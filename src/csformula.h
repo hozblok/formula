@@ -29,17 +29,18 @@ public:
   ~csformula();
   // Initialize formula by the expression.
   void setExpression(const std::string &texpression);
+  // Get current expression.
   std::string getExpression() const { return expression; }
 
-  // get the calculated value of the formula in accordance with the dictionary {mapVariableValues}
+  // Get the calculated value of the formula in accordance with the dictionary {mapVariableValues}
   // contains values of the variables
   // NOTE: Variables can be only letters of the Latin alphabet ('a','b',...,'z')
-  // Real get(const std::map<std::string, Real> &mapVariableValues) const;
-  std::string get(const std::map<std::string, std::string> &mapVariableValues) const;
+  Real get(const std::map<std::string, Real> &mapVariableValues = {}) const;
+  std::string get(const std::map<std::string, std::string> &mapVariableValues = {}) const;
   // get the calculated value of partial derivative with respect to a variable {variable} and
   // the {mapVariableValues} dictionary contains values of the variables
-  // Real getD(const std::string variable, const std::map<std::string, Real> &mapVariableValues) const;
-  std::string getD(const std::string variable, const std::map<std::string, std::string> &mapVariableValues) const;
+  // Real getD(const std::string variable, const std::map<std::string, Real> &mapVariableValues = {}) const;
+  std::string getD(const std::string variable, const std::map<std::string, std::string> &mapVariableValues = {}) const;
 };
 
 #endif // CSFORMULA_H

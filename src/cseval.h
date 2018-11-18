@@ -18,10 +18,74 @@
 #endif
 
 // arbitrary-precision arithmetic
-typedef boost::multiprecision::cpp_dec_float<16> mp_float_100;
-typedef boost::multiprecision::number<mp_float_100, boost::multiprecision::et_off> float100noet;
-// by default using float_100_et everywhere
-typedef boost::multiprecision::number<mp_float_100, boost::multiprecision::et_on> float100et;
+typedef boost::multiprecision::cpp_dec_float<1> mp_float_2_0;
+typedef boost::multiprecision::cpp_dec_float<2> mp_float_2_1;
+typedef boost::multiprecision::cpp_dec_float<4> mp_float_2_2;
+typedef boost::multiprecision::cpp_dec_float<8> mp_float_2_3;
+typedef boost::multiprecision::cpp_dec_float<16> mp_float_2_4;
+typedef boost::multiprecision::cpp_dec_float<32> mp_float_2_5;
+typedef boost::multiprecision::cpp_dec_float<64> mp_float_2_6;
+typedef boost::multiprecision::cpp_dec_float<128> mp_float_2_7;
+typedef boost::multiprecision::cpp_dec_float<256> mp_float_2_8;
+typedef boost::multiprecision::cpp_dec_float<512> mp_float_2_9;
+typedef boost::multiprecision::cpp_dec_float<1024> mp_float_2_10;
+typedef boost::multiprecision::cpp_dec_float<2048> mp_float_2_11;
+typedef boost::multiprecision::cpp_dec_float<4096> mp_float_2_12;
+typedef boost::multiprecision::cpp_dec_float<8192> mp_float_2_13;
+typedef boost::multiprecision::cpp_dec_float<16384> mp_float_2_14;
+typedef boost::multiprecision::cpp_dec_float<32768> mp_float_2_15;
+typedef boost::multiprecision::cpp_dec_float<65536> mp_float_2_16;
+typedef boost::multiprecision::cpp_dec_float<131072> mp_float_2_17;
+typedef boost::multiprecision::cpp_dec_float<262144> mp_float_2_18;
+typedef boost::multiprecision::cpp_dec_float<524288> mp_float_2_19;
+typedef boost::multiprecision::cpp_dec_float<1048576> mp_float_2_20;
+typedef boost::multiprecision::cpp_dec_float<2097152> mp_float_2_21;
+typedef boost::multiprecision::cpp_dec_float<4194304> mp_float_2_22;
+typedef boost::multiprecision::cpp_dec_float<8388608> mp_float_2_23;
+typedef boost::multiprecision::cpp_dec_float<16777216> mp_float_2_24;
+typedef boost::multiprecision::cpp_dec_float<33554432> mp_float_2_25;
+typedef boost::multiprecision::cpp_dec_float<67108864> mp_float_2_26;
+typedef boost::multiprecision::cpp_dec_float<134217728> mp_float_2_27;
+typedef boost::multiprecision::cpp_dec_float<268435456> mp_float_2_28;
+typedef boost::multiprecision::cpp_dec_float<536870912> mp_float_2_29;
+typedef boost::multiprecision::cpp_dec_float<1073741824> mp_float_2_30;
+typedef boost::multiprecision::cpp_dec_float<2147483648> mp_float_2_31;
+
+// typedef boost::multiprecision::number<mp_float_2_0, boost::multiprecision::et_off> float100noet;
+// by default using et_on everywhere
+// TODO
+typedef boost::multiprecision::number<mp_float_2_7, boost::multiprecision::et_on> float100et; // TODO
+typedef boost::multiprecision::number<mp_float_2_1, boost::multiprecision::et_on> float_2_1_et;
+typedef boost::multiprecision::number<mp_float_2_2, boost::multiprecision::et_on> float_2_2_et;
+typedef boost::multiprecision::number<mp_float_2_3, boost::multiprecision::et_on> float_2_3_et;
+typedef boost::multiprecision::number<mp_float_2_4, boost::multiprecision::et_on> float_2_4_et;
+typedef boost::multiprecision::number<mp_float_2_5, boost::multiprecision::et_on> float_2_5_et;
+typedef boost::multiprecision::number<mp_float_2_6, boost::multiprecision::et_on> float_2_6_et;
+typedef boost::multiprecision::number<mp_float_2_7, boost::multiprecision::et_on> float_2_7_et;
+typedef boost::multiprecision::number<mp_float_2_8, boost::multiprecision::et_on> float_2_8_et;
+typedef boost::multiprecision::number<mp_float_2_9, boost::multiprecision::et_on> float_2_9_et;
+typedef boost::multiprecision::number<mp_float_2_10, boost::multiprecision::et_on> float_2_10_et;
+typedef boost::multiprecision::number<mp_float_2_11, boost::multiprecision::et_on> float_2_11_et;
+typedef boost::multiprecision::number<mp_float_2_12, boost::multiprecision::et_on> float_2_12_et;
+typedef boost::multiprecision::number<mp_float_2_13, boost::multiprecision::et_on> float_2_13_et;
+typedef boost::multiprecision::number<mp_float_2_14, boost::multiprecision::et_on> float_2_14_et;
+typedef boost::multiprecision::number<mp_float_2_15, boost::multiprecision::et_on> float_2_15_et;
+typedef boost::multiprecision::number<mp_float_2_16, boost::multiprecision::et_on> float_2_16_et;
+typedef boost::multiprecision::number<mp_float_2_17, boost::multiprecision::et_on> float_2_17_et;
+typedef boost::multiprecision::number<mp_float_2_18, boost::multiprecision::et_on> float_2_18_et;
+typedef boost::multiprecision::number<mp_float_2_19, boost::multiprecision::et_on> float_2_19_et;
+typedef boost::multiprecision::number<mp_float_2_20, boost::multiprecision::et_on> float_2_20_et;
+typedef boost::multiprecision::number<mp_float_2_21, boost::multiprecision::et_on> float_2_21_et;
+typedef boost::multiprecision::number<mp_float_2_22, boost::multiprecision::et_on> float_2_22_et;
+typedef boost::multiprecision::number<mp_float_2_23, boost::multiprecision::et_on> float_2_23_et;
+typedef boost::multiprecision::number<mp_float_2_24, boost::multiprecision::et_on> float_2_24_et;
+typedef boost::multiprecision::number<mp_float_2_25, boost::multiprecision::et_on> float_2_25_et;
+typedef boost::multiprecision::number<mp_float_2_26, boost::multiprecision::et_on> float_2_26_et;
+typedef boost::multiprecision::number<mp_float_2_27, boost::multiprecision::et_on> float_2_27_et;
+typedef boost::multiprecision::number<mp_float_2_28, boost::multiprecision::et_on> float_2_28_et;
+typedef boost::multiprecision::number<mp_float_2_29, boost::multiprecision::et_on> float_2_29_et;
+typedef boost::multiprecision::number<mp_float_2_30, boost::multiprecision::et_on> float_2_30_et;
+typedef boost::multiprecision::number<mp_float_2_31, boost::multiprecision::et_on> float_2_31_et;
 // complex numbers
 typedef std::complex<float100et> complexFloat100et;
 // function with two arguments

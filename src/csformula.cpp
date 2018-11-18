@@ -38,7 +38,7 @@ void csformula<Real>::setExpression(const std::string &texpression)
     boost::algorithm::erase_all(expression, "\v");
 
     delete eval;
-    eval = new cseval<float100et>(expression);
+    eval = new cseval<Real>(expression);
 }
 
 template <typename Real>
@@ -63,11 +63,11 @@ bool csformula<Real>::validateBrackets(const std::string &str)
     return (count == 0);
 }
 
-// template <typename Real>
-// float100et csformula<Real>::get(const std::map<std::string, float100et> &mapVariableValues) const
-// {
-//     return eval->calculate(mapVariableValues, functionsTwoArgs, functionsOneArg);
-// }
+template <typename Real>
+Real csformula<Real>::get(const std::map<std::string, Real> &mapVariableValues) const
+{
+    return eval->calculate(mapVariableValues);
+}
 
 template <typename Real>
 std::string csformula<Real>::get(const std::map<std::string, std::string> &mapVariableValues) const
@@ -76,14 +76,9 @@ std::string csformula<Real>::get(const std::map<std::string, std::string> &mapVa
 }
 
 // template <typename Real>
-// float100et csformula<Real>::getD(const std::string variable, const std::map<std::string, float100et> &mapVariableValues) const
+// Real csformula<Real>::getD(const std::string variable, const std::map<std::string, Real> &mapVariableValues) const
 // {
-//     return eval->calculateDerivative(variable,
-//                                      mapVariableValues,
-//                                      functionsTwoArgs,
-//                                      functionsOneArg,
-//                                      functionsTwoArgsDLeft,
-//                                      functionsTwoArgsDRight);
+//     return eval->calculateDerivative(variable, mapVariableValues);
 // }
 
 template <typename Real>

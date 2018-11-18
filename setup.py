@@ -3,7 +3,7 @@ from setuptools.command.build_ext import build_ext
 import sys
 import setuptools
 
-__version__ = "0.3.38"
+__version__ = "0.3.46"
 
 
 class get_pybind_include(object):
