@@ -1,12 +1,9 @@
+
 *.so
-MANIFEST
 *.py[cod]
 *.egg-info
-.DS_Store
-_build
-_generate
-build
-boost_1_66_0*
-tmp
-venv
+
 .vscode
+
+venv
+

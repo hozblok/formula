@@ -2,6 +2,8 @@
 #define CSFORMULA_H
 #include "cseval.cpp"
 
+// TODO use namespace!
+
 // {csformula} - wrapper for a {cseval} class that will parse a string
 // {csformula} contains case insensitive string parser.
 // Each variable can only be set as a single Latin character in a string
@@ -30,7 +32,7 @@ public:
   // Initialize formula by the expression.
   void setExpression(const std::string &texpression);
   // Get current expression.
-  std::string getExpression() const { return expression; }
+  std::string getExpression() const { std::cout << boost::integer_traits<boost::int32_t>::const_max - 100; return expression; }
 
   // Get the calculated value of the formula in accordance with the dictionary {mapVariableValues}
   // contains values of the variables

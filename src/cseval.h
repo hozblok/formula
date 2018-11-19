@@ -18,6 +18,31 @@
 #endif
 
 // arbitrary-precision arithmetic
+template <size_t N>
+using mp_real = boost::multiprecision::number<boost::multiprecision::cpp_dec_float<N>, boost::multiprecision::et_on>;
+
+template <typename Real>
+struct mp_function
+{
+    // Function with three arguments.
+    typedef Real (*three_args)(Real, Real, Real);
+    // Function with two arguments.
+    typedef Real (*two_args)(Real, Real);
+    // Function with one argument.
+    typedef Real (*one_arg)(Real);
+};
+
+enum precisions 
+{ 
+  float_2_0 = 1 << 0,
+  float_2_1 = 1 << 1,
+  float_2_2 = 1 << 2,
+  float_2_3 = 1 << 3,
+  float_2_4 = 1 << 4,
+  float_2_5 = 1 << 5,
+  float_2_6 = 1 << 6,
+};
+
 typedef boost::multiprecision::cpp_dec_float<1> mp_float_2_0;
 typedef boost::multiprecision::cpp_dec_float<2> mp_float_2_1;
 typedef boost::multiprecision::cpp_dec_float<4> mp_float_2_2;
@@ -49,12 +74,12 @@ typedef boost::multiprecision::cpp_dec_float<134217728> mp_float_2_27;
 typedef boost::multiprecision::cpp_dec_float<268435456> mp_float_2_28;
 typedef boost::multiprecision::cpp_dec_float<536870912> mp_float_2_29;
 typedef boost::multiprecision::cpp_dec_float<1073741824> mp_float_2_30;
-typedef boost::multiprecision::cpp_dec_float<2147483648> mp_float_2_31;
+typedef boost::multiprecision::cpp_dec_float<2147483647> mp_float_2_31_1;
 
 // typedef boost::multiprecision::number<mp_float_2_0, boost::multiprecision::et_off> float100noet;
 // by default using et_on everywhere
 // TODO
-typedef boost::multiprecision::number<mp_float_2_7, boost::multiprecision::et_on> float100et; // TODO
+typedef boost::multiprecision::number<mp_float_2_0, boost::multiprecision::et_on> float100et; // TODO
 typedef boost::multiprecision::number<mp_float_2_1, boost::multiprecision::et_on> float_2_1_et;
 typedef boost::multiprecision::number<mp_float_2_2, boost::multiprecision::et_on> float_2_2_et;
 typedef boost::multiprecision::number<mp_float_2_3, boost::multiprecision::et_on> float_2_3_et;
@@ -85,9 +110,10 @@ typedef boost::multiprecision::number<mp_float_2_27, boost::multiprecision::et_o
 typedef boost::multiprecision::number<mp_float_2_28, boost::multiprecision::et_on> float_2_28_et;
 typedef boost::multiprecision::number<mp_float_2_29, boost::multiprecision::et_on> float_2_29_et;
 typedef boost::multiprecision::number<mp_float_2_30, boost::multiprecision::et_on> float_2_30_et;
-typedef boost::multiprecision::number<mp_float_2_31, boost::multiprecision::et_on> float_2_31_et;
+typedef boost::multiprecision::number<mp_float_2_31_1, boost::multiprecision::et_on> float_2_31_1_et;
 // complex numbers
-typedef std::complex<float100et> complexFloat100et;
+// TODO
+// typedef std::complex<float100et> complexFloat100et;
 // function with two arguments
 typedef float100et (*mathFunctionTwoArgs)(float100et, float100et);
 // function with one argument

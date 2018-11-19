@@ -3,7 +3,7 @@ from setuptools.command.build_ext import build_ext
 import sys
 import setuptools
 
-__version__ = "0.3.46"
+__version__ = "0.3.47"
 
 
 class get_pybind_include(object):
@@ -29,7 +29,7 @@ ext_modules = [
         include_dirs=[
             # Path to boost.
             # TODO
-            "boost_1_66_0/",
+            "boost/",
             # Path to csformula src.
             "src/",
             # Path to pybind11 headers.
