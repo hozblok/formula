@@ -3,7 +3,7 @@ from setuptools.command.build_ext import build_ext
 import sys
 import setuptools
 
-__version__ = "0.3.47"
+__version__ = "1.0.1"
 
 
 class get_pybind_include(object):
@@ -96,7 +96,7 @@ class BuildExt(build_ext):
 
 
 setup(
-    name="python_example",
+    name="formula",
     version=__version__,
     author="Ivan Ergunov",
     author_email="hozblok@gmail.com",

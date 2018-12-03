@@ -1,21 +1,22 @@
 #include "csformula.h"
 
-template <typename Real>
-csformula<Real>::csformula(const std::string &texpression) : expression(""),
-                                                       eval(0)
+csformula::csformula(const std::string &texpression) : expression(""),
+                                                       eval_2_0(0),
+                                                       eval_2_1(0),
+                                                       eval_2_2(0),
+                                                       eval_2_3(0),
+                                                       eval_2_4(0)
 {
     setExpression(texpression);
 }
 
-template <typename Real>
-csformula<Real>::~csformula()
+csformula::~csformula()
 {
-    delete eval;
-    eval = 0;
+    delete eval_2_1;
+    eval_2_1 = 0;
 }
 
-template <typename Real>
-void csformula<Real>::setExpression(const std::string &texpression)
+void csformula::setExpression(const std::string &texpression)
 {
     expression = texpression;
     if (expression.empty())
@@ -37,12 +38,11 @@ void csformula<Real>::setExpression(const std::string &texpression)
     boost::algorithm::erase_all(expression, "\t");
     boost::algorithm::erase_all(expression, "\v");
 
-    delete eval;
-    eval = new cseval<Real>(expression);
+    delete eval_2_1;
+    eval_2_1 = new cseval<mp_real<2>>(expression);
 }
 
-template <typename Real>
-bool csformula<Real>::validateBrackets(const std::string &str)
+bool csformula::validateBrackets(const std::string &str)
 {
     int count = 0;
     for (std::string::const_iterator it = str.cbegin(); it != str.cend(); ++it)
@@ -63,16 +63,15 @@ bool csformula<Real>::validateBrackets(const std::string &str)
     return (count == 0);
 }
 
-template <typename Real>
-Real csformula<Real>::get(const std::map<std::string, Real> &mapVariableValues) const
-{
-    return eval->calculate(mapVariableValues);
-}
+// template <typename Real>
+// Real csformula<Real>::get(const std::map<std::string, Real> &mapVariableValues) const
+// {
+//     return eval->calculate(mapVariableValues);
+// }
 
-template <typename Real>
-std::string csformula<Real>::get(const std::map<std::string, std::string> &mapVariableValues) const
+std::string csformula::get(const std::map<std::string, std::string> &mapVariableValues) const
 {
-    return eval->calculate(mapVariableValues).str();
+    return eval_2_1->calculate(mapVariableValues).str();
 }
 
 // template <typename Real>
@@ -81,8 +80,7 @@ std::string csformula<Real>::get(const std::map<std::string, std::string> &mapVa
 //     return eval->calculateDerivative(variable, mapVariableValues);
 // }
 
-template <typename Real>
-std::string csformula<Real>::getD(const std::string variable, const std::map<std::string, std::string> &mapVariableValues) const
+std::string csformula::getD(const std::string variable, const std::map<std::string, std::string> &mapVariableValues) const
 {
-    return eval->calculateDerivative(variable, mapVariableValues).str();
+    return eval_2_1->calculateDerivative(variable, mapVariableValues).str();
 }

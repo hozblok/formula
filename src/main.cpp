@@ -62,23 +62,23 @@ PYBIND11_MODULE(formula, m)
     .value("_S_ios_fmtflags_min", std::_Ios_Fmtflags::_S_ios_fmtflags_min)
     .export_values();
 
-    py::class_<csformula<float100et>>(m, "csformula")
+    py::class_<csformula>(m, "csformula")
         .def(py::init<const std::string &>())
         // .def("setName", &csformula::setName)
-        .def("getExpression", &csformula<float100et>::getExpression, "A function which adds two numbers")
-        // .def_property("expression", &csformula<float100et>::getExpression, &csformula<float100et>::setExpression)
+        .def("getExpression", &csformula::getExpression, "A function which adds two numbers")
+        // .def_property("expression", &csformula<mp_real<1>>::getExpression, &csformula<mp_real<1>>::setExpression)
         // .def(py::init<const std::string &>());
-        .def("get", (std::string(csformula<float100et>::*)(const std::map<std::string, std::string> &) const) & csformula<float100et>::get,
-             "Calculate the value of the parsed string using the passed values of the variables.")
-        .def("get", (float100et(csformula<float100et>::*)(const std::map<std::string, float100et> &) const) & csformula<float100et>::get,
+        .def("get", (std::string(csformula::*)(const std::map<std::string, std::string> &) const) & csformula::get,
              "Calculate the value of the parsed string using the passed values of the variables.");
+        // .def("get", (mp_real<1>(csformula<mp_real<1>>::*)(const std::map<std::string, mp_real<1>> &) const) & csformula<mp_real<1>>::get,
+        //      "Calculate the value of the parsed string using the passed values of the variables.");
     // .def("set", (void (Pet::*)(int)) &Pet::set, "Set the pet's age")
     // .def("set", (void (Pet::*)(const std::string &)) &Pet::set, "Set the pet's name");
-    // .def("getD", &csformula<float100et>::getD);
+    // .def("getD", &csformula<mp_real<1>>::getD);
 
-    py::class_<float100et>(m, "float100et")
+    py::class_<mp_real<1>>(m, "mp_real_1")
         .def(py::init<const std::string &>())
-        .def("str", (std::string(float100et::*)(std::streamsize digits, std::ios_base::fmtflags) const) & float100et::str,
+        .def("str", (std::string(mp_real<1>::*)(std::streamsize digits, std::ios_base::fmtflags) const) & mp_real<1>::str,
              "Returns the number formatted as a string, with at least precision digits, and in scientific format if scientific is true. ",
              py::arg("digits") = 0, py::arg("f") = std::ios_base::fmtflags(0) /*std::_Ios_Fmtflags::_S_scientific*/ /*1L << 8*/ /*std::ios_base::fmtflags(0)*/);
 

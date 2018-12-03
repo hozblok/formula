@@ -21,26 +21,16 @@
 template <size_t N>
 using mp_real = boost::multiprecision::number<boost::multiprecision::cpp_dec_float<N>, boost::multiprecision::et_on>;
 
-template <typename Real>
-struct mp_function
-{
-    // Function with three arguments.
-    typedef Real (*three_args)(Real, Real, Real);
-    // Function with two arguments.
-    typedef Real (*two_args)(Real, Real);
-    // Function with one argument.
-    typedef Real (*one_arg)(Real);
-};
-
 enum precisions 
 { 
-  float_2_0 = 1 << 0,
-  float_2_1 = 1 << 1,
-  float_2_2 = 1 << 2,
-  float_2_3 = 1 << 3,
-  float_2_4 = 1 << 4,
-  float_2_5 = 1 << 5,
-  float_2_6 = 1 << 6,
+  p_2_0 = 1 << 0,
+  p_2_1 = 1 << 1,
+  p_2_2 = 1 << 2,
+  p_2_3 = 1 << 3,
+  p_2_4 = 1 << 4,
+  p_2_5 = 1 << 5,
+  p_2_6 = 1 << 6,
+  p_2_7 = 1 << 7,
 };
 
 typedef boost::multiprecision::cpp_dec_float<1> mp_float_2_0;
@@ -79,7 +69,7 @@ typedef boost::multiprecision::cpp_dec_float<2147483647> mp_float_2_31_1;
 // typedef boost::multiprecision::number<mp_float_2_0, boost::multiprecision::et_off> float100noet;
 // by default using et_on everywhere
 // TODO
-typedef boost::multiprecision::number<mp_float_2_0, boost::multiprecision::et_on> float100et; // TODO
+typedef boost::multiprecision::number<mp_float_2_0, boost::multiprecision::et_on> float_2_0_et; // TODO
 typedef boost::multiprecision::number<mp_float_2_1, boost::multiprecision::et_on> float_2_1_et;
 typedef boost::multiprecision::number<mp_float_2_2, boost::multiprecision::et_on> float_2_2_et;
 typedef boost::multiprecision::number<mp_float_2_3, boost::multiprecision::et_on> float_2_3_et;
