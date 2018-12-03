@@ -7,7 +7,7 @@ template <typename Real>
 const Real cseval<Real>::ONE = Real("1");
 
 template <typename Real>
-const std::map<std::string, mathFunctionTwoArgs> cseval<Real>::functionsTwoArgs = {{std::string("|"), _or},
+const std::map<std::string,  Real (*)(Real, Real)> cseval<Real>::functionsTwoArgs = {{std::string("|"), _or},
                                                                                 {std::string("&"), _and},
                                                                                 {std::string("="), _eq},
                                                                                 {std::string(">"), _gt},
@@ -18,7 +18,7 @@ const std::map<std::string, mathFunctionTwoArgs> cseval<Real>::functionsTwoArgs 
                                                                                 {std::string("*"), _mul},
                                                                                 {std::string("^"), _pow}};
 template <typename Real>
-const std::map<std::string, mathFunctionOneArg> cseval<Real>::functionsOneArg = {{std::string("sin"), _sin},
+const std::map<std::string,  Real (*)(Real)> cseval<Real>::functionsOneArg = {{std::string("sin"), _sin},
                                                                               {std::string("asin"), _asin},
                                                                               {std::string("cos"), _cos},
                                                                               {std::string("acos"), _acos},
@@ -28,7 +28,7 @@ const std::map<std::string, mathFunctionOneArg> cseval<Real>::functionsOneArg = 
                                                                               {std::string("sqrt"), _sqrt},
                                                                               {std::string("exp"), _exp}};
 template <typename Real>
-const std::map<std::string, mathFunctionTwoArgs> cseval<Real>::functionsTwoArgsDLeft = {{std::string("+"), _one},
+const std::map<std::string,  Real (*)(Real, Real)> cseval<Real>::functionsTwoArgsDLeft = {{std::string("+"), _one},
                                                                                      {std::string("-"), _one},
                                                                                      {std::string("*"), _mul1},
                                                                                      {std::string("/"), _truediv1},
@@ -43,7 +43,7 @@ const std::map<std::string, mathFunctionTwoArgs> cseval<Real>::functionsTwoArgsD
                                                                                      {std::string("sqrt"), _sqrt_d},
                                                                                      {std::string("exp"), _exp_d}};
 template <typename Real>
-const std::map<std::string, mathFunctionTwoArgs> cseval<Real>::functionsTwoArgsDRight = {{std::string("+"), _one},
+const std::map<std::string,  Real (*)(Real, Real)> cseval<Real>::functionsTwoArgsDRight = {{std::string("+"), _one},
                                                                                       {std::string("-"), _m_one},
                                                                                       {std::string("*"), _mul2},
                                                                                       {std::string("/"), _truediv2},
@@ -182,8 +182,8 @@ cseval<Real>::~cseval()
 
 template <typename Real>
 Real cseval<Real>::calculate(const std::map<std::string, Real> &mapVariableValues,
-                                const std::map<std::string, mathFunctionTwoArgs> &mapFunctionTwoArgsValue,
-                                const std::map<std::string, mathFunctionOneArg> &mapFunctionOneArgValue) const
+                                const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionTwoArgsValue,
+                                const std::map<std::string,  Real (*)(Real)> &mapFunctionOneArgValue) const
 {
     if (kind == 'n')
     {
@@ -209,7 +209,7 @@ Real cseval<Real>::calculate(const std::map<std::string, Real> &mapVariableValue
             Real right("0");
             left = leftEval->calculate(mapVariableValues, mapFunctionTwoArgsValue, mapFunctionOneArgValue);
             right = rightEval->calculate(mapVariableValues, mapFunctionTwoArgsValue, mapFunctionOneArgValue);
-            std::map<std::string, mathFunctionTwoArgs>::const_iterator itFunction;
+            typename std::map<std::string,  Real (*)(Real, Real)>::const_iterator itFunction;
             itFunction = mapFunctionTwoArgsValue.find(id);
             if (itFunction != mapFunctionTwoArgsValue.cend())
             {
@@ -226,7 +226,7 @@ Real cseval<Real>::calculate(const std::map<std::string, Real> &mapVariableValue
             // function with one argument
             Real left("0");
             left = leftEval->calculate(mapVariableValues, mapFunctionTwoArgsValue, mapFunctionOneArgValue);
-            std::map<std::string, mathFunctionOneArg>::const_iterator itFunction;
+            typename std::map<std::string,  Real (*)(Real)>::const_iterator itFunction;
             itFunction = mapFunctionOneArgValue.find(id);
             if (itFunction != mapFunctionOneArgValue.cend())
             {
@@ -245,8 +245,8 @@ Real cseval<Real>::calculate(const std::map<std::string, Real> &mapVariableValue
 
 template <typename Real>
 Real cseval<Real>::calculate(const std::map<std::string, std::string> &mapVariableValues,
-                                const std::map<std::string, mathFunctionTwoArgs> &mapFunctionTwoArgsValue,
-                                const std::map<std::string, mathFunctionOneArg> &mapFunctionOneArgValue) const
+                                const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionTwoArgsValue,
+                                const std::map<std::string,  Real (*)(Real)> &mapFunctionOneArgValue) const
 {
     typename std::map<std::string, Real> values;
     typename std::map<std::string, std::string>::const_iterator it;
@@ -260,10 +260,10 @@ Real cseval<Real>::calculate(const std::map<std::string, std::string> &mapVariab
 template <typename Real>
 Real cseval<Real>::calculateDerivative(const std::string &variable,
                                           const std::map<std::string, Real> &mapVariableValues,
-                                          const std::map<std::string, mathFunctionTwoArgs> &mapFunctionTwoArgsValue,
-                                          const std::map<std::string, mathFunctionOneArg> &mapFunctionOneArgValue,
-                                          const std::map<std::string, mathFunctionTwoArgs> &mapFunctionDerivLeft,
-                                          const std::map<std::string, mathFunctionTwoArgs> &mapFunctionDerivRight) const
+                                          const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionTwoArgsValue,
+                                          const std::map<std::string,  Real (*)(Real)> &mapFunctionOneArgValue,
+                                          const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionDerivLeft,
+                                          const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionDerivRight) const
 {
     if (kind == 'n')
     {
@@ -308,9 +308,9 @@ Real cseval<Real>::calculateDerivative(const std::string &variable,
                                                           mapFunctionOneArgValue,
                                                           mapFunctionDerivLeft,
                                                           mapFunctionDerivRight);
-            std::map<std::string, mathFunctionTwoArgs>::const_iterator itFunction_1;
+            typename std::map<std::string,  Real (*)(Real, Real)>::const_iterator itFunction_1;
             itFunction_1 = mapFunctionDerivLeft.find(id);
-            std::map<std::string, mathFunctionTwoArgs>::const_iterator itFunction_2;
+            typename std::map<std::string,  Real (*)(Real, Real)>::const_iterator itFunction_2;
             itFunction_2 = mapFunctionDerivRight.find(id);
             if (itFunction_1 != mapFunctionDerivLeft.cend() && itFunction_2 != mapFunctionDerivRight.cend())
             {
@@ -334,7 +334,7 @@ Real cseval<Real>::calculateDerivative(const std::string &variable,
                                                          mapFunctionOneArgValue,
                                                          mapFunctionDerivLeft,
                                                          mapFunctionDerivRight);
-            std::map<std::string, mathFunctionTwoArgs>::const_iterator itFunction;
+            typename std::map<std::string,  Real (*)(Real, Real)>::const_iterator itFunction;
             itFunction = mapFunctionDerivLeft.find(id);
             if (itFunction != mapFunctionDerivLeft.cend())
             {
@@ -354,10 +354,10 @@ Real cseval<Real>::calculateDerivative(const std::string &variable,
 template <typename Real>
 Real cseval<Real>::calculateDerivative(const std::string &variable,
                                           const std::map<std::string, std::string> &mapVariableValues,
-                                          const std::map<std::string, mathFunctionTwoArgs> &mapFunctionTwoArgsValue,
-                                          const std::map<std::string, mathFunctionOneArg> &mapFunctionOneArgValue,
-                                          const std::map<std::string, mathFunctionTwoArgs> &mapFunctionDerivLeft,
-                                          const std::map<std::string, mathFunctionTwoArgs> &mapFunctionDerivRight) const
+                                          const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionTwoArgsValue,
+                                          const std::map<std::string,  Real (*)(Real)> &mapFunctionOneArgValue,
+                                          const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionDerivLeft,
+                                          const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionDerivRight) const
 {
     typename std::map<std::string, Real> values;
     typename std::map<std::string, std::string>::const_iterator it;

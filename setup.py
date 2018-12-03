@@ -24,11 +24,10 @@ class get_pybind_include(object):
 
 ext_modules = [
     Extension(
-        "python_example",
+        "formula",
         ["src/main.cpp"],
         include_dirs=[
             # Path to boost.
-            # TODO
             "boost/",
             # Path to csformula src.
             "src/",
@@ -101,8 +100,8 @@ setup(
     version=__version__,
     author="Ivan Ergunov",
     author_email="hozblok@gmail.com",
-    url="https://github.com/hozblok/formula", #TODO
-    description="Arbitrary-precision formula solver.",
+    url="https://github.com/hozblok/formula",
+    description="Arbitrary-precision formula solver.", # TODO
     long_description="",
     ext_modules=ext_modules,
     install_requires=["pybind11>=2.2"],

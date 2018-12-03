@@ -114,10 +114,11 @@ typedef boost::multiprecision::number<mp_float_2_31_1, boost::multiprecision::et
 // complex numbers
 // TODO
 // typedef std::complex<float100et> complexFloat100et;
+// TODO delete me
 // function with two arguments
-typedef float100et (*mathFunctionTwoArgs)(float100et, float100et);
+// typedef float100et (*mathFunctionTwoArgs)(float100et, float100et);
 // function with one argument
-typedef float100et (*mathFunctionOneArg)(float100et);
+// typedef float100et (*mathFunctionOneArg)(float100et);
 
 // error codes (?)
 #define WRONG_BRACKETS 10000
@@ -167,24 +168,24 @@ public:
   ~cseval();
   // evaluation of subformula
   Real calculate(const std::map<std::string, Real> &mapVariableValues,
-                       const std::map<std::string, mathFunctionTwoArgs> &mapFunctionTwoArgsValue = functionsTwoArgs,
-                       const std::map<std::string, mathFunctionOneArg> &mapFunctionOneArgValue = functionsOneArg) const;
+                       const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionTwoArgsValue = functionsTwoArgs,
+                       const std::map<std::string,  Real (*)(Real)> &mapFunctionOneArgValue = functionsOneArg) const;
   Real calculate(const std::map<std::string, std::string> &mapVariableValues,
-                       const std::map<std::string, mathFunctionTwoArgs> &mapFunctionTwoArgsValue = functionsTwoArgs,
-                       const std::map<std::string, mathFunctionOneArg> &mapFunctionOneArgValue = functionsOneArg) const;
+                       const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionTwoArgsValue = functionsTwoArgs,
+                       const std::map<std::string,  Real (*)(Real)> &mapFunctionOneArgValue = functionsOneArg) const;
   // evaluation derivative of subformula
   Real calculateDerivative(const std::string &variable,
                                  const std::map<std::string, Real> &mapVariableValues,
-                                 const std::map<std::string, mathFunctionTwoArgs> &mapFunctionTwoArgsValue = functionsTwoArgs,
-                                 const std::map<std::string, mathFunctionOneArg> &mapFunctionOneArgValue = functionsOneArg,
-                                 const std::map<std::string, mathFunctionTwoArgs> &mapFunctionDerivLeft = functionsTwoArgsDLeft,
-                                 const std::map<std::string, mathFunctionTwoArgs> &mapFunctionDerivRight = functionsTwoArgsDRight) const;
+                                 const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionTwoArgsValue = functionsTwoArgs,
+                                 const std::map<std::string,  Real (*)(Real)> &mapFunctionOneArgValue = functionsOneArg,
+                                 const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionDerivLeft = functionsTwoArgsDLeft,
+                                 const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionDerivRight = functionsTwoArgsDRight) const;
   Real calculateDerivative(const std::string &variable,
                                  const std::map<std::string, std::string> &mapVariableValues,
-                                 const std::map<std::string, mathFunctionTwoArgs> &mapFunctionTwoArgsValue = functionsTwoArgs,
-                                 const std::map<std::string, mathFunctionOneArg> &mapFunctionOneArgValue = functionsOneArg,
-                                 const std::map<std::string, mathFunctionTwoArgs> &mapFunctionDerivLeft = functionsTwoArgsDLeft,
-                                 const std::map<std::string, mathFunctionTwoArgs> &mapFunctionDerivRight = functionsTwoArgsDRight) const;
+                                 const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionTwoArgsValue = functionsTwoArgs,
+                                 const std::map<std::string,  Real (*)(Real)> &mapFunctionOneArgValue = functionsOneArg,
+                                 const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionDerivLeft = functionsTwoArgsDLeft,
+                                 const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionDerivRight = functionsTwoArgsDRight) const;
 
   // usefull constants
   const static Real ZERO;
@@ -339,13 +340,13 @@ public:
   // dictionaries contain the appropriate names of operations and static methods for evaluating, e.g.
   // "+" -> _add
   // "sin" -> _sin
-  static const std::map<std::string, mathFunctionTwoArgs> functionsTwoArgs;
-  static const std::map<std::string, mathFunctionOneArg> functionsOneArg;
+  static const std::map<std::string,  Real (*)(Real, Real)> functionsTwoArgs;
+  static const std::map<std::string,  Real (*)(Real)> functionsOneArg;
 
   // dictionaries contain references to derivatives of basic functions and their names:
-  static const std::map<std::string, mathFunctionTwoArgs> functionsTwoArgsDLeft;
-  static const std::map<std::string, mathFunctionTwoArgs> functionsTwoArgsDRight;
-  static const std::map<std::string, mathFunctionOneArg> functionsOneArgD;
+  static const std::map<std::string,  Real (*)(Real, Real)> functionsTwoArgsDLeft;
+  static const std::map<std::string,  Real (*)(Real, Real)> functionsTwoArgsDRight;
+  static const std::map<std::string,  Real (*)(Real)> functionsOneArgD;
 };
 
 #endif // EVAL_MPF_H
