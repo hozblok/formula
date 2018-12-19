@@ -63,7 +63,7 @@ cseval<Real>::cseval(std::string expression) : kind('e'),
     }
 
     // remove braces
-    while (!isThereSymbolsOutsideBrackets(expression))
+    while (!isThereSymbolsOutsideParentheses(expression))
     {
         expression.erase(expression.cbegin());
         expression.pop_back();
@@ -398,7 +398,7 @@ std::unordered_map<char, int> cseval<Real>::findSymbolsOutsideBrackets(const std
 }
 
 template <typename Real>
-bool cseval<Real>::isThereSymbolsOutsideBrackets(const std::string &str) const
+bool cseval<Real>::isThereSymbolsOutsideParentheses(const std::string &str) const
 {
     unsigned int countBraces = 0;
     std::string::const_iterator it = str.cbegin();

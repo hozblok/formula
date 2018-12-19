@@ -63,7 +63,7 @@ PYBIND11_MODULE(formula, m)
     .export_values();
 
     py::class_<csformula>(m, "csformula")
-        .def(py::init<const std::string &>())
+        .def(py::init<const std::string &, const size_t>())
         // .def("setName", &csformula::setName)
         .def("getExpression", &csformula::getExpression, "A function which adds two numbers")
         // .def_property("expression", &csformula<mp_real<1>>::getExpression, &csformula<mp_real<1>>::setExpression)

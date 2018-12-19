@@ -4,9 +4,11 @@
 #include <string>
 #include <map>
 #include <unordered_map>
+#include <memory>
 #include <boost/algorithm/string.hpp>
 #include <boost/math/constants/constants.hpp>
 #include <boost/multiprecision/cpp_dec_float.hpp>
+#include <boost/variant.hpp>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -20,6 +22,19 @@
 // arbitrary-precision arithmetic
 template <size_t N>
 using mp_real = boost::multiprecision::number<boost::multiprecision::cpp_dec_float<N>, boost::multiprecision::et_on>;
+
+enum allowed_precisions 
+{ 
+  degree_of_two_0 = 1 << 0,
+  degree_of_two_1 = 1 << 1,
+  degree_of_two_2 = 1 << 2,
+  degree_of_two_3 = 1 << 3,
+  degree_of_two_4 = 1 << 4,
+  degree_of_two_5 = 1 << 5,
+  degree_of_two_6 = 1 << 6,
+  degree_of_two_7 = 1 << 7,
+  degree_of_two_8 = 1 << 8,
+};
 
 enum precisions 
 { 
@@ -134,28 +149,57 @@ using boost::multiprecision::sqrt;
 using boost::multiprecision::swap;
 using boost::multiprecision::tan;
 
-// Class for evaluating formula specified by the string
+/**
+ * Class for evaluating formula specified by the string
+ * typename Real (not mp_real<NUMBER>) for double support.
+ */ 
 template <typename Real>
 class cseval
 {
 private:
-  // kind of formula element:
-  // 'n' - number, 'v' - variable, 'f' - function, 'e' - error
+  /** 
+   * Kind of formula element:
+   * 'n' - number, 'v' - variable, 'f' - function, 'e' - error.
+   */ 
   char kind;
-  // the function name or variable name for current node. e.g. "+","-","/","x","a"
-  // (!) all variable names must be represented by one Latin letter (!)
+  /**
+   * The function name or variable name for current node. e.g. "+","-","/","x","a"
+   * (!) all variable names must be represented by one Latin letter (!).
+   * (!) i, j - reserved for complex numbers. (!)
+   */
   std::string id;
-  // value which was parset from expression, value makes sense if kind is 'n'
+  /**
+   * Value which was parset from expression, value makes sense if kind is 'n'.
+   */
   Real value;
-  // child elements in the formula tree
+  /**
+   * Child elements of the formula tree.
+   */
   cseval *leftEval, *rightEval;
-  // try to find each symbol of {symbols} string in the {str} string
+  /**
+   * Try to find each symbol of {symbols} string in the {str} string.
+   */
   std::unordered_map<char, int> findSymbolsOutsideBrackets(const std::string &str, const std::string &symbols) const;
-  bool isThereSymbolsOutsideBrackets(const std::string &str) const;
+  /**
+   *  Try to find symbols outside parentheses: '(' and ')'.
+   */
+  bool isThereSymbolsOutsideParentheses(const std::string &str) const;
   
 public:
   cseval(std::string expression);
   ~cseval();
+  // cseval & operator = (const cseval & other) {
+  //     if (this != &other) {
+  //         delete leftEval;
+  //         delete rightEval;
+  //         leftEval = other.leftEval;
+  //         rightEval = other.rightEval;
+  //         kind = other.kind;
+  //         id = other.id;
+  //         value = other.value;
+  //     }
+  //     return *this;
+  // }
   // evaluation of subformula
   Real calculate(const std::map<std::string, Real> &mapVariableValues,
                        const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionTwoArgsValue = functionsTwoArgs,

@@ -1,20 +1,28 @@
 #include "csformula.h"
 
-csformula::csformula(const std::string &texpression) : expression(""),
-                                                       eval_2_0(0),
-                                                       eval_2_1(0),
-                                                       eval_2_2(0),
-                                                       eval_2_3(0),
-                                                       eval_2_4(0)
+csformula::csformula(const std::string &texpression, const size_t tprecision) :
+    precision(tprecision),
+    expression(""),
+    eval(nullptr)
 {
     setExpression(texpression);
 }
 
 csformula::~csformula()
 {
-    delete eval_2_1;
-    eval_2_1 = 0;
+    // delete eval;
 }
+
+constexpr size_t degrees_of_two[9] = {1,2,4,8,16,32,64,128,256};
+// const size_t prepare_precision(size_t prec) {
+//   for (const size_t *ptr=degrees_of_two; ptr<=&degrees_of_two[9]; ptr++) {
+//     if (prec <= *ptr) {
+//       return *ptr;
+//     }
+//   }
+//   return 256;
+// }
+
 
 void csformula::setExpression(const std::string &texpression)
 {
@@ -38,8 +46,19 @@ void csformula::setExpression(const std::string &texpression)
     boost::algorithm::erase_all(expression, "\t");
     boost::algorithm::erase_all(expression, "\v");
 
-    delete eval_2_1;
-    eval_2_1 = new cseval<mp_real<2>>(expression);
+    // delete eval;
+    //cseval<mp_real<prepare_precision(precision)>> * test = new cseval<mp_real<prepare_precision(precision)>>(expression);
+    // const size_t prec = precision;
+    // constexpr size_t degrees_of_two[9] = {1,2,4,8,16,32,64,128,256};
+    // const size_t *ptr=degrees_of_two;
+    // const qw a = A;
+    eval = std::make_shared<cseval<mp_real<1>>>(expression);
+    // for (int i = 0; i < 9; ++i) {
+    //     if (precision <= degrees_of_two[i]) {
+    //         eval = cseval<mp_real<a>>(expression);
+    //     }
+    // }
+    
 }
 
 bool csformula::validateBrackets(const std::string &str)
@@ -71,7 +90,8 @@ bool csformula::validateBrackets(const std::string &str)
 
 std::string csformula::get(const std::map<std::string, std::string> &mapVariableValues) const
 {
-    return eval_2_1->calculate(mapVariableValues).str();
+    return std::string("asdff");
+    // return eval->calculate(mapVariableValues).str();
 }
 
 // template <typename Real>
@@ -82,5 +102,6 @@ std::string csformula::get(const std::map<std::string, std::string> &mapVariable
 
 std::string csformula::getD(const std::string variable, const std::map<std::string, std::string> &mapVariableValues) const
 {
-    return eval_2_1->calculateDerivative(variable, mapVariableValues).str();
+    return std::string("asdff");
+    // return eval->calculateDerivative(variable, mapVariableValues).str();
 }

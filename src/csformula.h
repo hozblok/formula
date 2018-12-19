@@ -3,7 +3,6 @@
 #include "cseval.cpp"
 
 // TODO use namespace!
-
 // {csformula} - wrapper for a {cseval} class that will parse a string
 // {csformula} contains case insensitive string parser.
 // Each variable can only be set as a single Latin character in a string
@@ -20,20 +19,18 @@ class csformula
 {
 private:
   // TODO
-  // precisions precision;
+  size_t precision;
   // expression to evaluate, for example "(x+1)*(y-0.004)*(sin(x))^2"
   std::string expression;
   // pointer to a recursive, smart formula string parser
-  cseval<mp_real<0>> *eval_2_0;
-  cseval<mp_real<2>> *eval_2_1;
-  cseval<mp_real<4>> *eval_2_2;
-  cseval<mp_real<8>> *eval_2_3;
-  cseval<mp_real<16>> *eval_2_4;
+  boost::variant<
+    std::shared_ptr<cseval<mp_real<1>>>
+  > eval;
   // simple checker the correct order of parentheses
   bool validateBrackets(const std::string &str);
 
 public:
-  csformula(const std::string &texpression);
+  csformula(const std::string &texpression, const size_t tprecision = 1);
   ~csformula();
   // Initialize formula by the expression.
   void setExpression(const std::string &texpression);
