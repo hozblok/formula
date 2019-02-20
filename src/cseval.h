@@ -20,32 +20,37 @@
 #endif
 
 // arbitrary-precision arithmetic
-template <size_t N>
+template <unsigned N>
 using mp_real = boost::multiprecision::number<boost::multiprecision::cpp_dec_float<N>, boost::multiprecision::et_on>;
 
-enum allowed_precisions 
-{ 
-  degree_of_two_0 = 1 << 0,
-  degree_of_two_1 = 1 << 1,
-  degree_of_two_2 = 1 << 2,
-  degree_of_two_3 = 1 << 3,
-  degree_of_two_4 = 1 << 4,
-  degree_of_two_5 = 1 << 5,
-  degree_of_two_6 = 1 << 6,
-  degree_of_two_7 = 1 << 7,
-  degree_of_two_8 = 1 << 8,
-};
+/**
+ * TODO 1<<0, 1<<1, 1<<2, 1<<3, 1<<4, ...
+ * Sorted in ascending order.
+ */
+constexpr const unsigned precisions[] =
+    {1, 2, 4,
+     8, 16, 32,
+     64, 128, 256,
+     512, 1024, 2048,
+     4096, 8192, 8193};
 
-enum precisions 
-{ 
-  p_2_0 = 1 << 0,
-  p_2_1 = 1 << 1,
-  p_2_2 = 1 << 2,
-  p_2_3 = 1 << 3,
-  p_2_4 = 1 << 4,
-  p_2_5 = 1 << 5,
-  p_2_6 = 1 << 6,
-  p_2_7 = 1 << 7,
+enum allowed_precisions
+{
+  power_of_two_0 = precisions[0],
+  power_of_two_1 = precisions[1],
+  power_of_two_2 = precisions[2],
+  power_of_two_3 = precisions[3],
+  power_of_two_4 = precisions[4],
+  power_of_two_5 = precisions[5],
+  power_of_two_6 = precisions[6],
+  power_of_two_7 = precisions[7],
+  power_of_two_8 = precisions[8],
+  power_of_two_9 = precisions[9],
+  power_of_two_10 = precisions[10],
+  power_of_two_11 = precisions[11],
+  power_of_two_12 = precisions[12],
+  power_of_two_13 = precisions[13],
+  power_of_two_14 = precisions[14],
 };
 
 typedef boost::multiprecision::cpp_dec_float<1> mp_float_2_0;
@@ -152,7 +157,7 @@ using boost::multiprecision::tan;
 /**
  * Class for evaluating formula specified by the string
  * typename Real (not mp_real<NUMBER>) for double support.
- */ 
+ */
 template <typename Real>
 class cseval
 {
@@ -160,7 +165,7 @@ private:
   /** 
    * Kind of formula element:
    * 'n' - number, 'v' - variable, 'f' - function, 'e' - error.
-   */ 
+   */
   char kind;
   /**
    * The function name or variable name for current node. e.g. "+","-","/","x","a"
@@ -184,7 +189,7 @@ private:
    *  Try to find symbols outside parentheses: '(' and ')'.
    */
   bool isThereSymbolsOutsideParentheses(const std::string &str) const;
-  
+
 public:
   cseval(std::string expression);
   ~cseval();
@@ -202,29 +207,29 @@ public:
   // }
   // evaluation of subformula
   Real calculate(const std::map<std::string, Real> &mapVariableValues,
-                       const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionTwoArgsValue = functionsTwoArgs,
-                       const std::map<std::string,  Real (*)(Real)> &mapFunctionOneArgValue = functionsOneArg) const;
+                 const std::map<std::string, Real (*)(Real, Real)> &mapFunctionTwoArgsValue = functionsTwoArgs,
+                 const std::map<std::string, Real (*)(Real)> &mapFunctionOneArgValue = functionsOneArg) const;
   Real calculate(const std::map<std::string, std::string> &mapVariableValues,
-                       const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionTwoArgsValue = functionsTwoArgs,
-                       const std::map<std::string,  Real (*)(Real)> &mapFunctionOneArgValue = functionsOneArg) const;
+                 const std::map<std::string, Real (*)(Real, Real)> &mapFunctionTwoArgsValue = functionsTwoArgs,
+                 const std::map<std::string, Real (*)(Real)> &mapFunctionOneArgValue = functionsOneArg) const;
   // evaluation derivative of subformula
   Real calculateDerivative(const std::string &variable,
-                                 const std::map<std::string, Real> &mapVariableValues,
-                                 const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionTwoArgsValue = functionsTwoArgs,
-                                 const std::map<std::string,  Real (*)(Real)> &mapFunctionOneArgValue = functionsOneArg,
-                                 const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionDerivLeft = functionsTwoArgsDLeft,
-                                 const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionDerivRight = functionsTwoArgsDRight) const;
+                           const std::map<std::string, Real> &mapVariableValues,
+                           const std::map<std::string, Real (*)(Real, Real)> &mapFunctionTwoArgsValue = functionsTwoArgs,
+                           const std::map<std::string, Real (*)(Real)> &mapFunctionOneArgValue = functionsOneArg,
+                           const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivLeft = functionsTwoArgsDLeft,
+                           const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivRight = functionsTwoArgsDRight) const;
   Real calculateDerivative(const std::string &variable,
-                                 const std::map<std::string, std::string> &mapVariableValues,
-                                 const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionTwoArgsValue = functionsTwoArgs,
-                                 const std::map<std::string,  Real (*)(Real)> &mapFunctionOneArgValue = functionsOneArg,
-                                 const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionDerivLeft = functionsTwoArgsDLeft,
-                                 const std::map<std::string,  Real (*)(Real, Real)> &mapFunctionDerivRight = functionsTwoArgsDRight) const;
+                           const std::map<std::string, std::string> &mapVariableValues,
+                           const std::map<std::string, Real (*)(Real, Real)> &mapFunctionTwoArgsValue = functionsTwoArgs,
+                           const std::map<std::string, Real (*)(Real)> &mapFunctionOneArgValue = functionsOneArg,
+                           const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivLeft = functionsTwoArgsDLeft,
+                           const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivRight = functionsTwoArgsDRight) const;
 
   // usefull constants
   const static Real ZERO;
   const static Real ONE;
- 
+
   //+ general static methods that have a one-to-one correspondence
   // with the operations specified in the expression string
   // "+" - addition
@@ -374,13 +379,13 @@ public:
   // dictionaries contain the appropriate names of operations and static methods for evaluating, e.g.
   // "+" -> _add
   // "sin" -> _sin
-  static const std::map<std::string,  Real (*)(Real, Real)> functionsTwoArgs;
-  static const std::map<std::string,  Real (*)(Real)> functionsOneArg;
+  static const std::map<std::string, Real (*)(Real, Real)> functionsTwoArgs;
+  static const std::map<std::string, Real (*)(Real)> functionsOneArg;
 
   // dictionaries contain references to derivatives of basic functions and their names:
-  static const std::map<std::string,  Real (*)(Real, Real)> functionsTwoArgsDLeft;
-  static const std::map<std::string,  Real (*)(Real, Real)> functionsTwoArgsDRight;
-  static const std::map<std::string,  Real (*)(Real)> functionsOneArgD;
+  static const std::map<std::string, Real (*)(Real, Real)> functionsTwoArgsDLeft;
+  static const std::map<std::string, Real (*)(Real, Real)> functionsTwoArgsDRight;
+  static const std::map<std::string, Real (*)(Real)> functionsOneArgD;
 };
 
 #endif // EVAL_MPF_H

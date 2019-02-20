@@ -3,7 +3,7 @@ from setuptools.command.build_ext import build_ext
 import sys
 import setuptools
 
-__version__ = "1.0.4"
+__version__ = "1.0.0a1"
 
 
 class get_pybind_include(object):
@@ -25,7 +25,13 @@ class get_pybind_include(object):
 ext_modules = [
     Extension(
         "formula",
-        ["src/main.cpp"],
+        [
+            "src/main.cpp",
+            "src/cseval.h",
+            "src/cseval.cpp",
+            "src/csformula.h",
+            "src/csformula.cpp",
+        ],
         include_dirs=[
             # Path to boost.
             "boost/",
@@ -101,10 +107,11 @@ setup(
     author="Ivan Ergunov",
     author_email="hozblok@gmail.com",
     url="https://github.com/hozblok/formula",
-    description="Arbitrary-precision formula solver.", # TODO
+    description="Arbitrary-precision formula solver.",  # TODO
     long_description="",
     ext_modules=ext_modules,
     install_requires=["pybind11>=2.2"],
     cmdclass={"build_ext": BuildExt},
     zip_safe=False,
+    package_data={"": ["boost/libs/variant/include/boost/*.hpp"]},
 )

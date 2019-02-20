@@ -18,24 +18,55 @@
 class csformula
 {
 private:
-  // TODO
-  size_t precision;
-  // expression to evaluate, for example "(x+1)*(y-0.004)*(sin(x))^2"
+  /**
+   * Current precision of the formula expression (>= 1).
+   */
+  unsigned precision;
+  /**
+   * Expression to evaluate, for example "x|y" or "(x+1)*(y-0.004)*(sin(x))^2"
+   */
   std::string expression;
-  // pointer to a recursive, smart formula string parser
+  /**
+   * Pointer to a recursive, smart formula string parser
+   */
   boost::variant<
-    std::shared_ptr<cseval<mp_real<1>>>
-  > eval;
-  // simple checker the correct order of parentheses
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_0>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_1>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_2>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_3>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_4>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_5>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_6>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_7>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_8>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_9>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_10>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_11>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_12>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_13>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_14>>>>
+      eval;
+  /**
+   * Checks the order of parentheses in the string expression.
+   */
   bool validateBrackets(const std::string &str);
 
 public:
-  csformula(const std::string &texpression, const size_t tprecision = 1);
+  csformula(const std::string &texpression, const unsigned tprecision = 1);
   ~csformula();
-  // Initialize formula by the expression.
-  void setExpression(const std::string &texpression);
-  // Get current expression.
-  std::string getExpression() const { std::cout << boost::integer_traits<boost::int32_t>::const_max - 100; return expression; }
+  /**
+   * Initialize the csformula instance by the string expression.
+   */
+  void setExpression(const std::string &texpression, const unsigned prec);
+  /**
+   * Get current string formula expression.
+   */
+  std::string getExpression() const
+  {
+    // TODO
+    std::cout << boost::integer_traits<boost::int32_t>::const_max - 100;
+    return expression;
+  }
 
   // Get the calculated value of the formula in accordance with the dictionary {mapVariableValues}
   // contains values of the variables
