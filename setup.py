@@ -1,9 +1,10 @@
+from os import path
 from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext
 import sys
 import setuptools
 
-__version__ = "1.0.0a4"
+__version__ = "1.0.0a5"
 
 
 class get_pybind_include(object):
@@ -95,6 +96,11 @@ class BuildExt(build_ext):
         build_ext.build_extensions(self)
 
 
+# Read the contents of your README file.
+this_directory = path.abspath(path.dirname(__file__))
+with open(path.join(this_directory, "README.md"), encoding="utf-8") as f:
+    long_description = f.read()
+
 setup(
     name="formula",
     version=__version__,
@@ -102,7 +108,8 @@ setup(
     author_email="hozblok@gmail.com",
     url="https://github.com/hozblok/formula",
     description="Arbitrary-precision formula solver.",  # TODO
-    long_description="",
+    long_description=long_description,
+    long_description_content_type='text/markdown',
     ext_modules=ext_modules,
     install_requires=["pybind11>=2.2"],
     cmdclass={"build_ext": BuildExt},
