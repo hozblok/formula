@@ -3,7 +3,7 @@ from setuptools.command.build_ext import build_ext
 import sys
 import setuptools
 
-__version__ = "1.0.0a1"
+__version__ = "1.0.0a4"
 
 
 class get_pybind_include(object):
@@ -25,18 +25,12 @@ class get_pybind_include(object):
 ext_modules = [
     Extension(
         "formula",
-        [
-            "src/main.cpp",
-            "src/cseval.h",
-            "src/cseval.cpp",
-            "src/csformula.h",
-            "src/csformula.cpp",
-        ],
+        ["src/main.cpp"],
         include_dirs=[
-            # Path to boost.
-            "boost/",
-            # Path to csformula src.
-            "src/",
+            # Paths to boost headers.
+            "boost",
+            # Path to csformula headers.
+            "src",
             # Path to pybind11 headers.
             get_pybind_include(),
             get_pybind_include(user=True),
@@ -113,5 +107,4 @@ setup(
     install_requires=["pybind11>=2.2"],
     cmdclass={"build_ext": BuildExt},
     zip_safe=False,
-    package_data={"": ["boost/libs/variant/include/boost/*.hpp"]},
 )

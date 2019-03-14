@@ -30,21 +30,21 @@ private:
    * Pointer to a recursive, smart formula string parser
    */
   boost::variant<
-      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_0>>>,
-      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_1>>>,
-      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_2>>>,
-      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_3>>>,
-      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_4>>>,
-      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_5>>>,
-      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_6>>>,
-      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_7>>>,
-      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_8>>>,
-      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_9>>>,
-      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_10>>>,
-      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_11>>>,
-      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_12>>>,
-      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_13>>>,
-      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_14>>>>
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_1>>>>
+      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_1>>>,
+      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_2>>>,
+      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_3>>>,
+      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_4>>>,
+      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_5>>>,
+      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_6>>>,
+      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_7>>>,
+      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_8>>>,
+      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_9>>>,
+      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_10>>>,
+      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_11>>>,
+      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_12>>>,
+      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_13>>>,
+      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_14>>>>
       eval;
   /**
    * Checks the order of parentheses in the string expression.

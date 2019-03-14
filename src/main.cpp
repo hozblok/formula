@@ -1,7 +1,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <iostream>
-#include <cseval.h>
+#include <cseval.hpp>
 #include <csformula.cpp>
 
 int add(int i, int j)
