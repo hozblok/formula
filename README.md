@@ -1,22 +1,23 @@
 # formula
-Python wrapper to csformula.
+Python csformula wrapper.
 ==============
 
-An example project built with [pybind11](https://github.com/pybind/pybind11).
+Development status: in developing
+
+Thi project built with [pybind11](https://github.com/pybind/pybind11).
 
 Installation
 ------------
 
 **On Unix (Linux, OS X)**
 
- - clone this repository
- - `pip install ./python_example`
+ - `pip install formula`
 
 **On Windows (Requires Visual Studio 2015)**
 
- - For Python 3.5:
+ - For Python 3.5+:
      - clone this repository
-     - `pip install ./python_example`
+     - `pip install ./formula`
  - For earlier versions of Python, including Python 2.7:
 
    Pybind11 requires a C++11 compliant compiler (i.e. Visual Studio 2015 on
@@ -28,9 +29,9 @@ Installation
      - `"%VS140COMNTOOLS%\..\..\VC\vcvarsall.bat" x64`
      - `set DISTUTILS_USE_SDK=1`
      - `set MSSdk=1`
-     - `pip install ./python_example`
+     - `pip install ./formula`
 
-   Note that this requires the user building `python_example` to have registry edition
+   Note that this requires the user building `formula` to have registry edition
    rights on the machine, to be able to run the `vcvarsall.bat` script.
 
 
@@ -56,22 +57,15 @@ requirements:
 ```
 
 
-Building the documentation
+Documentation
 --------------------------
 
-Documentation for the example project is generated using Sphinx. Sphinx has the
-ability to automatically inspect the signatures and documentation strings in
-the extension module to generate beautiful documentation in a variety formats.
-The following command generates HTML-based reference documentation; for other
-formats please refer to the Sphinx manual:
-
- - `cd python_example/docs`
- - `make html`
+In progress...
 
 License
 -------
 
-pybind11 is provided under a BSD-style license that can be found in the LICENSE
+formula is provided under a Apache license that can be found in the LICENSE
 file. By using, distributing, or contributing to this project, you agree to the
 terms and conditions of this license.
 
@@ -79,6 +73,6 @@ Test call
 ---------
 
 ```python
-import python_example
-python_example.add(1, 2)
+from formula import csformula
+pi = csformula("2*asin(x)", 64).get({'x': '1'})
 ```
