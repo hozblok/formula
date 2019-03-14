@@ -1,5 +1,5 @@
 package:
-  name: python_example
+  name: formula
   version: {{ environ.get('GIT_DESCRIBE_TAG', 'dev') }}
 
 build:
@@ -25,8 +25,8 @@ requirements:
 
 test:
   imports:
-    - python_example
+    - formula
 
 about:
-  summary: An example project built with pybind11.
+  summary: Arbitrary-precision formula solver.
   license_file: LICENSE

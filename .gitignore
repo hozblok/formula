@@ -1,11 +1,11 @@
+.vscode
 
 *.so
 *.py[cod]
 *.egg-info
 
-.vscode
 
-venv*
 dist
-tmp
 formula-*
+venv*
+tmp
