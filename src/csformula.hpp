@@ -19,32 +19,38 @@ class csformula
 {
 private:
   /**
-   * Current precision of the formula expression (>= 1).
+   * Precision that was selected by user.
+   */
+  unsigned origin_precision;
+  /**
+   * Current precision of the formula expression (should be >= 1).
+   * 0 means that this precision has not calculated yet.
    */
   unsigned precision;
   /**
    * Expression to evaluate, for example "x|y" or "(x+1)*(y-0.004)*(sin(x))^2"
+   * Equals to user-supplied excluding whitespace symbols (' ', '\n', '\t', '\v').
    */
   std::string expression;
   /**
    * Pointer to a recursive, smart formula string parser
    */
   boost::variant<
-      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_1>>>>
-      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_1>>>,
-      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_2>>>,
-      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_3>>>,
-      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_4>>>,
-      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_5>>>,
-      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_6>>>,
-      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_7>>>,
-      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_8>>>,
-      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_9>>>,
-      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_10>>>,
-      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_11>>>,
-      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_12>>>,
-      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_13>>>,
-      // std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_14>>>>
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_0>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_1>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_2>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_3>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_4>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_5>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_6>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_7>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_8>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_9>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_10>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_11>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_12>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_13>>>,
+      std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_14>>>>
       eval;
   /**
    * Checks the order of parentheses in the string expression.
@@ -52,32 +58,63 @@ private:
   bool validateBrackets(const std::string &str);
 
 public:
-  csformula(const std::string &texpression, const unsigned tprecision = 1);
-  ~csformula();
-  /**
-   * Initialize the csformula instance by the string expression.
-   */
-  void setExpression(const std::string &texpression, const unsigned prec);
+  csformula(const std::string &_expression, const unsigned _precision = 0);
+  ~csformula() {}
   /**
    * Get current string formula expression.
    */
   std::string getExpression() const
   {
-    // TODO
-    std::cout << boost::integer_traits<boost::int32_t>::const_max - 100;
     return expression;
   }
+  /**
+   * Initialize the csformula instance by the string expression.
+   */
+  void setExpression(const std::string &_expression);
+  /**
+   * Get current precision.
+   */
+  unsigned getPrecision() const
+  {
+    return precision;
+  }
+  /**
+   * Set new precision.
+   */
+  void setPrecision(const unsigned _precision = 0);
 
   // Get the calculated value of the formula in accordance with the dictionary {mapVariableValues}
   // contains values of the variables
   // NOTE: Variables can be only letters of the Latin alphabet ('a','b',...,'z')
+  // and 'i' and 'j' reserved for complex number.
   // template< typename Real >
   // Real get(const std::map<std::string, Real> &mapVariableValues = {}) const;
-  std::string get(const std::map<std::string, std::string> &mapVariableValues = {}) const;
+  std::string get(const std::map<std::string, std::string> &mapVariableValues = {});
   // get the calculated value of partial derivative with respect to a variable {variable} and
   // the {mapVariableValues} dictionary contains values of the variables
   // Real getD(const std::string variable, const std::map<std::string, Real> &mapVariableValues = {}) const;
   std::string getD(const std::string variable, const std::map<std::string, std::string> &mapVariableValues = {}) const;
+};
+
+struct visitor_value_getter : public boost::static_visitor<std::string>
+{
+  template <typename T>
+  std::string operator()(const T &eval) const
+  {
+    return eval->calculate(*mapVariableValues).str();
+  }
+  const std::map<std::string, std::string> *mapVariableValues;
+};
+
+struct visitor_derivative_getter : public boost::static_visitor<std::string>
+{
+  template <typename T>
+  std::string operator()(const T &eval) const
+  {
+    return eval->calculateDerivative(*variable, *mapVariableValues).str();
+  }
+  const std::string *variable;
+  const std::map<std::string, std::string> *mapVariableValues;
 };
 
 #endif // CSFORMULA_H

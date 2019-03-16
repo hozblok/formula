@@ -1,4 +1,3 @@
 import formula
 
-# TODO
-assert m.__version__ == "1.0.0a5"
+assert m.__version__ == "1.0.0a6"

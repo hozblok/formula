@@ -1,46 +1,45 @@
 #include "csformula.hpp"
 
-csformula::csformula(const std::string &texpression, const unsigned tprecision) : precision(tprecision),
-                                                                                expression("")
+csformula::csformula(const std::string &_expression, const unsigned _precision) : origin_precision(0),
+                                                                                  precision(0),
+                                                                                  expression("")
 {
-    setExpression(texpression, tprecision);
+    setPrecision(_precision);
+    setExpression(_expression);
 }
 
-csformula::~csformula()
+void csformula::setPrecision(const unsigned _precision)
 {
-    // delete eval;
-}
-
-// constexpr size_t degrees_of_two[9] = {1, 2, 4, 8, 16, 32, 64, 128, 256};
-constexpr const unsigned resolve_precision(const unsigned prec) {
-  for (const unsigned *ptr=precisions; ptr<=&precisions[15]; ptr++) {
-    if (prec <= *ptr) {
-      return *ptr;
+    precision = 0;
+    origin_precision = _precision;
+    for (const unsigned &prec : precisions)
+    {
+        if (_precision <= prec)
+        {
+            precision = prec;
+            break;
+        }
     }
-  }
-  return 256;
-}
-
-const unsigned testt(const unsigned prec) {
-    if (0 <= prec) {
-        return allowed_precisions::power_of_two_4;
+    if (precision == 0)
+    {
+        std::cerr << "Cannot use '" << _precision << "' precision. This is too much value!\n";
     }
-    return allowed_precisions::power_of_two_1;
+    std::cout << "TODO: resolved prec:" << precision << "\n";
 }
 
-void csformula::setExpression(const std::string &texpression, const unsigned tprecision)
+void csformula::setExpression(const std::string &_expression)
 {
-    if (texpression.empty())
+    if (_expression.empty())
     {
         std::cerr << "ERROR: Empty expression\n";
         throw EMPTY_EXPRESSION;
     }
-    if (!validateBrackets(texpression))
+    if (!validateBrackets(_expression))
     {
         std::cerr << "ERROR: wrong brackets in expression\n";
         throw WRONG_BRACKETS;
     }
-    expression = texpression;
+    expression = _expression;
     // TODO -> tests.
     // boost::algorithm::to_lower(expression);
 
@@ -59,54 +58,68 @@ void csformula::setExpression(const std::string &texpression, const unsigned tpr
     // const qw a = A;
     // const unsigned prec = allowed_precisions::power_of_two_4;
     // const unsigned prec = testt(tprecision);
-    // if (tprecision <= 1<<1) {
-        precision = allowed_precisions::power_of_two_1;
+
+    if (precision == precisions[0])
+    {
+        eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_0>>>(expression);
+    }
+    else if (precision == precisions[1])
+    {
         eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_1>>>(expression);
-    // } else if (tprecision <= 1<<2) {
-    //     precision = allowed_precisions::power_of_two_2;
-    //     eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_2>>>(expression);
-    // } else if (tprecision <= 1<<3) {
-    //     precision = allowed_precisions::power_of_two_3;
-    //     eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_3>>>(expression);
-    // } else if (tprecision <= 1<<4) {
-    //     precision = allowed_precisions::power_of_two_4;
-    //     eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_4>>>(expression);
-    // } else if (tprecision <= 1<<5) {
-    //     precision = allowed_precisions::power_of_two_5;
-    //     eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_5>>>(expression);
-    // } else if (tprecision <= 1<<6) {
-    //     precision = allowed_precisions::power_of_two_6;
-    //     eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_6>>>(expression);
-    // } else if (tprecision <= 1<<7) {
-    //     precision = allowed_precisions::power_of_two_7;
-    //     eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_7>>>(expression);
-    // } else if (tprecision <= 1<<8) {
-    //     precision = allowed_precisions::power_of_two_8;
-    //     eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_8>>>(expression);
-    // } else if (tprecision <= 1<<9) {
-    //     precision = allowed_precisions::power_of_two_9;
-    //     eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_9>>>(expression);
-    // } else if (tprecision <= 1<<10) {
-    //     precision = allowed_precisions::power_of_two_10;
-    //     eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_10>>>(expression);
-    // } else if (tprecision <= 1<<11) {
-    //     precision = allowed_precisions::power_of_two_11;
-    //     eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_11>>>(expression);
-    // } else if (tprecision <= 1<<12) {
-    //     precision = allowed_precisions::power_of_two_12;
-    //     eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_12>>>(expression);
-    // } else if (tprecision <= 1<<13) {
-    //     precision = allowed_precisions::power_of_two_13;
-    //     eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_13>>>(expression);
-    // } else if (tprecision <= 1<<14) {
-    //     precision = allowed_precisions::power_of_two_14;
-    //     eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_14>>>(expression);
-    // }
-    // if (0 <= tprecison) {
-    //     const unsigned prec = allowed_precisions::power_of_two_4;//resolve_precision(tprecision);
-    // }
-    // std::cout << "TODO: resolved prec:" << prec << "\n";
-    
+    }
+    else if (precision == precisions[2])
+    {
+        eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_2>>>(expression);
+    }
+    else if (precision == precisions[3])
+    {
+        eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_3>>>(expression);
+    }
+    else if (precision == precisions[4])
+    {
+        eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_4>>>(expression);
+    }
+    else if (precision == precisions[5])
+    {
+        eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_5>>>(expression);
+    }
+    else if (precision == precisions[6])
+    {
+        eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_6>>>(expression);
+    }
+    else if (precision == precisions[7])
+    {
+        eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_7>>>(expression);
+    }
+    else if (precision == precisions[8])
+    {
+        eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_8>>>(expression);
+    }
+    else if (precision == precisions[9])
+    {
+        eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_9>>>(expression);
+    }
+    else if (precision == precisions[10])
+    {
+        eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_10>>>(expression);
+    }
+    else if (precision == precisions[11])
+    {
+        eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_11>>>(expression);
+    }
+    else if (precision == precisions[12])
+    {
+        eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_12>>>(expression);
+    }
+    else if (precision == precisions[13])
+    {
+        eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_13>>>(expression);
+    }
+    else if (precision == precisions[14])
+    {
+        eval = std::make_shared<cseval<mp_real<allowed_precisions::power_of_two_14>>>(expression);
+    }
+
     // for (int i = 0; i < 9; ++i) {
     //     if (tprecision <= degrees_of_two[i]) {
     //         eval = std::make_shared<cseval<mp_real<precisions[i]>>>(expression);
@@ -142,38 +155,68 @@ bool csformula::validateBrackets(const std::string &str)
 //     return eval->calculate(mapVariableValues);
 // }
 
-std::string csformula::get(const std::map<std::string, std::string> &mapVariableValues) const
+std::string csformula::get(const std::map<std::string, std::string> &mapVariableValues)
 {
-    // if (precision <= 1<<1) {
-        return boost::get<std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_1>>>>(eval)->calculate(mapVariableValues).str();
-    // } else if (precision <= 1<<2) {
+    visitor_value_getter visitor = visitor_value_getter();
+    visitor.mapVariableValues = &mapVariableValues;
+    return boost::apply_visitor(visitor, eval);
+    // if (precision <= 1 << 1)
+    // {
+    // return boost::get<std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_1>>>>(eval)->calculate(mapVariableValues).str();
+    // }
+    // else if (precision <= 1 << 2)
+    // {
     //     return boost::get<std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_2>>>>(eval)->calculate(mapVariableValues).str();
-    // } else if (precision <= 1<<3) {
+    // }
+    // else if (precision <= 1 << 3)
+    // {
     //     return boost::get<std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_3>>>>(eval)->calculate(mapVariableValues).str();
-    // } else if (precision <= 1<<4) {
+    // }
+    // else if (precision <= 1 << 4)
+    // {
     //     return boost::get<std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_4>>>>(eval)->calculate(mapVariableValues).str();
-    // } else if (precision <= 1<<5) {
+    // }
+    // else if (precision <= 1 << 5)
+    // {
     //     return boost::get<std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_5>>>>(eval)->calculate(mapVariableValues).str();
-    // } else if (precision <= 1<<6) {
+    // }
+    // else if (precision <= 1 << 6)
+    // {
     //     return boost::get<std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_6>>>>(eval)->calculate(mapVariableValues).str();
-    // } else if (precision <= 1<<7) {
+    // }
+    // else if (precision <= 1 << 7)
+    // {
     //     return boost::get<std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_7>>>>(eval)->calculate(mapVariableValues).str();
-    // } else if (precision <= 1<<8) {
+    // }
+    // else if (precision <= 1 << 8)
+    // {
     //     return boost::get<std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_8>>>>(eval)->calculate(mapVariableValues).str();
-    // } else if (precision <= 1<<9) {
+    // }
+    // else if (precision <= 1 << 9)
+    // {
     //     return boost::get<std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_9>>>>(eval)->calculate(mapVariableValues).str();
-    // } else if (precision <= 1<<10) {
+    // }
+    // else if (precision <= 1 << 10)
+    // {
     //     return boost::get<std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_10>>>>(eval)->calculate(mapVariableValues).str();
-    // } else if (precision <= 1<<11) {
+    // }
+    // else if (precision <= 1 << 11)
+    // {
     //     return boost::get<std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_11>>>>(eval)->calculate(mapVariableValues).str();
-    // } else if (precision <= 1<<12) {
+    // }
+    // else if (precision <= 1 << 12)
+    // {
     //     return boost::get<std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_12>>>>(eval)->calculate(mapVariableValues).str();
-    // } else if (precision <= 1<<13) {
+    // }
+    // else if (precision <= 1 << 13)
+    // {
     //     return boost::get<std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_13>>>>(eval)->calculate(mapVariableValues).str();
-    // } else if (precision <= 1<<14) {
+    // }
+    // else if (precision <= 1 << 14)
+    // {
     //     return boost::get<std::shared_ptr<cseval<mp_real<allowed_precisions::power_of_two_14>>>>(eval)->calculate(mapVariableValues).str();
     // }
-    // // TODO delete me.
+    // TODO delete me.
     // return std::string("asdff");
     // const unsigned prec = allowed_precisions::power_of_two_4;
     // return boost::get<std::shared_ptr<cseval<mp_real<prec>>>>(eval)->calculate(mapVariableValues).str();
@@ -187,8 +230,10 @@ std::string csformula::get(const std::map<std::string, std::string> &mapVariable
 
 std::string csformula::getD(const std::string variable, const std::map<std::string, std::string> &mapVariableValues) const
 {
-    // TODO delete me.
-    return std::string("asdff");
+    visitor_derivative_getter visitor = visitor_derivative_getter();
+    visitor.variable = &variable;
+    visitor.mapVariableValues = &mapVariableValues;
+    return boost::apply_visitor(visitor, eval);
     // const unsigned prec = allowed_precisions::power_of_two_4;
     // return boost::get<std::shared_ptr<cseval<mp_real<prec>>>>(eval)->calculateDerivative(variable, mapVariableValues).str();
 }
