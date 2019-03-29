@@ -1,6 +1,7 @@
-# formula
-Python csformula wrapper.
+formula - Python csformula wrapper.
 ==============
+
+[![PyPI](https://img.shields.io/pypi/v/formula.svg)](https://pypi.org/project/formula/)
 
 Development status: in developing
 
