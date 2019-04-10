@@ -1,2 +1,3 @@
-recursive-include boost/boost/ *.hpp *.cpp *.h *.c
-recursive-include src/ *.hpp *.cpp *.h *.c
+recursive-include boost_win_headers *.hpp *.cpp *.h *.c
+recursive-include boost_lin_headers *.hpp *.cpp *.h *.c
+recursive-include src *.hpp *.cpp *.h *.c

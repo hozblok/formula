@@ -1,9 +1,9 @@
-.vscode
-
 *.so
 *.py[cod]
 *.egg-info
 
+boost_lin_headers/boost_*
+boost_win_headers/boost_*
 
 dist
 formula-*

@@ -1,4 +1,4 @@
-formula - Python csformula wrapper.
+formula - Python csformula wrapper
 ==============
 
 [![PyPI](https://img.shields.io/pypi/v/formula.svg)](https://pypi.org/project/formula/)
@@ -57,7 +57,6 @@ requirements:
    - vs2015_runtime  # [win]
 ```
 
-
 Documentation
 --------------------------
 
@@ -66,7 +65,7 @@ In progress...
 License
 -------
 
-formula is provided under a Apache license that can be found in the LICENSE
+formula is provided under Apache license that can be found in the LICENSE
 file. By using, distributing, or contributing to this project, you agree to the
 terms and conditions of this license.
 

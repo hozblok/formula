@@ -1,11 +1,13 @@
-from os import path
+import os
+import platform
 from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext
 import sys
 import setuptools
 
-__version__ = "1.0.0a6"
+__version__ = "1.0.0a7"
 
+this_directory = os.path.abspath(os.path.dirname(__file__))
 
 class get_pybind_include(object):
     """Helper class to determine the pybind11 include path
@@ -22,16 +24,24 @@ class get_pybind_include(object):
 
         return pybind11.get_include(self.user)
 
+dev_boost_headers = os.path.join(this_directory, "boost", "boost")
+if os.path.exists(dev_boost_headers):
+    boost_headers = "boost/"
+elif platform.system() == "Windows":
+    boost_headers = "boost_win_headers/"
+else:
+    boost_headers = "boost_lin_headers/"
+
 
 ext_modules = [
     Extension(
         "formula",
         ["src/main.cpp"],
         include_dirs=[
-            # Paths to boost headers.
-            "boost",
-            # Path to csformula headers.
-            "src",
+            # Path to boost headers.
+            boost_headers,
+            # Path to CsFormula headers.
+            "src/",
             # Path to pybind11 headers.
             get_pybind_include(),
             get_pybind_include(user=True),
@@ -97,21 +107,21 @@ class BuildExt(build_ext):
 
 
 # Read the contents of your README file.
-this_directory = path.abspath(path.dirname(__file__))
-with open(path.join(this_directory, "README.md"), encoding="utf-8") as f:
+with open(os.path.join(this_directory, "README.md"), encoding="utf-8") as f:
     long_description = f.read()
 
 setup(
-    name="formula",
-    version=__version__,
-    author="Ivan Ergunov",
     author_email="hozblok@gmail.com",
-    url="https://github.com/hozblok/formula",
+    author="Ivan Ergunov",
+    cmdclass={"build_ext": BuildExt},
     description="Arbitrary-precision formula solver.",  # TODO
-    long_description=long_description,
-    long_description_content_type='text/markdown',
     ext_modules=ext_modules,
     install_requires=["pybind11>=2.2"],
-    cmdclass={"build_ext": BuildExt},
+    long_description_content_type='text/markdown',
+    long_description=long_description,
+    name="formula",
+    python_requires=">2.6, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*, <4", # TODO check all versions.
+    url="https://github.com/hozblok/formula",
+    version=__version__,
     zip_safe=False,
 )

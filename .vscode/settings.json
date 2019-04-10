@@ -1,0 +1,13 @@
+{
+    "python.pythonPath": "python",
+    "python.formatting.provider": "black",
+    "files.associations": {
+        "cctype": "cpp",
+        "cmath": "cpp",
+        "cstddef": "cpp",
+        "cstdio": "cpp",
+        "cstdlib": "cpp",
+        "cstring": "cpp",
+        "cwchar": "cpp"
+    }
+}

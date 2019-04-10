@@ -1,0 +1,21 @@
+C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\BIN\cl.exe /c /nologo /Ox /W3 /GL /DNDEBUG /MD -Iboost_win_headers/ -Isrc/ "-IC:\Program Files (x86)\Python37-32\Include" -IC:\Users\hozblok\AppData\Roaming\Python\Python37\Include "-IC:\Program Files (x86)\Python37-32\include" "-IC:\Program Files (x86)\Python37-32\include" "-IC:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\INCLUDE" "-IC:\Program Files (x86)\Windows Kits\10\include\10.0.10240.0\ucrt" "-IC:\Program Files (x86)\Windows Kits\8.1\include\shared" "-IC:\Program Files (x86)\Windows Kits\8.1\include\um" "-IC:\Program Files (x86)\Windows Kits\8.1\include\winrt" /EHsc /Tpsrc/main.cpp /Fobuild\temp.win32-3.7\Release\src/main.obj /EHsc /DVERSION_INFO=\"1.0.0a7\"
+main.cpp
+C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\INCLUDE\type_traits(926): error C2154: 'std::ios_base::fmtflags': only enumeration type is allowed as an argument to compiler intrinsic type trait '__underlying_type'
+C:\Program Files (x86)\Python37-32\Include\pybind11/pybind11.h(1364): note: see reference to class template instantiation 'std::underlying_type<Type>' being compiled
+        with
+        [
+            Type=std::ios_base::fmtflags
+        ]
+src/main.cpp(41): note: see reference to class template instantiation 'pybind11::enum_<std::ios_base::fmtflags>' being compiled
+boost_win_headers/boost/math/constants/constants.hpp(264): note: see reference to class template instantiation 'boost::math::constants::detail::constant_half<T>' being compiled
+        with
+        [
+            T=double
+        ]
+boost_win_headers/boost/math/constants/constants.hpp(264): note: see reference to function template instantiation 'double boost::math::constants::half<T,boost::math::policies::policy<boost::math::policies::default_policy,boost::math::policies::default_policy,boost::math::policies::default_policy,boost::math::policies::default_policy,boost::math::policies::default_policy,boost::math::policies::default_policy,boost::math::policies::default_policy,boost::math::policies::default_policy,boost::math::policies::default_policy,boost::math::policies::default_policy,boost::math::policies::default_policy,boost::math::policies::default_policy,boost::math::policies::default_policy>>(void) noexcept' being compiled
+        with
+        [
+            T=double
+        ]
+boost_win_headers/boost/math/special_functions/detail/bernoulli_details.hpp(82): note: see reference to function template instantiation 'double boost::math::constants::half<double>(void) noexcept' being compiled
+error: command 'C:\\Program Files (x86)\\Microsoft Visual Studio 14.0\\VC\\BIN\\cl.exe' failed with exit status 2
