@@ -5,6 +5,8 @@
 boost_lin_headers/boost_*
 boost_win_headers/boost_*
 
+.vscode
+build
 dist
 formula-*
 venv*

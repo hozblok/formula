@@ -38,25 +38,47 @@ PYBIND11_MODULE(formula, m)
         Some other explanation about the subtract function.
     )pbdoc");
 
-    py::enum_<std::ios_base::fmtflags>(m, "ios_base_fmtflags")
-    .value("boolalpha", std::ios_base::boolalpha)
-    .value("dec", std::ios_base::dec)
-    .value("fixed", std::ios_base::fixed)
-    .value("hex", std::ios_base::hex)
-    .value("internal", std::ios_base::internal)
-    .value("left", std::ios_base::left)
-    .value("oct", std::ios_base::oct)
-    .value("right", std::ios_base::right)
-    .value("scientific", std::ios_base::scientific)
-    .value("showbase", std::ios_base::showbase)
-    .value("showpoint", std::ios_base::showpoint)
-    .value("showpos", std::ios_base::showpos)
-    .value("skipws", std::ios_base::skipws)
-    .value("unitbuf", std::ios_base::unitbuf)
-    .value("uppercase", std::ios_base::uppercase)
-    .value("adjustfield", std::ios_base::adjustfield)
-    .value("basefield", std::ios_base::basefield)
-    .value("floatfield", std::ios_base::floatfield)
+    enum fmtflags
+    {
+        boolalpha = std::ios_base::boolalpha,
+        dec = std::ios_base::dec,
+        fixed = std::ios_base::fixed,
+        hex = std::ios_base::hex,
+        internal = std::ios_base::internal,
+        left = std::ios_base::left,
+        oct = std::ios_base::oct,
+        right = std::ios_base::right,
+        scientific = std::ios_base::scientific,
+        showbase = std::ios_base::showbase,
+        showpoint = std::ios_base::showpoint,
+        showpos = std::ios_base::showpos,
+        skipws = std::ios_base::skipws,
+        unitbuf = std::ios_base::unitbuf,
+        uppercase = std::ios_base::uppercase,
+        adjustfield = std::ios_base::adjustfield,
+        basefield = std::ios_base::basefield,
+        floatfield = std::ios_base::floatfield,
+    };
+
+    py::enum_<fmtflags>(m, "fmtflags")
+    .value("boolalpha", fmtflags::boolalpha)
+    .value("dec", fmtflags::dec)
+    .value("fixed", fmtflags::fixed)
+    .value("hex", fmtflags::hex)
+    .value("internal", fmtflags::internal)
+    .value("left", fmtflags::left)
+    .value("oct", fmtflags::oct)
+    .value("right", fmtflags::right)
+    .value("scientific", fmtflags::scientific)
+    .value("showbase", fmtflags::showbase)
+    .value("showpoint", fmtflags::showpoint)
+    .value("showpos", fmtflags::showpos)
+    .value("skipws", fmtflags::skipws)
+    .value("unitbuf", fmtflags::unitbuf)
+    .value("uppercase", fmtflags::uppercase)
+    .value("adjustfield", fmtflags::adjustfield)
+    .value("basefield", fmtflags::basefield)
+    .value("floatfield", fmtflags::floatfield)
     .export_values();
 
     py::class_<csformula>(m, "csformula")
@@ -77,7 +99,7 @@ PYBIND11_MODULE(formula, m)
         .def(py::init<const std::string &>())
         .def("str", (std::string(mp_real<1>::*)(std::streamsize digits, std::ios_base::fmtflags) const) & mp_real<1>::str,
              "Returns the number formatted as a string, with at least precision digits, and in scientific format if scientific is true. ",
-             py::arg("digits") = 0, py::arg("f") = std::ios_base::fmtflags(0) /*std::_Ios_Fmtflags::_S_scientific*/ /*1L << 8*/ /*std::ios_base::fmtflags(0)*/);
+             py::arg("digits") = 0, py::arg("f") = fmtflags::dec /*std::_Ios_Fmtflags::_S_scientific*/ /*1L << 8*/ /*std::ios_base::fmtflags(0)*/);
 
     //            std::string str(std::streamsize digits = 0, std::ios_base::fmtflags f = std::ios_base::fmtflags(0))const
     //    {

@@ -5,7 +5,7 @@ from setuptools.command.build_ext import build_ext
 import sys
 import setuptools
 
-__version__ = "1.0.0a7"
+__version__ = "1.0.0b0"
 
 this_directory = os.path.abspath(os.path.dirname(__file__))
 
