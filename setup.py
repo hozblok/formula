@@ -1,13 +1,14 @@
 import os
 import platform
-from setuptools import setup, Extension
-from setuptools.command.build_ext import build_ext
-import sys
 import setuptools
+from setuptools.command.build_ext import build_ext
+from setuptools.command.test import test
+import sys
 
-__version__ = "1.0.0b0"
+__version__ = "1.0.0b4"
 
 this_directory = os.path.abspath(os.path.dirname(__file__))
+
 
 class get_pybind_include(object):
     """Helper class to determine the pybind11 include path
@@ -24,6 +25,7 @@ class get_pybind_include(object):
 
         return pybind11.get_include(self.user)
 
+
 dev_boost_headers = os.path.join(this_directory, "boost", "boost")
 if os.path.exists(dev_boost_headers):
     boost_headers = "boost/"
@@ -34,7 +36,7 @@ else:
 
 
 ext_modules = [
-    Extension(
+    setuptools.Extension(
         "formula",
         ["src/main.cpp"],
         include_dirs=[
@@ -106,21 +108,49 @@ class BuildExt(build_ext):
         build_ext.build_extensions(self)
 
 
-# Read the contents of your README file.
+class PyTest(test):
+    user_options = [("pytest-args=", "a", "Arguments to pass to pytest")]
+
+    def initialize_options(self):
+        test.initialize_options(self)
+        self.pytest_args = ""
+
+    def run_tests(self):
+        import shlex
+
+        # import here, cause outside the eggs aren't loaded
+        import pytest
+
+        errno = pytest.main(shlex.split(self.pytest_args))
+        sys.exit(errno)
+
+
+# Read the contents of the README file.
 with open(os.path.join(this_directory, "README.md"), encoding="utf-8") as f:
     long_description = f.read()
 
-setup(
+setuptools.setup(
     author_email="hozblok@gmail.com",
     author="Ivan Ergunov",
-    cmdclass={"build_ext": BuildExt},
-    description="Arbitrary-precision formula solver.",  # TODO
+    classifiers=[
+        "Development Status :: 4 - Beta",
+        "License :: OSI Approved :: Apache Software License",
+        "Operating System :: OS Independent",
+        "Programming Language :: C++",
+        "Programming Language :: Python",
+        "Topic :: Scientific/Engineering :: Mathematics",
+        "Topic :: Scientific/Engineering :: Physics",
+    ],
+    cmdclass={"pytest": PyTest, "build_ext": BuildExt},
+    description="Arbitrary-precision formula parser and solver.",
     ext_modules=ext_modules,
     install_requires=["pybind11>=2.2"],
-    long_description_content_type='text/markdown',
+    long_description_content_type="text/markdown",
     long_description=long_description,
     name="formula",
-    python_requires=">2.6, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*, <4", # TODO check all versions.
+    packages=setuptools.find_packages(),
+    python_requires=">2.6, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*, <4",
+    tests_require=["pytest>=2.1"],
     url="https://github.com/hozblok/formula",
     version=__version__,
     zip_safe=False,

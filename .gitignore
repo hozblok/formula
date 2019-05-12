@@ -1,13 +1,15 @@
 *.so
 *.py[cod]
 *.egg-info
+*.eggs
 
 boost_lin_headers/boost_*
 boost_win_headers/boost_*
 
-.vscode
+dev.txt
 build
 dist
 formula-*
 venv*
 tmp
+.vscode/ipch

@@ -1,11 +1,14 @@
 #ifndef EVAL_MPF_H
 #define EVAL_MPF_H
-#include <iostream>
-#include <string>
+
 #include <map>
-#include <unordered_map>
 #include <memory>
+#include <stdexcept>
+#include <string>
+#include <unordered_map>
+
 #include <boost/algorithm/string.hpp>
+#include <boost/format.hpp>
 #include <boost/math/constants/constants.hpp>
 #include <boost/multiprecision/cpp_dec_float.hpp>
 #include <boost/variant.hpp>
@@ -17,59 +20,55 @@
 // TODO
 // 512 bit of pi number.
 #ifndef M_PI_STR
-#define M_PI_STR "3.141592653589793238462643383279502884197169399375105820974944592307816406286208998628034825342117067982148086513282306647093844609550582231725359408128481117"
+#define M_PI_STR                                                               \
+  "3."                                                                         \
+  "14159265358979323846264338327950288419716939937510582097494459230781640628" \
+  "62089986280348253421170679821480865132823066470938446095505822317253594081" \
+  "28481117"
 #endif
 
 /**
  * Arbitrary-precision arithmetic.
  */
 template <unsigned N>
-using mp_real = boost::multiprecision::number<boost::multiprecision::cpp_dec_float<N>, boost::multiprecision::et_on>;
+using mp_real =
+    boost::multiprecision::number<boost::multiprecision::cpp_dec_float<N>,
+                                  boost::multiprecision::et_on>;
 
 /**
- * TODO 1<<0, 1<<1, 1<<2, 1<<3, 1<<4, ...
- * Sorted in ascending order.
+ * All available precisions for high accuracy calculations.
  */
-constexpr const unsigned precisions[] = {16, 17, 18,
-                                         19, 20, 21,
-                                         22, 32, 64,
-                                         128, 256, 512,
-                                         1024, 2048, 4096,
-                                         8192};
-
-enum allowed_precisions
-{
-  power_of_two_0 = precisions[0],
-  power_of_two_1 = precisions[1],
-  power_of_two_2 = precisions[2],
-  power_of_two_3 = precisions[3],
-  power_of_two_4 = precisions[4],
-  power_of_two_5 = precisions[5],
-  power_of_two_6 = precisions[6],
-  power_of_two_7 = precisions[7],
-  power_of_two_8 = precisions[8],
-  power_of_two_9 = precisions[9],
-  power_of_two_10 = precisions[10],
-  power_of_two_11 = precisions[11],
-  power_of_two_12 = precisions[12],
-  power_of_two_13 = precisions[13],
-  power_of_two_14 = precisions[14],
+enum AllowedPrecisions : unsigned {
+  p_16 = 16,
+  p_24 = 24,
+  p_32 = 32,
+  p_48 = 48,
+  p_64 = 64,
+  p_96 = 96,
+  p_128 = 128,
+  p_192 = 192,
+  p_256 = 256,
+  p_384 = 384,
+  p_512 = 512,
+  p_768 = 768,
+  p_1024 = 1024,
+  p_2048 = 2048,
+  p_3072 = 3072,
+  p_4096 = 4096,
+  p_6144 = 6144,
+  p_8192 = 8192,
 };
 
-// TODO
-// Complex numbers.
-// typedef std::complex<float100et> complexFloat100et;
+/**
+ * Allowed precisions sorted in ascending order.
+ */
+static const AllowedPrecisions precisions[] = {
+    p_16,  p_24,  p_32,  p_48,   p_64,   p_96,   p_128,  p_192,  p_256,
+    p_384, p_512, p_768, p_1024, p_2048, p_3072, p_4096, p_6144, p_8192,
+};
 
-// TODO
-// error codes (?)
-#define WRONG_BRACKETS 10000
-#define IMPOSIBLE_VALUE_CONVERSION 10001
-#define EMPTY_EXPRESSION 10002
-#define UNKNOWN_VARIABLE_OR_FUNCTION 10003
-#define DIVISION_BY_ZERO 10004
-#define UNKNOWN_VARIABLE_OR_FUNCTION_D 10005
-#define UNKNOWN_CALCULATE_D_ERROR 10006
-#define UNKNOWN_CALCULATE_ERROR 10099
+// TODO Complex numbers
+// typedef std::complex<float100et> complexFloat100et;
 
 using boost::math::constants::pi;
 using boost::multiprecision::acos;
@@ -90,16 +89,16 @@ using boost::multiprecision::tan;
  * typename Real (not mp_real<NUMBER>) for double support.
  */
 template <typename Real>
-class cseval
-{
-private:
-  /** 
+class cseval {
+ private:
+  /**
    * Kind of formula element:
    * 'n' - number, 'v' - variable, 'f' - function, 'e' - error.
    */
   char kind;
   /**
-   * The function name or variable name for current node. e.g. "+","-","/","x","a"
+   * The function name or variable name for current node. e.g.
+   * "+","-","/","x","a"
    * (!) all variable names must be represented by one Latin letter (!).
    * (!) i, j - reserved for complex numbers. (!)
    */
@@ -113,16 +112,21 @@ private:
    */
   cseval *leftEval, *rightEval;
   /**
+   * Symbol of the imaginary unit (by default - 'i').
+   */
+  char imaginary_unit;
+  /**
    * Try to find each symbol of {symbols} string in the {str} string.
    */
-  std::unordered_map<char, int> findSymbolsOutsideBrackets(const std::string &str, const std::string &symbols) const;
+  std::unordered_map<char, long> findSymbolsOutsideBrackets(
+      const std::string &str, const std::string &symbols) const;
   /**
    *  Try to find symbols outside parentheses: '(' and ')'.
    */
   bool isThereSymbolsOutsideParentheses(const std::string &str) const;
 
-public:
-  cseval(std::string expression);
+ public:
+  cseval(std::string expression, char _imaginary_unit = 'i');
   ~cseval();
   // TODO
   // cseval & operator = (const cseval & other) {
@@ -139,24 +143,43 @@ public:
   // }
   // Evaluation of subformula.
   Real calculate(const std::map<std::string, Real> &mapVariableValues,
-                 const std::map<std::string, Real (*)(Real, Real)> &mapFunctionTwoArgsValue = functionsTwoArgs,
-                 const std::map<std::string, Real (*)(Real)> &mapFunctionOneArgValue = functionsOneArg) const;
+                 const std::map<std::string, Real (*)(Real, Real)>
+                     &mapFunctionTwoArgsValue = functionsTwoArgs,
+                 const std::map<std::string, Real (*)(Real)>
+                     &mapFunctionOneArgValue = functionsOneArg) const;
   Real calculate(const std::map<std::string, std::string> &mapVariableValues,
-                 const std::map<std::string, Real (*)(Real, Real)> &mapFunctionTwoArgsValue = functionsTwoArgs,
-                 const std::map<std::string, Real (*)(Real)> &mapFunctionOneArgValue = functionsOneArg) const;
+                 const std::map<std::string, Real (*)(Real, Real)>
+                     &mapFunctionTwoArgsValue = functionsTwoArgs,
+                 const std::map<std::string, Real (*)(Real)>
+                     &mapFunctionOneArgValue = functionsOneArg) const;
+  Real calculate(const std::map<std::string, double> &mapVariableValues,
+                 const std::map<std::string, Real (*)(Real, Real)>
+                     &mapFunctionTwoArgsValue = functionsTwoArgs,
+                 const std::map<std::string, Real (*)(Real)>
+                     &mapFunctionOneArgValue = functionsOneArg) const;
   // Evaluation derivative of subformula.
-  Real calculateDerivative(const std::string &variable,
-                           const std::map<std::string, Real> &mapVariableValues,
-                           const std::map<std::string, Real (*)(Real, Real)> &mapFunctionTwoArgsValue = functionsTwoArgs,
-                           const std::map<std::string, Real (*)(Real)> &mapFunctionOneArgValue = functionsOneArg,
-                           const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivLeft = functionsTwoArgsDLeft,
-                           const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivRight = functionsTwoArgsDRight) const;
-  Real calculateDerivative(const std::string &variable,
-                           const std::map<std::string, std::string> &mapVariableValues,
-                           const std::map<std::string, Real (*)(Real, Real)> &mapFunctionTwoArgsValue = functionsTwoArgs,
-                           const std::map<std::string, Real (*)(Real)> &mapFunctionOneArgValue = functionsOneArg,
-                           const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivLeft = functionsTwoArgsDLeft,
-                           const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivRight = functionsTwoArgsDRight) const;
+  Real calculateDerivative(
+      const std::string &variable,
+      const std::map<std::string, Real> &mapVariableValues,
+      const std::map<std::string, Real (*)(Real, Real)>
+          &mapFunctionTwoArgsValue = functionsTwoArgs,
+      const std::map<std::string, Real (*)(Real)> &mapFunctionOneArgValue =
+          functionsOneArg,
+      const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivLeft =
+          functionsTwoArgsDLeft,
+      const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivRight =
+          functionsTwoArgsDRight) const;
+  Real calculateDerivative(
+      const std::string &variable,
+      const std::map<std::string, std::string> &mapVariableValues,
+      const std::map<std::string, Real (*)(Real, Real)>
+          &mapFunctionTwoArgsValue = functionsTwoArgs,
+      const std::map<std::string, Real (*)(Real)> &mapFunctionOneArgValue =
+          functionsOneArg,
+      const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivLeft =
+          functionsTwoArgsDLeft,
+      const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivRight =
+          functionsTwoArgsDRight) const;
 
   // usefull constants
   const static Real ZERO;
@@ -169,9 +192,13 @@ public:
   // "-" - subtraction
   static Real _sub(Real a, Real b) { return a - b; }
   // "&" - and
-  static Real _and(Real a, Real b) { return a != ZERO && b != ZERO ? ONE : ZERO; }
+  static Real _and(Real a, Real b) {
+    return a != ZERO && b != ZERO ? ONE : ZERO;
+  }
   // "|" - or
-  static Real _or(Real a, Real b) { return a != ZERO || b != ZERO ? ONE : ZERO; }
+  static Real _or(Real a, Real b) {
+    return a != ZERO || b != ZERO ? ONE : ZERO;
+  }
   // "=" - is equal to
   static Real _eq(Real a, Real b) { return a == b ? ONE : ZERO; }
   // "<"
@@ -179,32 +206,28 @@ public:
   // ">"
   static Real _gt(Real a, Real b) { return a > b ? ONE : ZERO; }
   // "/" - division
-  static Real _truediv(Real a, Real b)
-  {
-    if (b == ZERO)
-    {
-      std::cerr << "ERROR: division by zero error!";
-      throw DIVISION_BY_ZERO;
+  static Real _truediv(Real a, Real b) {
+    if (b == ZERO) {
+      throw std::invalid_argument(
+          "Division by zero during the \'/\' operation");
     }
     return a / b;
   }
   // division for the computation of the derivative (left path)
-  static Real _truediv1(Real, Real b)
-  {
-    if (b == ZERO)
-    {
-      std::cerr << "ERROR: division by zero error!";
-      throw DIVISION_BY_ZERO;
+  static Real _truediv1(Real, Real b) {
+    if (b == ZERO) {
+      throw std::invalid_argument(
+          "Division by zero during the computation the left path \
+of the derivative");
     }
     return 1 / b;
   }
   // division for the computation of the derivative (right path)
-  static Real _truediv2(Real a, Real b)
-  {
-    if (b == ZERO)
-    {
-      std::cerr << "ERROR: division by zero error!";
-      throw DIVISION_BY_ZERO;
+  static Real _truediv2(Real a, Real b) {
+    if (b == ZERO) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of \
+right path of the derivative");
     }
     return ZERO - a / (b * b);
   }
@@ -219,11 +242,12 @@ public:
   // exponentiation for the computation of the derivative (left path)
   static Real _pow1(Real a, Real b) { return (b * _pow(a, b - ONE)); }
   // exponentiation for the computation of the derivative (right path)
-  //TODO test log()
+  // TODO test log()
   static Real _pow2(Real a, Real b) { return (_log(a) * _pow(a, b)); }
   //- general static methods
 
-  //+ trigonometric functions, exp, log, sqrt and methods for the computation of the derivative:
+  //+ trigonometric functions, exp, log, sqrt and methods for the computation of
+  // the derivative:
   // "sin"
   static Real _sin(Real a) { return sin(a); }
   // "sin" for the derivative
@@ -231,12 +255,11 @@ public:
   // "asin"
   static Real _asin(Real a) { return asin(a); }
   // "asin" for the derivative
-  static Real _asin_d(Real a, Real)
-  {
-    if (a * a == ONE)
-    {
-      std::cerr << "ERROR: division by zero error!";
-      throw DIVISION_BY_ZERO;
+  static Real _asin_d(Real a, Real) {
+    if (a * a == ONE) {
+      // TODO may be inf?
+      throw std::invalid_argument(
+          "Division by zero during the computation of the arcsin derivative");
     }
     return ONE / _sqrt(ONE - a * a);
   }
@@ -246,24 +269,22 @@ public:
   static Real _cos_d(Real a, Real) { return ZERO - _sin(a); }
   // "acos"
   static Real _acos(Real a) { return acos(a); }
-  static Real _acos_d(Real a, Real)
-  {
-    if (a * a == ONE)
-    {
-      std::cerr << "ERROR: division by zero error!";
-      throw DIVISION_BY_ZERO;
+  static Real _acos_d(Real a, Real) {
+    if (a * a == ONE) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of \
+the arccos derivative");
     }
     return ZERO - (ONE / _sqrt(ONE - a * a));
   }
   // "tan"
   static Real _tan(Real a) { return tan(a); }
   // "tan" for the derivative
-  static Real _tan_d(Real a, Real)
-  {
-    if (_cos(a) == ZERO)
-    {
-      std::cerr << "ERROR: division by zero error!";
-      throw DIVISION_BY_ZERO;
+  static Real _tan_d(Real a, Real) {
+    if (_cos(a) == ZERO) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of \
+the tangent derivative");
     }
     return ONE / (_cos(a) * _cos(a));
   }
@@ -278,12 +299,11 @@ public:
   // "log" - (!) Natural logarithm
   static Real _log(Real a) { return log(a); }
   // "log" - (!) Natural logarithm for the derivative
-  static Real _log_d(Real a, Real)
-  {
-    if (a == ZERO)
-    {
-      std::cerr << "ERROR: division by zero error!";
-      throw DIVISION_BY_ZERO;
+  static Real _log_d(Real a, Real) {
+    if (a == ZERO) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of \
+the natural logarithm derivative");
     }
     return ONE / a;
   }
@@ -291,12 +311,11 @@ public:
   static Real _sqrt(Real a) { return sqrt(a); }
   // TODO test _sqrt_d()
   // "sqrt" for the derivative
-  static Real _sqrt_d(Real a, Real)
-  {
-    if (sqrt(a) == ZERO)
-    {
-      std::cerr << "ERROR: division by zero error!";
-      throw DIVISION_BY_ZERO;
+  static Real _sqrt_d(Real a, Real) {
+    if (sqrt(a) == ZERO) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of \
+the sqrt derivative");
     }
     return ONE / (2 * sqrt(a));
   }
@@ -308,16 +327,20 @@ public:
   static Real _m_one(Real, Real) { return ZERO - ONE; }
   //- auxiliary methods
 
-  // dictionaries contain the appropriate names of operations and static methods for evaluating, e.g.
+  // dictionaries contain the appropriate names of operations and static methods
+  // for evaluating, e.g.
   // "+" -> _add
   // "sin" -> _sin
   static const std::map<std::string, Real (*)(Real, Real)> functionsTwoArgs;
   static const std::map<std::string, Real (*)(Real)> functionsOneArg;
 
-  // dictionaries contain references to derivatives of basic functions and their names:
-  static const std::map<std::string, Real (*)(Real, Real)> functionsTwoArgsDLeft;
-  static const std::map<std::string, Real (*)(Real, Real)> functionsTwoArgsDRight;
+  // dictionaries contain references to derivatives of basic functions and their
+  // names:
+  static const std::map<std::string, Real (*)(Real, Real)>
+      functionsTwoArgsDLeft;
+  static const std::map<std::string, Real (*)(Real, Real)>
+      functionsTwoArgsDRight;
   static const std::map<std::string, Real (*)(Real)> functionsOneArgD;
 };
 
-#endif // EVAL_MPF_H
+#endif  // EVAL_MPF_H
