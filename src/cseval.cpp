@@ -40,13 +40,35 @@ const std::map<std::string, Real (*)(Real, Real)>
                                             {std::string("^"), _pow2}};
 
 template <typename Real>
-cseval<Real>::cseval(std::string expression, char _imaginary_unit)
+cseval<Real>::cseval(const cseval<Real> &other)
+    : kind(other.kind),
+      id(std::string(other.id)),
+      value(Real(other.value)),
+      leftEval(nullptr),
+      rightEval(nullptr),
+      imaginary_unit(other.imaginary_unit) {
+#ifdef CSDEBUG
+  std::cout << "copy constructor cseval" << std::endl;
+#endif
+  if (other.leftEval) {
+    leftEval = new cseval<Real>(*other.leftEval);
+  }
+  if (other.rightEval) {
+    rightEval = new cseval<Real>(*other.rightEval);
+  }
+}
+
+template <typename Real>
+cseval<Real>::cseval(std::string expression, char imaginary_unit)
     : kind('e'),
       id(""),
-      value(0),
-      leftEval(0),
-      rightEval(0),
-      imaginary_unit(_imaginary_unit) {
+      value("0"),
+      leftEval(nullptr),
+      rightEval(nullptr),
+      imaginary_unit(imaginary_unit) {
+#ifdef CSDEBUG
+  std::cout << "constructor cseval, expression:" << expression << std::endl;
+#endif
   if (expression.empty()) {
     throw std::invalid_argument(
         "Expression string is empty or \
@@ -54,13 +76,13 @@ some substring within brackets \
 is empty");
   }
 
-  // remove braces
+  // Remove braces.
   while (!isThereSymbolsOutsideParentheses(expression)) {
     expression.erase(expression.cbegin());
     expression.pop_back();
   }
 
-  // find operations: logical or, logical and, relational =, <, >, addition,
+  // Find operations: logical or, logical and, relational =, <, >, addition,
   // subtraction, multiplication, division, the construction of the power First,
   // we are looking for addition and subtraction, because division and
   // multiplication have a higher priority and should be performed first.
@@ -77,8 +99,8 @@ is empty");
         // a subtraction operation similarly for '+'
         if (foundedOperation.at(*it) == 0) {
           // allowed '-x', '--x', '---x*y', '-.01' etc.
-          leftEval = new cseval(std::string("0"));
-          rightEval = new cseval(expression.substr(1));
+          leftEval = new cseval<Real>(std::string("0"));
+          rightEval = new cseval<Real>(expression.substr(1));
           return;
         } else if (operations.find(expression.at(foundedOperation.at(*it) -
                                                  1)) != std::string::npos) {
@@ -89,8 +111,10 @@ is empty");
       }
       // split the string into two parts
       // separator: + - * / ^
-      leftEval = new cseval(expression.substr(0, foundedOperation.at(*it)));
-      rightEval = new cseval(expression.substr(foundedOperation.at(*it) + 1));
+      leftEval =
+          new cseval<Real>(expression.substr(0, foundedOperation.at(*it)));
+      rightEval =
+          new cseval<Real>(expression.substr(foundedOperation.at(*it) + 1));
       return;
     }
   }
@@ -141,23 +165,26 @@ at the moment") %
     id = name_fun;
     size_t iComma = expression.find(',');
     if (iComma != std::string::npos) {
-      leftEval = new cseval(expression.substr(0, iComma));
-      rightEval = new cseval(expression.substr(iComma + 1));
+      leftEval = new cseval<Real>(expression.substr(0, iComma));
+      rightEval = new cseval<Real>(expression.substr(iComma + 1));
     } else {
-      leftEval = new cseval(expression);
+      leftEval = new cseval<Real>(expression);
     }
   }
 }
 
 template <typename Real>
 cseval<Real>::~cseval() {
-  if (leftEval != 0) {
+#ifdef CSDEBUG
+  std::cout << "desctructor cseval, id:" << id << " kind:" << kind << std::endl;
+#endif
+  if (leftEval) {
     delete leftEval;
-    leftEval = 0;
+    leftEval = nullptr;
   }
-  if (rightEval != 0) {
+  if (rightEval) {
     delete rightEval;
-    rightEval = 0;
+    rightEval = nullptr;
   }
 }
 
@@ -182,7 +209,7 @@ calculation of the expression, id: %s") %
          id)
             .str());
   } else if (kind == 'f') {
-    if (leftEval != 0 && rightEval != 0) {
+    if (leftEval && rightEval) {
       // function with two arguments
       Real left("0");
       Real right("0");
@@ -196,7 +223,7 @@ calculation of the expression, id: %s") %
       if (itFunction != mapFunctionTwoArgsValue.cend()) {
         return itFunction->second(left, right);
       }
-    } else if (leftEval != 0) {
+    } else if (leftEval) {
       // function with one argument
       Real left("0");
       left = leftEval->calculate(mapVariableValues, mapFunctionTwoArgsValue,
@@ -263,7 +290,7 @@ Real cseval<Real>::calculateDerivative(
     }
     return ZERO;
   } else if (kind == 'f') {
-    if (leftEval != 0 && rightEval != 0) {
+    if (leftEval && rightEval) {
       // (u+v)'=u'+v'=1*d+1*c
       // (u-v)'=u'-v'=1*d-1*c
       // (u*v)'=vu'+uv'=b*d+a*c
@@ -290,7 +317,7 @@ Real cseval<Real>::calculateDerivative(
           itFunction_2 != mapFunctionDerivRight.cend()) {
         return itFunction_1->second(a, b) * d + itFunction_2->second(a, b) * c;
       }
-    } else if (leftEval != 0) {
+    } else if (leftEval) {
       // the same, but b === 0 and c === 0
       Real a = leftEval->calculate(mapVariableValues, mapFunctionTwoArgsValue,
                                    mapFunctionOneArgValue);

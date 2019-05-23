@@ -5,7 +5,7 @@ from setuptools.command.build_ext import build_ext
 from setuptools.command.test import test
 import sys
 
-__version__ = "1.0.0b4"
+__version__ = "1.0.0b5"
 
 this_directory = os.path.abspath(os.path.dirname(__file__))
 
@@ -126,7 +126,7 @@ class PyTest(test):
 
 
 # Read the contents of the README file.
-with open(os.path.join(this_directory, "README.md"), encoding="utf-8") as f:
+with open(os.path.join(this_directory, "README.md")) as f:
     long_description = f.read()
 
 setuptools.setup(

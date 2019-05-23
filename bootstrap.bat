@@ -7,8 +7,11 @@ git submodule update --recursive
 .\b2 headers
 TODO
 
+ delete dist build 
 & ./venv/Scripts/python.exe -m pip install -e .
 & ./venv/Scripts/python.exe setup.py test -a "--verbose"
+
+pytest ./tests
 
 
 python setup.py sdist bdist bdist_wheel bdist_egg
