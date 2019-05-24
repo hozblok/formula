@@ -1,39 +1,39 @@
 #include "csformula.hpp"
 
-csformula::csformula(const std::string &_expression, const unsigned _precision,
+Formula::Formula(const std::string &_expression, const unsigned _precision,
                      const char _imaginary_unit, const bool _case_insensitive)
     : origin_precision(0),
       precision(AllowedPrecisions::p_16),
       expression(""),
       imaginary_unit(_imaginary_unit),
       case_insensitive(_case_insensitive) {
-  preparePrecision(_precision);
-  prepareExpression(_expression);
-  initEval();
+  prepare_precision(_precision);
+  prepare_expression(_expression);
+  init_eval();
 }
 
-csformula::csformula(const csformula &other)
+Formula::Formula(const Formula &other)
     : origin_precision(other.origin_precision),
       precision(other.precision),
       expression(std::string(other.expression)),
       imaginary_unit(other.imaginary_unit),
       case_insensitive(other.case_insensitive) {
-  auto visitor = std::bind(visitor_init_eval_from_copy(), &this->eval,
+  auto visitor = std::bind(InitEvalFromCopyVisitor(), &this->eval,
                            std::placeholders::_1);
   boost::apply_visitor(visitor, other.eval);
 }
 
-void csformula::setPrecision(const unsigned _precision) {
-  preparePrecision(_precision);
-  initEval();
+void Formula::set_precision(const unsigned _precision) {
+  prepare_precision(_precision);
+  init_eval();
 }
 
-void csformula::setExpression(const std::string &_expression) {
-  prepareExpression(_expression);
-  initEval();
+void Formula::set_expression(const std::string &_expression) {
+  prepare_expression(_expression);
+  init_eval();
 }
 
-bool csformula::validateBrackets(const std::string &str) {
+bool Formula::validate_brackets(const std::string &str) {
   int count = 0;
   for (std::string::const_iterator it = str.cbegin(); it != str.cend(); ++it) {
     if (*it == '(') {
@@ -49,28 +49,28 @@ bool csformula::validateBrackets(const std::string &str) {
 }
 
 template <typename Real>
-Real csformula::get(
+Real Formula::get(
     const std::map<std::string, Real> &mapVariableValues) const {
-  visitor_real_value_getter<Real> visitor = visitor_real_value_getter<Real>();
+  GetCalculatedRealVisitor<Real> visitor = GetCalculatedRealVisitor<Real>();
   visitor.mapVariableValues = &mapVariableValues;
   return boost::apply_visitor(visitor, this->eval);
 }
 
-std::string csformula::get(
+std::string Formula::get(
     const std::map<std::string, std::string> &mapVariableValues,
     std::streamsize digits, std::ios_base::fmtflags format) const {
-  visitor_value_getter<std::string> visitor =
-      visitor_value_getter<std::string>();
+  GetCalculatedStringVisitor<std::string> visitor =
+      GetCalculatedStringVisitor<std::string>();
   visitor.mapVariableValues = &mapVariableValues;
   visitor.digits = digits;
   visitor.format = format;
   return boost::apply_visitor(visitor, this->eval);
 }
 
-std::string csformula::get(
+std::string Formula::get(
     const std::map<std::string, double> &mapVariableValues,
     std::streamsize digits, std::ios_base::fmtflags format) const {
-  visitor_value_getter<double> visitor = visitor_value_getter<double>();
+  GetCalculatedStringVisitor<double> visitor = GetCalculatedStringVisitor<double>();
   visitor.mapVariableValues = &mapVariableValues;
   visitor.digits = digits;
   visitor.format = format;
@@ -78,22 +78,22 @@ std::string csformula::get(
 }
 
 // template <typename Real>
-// Real csformula<Real>::getD(const std::string variable, const
+// Real Formula<Real>::get_derivative(const std::string variable, const
 // std::map<std::string, Real> &mapVariableValues) const
 // {
 //     return eval->calculateDerivative(variable, mapVariableValues);
 // }
 
-std::string csformula::getD(
+std::string Formula::get_derivative(
     const std::string variable,
     const std::map<std::string, std::string> &mapVariableValues) const {
-  visitor_derivative_getter visitor = visitor_derivative_getter();
+  GetCalculatedDerivativeStringVisitor visitor = GetCalculatedDerivativeStringVisitor();
   visitor.variable = &variable;
   visitor.mapVariableValues = &mapVariableValues;
   return boost::apply_visitor(visitor, this->eval);
 }
 
-void csformula::preparePrecision(const unsigned precision) {
+void Formula::prepare_precision(const unsigned &precision) {
   AllowedPrecisions result = min_precision;
   for_each(precisions,
            [&precision, &result](const AllowedPrecisions &prec) -> bool {
@@ -115,13 +115,13 @@ allowed maximum %s") %
   }
 }
 
-void csformula::prepareExpression(const std::string &_expression) {
+void Formula::prepare_expression(const std::string &_expression) {
   if (_expression.empty()) {
     throw std::invalid_argument(
         "Cannot set the expression, \
 the string is empty");
   }
-  if (!validateBrackets(_expression)) {
+  if (!validate_brackets(_expression)) {
     throw std::invalid_argument(
         "The given expression contains the wrong \
 location and / or number of brackets");
@@ -136,64 +136,5 @@ location and / or number of brackets");
 
   if (case_insensitive) {
     boost::algorithm::to_lower(expression);
-  }
-}
-
-void csformula::initEval() {
-  switch (precision) {
-    case AllowedPrecisions::p_16:
-      _initEval<AllowedPrecisions::p_16>();
-      break;
-    case AllowedPrecisions::p_24:
-      _initEval<AllowedPrecisions::p_24>();
-      break;
-    case AllowedPrecisions::p_32:
-      _initEval<AllowedPrecisions::p_32>();
-      break;
-    case AllowedPrecisions::p_48:
-      _initEval<AllowedPrecisions::p_48>();
-      break;
-    case AllowedPrecisions::p_64:
-      _initEval<AllowedPrecisions::p_64>();
-      break;
-    case AllowedPrecisions::p_96:
-      _initEval<AllowedPrecisions::p_96>();
-      break;
-    case AllowedPrecisions::p_128:
-      _initEval<AllowedPrecisions::p_128>();
-      break;
-    case AllowedPrecisions::p_192:
-      _initEval<AllowedPrecisions::p_192>();
-      break;
-    case AllowedPrecisions::p_256:
-      _initEval<AllowedPrecisions::p_256>();
-      break;
-    case AllowedPrecisions::p_384:
-      _initEval<AllowedPrecisions::p_384>();
-      break;
-    case AllowedPrecisions::p_512:
-      _initEval<AllowedPrecisions::p_512>();
-      break;
-    case AllowedPrecisions::p_768:
-      _initEval<AllowedPrecisions::p_768>();
-      break;
-    case AllowedPrecisions::p_1024:
-      _initEval<AllowedPrecisions::p_1024>();
-      break;
-    case AllowedPrecisions::p_2048:
-      _initEval<AllowedPrecisions::p_2048>();
-      break;
-    case AllowedPrecisions::p_3072:
-      _initEval<AllowedPrecisions::p_3072>();
-      break;
-    case AllowedPrecisions::p_4096:
-      _initEval<AllowedPrecisions::p_4096>();
-      break;
-    case AllowedPrecisions::p_6144:
-      _initEval<AllowedPrecisions::p_6144>();
-      break;
-    case AllowedPrecisions::p_8192:
-      _initEval<AllowedPrecisions::p_8192>();
-      break;
   }
 }

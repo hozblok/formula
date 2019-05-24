@@ -99,7 +99,6 @@
     "python.pythonPath": "venv\\Scripts\\python.exe",
     "cSpell.words": [
         "cseval",
-        "csformula",
         "pybind"
     ],
 }

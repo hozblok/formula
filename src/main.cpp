@@ -64,35 +64,35 @@ PYBIND11_MODULE(formula, m) {
       .value("floatfield", fmtflags::floatfield)
       .export_values();
 
-  py::class_<csformula>(m, "formula")
+  py::class_<Formula>(m, "formula")
       .def(py::init<const std::string &, const unsigned, const char,
                     const bool>(),
            py::arg("_expression"), py::arg("_precision") = 24,
            py::arg("_imaginary_unit") = 'i',
            py::arg("_case_insensitive") = false)
-      .def("getPrecision", &csformula::getPrecision, "TODO")
-      .def("setPrecision", &csformula::setPrecision, "TODO")
-      .def_property("precision", &csformula::getPrecision,
-                    &csformula::setPrecision, "TODO")
-      .def("getExpression", &csformula::getExpression, "TODO")
-      .def("setExpression", &csformula::setExpression, "TODO")
-      .def_property("expression", &csformula::getExpression,
-                    &csformula::setExpression)
+      .def("get_precision", &Formula::get_precision, "TODO")
+      .def("set_precision", &Formula::set_precision, "TODO")
+      .def_property("precision", &Formula::get_precision,
+                    &Formula::set_precision, "TODO")
+      .def("get_expression", &Formula::get_expression, "TODO")
+      .def("set_expression", &Formula::set_expression, "TODO")
+      .def_property("expression", &Formula::get_expression,
+                    &Formula::set_expression)
       .def("get",
-           (std::string(csformula::*)(
+           (std::string(Formula::*)(
                const std::map<std::string, std::string> &, std::streamsize,
                std::ios_base::fmtflags) const) &
-               csformula::get,
+               Formula::get,
            "Calculate the value of the parsed formula string \
 using the passed string values of the variables.",
            py::arg("mapVariableValues") = std::map<std::string, std::string>(),
            py::arg("digits") = 0,
            py::arg("format") = std::ios_base::fmtflags(0))
       .def("get_from_float",
-           (std::string(csformula::*)(
+           (std::string(Formula::*)(
                const std::map<std::string, double> &, std::streamsize,
                std::ios_base::fmtflags) const) &
-               csformula::get,
+               Formula::get,
            "Calculate the value of the parsed formula string \
 using the passed real values of the variables.",
            py::arg("mapVariableValues") = std::map<std::string, double>(),

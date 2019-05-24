@@ -79,7 +79,7 @@ from formula import formula
 f5a = formula("(x^2+y)/sin(a*z)")
 ```
 
-And it is enough to call the `get(...)` method or the `getD(...)` to calculate
+And it is enough to call the `get(...)` method or the `get_derivative(...)` to calculate
 the value of the expression or the derivative of the expression at this point.
 
 ```python
@@ -90,8 +90,8 @@ variables = {
   "a": "-1",
 }
 value = f5a.get(variables)
-x_derivative = f5a.getD("x", variables)
-z_derivative = f5a.getD("z", variables)
+x_derivative = f5a.get_derivative("x", variables)
+z_derivative = f5a.get_derivative("z", variables)
 ```
 
 ## License

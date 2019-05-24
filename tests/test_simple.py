@@ -11,7 +11,7 @@ def test_changing_precision():
 
     f = formula("2*asin(x)", 16)
     assert "3.1415926535897932384626433832795" == f.get({"x": "1"})
-    f.setPrecision(240)
+    f.set_precision(240)
     assert "3.14" == f.get({"x": "1"})
 
 def test_changing_expression():
@@ -20,7 +20,7 @@ def test_changing_expression():
     f = formula("2*asin(x)", 16)
     assert "3.1415926535897932384626433832795" == f.get({"x": "1"})
     assert "2*asin(x)" == f.expression
-    f.setExpression("asin(x)")
+    f.set_expression("asin(x)")
     assert "1.57079632679489661923132169163975" == f.get({"x": "1"})
     f.expression = "sin(x)"
     assert "0.8414709848078965066609974948209608755664" == f.get({"x": "1"})

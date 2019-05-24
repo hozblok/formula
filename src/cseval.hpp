@@ -65,7 +65,6 @@ enum AllowedPrecisions : unsigned {
   p_8192 = 8192U,
 };
 
-
 /**
  * Allowed precisions sorted in ascending order.
  */
@@ -78,16 +77,12 @@ static const std::tuple<AllowedPrecisions, AllowedPrecisions, AllowedPrecisions,
                         AllowedPrecisions, AllowedPrecisions, AllowedPrecisions,
                         AllowedPrecisions, AllowedPrecisions, AllowedPrecisions>
     precisions = std::make_tuple(p_16, p_24, p_32, p_48, p_64, p_96, p_128,
-                                  p_192, p_256, p_384, p_512, p_768, p_1024,
-                                  p_2048, p_3072, p_4096, p_6144, p_8192);
-// TODO
-struct DoSomething {
-  template <typename T>
-  bool operator()(T &t) const {
-    std::cout << t << "\n";
-    return true;
-  }
-};
+                                 p_192, p_256, p_384, p_512, p_768, p_1024,
+                                 p_2048, p_3072, p_4096, p_6144, p_8192);
+constexpr unsigned prec_len = 18U;
+constexpr unsigned precisions_array[prec_len] = {
+    16U,  24U,  32U,  48U,   64U,   96U,   128U,  192U,  256U,
+    384U, 512U, 768U, 1024U, 2048U, 3072U, 4096U, 6144U, 8192U};
 
 template <std::size_t I = 0, typename FuncT, typename... Tp>
 inline typename std::enable_if<I == sizeof...(Tp), void>::type for_each(

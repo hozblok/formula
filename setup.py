@@ -42,7 +42,7 @@ ext_modules = [
         include_dirs=[
             # Path to boost headers.
             boost_headers,
-            # Path to CsFormula headers.
+            # Path to Formula headers.
             "src/",
             # Path to pybind11 headers.
             get_pybind_include(),
