@@ -1,5 +1,3 @@
-#include <iostream>
-
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
@@ -10,16 +8,13 @@ namespace py = pybind11;
 
 PYBIND11_MODULE(formula, m) {
   m.doc() = R"pbdoc(
-        Pybind11 example plugin
+        Arbitrary-precision formula parser and solver.
         -----------------------
 
         .. currentmodule:: formula
 
         .. autosummary::
            :toctree: _generate
-
-           add
-           subtract
     )pbdoc";
 
   enum fmtflags {
@@ -43,22 +38,22 @@ PYBIND11_MODULE(formula, m) {
     floatfield = std::ios_base::floatfield,
   };
 
-  py::enum_<fmtflags>(m, "fmtflags")
-      .value("boolalpha", fmtflags::boolalpha)
-      .value("dec", fmtflags::dec)
-      .value("fixed", fmtflags::fixed)
-      .value("hex", fmtflags::hex)
-      .value("internal", fmtflags::internal)
-      .value("left", fmtflags::left)
-      .value("oct", fmtflags::oct)
-      .value("right", fmtflags::right)
-      .value("scientific", fmtflags::scientific)
-      .value("showbase", fmtflags::showbase)
-      .value("showpoint", fmtflags::showpoint)
-      .value("showpos", fmtflags::showpos)
+  py::enum_<fmtflags>(m, "fmtflags", "Specifies available formatting flags.")
       .value("skipws", fmtflags::skipws)
       .value("unitbuf", fmtflags::unitbuf)
       .value("uppercase", fmtflags::uppercase)
+      .value("showbase", fmtflags::showbase)
+      .value("showpoint", fmtflags::showpoint)
+      .value("showpos", fmtflags::showpos)
+      .value("left", fmtflags::left)
+      .value("right", fmtflags::right)
+      .value("internal", fmtflags::internal)
+      .value("dec", fmtflags::dec)
+      .value("oct", fmtflags::oct)
+      .value("hex", fmtflags::hex)
+      .value("scientific", fmtflags::scientific)
+      .value("fixed", fmtflags::fixed)
+      .value("boolalpha", fmtflags::boolalpha)
       .value("adjustfield", fmtflags::adjustfield)
       .value("basefield", fmtflags::basefield)
       .value("floatfield", fmtflags::floatfield)
@@ -67,56 +62,64 @@ PYBIND11_MODULE(formula, m) {
   py::class_<Formula>(m, "formula")
       .def(py::init<const std::string &, const unsigned, const char,
                     const bool>(),
-           py::arg("_expression"), py::arg("_precision") = 24,
-           py::arg("_imaginary_unit") = 'i',
-           py::arg("_case_insensitive") = false)
-      .def("get_precision", &Formula::get_precision, "TODO")
-      .def("set_precision", &Formula::set_precision, "TODO")
+           py::arg("expression"), py::arg("precision") = 24,
+           py::arg("imaginary_unit") = 'i', py::arg("case_insensitive") = false)
+      .def("get_precision", &Formula::get_precision)
+      .def("set_precision", &Formula::set_precision)
       .def_property("precision", &Formula::get_precision,
-                    &Formula::set_precision, "TODO")
-      .def("get_expression", &Formula::get_expression, "TODO")
-      .def("set_expression", &Formula::set_expression, "TODO")
+                    &Formula::set_precision,
+                    "Precision with which the calculations will be performed.")
+      .def("get_expression", &Formula::get_expression)
+      .def("set_expression", &Formula::set_expression)
       .def_property("expression", &Formula::get_expression,
-                    &Formula::set_expression)
+                    &Formula::set_expression,
+                    "Formula expression that is ready for calculations.")
+      .def("copy", &Formula::copy, py::return_value_policy::take_ownership,
+           "Create copy of the Formula object.")
+      .def("variables", (std::unordered_set<std::string>(Formula::*)()
+                const) &Formula::variables, py::return_value_policy::automatic,
+           "Parsed variables from the expression.")
       .def("get",
-           (std::string(Formula::*)(
-               const std::map<std::string, std::string> &, std::streamsize,
-               std::ios_base::fmtflags) const) &
+           (std::string(Formula::*)(const std::map<std::string, std::string> &,
+                                    std::streamsize, std::ios_base::fmtflags)
+                const) &
                Formula::get,
            "Calculate the value of the parsed formula string \
 using the passed string values of the variables.",
-           py::arg("mapVariableValues") = std::map<std::string, std::string>(),
+           py::arg("variables_to_values") = std::map<std::string, std::string>(),
            py::arg("digits") = 0,
            py::arg("format") = std::ios_base::fmtflags(0))
+      .def(
+          "get_derivative",
+          (std::string(Formula::*)(
+              const std::string, const std::map<std::string, std::string> &,
+              std::streamsize, std::ios_base::fmtflags) const) &
+              Formula::get_derivative,
+          "Calculate the value of the partial derivative of the formula.",
+          py::arg("variable"),
+          py::arg("variables_to_values") = std::map<std::string, std::string>(),
+          py::arg("digits") = 0, py::arg("format") = std::ios_base::fmtflags(0))
       .def("get_from_float",
-           (std::string(Formula::*)(
-               const std::map<std::string, double> &, std::streamsize,
-               std::ios_base::fmtflags) const) &
+           (std::string(Formula::*)(const std::map<std::string, double> &,
+                                    std::streamsize, std::ios_base::fmtflags)
+                const) &
                Formula::get,
            "Calculate the value of the parsed formula string \
 using the passed real values of the variables.",
-           py::arg("mapVariableValues") = std::map<std::string, double>(),
+           py::arg("variables_to_values") = std::map<std::string, double>(),
            py::arg("digits") = 0,
            py::arg("format") = std::ios_base::fmtflags(0));
 
-  // TODO
-  py::class_<mp_real<1>>(m, "mp_real_1")
+  // TODO support all mp_real
+  py::class_<mp_real<24>>(m, "mp_real_24")
       .def(py::init<const std::string &>())
       .def("str",
-           (std::string(mp_real<1>::*)(std::streamsize digits,
-                                       std::ios_base::fmtflags) const) &
-               mp_real<1>::str,
+           (std::string(mp_real<24>::*)(std::streamsize digits,
+                                        std::ios_base::fmtflags) const) &
+               mp_real<24>::str,
            "Returns the number formatted as a string, with at least precision "
-           "digits, and in scientific format if scientific is true. ",
-           py::arg("digits") = 0,
-           py::arg("f") = fmtflags::dec /*std::_Ios_Fmtflags::_S_scientific*/
-           /*1L << 8*/ /*std::ios_base::fmtflags(0)*/);
-
-  //            std::string str(std::streamsize digits = 0,
-  //            std::ios_base::fmtflags f = std::ios_base::fmtflags(0))const
-  //    {
-  //       return m_backend.str(digits, f);
-  //    }
+           "digits.",
+           py::arg("digits") = 0, py::arg("f") = std::ios_base::fmtflags(0));
 
 #ifdef VERSION_INFO
   m.attr("__version__") = VERSION_INFO;

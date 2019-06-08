@@ -1,39 +1,51 @@
 #include "csformula.hpp"
 
-Formula::Formula(const std::string &_expression, const unsigned _precision,
-                     const char _imaginary_unit, const bool _case_insensitive)
-    : origin_precision(0),
-      precision(AllowedPrecisions::p_16),
-      expression(""),
-      imaginary_unit(_imaginary_unit),
-      case_insensitive(_case_insensitive) {
-  prepare_precision(_precision);
-  prepare_expression(_expression);
+Formula::Formula(const std::string &expression, const unsigned precision,
+                 const char imaginary_unit, const bool case_insensitive)
+    : origin_precision_(0),
+      precision_(AllowedPrecisions::p_16),
+      expression_(""),
+      imaginary_unit_(imaginary_unit),
+      case_insensitive_(case_insensitive) {
+#ifdef CSDEBUG
+  std::cout << "constructor Formula +" << std::endl;
+#endif
+  prepare_precision(precision);
+  prepare_expression(expression);
   init_eval();
+#ifdef CSDEBUG
+  std::cout << "constructor Formula -" << std::endl;
+#endif
 }
 
 Formula::Formula(const Formula &other)
-    : origin_precision(other.origin_precision),
-      precision(other.precision),
-      expression(std::string(other.expression)),
-      imaginary_unit(other.imaginary_unit),
-      case_insensitive(other.case_insensitive) {
-  auto visitor = std::bind(InitEvalFromCopyVisitor(), &this->eval,
-                           std::placeholders::_1);
-  boost::apply_visitor(visitor, other.eval);
+    : origin_precision_(other.origin_precision_),
+      precision_(other.precision_),
+      expression_(std::string(other.expression_)),
+      imaginary_unit_(other.imaginary_unit_),
+      case_insensitive_(other.case_insensitive_) {
+#ifdef CSDEBUG
+  std::cout << "copy constructor Formula+" << std::endl;
+#endif
+  auto visitor =
+      std::bind(InitEvalFromCopyVisitor(), &eval_, std::placeholders::_1);
+  boost::apply_visitor(visitor, other.eval_);
+#ifdef CSDEBUG
+  std::cout << "copy constructor Formula-" << std::endl;
+#endif
 }
 
-void Formula::set_precision(const unsigned _precision) {
-  prepare_precision(_precision);
+void Formula::set_precision(const unsigned precision) {
+  prepare_precision(precision);
   init_eval();
 }
 
-void Formula::set_expression(const std::string &_expression) {
-  prepare_expression(_expression);
+void Formula::set_expression(const std::string &expression) {
+  prepare_expression(expression);
   init_eval();
 }
 
-bool Formula::validate_brackets(const std::string &str) {
+bool Formula::validate_brackets(const std::string &str) const {
   int count = 0;
   for (std::string::const_iterator it = str.cbegin(); it != str.cend(); ++it) {
     if (*it == '(') {
@@ -48,49 +60,53 @@ bool Formula::validate_brackets(const std::string &str) {
   return (count == 0);
 }
 
+// TODO support Real and double and ... values.
 template <typename Real>
 Real Formula::get(
-    const std::map<std::string, Real> &mapVariableValues) const {
+    const std::map<std::string, Real> &variables_to_values) const {
   GetCalculatedRealVisitor<Real> visitor = GetCalculatedRealVisitor<Real>();
-  visitor.mapVariableValues = &mapVariableValues;
-  return boost::apply_visitor(visitor, this->eval);
+  visitor.variables_to_values = &variables_to_values;
+  return boost::apply_visitor(visitor, eval_);
 }
 
 std::string Formula::get(
-    const std::map<std::string, std::string> &mapVariableValues,
+    const std::map<std::string, std::string> &variables_to_values,
     std::streamsize digits, std::ios_base::fmtflags format) const {
   GetCalculatedStringVisitor<std::string> visitor =
       GetCalculatedStringVisitor<std::string>();
-  visitor.mapVariableValues = &mapVariableValues;
+  visitor.variables_to_values = &variables_to_values;
   visitor.digits = digits;
   visitor.format = format;
-  return boost::apply_visitor(visitor, this->eval);
+  return boost::apply_visitor(visitor, eval_);
 }
 
 std::string Formula::get(
-    const std::map<std::string, double> &mapVariableValues,
+    const std::map<std::string, double> &variables_to_values,
     std::streamsize digits, std::ios_base::fmtflags format) const {
-  GetCalculatedStringVisitor<double> visitor = GetCalculatedStringVisitor<double>();
-  visitor.mapVariableValues = &mapVariableValues;
+  GetCalculatedStringVisitor<double> visitor =
+      GetCalculatedStringVisitor<double>();
+  visitor.variables_to_values = &variables_to_values;
   visitor.digits = digits;
   visitor.format = format;
-  return boost::apply_visitor(visitor, this->eval);
+  return boost::apply_visitor(visitor, eval_);
 }
 
+// TODO support Real and double and ... values.
 // template <typename Real>
 // Real Formula<Real>::get_derivative(const std::string variable, const
-// std::map<std::string, Real> &mapVariableValues) const
+// std::map<std::string, Real> &variables_to_values) const
 // {
-//     return eval->calculateDerivative(variable, mapVariableValues);
+//     return eval->calculate_derivative(variable, variables_to_values);
 // }
 
 std::string Formula::get_derivative(
     const std::string variable,
-    const std::map<std::string, std::string> &mapVariableValues) const {
-  GetCalculatedDerivativeStringVisitor visitor = GetCalculatedDerivativeStringVisitor();
-  visitor.variable = &variable;
-  visitor.mapVariableValues = &mapVariableValues;
-  return boost::apply_visitor(visitor, this->eval);
+    const std::map<std::string, std::string> &variables_to_values,
+    std::streamsize digits, std::ios_base::fmtflags format) const {
+  auto visitor =
+      std::bind(GetCalculatedDerivativeStringVisitor(), std::placeholders::_1,
+                variable, variables_to_values, digits, format);
+  return boost::apply_visitor(visitor, eval_);
 }
 
 void Formula::prepare_precision(const unsigned &precision) {
@@ -103,38 +119,38 @@ void Formula::prepare_precision(const unsigned &precision) {
              }
              return true;
            });
-  this->origin_precision = precision;
-  this->precision = result;
-  if (this->precision == min_precision &&
-      this->origin_precision > static_cast<unsigned>(min_precision)) {
+  origin_precision_ = precision;
+  precision_ = result;
+  if (precision_ == min_precision &&
+      origin_precision_ > static_cast<unsigned>(min_precision)) {
     throw std::invalid_argument(
         (boost::format("The selected precision value %s exceeds the \
 allowed maximum %s") %
-         origin_precision % static_cast<unsigned>(max_precision))
+         origin_precision_ % static_cast<unsigned>(max_precision))
             .str());
   }
 }
 
-void Formula::prepare_expression(const std::string &_expression) {
-  if (_expression.empty()) {
+void Formula::prepare_expression(const std::string &expression) {
+  if (expression.empty()) {
     throw std::invalid_argument(
         "Cannot set the expression, \
 the string is empty");
   }
-  if (!validate_brackets(_expression)) {
+  if (!validate_brackets(expression)) {
     throw std::invalid_argument(
         "The given expression contains the wrong \
 location and / or number of brackets");
   }
-  expression = _expression;
+  expression_ = expression;
   // Remove spaces, tabs, \n, \r, \t, \v.
-  boost::algorithm::erase_all(expression, " ");
-  boost::algorithm::erase_all(expression, "\n");
-  boost::algorithm::erase_all(expression, "\r");
-  boost::algorithm::erase_all(expression, "\t");
-  boost::algorithm::erase_all(expression, "\v");
+  boost::algorithm::erase_all(expression_, " ");
+  boost::algorithm::erase_all(expression_, "\n");
+  boost::algorithm::erase_all(expression_, "\r");
+  boost::algorithm::erase_all(expression_, "\t");
+  boost::algorithm::erase_all(expression_, "\v");
 
-  if (case_insensitive) {
-    boost::algorithm::to_lower(expression);
+  if (case_insensitive_) {
+    boost::algorithm::to_lower(expression_);
   }
 }

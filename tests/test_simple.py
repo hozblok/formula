@@ -27,7 +27,7 @@ def test_changing_expression():
 
 @pytest.mark.xfail(reason="under development")
 def test_formula_object_copy():
-    """Compare formula objects. TODO"""
+    """Compare formula objects."""
 
     f = formula("2*asin(x)", 16)
     f2 = formula("2*asin(x)", 24)
