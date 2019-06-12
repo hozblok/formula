@@ -1,11 +1,12 @@
 import os
 import platform
-import setuptools
-from setuptools.command.build_ext import build_ext
-from setuptools.command.test import test
 import sys
 
-__version__ = "1.0.0b5"
+import setuptools
+from setuptools.command.build_ext import build_ext
+from setuptools.command.test import test as TestCommand
+
+__version__ = "1.0.2"
 
 this_directory = os.path.abspath(os.path.dirname(__file__))
 
@@ -27,7 +28,7 @@ class get_pybind_include(object):
 
 
 dev_boost_headers = os.path.join(this_directory, "boost", "boost")
-if os.path.exists(dev_boost_headers):
+if __version__.startswith("dev") and os.path.exists(dev_boost_headers):
     boost_headers = "boost/"
 elif platform.system() == "Windows":
     boost_headers = "boost_win_headers/"
@@ -108,11 +109,11 @@ class BuildExt(build_ext):
         build_ext.build_extensions(self)
 
 
-class PyTest(test):
+class PyTest(TestCommand):
     user_options = [("pytest-args=", "a", "Arguments to pass to pytest")]
 
     def initialize_options(self):
-        test.initialize_options(self)
+        TestCommand.initialize_options(self)
         self.pytest_args = ""
 
     def run_tests(self):
@@ -133,7 +134,7 @@ setuptools.setup(
     author_email="hozblok@gmail.com",
     author="Ivan Ergunov",
     classifiers=[
-        "Development Status :: 4 - Beta",
+        "Development Status :: 5 - Production/Stable",
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
         "Programming Language :: C++",
@@ -141,7 +142,7 @@ setuptools.setup(
         "Topic :: Scientific/Engineering :: Mathematics",
         "Topic :: Scientific/Engineering :: Physics",
     ],
-    cmdclass={"pytest": PyTest, "build_ext": BuildExt},
+    cmdclass={"build_ext": BuildExt, "pytest": PyTest},
     description="Arbitrary-precision formula parser and solver.",
     ext_modules=ext_modules,
     install_requires=["pybind11>=2.2"],
@@ -149,7 +150,8 @@ setuptools.setup(
     long_description=long_description,
     name="formula",
     packages=setuptools.find_packages(),
-    python_requires=">2.6, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*, <4",
+    python_requires=">2.6, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, <4",
+    setup_requires=["pybind11>=2.2"],
     tests_require=["pytest>=2.1"],
     url="https://github.com/hozblok/formula",
     version=__version__,

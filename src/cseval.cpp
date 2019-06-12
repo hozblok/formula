@@ -85,45 +85,41 @@ is empty");
 
   // Remove braces.
   while (!isThereSymbolsOutsideParentheses(expression)) {
-    expression.erase(expression.cbegin());
+    expression.erase(expression.begin());
     expression.pop_back();
   }
 
-  // Find operations: logical or, logical and, relational =, <, >, addition,
-  // subtraction, multiplication, division, the construction of the power First,
-  // we are looking for addition and subtraction, because division and
+  // First, we are looking for addition and subtraction, because division and
   // multiplication have a higher priority and should be performed first.
-  std::string operations("|&=><+-*/^");
-  std::unordered_map<char, long> foundedOperation =
-      findSymbolsOutsideBrackets(expression, operations);
-  for (std::string::const_iterator it = operations.cbegin();
-       it != operations.cend(); ++it) {
-    if (foundedOperation.at(*it) != -1) {
-      kind_ = 'f';
-      id_ = *it;
+  std::unordered_map<char, size_t> op_to_index =
+      operations_outside_parentheses(expression, kOperations);
+  for (std::string::const_iterator it = kOperations.cbegin();
+       it != kOperations.cend(); ++it) {
+    auto op_index = op_to_index.at(*it);
+    if (op_index != kNpos) {
       if (*it == '-' || *it == '+') {
         // if '-' represents negative number or negative value of variable, not
         // a subtraction operation similarly for '+'
-        if (foundedOperation.at(*it) == 0) {
+        if (op_index == 0) {
           // allowed '-x', '--x', '---x*y', '-.01' etc.
+          kind_ = 'f';
+          id_ = *it;
           left_eval_ = new cseval<Real>(std::string("0"));
           right_eval_ = new cseval<Real>(expression.substr(1));
           return;
-        } else if (operations.find(expression.at(foundedOperation.at(*it) -
-                                                 1)) != std::string::npos) {
+        } else if (kOperations.find(expression.at(op_index - 1)) !=
+                   std::string::npos) {
           // allowed 'x/-1' or 'y^-x' etc.
           // go on to the next operation
           continue;
-        } else {
-          // support formula("-002.e-0").get()
         }
       }
-      // split the string into two parts
-      // separator: + - * / ^
-      left_eval_ =
-          new cseval<Real>(expression.substr(0, foundedOperation.at(*it)));
+      kind_ = 'f';
+      id_ = *it;
+      // Split the string into two parts by the separator (operation).
+      left_eval_ = new cseval<Real>(expression.substr(0, op_to_index.at(*it)));
       right_eval_ =
-          new cseval<Real>(expression.substr(foundedOperation.at(*it) + 1));
+          new cseval<Real>(expression.substr(op_to_index.at(*it) + 1));
       return;
     }
   }
@@ -137,7 +133,6 @@ location and / or number of brackets");
   if (iLeftBracket == std::string::npos) {
     // There is no '(' => kind === 'v' or 'n'; or id === "pi".
     // Variable or number or pi.
-    // TODO: support multisymbol variables
     if (expression == std::string("pi")) {
       kind_ = 'n';
       id_ = "pi";
@@ -149,17 +144,42 @@ the expression: %s. Not implemented \
 at the moment") %
            expression)
               .str());
-    } else if (std::regex_match(expression, is_number_regex)) {
+    } else if (std::regex_match(expression, kIsNumberRegex)) {
       kind_ = 'n';
       id_ = expression;
       try {
-        // TODO delete data? check another construcotrs.
         value_ = Real(expression.data());
       } catch (...) {
         throw std::invalid_argument(
             (boost::format("Unknown number value: %s") % expression).str());
       }
     } else {
+      // Validate:
+      if (kForbiddenStartVariableSymbols.find(expression.at(0)) !=
+          std::string::npos) {
+        throw std::invalid_argument(
+            (boost::format(
+                 "Variable name '%s' starts with the forbidden character "
+                 "'%s', "
+                 "a variable name cannot begin with a number or a point") %
+             expression % std::string(1, expression.at(0)))
+                .str());
+      }
+      std::string var_name(expression);
+      std::string invalid_characters("");
+      std::smatch m;
+      while (std::regex_search(var_name, m, kWrongVariableRegex)) {
+        if (!invalid_characters.empty()) invalid_characters += ", ";
+        for (auto x : m) invalid_characters += x;
+        var_name = m.suffix().str();
+      }
+      if (!invalid_characters.empty()) {
+        throw std::invalid_argument(
+            (boost::format(
+                 "Variable name '%s' contains forbidden characters: %s") %
+             expression % invalid_characters)
+                .str());
+      }
       kind_ = 'v';
       id_ = expression;
     }
@@ -213,7 +233,7 @@ Real cseval<Real>::calculate(
     }
     throw std::invalid_argument(
         (boost::format("The required value is not found during the \
-calculation of the expression, id: %s") %
+calculation of the expression, variable name: '%s'") %
          id_)
             .str());
   } else if (kind_ == 'f') {
@@ -375,28 +395,70 @@ Real cseval<Real>::calculate_derivative(
 }
 
 template <typename Real>
-std::unordered_map<char, long> cseval<Real>::findSymbolsOutsideBrackets(
+std::unordered_map<char, size_t> cseval<Real>::operations_outside_parentheses(
     const std::string &str, const std::string &symbols) const {
-  unsigned int countBraces = 0;
+  size_t countBraces = 0;
 
-  std::unordered_map<char, long> operationIndex;
-  for (std::string::const_iterator it = symbols.cbegin(); it < symbols.cend();
-       ++it) {
-    operationIndex[*it] = -1;
+  std::unordered_map<char, size_t> op_to_ind;
+  for (std::string::const_iterator cit = symbols.cbegin(); cit < symbols.cend();
+       ++cit) {
+    op_to_ind[*cit] = kNpos;
   }
-  for (std::string::const_iterator it = str.cbegin(); it != str.cend(); ++it) {
-    if (*it == '(') {
+  for (std::string::const_reverse_iterator crit = str.crbegin();
+       crit != str.crend(); ++crit) {
+    char op = *crit;
+    if (op == ')') {
       countBraces++;
-    } else if (*it == ')') {
+    } else if (op == '(') {
       countBraces--;
     }
-    // we get only the first match in str, so we need the last condition
-    if (countBraces == 0 && symbols.find(*it) != std::string::npos &&
-        operationIndex.at(*it) == -1) {
-      operationIndex[*it] = it - str.cbegin();
+    // We get only the last match in str, so we need the last condition.
+    // For '-' & '/' we get the last match for correct ordering in e.g. "1-0-1".
+    // "2^5/2^2/2^2" != 32
+    if (countBraces == 0 && symbols.find(op) != std::string::npos &&
+        op_to_ind.at(op) == kNpos) {
+      bool is_number = false;
+      if (crit != str.crend() && (op == '+' || op == '-')) {
+        char prev = *(crit + 1);
+        if (prev == 'e' || prev == 'E') {
+          // Check that '-' or '+' is not the path of number.
+          // e.g. support Formula("-002.e-0")
+          for (auto index_check_number = crit + 2;
+               index_check_number != str.crend(); ++index_check_number) {
+            std::string check_symbol = std::string(1, *index_check_number);
+            if (kOperationsWithParentheses.find(check_symbol) !=
+                std::string::npos) {
+              break;
+            }
+            if (kNumberSymbols.find(check_symbol) != std::string::npos) {
+              is_number = true;
+            } else if (is_number) {
+              is_number = false;
+              break;
+            }
+          }
+        } else {
+          auto _crit = crit;
+          auto _prev = *(crit + 1);
+          while (_crit != str.crend() && (_prev == '+' || _prev == '-') &&
+                 op_to_ind.at(_prev) == kNpos) {
+            _crit++;
+            // 'op' mustn't be changed.
+            if (*_crit == op) {
+              // update position of 'op'. e.g Formula("0-+-+1")
+              crit = _crit;
+            }
+            _prev = *(_crit + 1);
+          }
+        }
+      }
+      if (!is_number) {
+        // It is not the path of the number.
+        op_to_ind[op] = std::distance(crit, str.crend()) - 1;
+      }
     }
   }
-  return operationIndex;
+  return op_to_ind;
 }
 
 template <typename Real>

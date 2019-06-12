@@ -1,3 +1,4 @@
+#include <pybind11/operators.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
@@ -17,49 +18,68 @@ PYBIND11_MODULE(formula, m) {
            :toctree: _generate
     )pbdoc";
 
-  enum fmtflags {
-    boolalpha = std::ios_base::boolalpha,
-    dec = std::ios_base::dec,
-    fixed = std::ios_base::fixed,
-    hex = std::ios_base::hex,
-    internal = std::ios_base::internal,
-    left = std::ios_base::left,
-    oct = std::ios_base::oct,
-    right = std::ios_base::right,
-    scientific = std::ios_base::scientific,
-    showbase = std::ios_base::showbase,
-    showpoint = std::ios_base::showpoint,
-    showpos = std::ios_base::showpos,
-    skipws = std::ios_base::skipws,
-    unitbuf = std::ios_base::unitbuf,
-    uppercase = std::ios_base::uppercase,
-    adjustfield = std::ios_base::adjustfield,
-    basefield = std::ios_base::basefield,
-    floatfield = std::ios_base::floatfield,
-  };
+  py::class_<std::ios_base::fmtflags>(m, "FmtFlags")
+      .def(py::self | py::self)
+      .def(py::self & py::self)
+      .def(py::self ^ py::self)
+      .def(py::self |= py::self)
+      .def(py::self &= py::self)
+      .def(py::self ^= py::self)
+      .def(~py::self)
+      .def_property_readonly_static("default",
+                                    [](py::object) -> std::ios_base::fmtflags {
+                                      return std::ios_base::fmtflags(0);
+                                    })
+      .def_property_readonly_static("fixed",
+                                    [](py::object) -> std::ios_base::fmtflags {
+                                      return std::ios_base::fixed;
+                                    })
+      .def_property_readonly_static("internal",
+                                    [](py::object) -> std::ios_base::fmtflags {
+                                      return std::ios_base::internal;
+                                    })
+      .def_property_readonly_static("left",
+                                    [](py::object) -> std::ios_base::fmtflags {
+                                      return std::ios_base::left;
+                                    })
+      .def_property_readonly_static("right",
+                                    [](py::object) -> std::ios_base::fmtflags {
+                                      return std::ios_base::right;
+                                    })
+      .def_property_readonly_static("scientific",
+                                    [](py::object) -> std::ios_base::fmtflags {
+                                      return std::ios_base::scientific;
+                                    })
+      .def_property_readonly_static("showpoint",
+                                    [](py::object) -> std::ios_base::fmtflags {
+                                      return std::ios_base::showpoint;
+                                    })
+      .def_property_readonly_static("showpos",
+                                    [](py::object) -> std::ios_base::fmtflags {
+                                      return std::ios_base::showpos;
+                                    })
+      .def_property_readonly_static("skipws",
+                                    [](py::object) -> std::ios_base::fmtflags {
+                                      return std::ios_base::skipws;
+                                    })
+      .def_property_readonly_static("unitbuf",
+                                    [](py::object) -> std::ios_base::fmtflags {
+                                      return std::ios_base::unitbuf;
+                                    })
+      .def_property_readonly_static("uppercase",
+                                    [](py::object) -> std::ios_base::fmtflags {
+                                      return std::ios_base::uppercase;
+                                    })
+      .def_property_readonly_static("adjustfield",
+                                    [](py::object) -> std::ios_base::fmtflags {
+                                      return std::ios_base::adjustfield;
+                                    })
+      .def_property_readonly_static("floatfield",
+                                    [](py::object) -> std::ios_base::fmtflags {
+                                      return std::ios_base::floatfield;
+                                    });
 
-  py::enum_<fmtflags>(m, "fmtflags", "Specifies available formatting flags.")
-      .value("skipws", fmtflags::skipws)
-      .value("unitbuf", fmtflags::unitbuf)
-      .value("uppercase", fmtflags::uppercase)
-      .value("showbase", fmtflags::showbase)
-      .value("showpoint", fmtflags::showpoint)
-      .value("showpos", fmtflags::showpos)
-      .value("left", fmtflags::left)
-      .value("right", fmtflags::right)
-      .value("internal", fmtflags::internal)
-      .value("dec", fmtflags::dec)
-      .value("oct", fmtflags::oct)
-      .value("hex", fmtflags::hex)
-      .value("scientific", fmtflags::scientific)
-      .value("fixed", fmtflags::fixed)
-      .value("boolalpha", fmtflags::boolalpha)
-      .value("adjustfield", fmtflags::adjustfield)
-      .value("basefield", fmtflags::basefield)
-      .value("floatfield", fmtflags::floatfield)
-      .export_values();
-
-  py::class_<Formula>(m, "formula")
+  py::class_<Formula>(m, "Formula")
       .def(py::init<const std::string &, const unsigned, const char,
                     const bool>(),
            py::arg("expression"), py::arg("precision") = 24,
@@ -76,19 +96,21 @@ PYBIND11_MODULE(formula, m) {
                     "Formula expression that is ready for calculations.")
       .def("copy", &Formula::copy, py::return_value_policy::take_ownership,
            "Create copy of the Formula object.")
-      .def("variables", (std::unordered_set<std::string>(Formula::*)()
-                const) &Formula::variables, py::return_value_policy::automatic,
+      .def("variables",
+           (std::unordered_set<std::string>(Formula::*)() const) &
+               Formula::variables,
+           py::return_value_policy::automatic,
            "Parsed variables from the expression.")
-      .def("get",
-           (std::string(Formula::*)(const std::map<std::string, std::string> &,
-                                    std::streamsize, std::ios_base::fmtflags)
-                const) &
-               Formula::get,
-           "Calculate the value of the parsed formula string \
+      .def(
+          "get",
+          (std::string(Formula::*)(const std::map<std::string, std::string> &,
+                                   std::streamsize, std::ios_base::fmtflags)
+               const) &
+              Formula::get,
+          "Calculate the value of the parsed formula string \
 using the passed string values of the variables.",
-           py::arg("variables_to_values") = std::map<std::string, std::string>(),
-           py::arg("digits") = 0,
-           py::arg("format") = std::ios_base::fmtflags(0))
+          py::arg("variables_to_values") = std::map<std::string, std::string>(),
+          py::arg("digits") = 0, py::arg("format") = std::ios_base::fmtflags(0))
       .def(
           "get_derivative",
           (std::string(Formula::*)(

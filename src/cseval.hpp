@@ -17,10 +17,11 @@
 #include <boost/multiprecision/cpp_dec_float.hpp>
 #include <boost/variant.hpp>
 
-#ifndef CSDEBUG
-#include <iostream>
-#define CSDEBUG
-#endif
+// TODO: uncomment to debug
+// #ifndef CSDEBUG
+// #include <iostream>
+// #define CSDEBUG
+// #endif
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -143,8 +144,31 @@
   "71138645587367812301458768712660348913909562009939361031"
 #endif
 
-const std::regex is_number_regex(
-        R"(^([+-]?(?:[[:d:]]+\.?|[[:d:]]*\.[[:d:]]+))(?:[Ee][+-]?[[:d:]]+)?$)");
+const size_t kNpos = static_cast<size_t> (~0);
+
+/**
+ * To check that substring is the number.
+ * e.g. -1e+10, 0009., -.1, etc.
+ */
+const std::regex kIsNumberRegex(
+    R"(^([+-]?(?:[[:d:]]+\.?|[[:d:]]*\.[[:d:]]+))(?:[Ee][+-]?[[:d:]]+)?$)");
+const std::string kNumberSymbols("+-0123456789.eE");
+/**
+ * Operations: logical or, logical and, relational =, <, >, addition,
+ * subtraction, multiplication, division, the construction of the power.
+ */
+const std::string kOperations("|&=><+-*/^");
+const std::string kOperationsWithParentheses("()|&=><+-*/^");
+
+/** '_', any letters are allowed. */
+// ValueError: Variable name '.e+0' contains forbidden characters: +
+// We can allow all except ()|&=><+-*/^, but... Is it necessary?
+// cannot start with numbers and '.'. (Formula("pi + 0e + 0").get({'e1': '1'}))
+// Formula("pi + .e + 0").get({'.e':'30'})
+const std::string kForbiddenVariableSymbols("()[]{}~!@#$%\\?,;`'\"|&=><+*/^-");
+const std::string kForbiddenStartVariableSymbols(".0123456789");
+const std::regex kWrongVariableRegex(
+    R"([\(\)\[\]\{\}~!@#\$%\\\?,;`'\"\|&=><\+\*/\^-])");
 
 /**
  * Arbitrary-precision arithmetic.
@@ -261,7 +285,7 @@ class cseval {
   char imaginary_unit_;
 
   /** Try to find each symbol of {symbols} string in the {str} string. */
-  std::unordered_map<char, long> findSymbolsOutsideBrackets(
+  std::unordered_map<char, size_t> operations_outside_parentheses(
       const std::string &str, const std::string &symbols) const;
 
   /**  Try to find symbols outside parentheses: '(' and ')'. */

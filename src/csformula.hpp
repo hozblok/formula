@@ -84,25 +84,25 @@ struct CollectVariablesVisitor : public boost::static_visitor<void> {
   }
 };
 
+//  * To calculate the value of the derivative of a function, we use
+//  * the following simple transformations:
+//  * a = u; b = v; c = v'; d = u'
+//  * (u + v)' = u' + v' = 1 * d + 1 * c
+//  * (u - v)' = u' - v' = 1 * d - 1 * c
+//  * (u * v)' = v * u' + u * v'= b * d + a * c
+//  * (u / v)' = (v * u' - u * v') / v^2
+//  * = (1 / v) * u' - (u / v^2) * v' = (1 / b) * d - (a / b^2) * c
+//  * (u ^ v)' = (e^(v * ln(u)))' = e^(v * ln(u)) * (v * ln(u))'
+//  * = v * u^(v - 1) * u' + (u^v) * ln(u) * v'
+//  * = b * a^(b - 1) * d + a^b * ln(a) * c
+
 /**
  * Formula - wrapper for Eval class to parse and evaluate the
  * formula expressions with any required accuracy. The accuracy
  * (precision) of the calculations can be changed on the fly.
  * Formula contains case sensitive (by default) string parser.
- * Each variable can only be set as a single Latin character
- * in a string. (TODO: development of multisymbol variables is in
- * progress.)
- * To calculate the value of the derivative of a function, we use
- * the following simple transformations:
- * a = u; b = v; c = v'; d = u'
- * (u + v)' = u' + v' = 1 * d + 1 * c
- * (u - v)' = u' - v' = 1 * d - 1 * c
- * (u * v)' = v * u' + u * v'= b * d + a * c
- * (u / v)' = (v * u' - u * v') / v^2
- * = (1 / v) * u' - (u / v^2) * v' = (1 / b) * d - (a / b^2) * c
- * (u ^ v)' = (e^(v * ln(u)))' = e^(v * ln(u)) * (v * ln(u))'
- * = v * u^(v - 1) * u' + (u^v) * ln(u) * v'
- * = b * a^(b - 1) * d + a^b * ln(a) * c
+ * Each variable can only be set as a string of any characters
+ * except .*()[]{}~!@#$%\?,;`'\"|&=><+/^- characters.
  */
 class Formula {
   /** User-selected calculation precision. */

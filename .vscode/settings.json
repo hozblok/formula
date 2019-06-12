@@ -89,14 +89,15 @@
         "future": "cpp",
         "mutex": "cpp",
         "random": "cpp",
-        "stack": "cpp"
+        "stack": "cpp",
+        "regex": "cpp"
     },
     "json.format.enable": true,
     "python.formatting.provider": "black",
     "python.linting.enabled": true,
     "python.linting.pep8Enabled": false,
     "python.linting.pylintEnabled": true,
-    "python.pythonPath": "venv\\Scripts\\python.exe",
+    "python.pythonPath": "python",
     "cSpell.words": [
         "cseval",
         "pybind"
