@@ -4,14 +4,11 @@
 
 ## Development status
 
-Status: **Beta**
+Status: **Production/Stable**
 
 Development plan:
 
 + Complex numbers support. (Character `i` are reserved for this by default.)
-+ Support getting all variables, numbers, functions after parsing.
-+ Examples.
-+ Support the LongReal from python. Auto conversion in the get method. Try ... any?
 
 This project built with [pybind11](https://github.com/pybind/pybind11).
 
@@ -64,7 +61,7 @@ requirements:
 
 ## Documentation
 
-The **formula** contains case sensitive (by default) string parser.
+**formula** contains case sensitive (by default) string parser.
 Let's imagine that we have a string expression, e.g. `"(x^2+y)/sin(a*z)"`.
 We want to calculate the value of this function in the following point:
 
@@ -75,11 +72,11 @@ x=0.001, y=0.0000000000000000000000555, z=-2, a=-1,
 So we pass the expression to the `formula` constructor.
 
 ```python
-from formula import formula
-f5a = formula("(x^2+y)/sin(a*z)")
+from formula import Formula
+f5a = Formula("(x^2+y)/sin(a*z)")
 ```
 
-And it is enough to call the `get(...)` method or the `getD(...)` to calculate
+And it is enough to call the `get(...)` method or the `get_derivative(...)` to calculate
 the value of the expression or the derivative of the expression at this point.
 
 ```python
@@ -90,19 +87,19 @@ variables = {
   "a": "-1",
 }
 value = f5a.get(variables)
-x_derivative = f5a.getD("x", variables)
-z_derivative = f5a.getD("z", variables)
+x_derivative = f5a.get_derivative("x", variables)
+z_derivative = f5a.get_derivative("z", variables)
 ```
 
 ## License
 
-formula is provided under Apache license that can be found in the LICENSE
+**formula** is provided under Apache license that can be found in the LICENSE
 file. By using, distributing, or contributing to this project, you agree to the
 terms and conditions of this license.
 
 ## Test call
 
 ```python
-from formula import formula
-pi = formula("2*asin(x)", 64).get({"x": "1"})
+from formula import Formula
+pi = Formula("2*asin(x)", 64).get({"x": "1"})
 ```

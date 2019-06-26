@@ -32,7 +32,7 @@ build_script:
 - ps: |
     if ($env:PYTHON) {
       python setup.py sdist
-      pip install --verbose dist\formula-1.0.0b4.tar.gz
+      pip install --verbose dist\formula-1.0.2.tar.gz
     } else {
       conda build conda.recipe
       conda install --use-local formula

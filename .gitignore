@@ -6,10 +6,12 @@
 boost_lin_headers/boost_*
 boost_win_headers/boost_*
 
-dev.txt
+**/__pycache__
+
 build
 dist
-formula-*
-venv*
 tmp
+venv*
+formula-*
 .vscode/ipch
+.pytest_cache

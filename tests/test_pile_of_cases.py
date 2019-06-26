@@ -1,5 +1,6 @@
-from formula import formula, fmtflags
 import pytest
+
+from formula import Formula
 
 
 @pytest.mark.parametrize(
@@ -18,10 +19,11 @@ import pytest
     "precision", [0, 16, 24, 32, 64, 128, 256, 1024, 5000, 8000, 8192]
 )
 def test_sum(a, b, result, precision):
-    """Сalculating the sum of two numbers."""
+    """Calculating the sum of two numbers."""
 
-    f = formula("a + b", precision)
+    f = Formula("a + b", precision)
     assert result == f.get({"a": a, "b": b})
+
 
 @pytest.mark.parametrize(
     "a, b, result",
@@ -29,7 +31,7 @@ def test_sum(a, b, result, precision):
         (2, 2, "4"),
         (2.0, 2.0, "4"),
         (0, 0, "0"),
-        (+0e+0, -0e-0, "0"),
+        (+0e0, -0e-0, "0"),
         (+1, -1, "0"),
         (1e-15, 1, "1.000000000000001"),
         (-100.0e10000, +450e10000, "nan"),
@@ -39,11 +41,12 @@ def test_sum(a, b, result, precision):
     "precision", [0, 16, 24, 32, 64, 128, 256, 1024, 5000, 8000, 8192]
 )
 def test_sum_float(a, b, result, precision):
-    """Сalculating the sum of two numbers."""
+    """Calculating the sum of two numbers."""
 
-    f = formula("a + b", precision)
+    f = Formula("a + b", precision)
     value = f.get_from_float({"a": a, "b": b})
     assert value.startswith(result)
+
 
 @pytest.mark.parametrize(
     "a, b, result",
@@ -61,7 +64,7 @@ def test_sum_float(a, b, result, precision):
     "precision", [0, 16, 24, 32, 64, 128, 256, 1024, 5000, 8000, 8192]
 )
 def test_difference(a, b, result, precision):
-    """Сalculating the sum of two numbers."""
+    """Calculating the sum of two numbers."""
 
-    f = formula("a - b", precision)
+    f = Formula("a - b", precision)
     assert result == f.get({"a": a, "b": b})
