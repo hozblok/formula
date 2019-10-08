@@ -239,13 +239,16 @@ template <std::size_t I = 0, typename FuncT, typename... Tp>
 // TODO Complex numbers
 // typedef std::complex<float100et> complexFloat100et;
 
+// TODO delete pi?
+// BOOST_DEFINE_MATH_CONSTANT(pi, 3.141592653589793238462643383279502884e+00, "3.14159265358979323846264338327950288419716939937510582097494459230781640628620899862803482534211706798214808651e+00")
 using boost::math::constants::pi;
+// TODO add log10 sinh cosh tanh asinh acosh atanh
 using boost::multiprecision::acos;
 using boost::multiprecision::asin;
 using boost::multiprecision::atan;
 using boost::multiprecision::cos;
 using boost::multiprecision::exp;
-using boost::multiprecision::fabs;
+using boost::multiprecision::fabs; // TODO non complex? log2?
 using boost::multiprecision::log;
 using boost::multiprecision::pow;
 using boost::multiprecision::sin;

@@ -21,7 +21,7 @@ def test_evaluation():
     assert Formula("1 + +1.e+0 + x").get({"x": "1"}) == "3"
     assert Formula("1 - -1.e-1 - x").get({"x": "1"}) == "0.1"
     assert Formula("1 + -1.e0 + x").get({"x": "1"}) == "1"
-    assert Formula("-1 - 0.e-0 - x").get({"x": "1"}) == "-2"
+    assert Formula("-1 - 0.e-0 - x").get({"x": "1", "y": "0000000000.000000"}) == "-2"
     assert Formula("1 - +0.e-0 - x").get({"x": "1"}) == "0"
     assert Formula("-e - +0.e-0 - e").get({"e": "1"}) == "-2"
     assert Formula("-e - +.9e-0 - - e").get({"e": "1"}) == "-0.9"

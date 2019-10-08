@@ -6,7 +6,7 @@ import setuptools
 from setuptools.command.build_ext import build_ext
 from setuptools.command.test import test as TestCommand
 
-__version__ = "1.0.2"
+__version__ = "1.1.4"
 
 this_directory = os.path.abspath(os.path.dirname(__file__))
 
@@ -38,7 +38,7 @@ else:
 
 ext_modules = [
     setuptools.Extension(
-        "formula",
+        "formula._formula",
         ["src/main.cpp"],
         include_dirs=[
             # Path to boost headers.
