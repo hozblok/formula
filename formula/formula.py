@@ -2,9 +2,8 @@ try:
     from collections.abc import Mapping
 except ImportError:
     from collections import Mapping
-from os import PathLike
 
-from formula import FmtFlags, Formula
+from ._formula import FmtFlags, Formula
 
 
 class Solver(Formula):
@@ -66,7 +65,7 @@ class Solver(Formula):
 
         for key in variables_to_values:
             val = variables_to_values[key]
-            if type(val) != str:
+            if not isinstance(val, str):
                 variables_to_values[key] = str(val)
 
         result = None

@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+# <-- support python2.7. It's not necessary in python3+
 import pytest
 
 from formula import Formula
@@ -28,7 +30,7 @@ def test_simple_sum(a, b, expected_result, precision):
     assert expected_result == Formula(a + "+" + b, precision).get()
     assert expected_result == Formula(a + "+" + b, precision).get({})
     assert expected_result == Formula(a + "+" + b, precision).get(
-        {"qwer": "-1", "ё": "0"}
+        {"qwer": "-1", u"й": "0"}
     )
 
 
@@ -57,7 +59,7 @@ def test_simple_subtract(a, b, expected_result, precision):
     assert expected_result == Formula(a + "-" + b, precision).get()
     assert expected_result == Formula(a + "-" + b, precision).get({})
     assert expected_result == Formula(a + "-" + b, precision).get(
-        {"dfgh_ф": "-1", "ё": "1e-100500"}
+        {u"asdf_фыва": "-1", u"й": "1e-100500"}
     )
 
 
