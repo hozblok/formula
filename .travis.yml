@@ -1,7 +1,7 @@
 jobs:
   include:
     - &test
-      stage: test
+      stage: main
       git:
         submodules: false
       os: linux
@@ -87,7 +87,7 @@ jobs:
       script:
         - python3 setup.py pytest -a '--verbose'
     - <<: *test
-      name: "lint"
+      name: "Checks: black, isort, pylint"
       git:
         submodules: false
       os: linux
@@ -96,10 +96,9 @@ jobs:
       python: "3.7"
       env: PYTHON=3.7
       install:
-        - pip install --progress-bar off black isort pytest pybind11 # pylint
+        - pip install --progress-bar off pytest pybind11 # TODO: add config for isort
+        - pip install --progress-bar off black isort pylint
       script:
         - black --check --diff .
         - isort --check-only --diff --recursive --project=formula
-        #- touch __init__.py TODO: add pylint.
-        #- pylint .
-        #- rm __init__.py
+        - pylint *.py **/*.py

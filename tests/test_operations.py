@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 # <-- support python2.7. It's not necessary in python3+
+
+"""Test on calculation with operations: addition, subtraction,
+division, multiplication, etc."""
+
 import pytest
 
 from formula import Formula
 
 
 @pytest.mark.parametrize(
-    "a, b, expected_result",
+    "var1, var2, expected_result",
     [
         ("0", "0", "0"),
         ("2", "2", "4"),
@@ -20,22 +24,24 @@ from formula import Formula
 @pytest.mark.parametrize(
     "precision", [0, 16, 24, 32, 64, 128, 256, 1024, 5000, 8000, 8192]
 )
-def test_simple_sum(a, b, expected_result, precision):
+def test_simple_sum(var1, var2, expected_result, precision):
     """Calculating the sum of two numbers."""
 
-    assert expected_result == Formula("a + b", precision).get({"a": a, "b": b})
-    assert expected_result == Formula("a + b", precision).get(
-        {"a": a, "b": b, "addition": "1e5000000"}
+    assert expected_result == Formula("var1 + var2", precision).get(
+        {"var1": var1, "var2": var2}
     )
-    assert expected_result == Formula(a + "+" + b, precision).get()
-    assert expected_result == Formula(a + "+" + b, precision).get({})
-    assert expected_result == Formula(a + "+" + b, precision).get(
+    assert expected_result == Formula("var1 + var2", precision).get(
+        {"var1": var1, "var2": var2, "addition": "1e5000000"}
+    )
+    assert expected_result == Formula(var1 + "+" + var2, precision).get()
+    assert expected_result == Formula(var1 + "+" + var2, precision).get({})
+    assert expected_result == Formula(var1 + "+" + var2, precision).get(
         {"qwer": "-1", u"й": "0"}
     )
 
 
 @pytest.mark.parametrize(
-    "a, b, expected_result",
+    "var1, var2, expected_result",
     [
         ("2", "2", "0"),
         ("2.0", "-2.0", "4"),
@@ -49,22 +55,24 @@ def test_simple_sum(a, b, expected_result, precision):
 @pytest.mark.parametrize(
     "precision", [0, 16, 24, 32, 64, 128, 256, 1024, 5000, 8000, 8192]
 )
-def test_simple_subtract(a, b, expected_result, precision):
+def test_simple_subtract(var1, var2, expected_result, precision):
     """Calculating the subtraction of two numbers."""
 
-    assert expected_result == Formula("a - b", precision).get({"a": a, "b": b})
-    assert expected_result == Formula("a - b", precision).get(
-        {"a": a, "b": b, "addition": "12345"}
+    assert expected_result == Formula("var1 - var2", precision).get(
+        {"var1": var1, "var2": var2}
     )
-    assert expected_result == Formula(a + "-" + b, precision).get()
-    assert expected_result == Formula(a + "-" + b, precision).get({})
-    assert expected_result == Formula(a + "-" + b, precision).get(
+    assert expected_result == Formula("var1 - var2", precision).get(
+        {"var1": var1, "var2": var2, "addition": "12345"}
+    )
+    assert expected_result == Formula(var1 + "-" + var2, precision).get()
+    assert expected_result == Formula(var1 + "-" + var2, precision).get({})
+    assert expected_result == Formula(var1 + "-" + var2, precision).get(
         {u"asdf_фыва": "-1", u"й": "1e-100500"}
     )
 
 
 @pytest.mark.parametrize(
-    "a, b, result",
+    "var1, var2, result",
     [
         (0, 0, "0"),
         (2, 2, "4"),
@@ -78,9 +86,9 @@ def test_simple_subtract(a, b, expected_result, precision):
 @pytest.mark.parametrize(
     "precision", [0, 16, 24, 32, 64, 128, 256, 1024, 5000, 8000, 8192]
 )
-def test_simple_sum_from_float(a, b, result, precision):
+def test_simple_sum_from_float(var1, var2, result, precision):
     """Calculating the sum of two numbers using 'get_from_float' method."""
 
-    f = Formula("a + b", precision)
-    value = f.get_from_float({"a": a, "b": b})
+    formula = Formula("var1 + var2", precision)
+    value = formula.get_from_float({"var1": var1, "var2": var2})
     assert value.startswith(result)

@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 # <-- support python2.7. It's not necessary in python3+
 
+"""Tests on various basic module use cases: parenthesized expressions,
+copying an object, getting variables, etc."""
+
 import pytest
 
 from formula import FmtFlags, Formula
 
 
-def test_evaluation():
+def test_evaluation():  # pylint: disable=too-many-statements
     """Evaluate several simple expressions."""
     assert Formula("2--1").get() == "3"
     assert Formula("2-0-1").get() == "1"
@@ -72,8 +75,9 @@ def test_evaluation():
 
 
 def test_getting_variables():
-    f = Formula("a*b+c+D/qwe+s_s_s.*16+3^йцу4^f^t+a+xx+x+x+x")
-    assert f.variables() == {
+    """Check that formula return correct varables."""
+    formula = Formula("a*b+c+D/qwe+s_s_s.*16+3^йцу4^f^t+a+xx+x+x+x")
+    assert formula.variables() == {
         "a",
         "b",
         "c",
@@ -91,46 +95,47 @@ def test_getting_variables():
 def test_changing_precision():
     """Change precision on the fly."""
 
-    f = Formula("2*asin(x)", 16)
-    assert "3.14159265358979" == f.get({"x": "1"})[0:16]
-    assert "3.141592654" == f.get({"x": "1"}, 10)
-    f.precision = 24
+    formula = Formula("2*asin(x)", 16)
+    assert formula.get({"x": "1"})[0:16] == "3.14159265358979"
+    assert formula.get({"x": "1"}, 10) == "3.141592654"
+    formula.precision = 24
     digits = 18
     format_flags = FmtFlags.fixed
-    assert "3.141592653589793238" == f.get({"x": "1"}, digits, format_flags)
-    f.set_precision(240)
-    assert f.precision == 256
+    assert formula.get({"x": "1"}, digits, format_flags) == "3.141592653589793238"
+    formula.set_precision(240)
+    assert formula.precision == 256
     assert (
-        "3.141592653589793238462643383279502884197169399375105820974944"
+        formula.get({"x": "1"})[0:256]
+        == "3.141592653589793238462643383279502884197169399375105820974944"
         "59230781640628620899862803482534211706798214808651328230664709"
         "38446095505822317253594081284811174502841027019385211055596446"
         "22948954930381964428810975665933446128475648233786783165271201"
-        "90914564" == f.get({"x": "1"})[0:256]
+        "90914564"
     )
 
 
 def test_changing_expression():
     """Change expression and get value."""
 
-    f = Formula("2*asin(x)", 16)
-    assert "3.1415926535897932384626433832795" == f.get({"x": "1"})
-    assert "2*asin(x)" == f.expression
-    f.set_expression("asin(x)")
-    assert "1.57079632679489661923132169163975" == f.get({"x": "1"})
-    f.expression = "sin(x)"
-    assert "0.8414709848078965066609974948209608755664" == f.get({"x": "1"})
+    formula = Formula("2*asin(x)", 16)
+    assert formula.get({"x": "1"}) == "3.1415926535897932384626433832795"
+    assert formula.expression == "2*asin(x)"
+    formula.set_expression("asin(x)")
+    assert formula.get({"x": "1"}) == "1.57079632679489661923132169163975"
+    formula.expression = "sin(x)"
+    assert formula.get({"x": "1"}) == "0.8414709848078965066609974948209608755664"
 
 
 def test_formula_object_copy():
     """Compare Formula objects."""
 
-    f = Formula("2*log(1)", 99)
-    f2 = f.copy()
-    assert f2 != f
-    assert f2 is not f
-    assert f2.expression == f.expression
-    assert f2.precision == f.precision
-    assert f2.get() == f.get()
-    f.expression = "1"
-    assert f.get() == "1"
-    assert f2.get() != f.get()
+    formula = Formula("2*log(1)", 99)
+    formula2 = formula.copy()
+    assert formula2 != formula
+    assert formula2 is not formula
+    assert formula2.expression == formula.expression
+    assert formula2.precision == formula.precision
+    assert formula2.get() == formula.get()
+    formula.expression = "1"
+    assert formula.get() == "1"
+    assert formula2.get() != formula.get()

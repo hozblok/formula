@@ -1,3 +1,6 @@
+"""Setup script is the centre of all activity in building,
+distributing, and installing formula using the Distutils."""
+
 import os
 import platform
 import sys
@@ -8,10 +11,11 @@ from setuptools.command.test import test as TestCommand
 
 __version__ = "1.1.4"
 
-this_directory = os.path.abspath(os.path.dirname(__file__))
+CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
 
 
-class get_pybind_include(object):
+# pylint: disable=useless-object-inheritance
+class GetPybindInclude(object):
     """Helper class to determine the pybind11 include path
 
     The purpose of this class is to postpone importing pybind11
@@ -22,32 +26,32 @@ class get_pybind_include(object):
         self.user = user
 
     def __str__(self):
-        import pybind11
+        import pybind11  # pylint: disable=import-outside-toplevel
 
         return pybind11.get_include(self.user)
 
 
-dev_boost_headers = os.path.join(this_directory, "boost", "boost")
-if __version__.startswith("dev") and os.path.exists(dev_boost_headers):
-    boost_headers = "boost/"
+DEV_BOOST_HEADERS = os.path.join(CURRENT_DIR, "boost", "boost")
+if __version__.startswith("dev") and os.path.exists(DEV_BOOST_HEADERS):
+    BOOST_HEADERS = "boost/"
 elif platform.system() == "Windows":
-    boost_headers = "boost_win_headers/"
+    BOOST_HEADERS = "boost_win_headers/"
 else:
-    boost_headers = "boost_lin_headers/"
+    BOOST_HEADERS = "boost_lin_headers/"
 
 
-ext_modules = [
+EXT_MODULES = [
     setuptools.Extension(
         "formula._formula",
         ["src/main.cpp"],
         include_dirs=[
             # Path to boost headers.
-            boost_headers,
+            BOOST_HEADERS,
             # Path to Formula headers.
             "src/",
             # Path to pybind11 headers.
-            get_pybind_include(),
-            get_pybind_include(user=True),
+            GetPybindInclude(),
+            GetPybindInclude(user=True),
         ],
         language="c++",
     )
@@ -60,12 +64,12 @@ def has_flag(compiler, flagname):
     """Return a boolean indicating whether a flag name is supported on
     the specified compiler.
     """
-    import tempfile
+    import tempfile  # pylint: disable=import-outside-toplevel
 
-    with tempfile.NamedTemporaryFile("w", suffix=".cpp") as f:
-        f.write("int main (int argc, char **argv) { return 0; }")
+    with tempfile.NamedTemporaryFile("w", suffix=".cpp") as tmp_file:
+        tmp_file.write("int main (int argc, char **argv) { return 0; }")
         try:
-            compiler.compile([f.name], extra_postargs=[flagname])
+            compiler.compile([tmp_file.name], extra_postargs=[flagname])
         except setuptools.distutils.errors.CompileError:
             return False
     return True
@@ -76,14 +80,14 @@ def cpp_flag(compiler):
 
     The c++14 is preferred over c++11 (when it is available).
     """
+
     if has_flag(compiler, "-std=c++14"):
         return "-std=c++14"
-    elif has_flag(compiler, "-std=c++11"):
+
+    if has_flag(compiler, "-std=c++11"):
         return "-std=c++11"
-    else:
-        raise RuntimeError(
-            "Unsupported compiler -- at least C++11 support " "is needed!"
-        )
+
+    raise RuntimeError("Unsupported compiler -- at least C++11 support " "is needed!")
 
 
 class BuildExt(build_ext):
@@ -95,14 +99,14 @@ class BuildExt(build_ext):
         c_opts["unix"] += ["-stdlib=libc++", "-mmacosx-version-min=10.7"]
 
     def build_extensions(self):
-        ct = self.compiler.compiler_type
-        opts = self.c_opts.get(ct, [])
-        if ct == "unix":
+        comp_type = self.compiler.compiler_type
+        opts = self.c_opts.get(comp_type, [])
+        if comp_type == "unix":
             opts.append('-DVERSION_INFO="%s"' % self.distribution.get_version())
             opts.append(cpp_flag(self.compiler))
             if has_flag(self.compiler, "-fvisibility=hidden"):
                 opts.append("-fvisibility=hidden")
-        elif ct == "msvc":
+        elif comp_type == "msvc":
             opts.append('/DVERSION_INFO=\\"%s\\"' % self.distribution.get_version())
         for ext in self.extensions:
             ext.extra_compile_args = opts
@@ -110,25 +114,27 @@ class BuildExt(build_ext):
 
 
 class PyTest(TestCommand):
+    """Setuptools Test command for invoking pytest."""
+
     user_options = [("pytest-args=", "a", "Arguments to pass to pytest")]
 
     def initialize_options(self):
         TestCommand.initialize_options(self)
-        self.pytest_args = ""
+        self.pytest_args = "" # pylint: disable=attribute-defined-outside-init
 
     def run_tests(self):
-        import shlex
+        import shlex  # pylint: disable=import-outside-toplevel
 
         # import here, cause outside the eggs aren't loaded
-        import pytest
+        import pytest  # pylint: disable=import-outside-toplevel
 
         errno = pytest.main(shlex.split(self.pytest_args))
         sys.exit(errno)
 
 
 # Read the contents of the README file.
-with open(os.path.join(this_directory, "README.md")) as f:
-    long_description = f.read()
+with open(os.path.join(CURRENT_DIR, "README.md")) as readme_file:
+    LONG_DESCRIPTION = readme_file.read()
 
 setuptools.setup(
     author_email="hozblok@gmail.com",
@@ -144,10 +150,10 @@ setuptools.setup(
     ],
     cmdclass={"build_ext": BuildExt, "pytest": PyTest},
     description="Arbitrary-precision formula parser and solver.",
-    ext_modules=ext_modules,
+    ext_modules=EXT_MODULES,
     install_requires=["pybind11>=2.2"],
     long_description_content_type="text/markdown",
-    long_description=long_description,
+    long_description=LONG_DESCRIPTION,
     name="formula",
     packages=setuptools.find_packages(),
     python_requires=">2.6, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, <4",

@@ -1,0 +1,4 @@
+[MESSAGES CONTROL]
+
+disable=bad-continuation,
+      too-few-public-methods

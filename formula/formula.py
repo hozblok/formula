@@ -1,9 +1,11 @@
+"""Solver wrapper to simplify calculations with Formula."""
+
 try:
     from collections.abc import Mapping
 except ImportError:
     from collections import Mapping
 
-from ._formula import FmtFlags, Formula
+from ._formula import FmtFlags, Formula # pylint: disable=no-name-in-module
 
 
 class Solver(Formula):
@@ -16,7 +18,7 @@ class Solver(Formula):
 
     def __init__(
         self, expression, precision=24, imaginary_unit="i", case_insensitive=False
-    ):
+    ): # pylint: disable=useless-super-delegation
         super(Solver, self).__init__(
             expression, precision, imaginary_unit, case_insensitive
         )
@@ -25,7 +27,7 @@ class Solver(Formula):
         self, values=None, derivative=None, digits=0, format_flags=FmtFlags.default
     ):
         """Calculate the value of the parsed formula string.
-        
+
         Args:
             values: dict contains names of variables as keys and their
                 values as items respectively. Or any value that can be
