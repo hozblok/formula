@@ -1,6 +1,7 @@
 """Arbitrary-precision formula parser and solver."""
 
-from ._formula import FmtFlags, Formula # pylint: disable=no-name-in-module
+# pylint: disable=no-name-in-module, import-error
+from ._formula import FmtFlags, Formula
 from .formula import Solver
 
 MAX_PRECISION = 8192

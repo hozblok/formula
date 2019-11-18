@@ -5,7 +5,8 @@ try:
 except ImportError:
     from collections import Mapping
 
-from ._formula import FmtFlags, Formula # pylint: disable=no-name-in-module
+# pylint: disable=no-name-in-module, import-error
+from ._formula import FmtFlags, Formula
 
 
 class Solver(Formula):
@@ -18,7 +19,7 @@ class Solver(Formula):
 
     def __init__(
         self, expression, precision=24, imaginary_unit="i", case_insensitive=False
-    ): # pylint: disable=useless-super-delegation
+    ):  # pylint: disable=useless-super-delegation
         super(Solver, self).__init__(
             expression, precision, imaginary_unit, case_insensitive
         )

@@ -120,7 +120,7 @@ class PyTest(TestCommand):
 
     def initialize_options(self):
         TestCommand.initialize_options(self)
-        self.pytest_args = "" # pylint: disable=attribute-defined-outside-init
+        self.pytest_args = ""  # pylint: disable=attribute-defined-outside-init
 
     def run_tests(self):
         import shlex  # pylint: disable=import-outside-toplevel
