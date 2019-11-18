@@ -7,7 +7,7 @@
 
 namespace py = pybind11;
 
-PYBIND11_MODULE(formula, m) {
+PYBIND11_MODULE(_formula, m) {
   m.doc() = R"pbdoc(
         Arbitrary-precision formula parser and solver.
         -----------------------
