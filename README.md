@@ -1,8 +1,8 @@
-# formula - Arbitrary-precision formula parser and solver for Python
+# formula - Arbitrary-precision formula parser and solver
 
 [![PyPI](https://img.shields.io/pypi/v/formula.svg)](https://pypi.org/project/formula/)
-[![downloads](https://img.shields.io/pypi/dm/formula.svg)](https://pypistats.org/packages/formula)
 [![python](https://img.shields.io/badge/python-2.7%7C3.5%7C3.6%7C3.7%7C3.8-blue)](https://pypi.org/project/formula/)
+[![downloads](https://img.shields.io/pypi/dm/formula.svg)](https://pypistats.org/packages/formula)
 [![Travis (.com)](https://img.shields.io/travis/com/hozblok/formula)](https://travis-ci.com/github/hozblok/formula/branches)
 [![GitHub license](https://img.shields.io/github/license/hozblok/formula)](https://github.com/hozblok/formula/blob/master/LICENSE)
 [![Gitter](https://badges.gitter.im/don_vanchos/Lobby.svg)](https://gitter.im/don_vanchos/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
