@@ -1,6 +1,8 @@
 # formula - Arbitrary-precision formula parser and solver
 
 [![PyPI](https://img.shields.io/pypi/v/formula.svg)](https://pypi.org/project/formula/)
+[![GitHub license](https://img.shields.io/github/license/hozblok/formula)](https://github.com/hozblok/formula/blob/master/LICENSE)
+![Travis (.com)](https://img.shields.io/travis/com/hozblok/formula)
 
 ## Development status
 
@@ -14,7 +16,7 @@ This project built with [pybind11](https://github.com/pybind/pybind11).
 
 ## Installation
 
-### On Unix (Linux, OS X)
+### On Unix (Linux or OS X)
 
 + `pip install formula`
 
@@ -91,15 +93,15 @@ x_derivative = f5a.get_derivative("x", variables)
 z_derivative = f5a.get_derivative("z", variables)
 ```
 
-## License
-
-**formula** is provided under Apache license that can be found in the LICENSE
-file. By using, distributing, or contributing to this project, you agree to the
-terms and conditions of this license.
-
 ## Test call
 
 ```python
 from formula import Formula
 pi = Formula("2*asin(x)", 64).get({"x": "1"})
 ```
+
+## License
+
+**formula** is provided under Apache license that can be found in the LICENSE
+file. By using, distributing, or contributing to this project, you agree to the
+terms and conditions of this license.
