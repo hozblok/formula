@@ -1,6 +1,13 @@
 # formula - Arbitrary-precision formula parser and solver
 
 [![PyPI](https://img.shields.io/pypi/v/formula.svg)](https://pypi.org/project/formula/)
+[![python](https://img.shields.io/badge/python-2.7%7C3.5%7C3.6%7C3.7%7C3.8-blue)](https://pypi.org/project/formula/)
+[![downloads](https://img.shields.io/pypi/dm/formula.svg)](https://pypistats.org/packages/formula)
+[![Travis (.com)](https://img.shields.io/travis/com/hozblok/formula)](https://travis-ci.com/github/hozblok/formula/branches)
+[![GitHub license](https://img.shields.io/github/license/hozblok/formula)](https://github.com/hozblok/formula/blob/master/LICENSE)
+[![Gitter](https://badges.gitter.im/don_vanchos/Lobby.svg)](https://gitter.im/don_vanchos/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
+
+![Usage example](preview.gif)
 
 ## Development status
 
@@ -14,15 +21,19 @@ This project built with [pybind11](https://github.com/pybind/pybind11).
 
 ## Installation
 
-### On Unix (Linux, OS X)
+### On Unix (Linux or OS X)
 
 + `pip install formula`
 
-### On Windows (Requires Visual Studio 2015)
+### On Windows (Requires Microsoft Visual Studio 2015+)
 
 + For Python 3.5+:
   + clone this repository
   + `pip install ./formula`
+  + if you get an `error: Microsoft Visual C++ 14.0 is required.` install Microsoft
+  Visual C++ Build Tools 14.0 from https://visualstudio.microsoft.com/visual-cpp-build-tools/
+  and try again. Example of the correct selection to install:
+  ![Microsoft Visual C++ Build Tools](winbuildtools.png)
 + For earlier versions of Python, including Python 2.7:
 
    Pybind11 requires a C++11 compliant compiler (i.e. Visual Studio 2015 on
@@ -91,15 +102,15 @@ x_derivative = f5a.get_derivative("x", variables)
 z_derivative = f5a.get_derivative("z", variables)
 ```
 
-## License
-
-**formula** is provided under Apache license that can be found in the LICENSE
-file. By using, distributing, or contributing to this project, you agree to the
-terms and conditions of this license.
-
 ## Test call
 
 ```python
 from formula import Formula
 pi = Formula("2*asin(x)", 64).get({"x": "1"})
 ```
+
+## License
+
+**formula** is provided under Apache license that can be found in the LICENSE
+file. By using, distributing, or contributing to this project, you agree to the
+terms and conditions of this license.

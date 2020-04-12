@@ -99,7 +99,23 @@
     "python.linting.pylintEnabled": true,
     "python.pythonPath": "/usr/bin/python3.7",
     "cSpell.words": [
+        "choco",
+        "cmdclass",
         "cseval",
-        "pybind"
+        "dversion",
+        "ergunov",
+        "errno",
+        "fvisibility",
+        "isort",
+        "libc",
+        "mmacosx",
+        "msvc",
+        "pybind",
+        "pylint",
+        "pytest",
+        "sdist",
+        "submodules",
+        "xcode",
+        "xenial"
     ],
 }
