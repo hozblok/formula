@@ -1,8 +1,10 @@
-# formula - Arbitrary-precision formula parser and solver
+# formula - Arbitrary-precision formula parser and solver for Python
 
 [![PyPI](https://img.shields.io/pypi/v/formula.svg)](https://pypi.org/project/formula/)
 [![GitHub license](https://img.shields.io/github/license/hozblok/formula)](https://github.com/hozblok/formula/blob/master/LICENSE)
-![Travis (.com)](https://img.shields.io/travis/com/hozblok/formula)
+[![Travis (.com)](https://img.shields.io/travis/com/hozblok/formula)](https://travis-ci.com/github/hozblok/formula/branches)
+
+![Usage example](preview.gif)
 
 ## Development status
 
@@ -20,11 +22,13 @@ This project built with [pybind11](https://github.com/pybind/pybind11).
 
 + `pip install formula`
 
-### On Windows (Requires Visual Studio 2015)
+### On Windows (Requires Microsoft Visual Studio 2015)
 
 + For Python 3.5+:
   + clone this repository
   + `pip install ./formula`
+  + To avoid `error: Microsoft Visual C++ 14.0 is required.` install Microsoft
+  Visual C++ Build Tools 14.0: https://visualstudio.microsoft.com/visual-cpp-build-tools/
 + For earlier versions of Python, including Python 2.7:
 
    Pybind11 requires a C++11 compliant compiler (i.e. Visual Studio 2015 on
