@@ -1,0 +1,41 @@
+name: Test on windows (x86-x64)
+
+on: [pull_request]
+
+jobs:
+  test:
+    name: Test on python ${{ matrix.python }} ${{ matrix.os }} (${{ matrix.architecture }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-2016, windows-latest]
+        architecture: [x86, x64]
+        python: [3.6, 3.7, 3.8, 3.9, pypy3]
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python }}
+          architecture: ${{ matrix.architecture }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade setuptools wheel pytest
+      - name: Display Python version
+        run: |
+          python -m pip --version
+          python -c "import sys; print(sys.version)"
+      - name: Build
+        run: |
+          python setup.py --quiet build --build-platlib formula-tmp
+      - name: Test
+        run: |
+          python -m pytest --verbose formula-tmp
+      # - name: Build & Install & Test (old)
+      #   run: |
+      #     python setup.py --quiet sdist
+      #     python -c "import os; path = next(os.path.abspath(el.path) for el in os.scandir('dist')); print('--> PACKAGE:', path)"
+      #     python -c "import os; path = next(os.path.abspath(el.path) for el in os.scandir('dist')); os.system(f'python -m pip install {path}')"
+      #     python -m pytest --verbose
+      #     python setup.py --verbose pytest -a '--verbose'
