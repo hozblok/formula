@@ -2,6 +2,9 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#define STRINGIFY(x) #x
+#define MACRO_STRINGIFY(x) STRINGIFY(x)
+
 #include <cseval.hpp>
 #include <csformula.cpp>
 
@@ -144,7 +147,7 @@ using the passed real values of the variables.",
            py::arg("digits") = 0, py::arg("f") = std::ios_base::fmtflags(0));
 
 #ifdef VERSION_INFO
-  m.attr("__version__") = VERSION_INFO;
+  m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
 #else
   m.attr("__version__") = "dev";
 #endif

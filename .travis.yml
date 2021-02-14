@@ -10,11 +10,11 @@ jobs:
       python: "3.7"
       env: PYTHON=3.7
       install:
-        - pip install --progress-bar off pytest pybind11 # TODO: add config for isort
-        - pip install --progress-bar off black isort pylint
+        - pip install --progress-bar off pytest pybind11
+        - pip install --progress-bar off black pylint "isort>=5.0"
       script:
         - black --check --diff .
-        - isort --check-only --diff --recursive --project=formula
+        - isort . --check --diff --project=formula
         - pylint *.py **/*.py
     - &test
       stage: main
@@ -23,30 +23,16 @@ jobs:
       os: linux
       dist: xenial # required for Python >= 3.7 on Linux
       language: python
-      python: "2.7" # this works for Linux but is ignored on macOS or Windows 
-      env: PYTHON=2.7
+      python: "3.6" # this works for Linux but is ignored on macOS or Windows
+      env: PYTHON=3.6
       before_install:
         - pip install --upgrade --progress-bar off pip
       install:
         - python setup.py --quiet sdist
-        - # rm -rf formula.egg-info # see  https://github.com/pypa/pip/issues/4621
+        -  # rm -rf formula.egg-info # see  https://github.com/pypa/pip/issues/4621
         - pip install dist/*.tar.gz
       script:
         - python setup.py pytest -a '--verbose'
-    - <<: *test
-      language: python
-      python: "3.4"
-      env: PYTHON=3.4
-      before_install:
-        - pip install --upgrade --progress-bar off pip pytest==4.6
-    - <<: *test
-      language: python
-      python: "3.5"
-      env: PYTHON=3.5
-    - <<: *test
-      language: python
-      python: "3.6"
-      env: PYTHON=3.6
     - <<: *test
       language: python
       python: "3.7"
@@ -58,27 +44,11 @@ jobs:
     - <<: *test
       name: "Python 3.x on Windows"
       env: PATH=/c/Python3x:/c/Python3x/Scripts:$PATH
-      os: windows           # Windows 10.0.17134 N/A Build 17134
-      language: shell       # 'language: python' is an error on Travis CI Windows
+      os: windows # Windows 10.0.17134 N/A Build 17134
+      language: shell # 'language: python' is an error on Travis CI Windows
       before_install:
         - choco install python3 -y --params '/InstallDir:C:\Python3x'
         - python -m pip install --upgrade --progress-bar off pip
-      install:
-        - python setup.py --quiet sdist
-        - python -m pip install dist/*.tar.gz
-      script:
-        - python setup.py pytest -a '--verbose'
-    - <<: *test
-      name: "Python 2.7 on MacOS"
-      git:
-        submodules: false
-      os: osx
-      osx_image: xcode10.2  # Python 3.7.2 running on macOS 10.14.3
-      language: shell       # 'language: python' is an error on Travis CI macOS
-      env:
-        - PYTHON=2.7
-      before_install:
-        - python -m pip install --upgrade --progress-bar off pip pytest==4.6
       install:
         - python setup.py --quiet sdist
         - python -m pip install dist/*.tar.gz

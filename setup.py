@@ -5,17 +5,18 @@ import os
 import platform
 import sys
 
-import setuptools
-from setuptools.command.build_ext import build_ext
+from setuptools import find_packages, setup
 from setuptools.command.test import test as TestCommand
 
-__version__ = "1.1.4"
+# This `setup_helpers` file was copied from pybind11 ver. 2.6.2.
+from setup_helpers import Pybind11Extension, build_ext
+
+__version__ = "2.0.0"
 
 CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
 
 
-# pylint: disable=useless-object-inheritance
-class GetPybindInclude(object):
+class GetPybindInclude:
     """Helper class to determine the pybind11 include path
 
     The purpose of this class is to postpone importing pybind11
@@ -41,7 +42,7 @@ else:
 
 
 EXT_MODULES = [
-    setuptools.Extension(
+    Pybind11Extension(
         "formula._formula",
         ["src/main.cpp"],
         include_dirs=[
@@ -53,64 +54,10 @@ EXT_MODULES = [
             GetPybindInclude(),
             GetPybindInclude(user=True),
         ],
+        define_macros=[("VERSION_INFO", __version__)],
         language="c++",
     )
 ]
-
-
-# As of Python 3.6, CCompiler has a `has_flag` method.
-# cf http://bugs.python.org/issue26689
-def has_flag(compiler, flagname):
-    """Return a boolean indicating whether a flag name is supported on
-    the specified compiler.
-    """
-    import tempfile  # pylint: disable=import-outside-toplevel
-
-    with tempfile.NamedTemporaryFile("w", suffix=".cpp") as tmp_file:
-        tmp_file.write("int main (int argc, char **argv) { return 0; }")
-        try:
-            compiler.compile([tmp_file.name], extra_postargs=[flagname])
-        except setuptools.distutils.errors.CompileError:
-            return False
-    return True
-
-
-def cpp_flag(compiler):
-    """Return the -std=c++[11/14] compiler flag.
-
-    The c++14 is preferred over c++11 (when it is available).
-    """
-
-    if has_flag(compiler, "-std=c++14"):
-        return "-std=c++14"
-
-    if has_flag(compiler, "-std=c++11"):
-        return "-std=c++11"
-
-    raise RuntimeError("Unsupported compiler -- at least C++11 support " "is needed!")
-
-
-class BuildExt(build_ext):
-    """A custom build extension for adding compiler-specific options."""
-
-    c_opts = {"msvc": ["/EHsc"], "unix": []}
-
-    if sys.platform == "darwin":
-        c_opts["unix"] += ["-stdlib=libc++", "-mmacosx-version-min=10.7"]
-
-    def build_extensions(self):
-        comp_type = self.compiler.compiler_type
-        opts = self.c_opts.get(comp_type, [])
-        if comp_type == "unix":
-            opts.append('-DVERSION_INFO="%s"' % self.distribution.get_version())
-            opts.append(cpp_flag(self.compiler))
-            if has_flag(self.compiler, "-fvisibility=hidden"):
-                opts.append("-fvisibility=hidden")
-        elif comp_type == "msvc":
-            opts.append('/DVERSION_INFO=\\"%s\\"' % self.distribution.get_version())
-        for ext in self.extensions:
-            ext.extra_compile_args = opts
-        build_ext.build_extensions(self)
 
 
 class PyTest(TestCommand):
@@ -136,7 +83,8 @@ class PyTest(TestCommand):
 with open(os.path.join(CURRENT_DIR, "README.md")) as readme_file:
     LONG_DESCRIPTION = readme_file.read()
 
-setuptools.setup(
+
+setup(
     author_email="hozblok@gmail.com",
     author="Ivan Ergunov",
     classifiers=[
@@ -148,16 +96,17 @@ setuptools.setup(
         "Topic :: Scientific/Engineering :: Mathematics",
         "Topic :: Scientific/Engineering :: Physics",
     ],
-    cmdclass={"build_ext": BuildExt, "pytest": PyTest},
+    cmdclass={"build_ext": build_ext, "pytest": PyTest},
     description="Arbitrary-precision formula parser and solver.",
     ext_modules=EXT_MODULES,
-    install_requires=["pybind11>=2.2"],
+    install_requires=["pybind11>=2.4"],
+    license="Apache-2.0",
     long_description_content_type="text/markdown",
     long_description=LONG_DESCRIPTION,
     name="formula",
-    packages=setuptools.find_packages(),
-    python_requires=">2.6, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, <4",
-    setup_requires=["pybind11>=2.2"],
+    packages=find_packages(),
+    python_requires=">3.5.*, <4",
+    setup_requires=["pybind11>=2.6"],
     tests_require=["pytest>=2.1"],
     url="https://github.com/hozblok/formula",
     version=__version__,

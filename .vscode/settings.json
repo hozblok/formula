@@ -1,11 +1,23 @@
 {
     "[python]": {
-        "editor.rulers": [70, 88],
+        "editor.rulers": [
+            70,
+            {
+                "column": 88,
+                "color": "#dc322f"
+            }
+        ]
     },
     "C_Cpp.clang_format_fallbackStyle": "Google",
     "C_Cpp.clang_format_style": "Google",
     "C_Cpp.formatting": "Default",
-    "editor.rulers": [65, 80],
+    "editor.rulers": [
+        80,
+        {
+            "column": 120,
+            "color": "#dc322f"
+        }
+    ],
     "files.associations": {
         "cctype": "cpp",
         "cmath": "cpp",
@@ -97,7 +109,11 @@
     "python.linting.enabled": true,
     "python.linting.pycodestyleEnabled": false,
     "python.linting.pylintEnabled": true,
-    "python.pythonPath": "/usr/bin/python3.7",
+    "python.linting.mypyEnabled": true,
+    "python.linting.pylamaEnabled": false,
+    "python.linting.flake8Enabled": true,
+    "python.pythonPath": "venv/bin/python",
+    "python.venvFolders": ["venv", "venv37", "venv38"],
     "cSpell.words": [
         "choco",
         "cmdclass",
@@ -118,4 +134,6 @@
         "xcode",
         "xenial"
     ],
+    "python.linting.flake8Args": ["--max-line-length=88"],
+    "cornflakes.linter.executablePath": "pylint"
 }

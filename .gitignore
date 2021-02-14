@@ -14,4 +14,5 @@ tmp
 venv*
 formula-*
 .vscode/ipch
+.mypy_cache
 .pytest_cache
