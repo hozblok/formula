@@ -11,7 +11,7 @@ from setuptools.command.test import test as TestCommand
 # This `setup_helpers` file was copied from pybind11 ver. 2.6.2.
 from setup_helpers import Pybind11Extension, build_ext
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 
 CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
 
