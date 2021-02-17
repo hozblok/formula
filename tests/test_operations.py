@@ -1,6 +1,3 @@
-# -*- coding: utf-8 -*-
-# <-- support python2.7. It's not necessary in python3+
-
 """Test on calculation with operations: addition, subtraction,
 division, multiplication, etc."""
 
