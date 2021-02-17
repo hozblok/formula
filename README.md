@@ -37,7 +37,7 @@ This project built with [pybind11](https://github.com/pybind/pybind11).
     and try again. Example of the correct selection to install:
     ![Microsoft Visual C++ Build Tools](doc/img/winbuildtools.png)
 
-    ### Windows runtime requirements
+    #### Windows runtime requirements
 
     On Windows, the Visual C++ 2015 redistributable packages are a runtime
     requirement for this project. It can be found [here](https://www.microsoft.com/en-us/download/details.aspx?id=48145).
@@ -89,21 +89,34 @@ And it is enough to call the `formula` object to calculate the value of the expr
 
 ## Simple examples
 
+### One plus one =)
+
 ```python
 >>> from formula import Solver, FmtFlags
->>> Solver("1", precision=32)()
-'1'
->>> Solver("1", 32)(format_digits=20, format_flags=FmtFlags.showpos)
-'+1'
->>> Solver("1", 32)(format_digits=20, format_flags=FmtFlags.fixed | FmtFlags.showpos)
-'+1.00000000000000000000'
->>> Solver("1", 32)(format_digits=20, format_flags=FmtFlags.scientific | FmtFlags.showpos)
-'+1.00000000000000000000e+00'
+>>> Solver("1+1", precision=32)()
+'2'
+>>> Solver("1+1", 32)(format_digits=20, format_flags=FmtFlags.showpos)
+'+2'
+>>> Solver("1+1", 32)(format_digits=20, format_flags=FmtFlags.fixed | FmtFlags.showpos)
+'+2.00000000000000000000'
+>>> Solver("1+1", 32)(format_digits=20, format_flags=FmtFlags.scientific | FmtFlags.showpos)
+'+2.00000000000000000000e+00'
+```
+
+### Find the number of PI using arcsin
+
+#### Precision = 32
+
+```python
+>>> from formula import Solver, FmtFlags
 >>> Solver("2*asin(x)", precision=32)({"x": "1"})
+# just 32 digits:
 '3.1415926535897932384626433832795'
 >>> Solver("2*asin(x)", 32)({"x": "1"}, format_digits=32)
+# by default format_digits is equal to precision:
 '3.1415926535897932384626433832795'
 >>> Solver("2*asin(x)", 32)({"x": "1"}, format_digits=31)
+# let's round in accordance with format_digits:
 '3.14159265358979323846264338328'
 >>> Solver("2*asin(x)", 32)({"x": "1"}, format_digits=30)
 '3.14159265358979323846264338328'
@@ -115,12 +128,15 @@ And it is enough to call the `formula` object to calculate the value of the expr
 '3.1'
 >>> Solver("2*asin(x)", 32)(1, format_digits=1)
 '3'
->>> Solver("9.99 + 9e-20 + 9e-51", precision=64)(None, None, 50, FmtFlags.scientific)
-'9.99000000000000000009000000000000000000000000000001e+00'
->>> Solver("9.99 + 9e-20 + 9e-51", 64)(None, None, 51, FmtFlags.scientific)
-'9.990000000000000000090000000000000000000000000000009e+00'
->>> Solver("0 + 9e-20 + 9e-51", 64)(None, None, 31, FmtFlags.scientific)
-'9.0000000000000000000000000000009e-20'
+>>> Solver("2*asin(x)", 32)(1, format_digits=0)
+# show the entire chunk of memory, including insignificant digits:
+'3.141592653589793238462643383279502884197169399374'
+```
+
+#### Precision = 4096
+
+```python
+>>> from formula import Solver, FmtFlags
 >>> Solver("2*asin(x)", precision=4096)(1) # 4095 digits of pi after the point ;-)
 '3.141592653589793238462643383279502884197169399375105820974944592307816406286
 208998628034825342117067982148086513282306647093844609550582231725359408128481
@@ -175,6 +191,18 @@ And it is enough to call the `formula` object to calculate the value of the expr
 658213144957685726243344189303968642624341077322697802807318915441101044682325
 271620105265227211166039666557309254711055785376346682065310989652691862056476
 931257058635662018558100729360659876486118'
+```
+
+### Other examples
+
+```python
+>>> from formula import Solver, FmtFlags
+>>> Solver("9.99 + 9e-20 + 9e-51", precision=64)(None, None, 50, FmtFlags.scientific)
+'9.99000000000000000009000000000000000000000000000001e+00'
+>>> Solver("9.99 + 9e-20 + 9e-51", 64)(None, None, 51, FmtFlags.scientific)
+'9.990000000000000000090000000000000000000000000000009e+00'
+>>> Solver("0 + 9e-20 + 9e-51", 64)(None, None, 31, FmtFlags.scientific)
+'9.0000000000000000000000000000009e-20'
 ```
 
 ## License

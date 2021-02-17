@@ -32,10 +32,3 @@ jobs:
       - name: Test
         run: |
           python -m pytest --verbose formula-tmp
-      # - name: Build & Install & Test (old)
-      #   run: |
-      #     python setup.py --quiet sdist
-      #     python -c "import os; path = next(os.path.abspath(el.path) for el in os.scandir('dist')); print('--> PACKAGE:', path)"
-      #     python -c "import os; path = next(os.path.abspath(el.path) for el in os.scandir('dist')); os.system(f'python -m pip install {path}')"
-      #     python -m pytest --verbose
-      #     python setup.py --verbose pytest -a '--verbose'
