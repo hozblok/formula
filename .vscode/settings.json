@@ -113,7 +113,7 @@
     "python.linting.pylamaEnabled": false,
     "python.linting.flake8Enabled": true,
     "python.pythonPath": "venv/bin/python",
-    "python.venvFolders": ["venv", "venv37", "venv38"],
+    "python.venvFolders": ["venv", "venv37", "venv38", "venv39", "venv310"],
     "cSpell.words": [
         "choco",
         "cmdclass",
@@ -135,5 +135,8 @@
         "xenial"
     ],
     "python.linting.flake8Args": ["--max-line-length=88"],
-    "cornflakes.linter.executablePath": "pylint"
+    "cornflakes.linter.executablePath": "pylint",
+    "python.formatting.blackArgs": [
+        "--line-length 120"
+    ]
 }

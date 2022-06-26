@@ -5,11 +5,13 @@ import os
 import platform
 import sys
 
+from pybind11 import get_cmake_dir
+
+# Available at setup time due to pyproject.toml
+from pybind11.setup_helpers import Pybind11Extension, build_ext
 from setuptools import find_packages, setup
 from setuptools.command.test import test as TestCommand
 
-# This `setup_helpers` file was copied from pybind11 ver. 2.6.2.
-from setup_helpers import Pybind11Extension, build_ext
 
 __version__ = "2.0.1"
 
@@ -96,16 +98,17 @@ setup(
     ],
     cmdclass={"build_ext": build_ext, "pytest": PyTest},
     description="Arbitrary-precision formula parser and solver.",
+    # Currently, build_ext only provides an optional "highest supported C++
+    # level" feature, but in the future it may provide more features.
     ext_modules=EXT_MODULES,
-    install_requires=["pybind11>=2.4"],
+    extras_require={"test": "pytest"},
+    install_requires=["pybind11>=2.6"],
     license="Apache-2.0",
     long_description_content_type="text/markdown",
     long_description=LONG_DESCRIPTION,
     name="formula",
     packages=find_packages(),
-    python_requires=">3.5.*, <4",
-    setup_requires=["pybind11>=2.6"],
-    tests_require=["pytest>=2.1"],
+    python_requires=">=3.6, <4",
     url="https://github.com/hozblok/formula",
     version=__version__,
     zip_safe=False,

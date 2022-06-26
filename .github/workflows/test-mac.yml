@@ -8,9 +8,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [macos-latest]
+        os: [macos-11, macos-latest]
         architecture: [x64]
-        python: ["3.6", "3.7", "3.8", "3.9", "pypy-3.8"]
+        python: ["3.6", "3.7", "3.8", "3.9", "3.10", "pypy-3.8"]
     steps:
       - uses: actions/checkout@v2
       - name: Set up Python ${{ matrix.python }}
@@ -26,9 +26,9 @@ jobs:
         run: |
           python -m pip --version
           python -c "import sys; print(sys.version)"
-      - name: Build
+      - name: Build and install
         run: |
-          python setup.py --quiet build --build-platlib formula-tmp
+          python -m pip install --verbose --target formula-tmp .
       - name: Test
         run: |
           python -m pytest --verbose formula-tmp
