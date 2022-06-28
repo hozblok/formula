@@ -3,8 +3,7 @@
 *.egg-info
 *.eggs
 
-boost_lin_headers/boost_*
-boost_win_headers/boost_*
+boost_headers/boost_*
 
 **/__pycache__
 
