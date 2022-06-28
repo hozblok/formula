@@ -8,9 +8,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-16.04, ubuntu-18.04, ubuntu-latest]
+        os: [ubuntu-16.04, ubuntu-18.04, ubuntu-20.04, ubuntu-latest]
         architecture: [x64]
-        python: [3.6, 3.7, 3.8, 3.9, pypy3]
+        python: ["3.6", "3.7", "3.8", "3.9", "pypy-3.8"]
     steps:
       - uses: actions/checkout@v2
       - name: Set up Python ${{ matrix.python }}
