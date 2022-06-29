@@ -1,6 +1,3 @@
-# -*- coding: utf-8 -*-
-# <-- support python2.7. It's not necessary in python3+
-
 """Tests on various basic module use cases: parenthesized expressions,
 copying an object, getting variables, etc."""
 
@@ -84,7 +81,7 @@ def test_getting_variables():
         "D",
         "qwe",
         "s_s_s.",
-        u"йцу4",  # support python2.7. It's not necessary in python3+
+        "йцу4",
         "f",
         "t",
         "xx",
@@ -117,13 +114,22 @@ def test_changing_precision():
 def test_changing_expression():
     """Change expression and get value."""
 
-    formula = Formula("2*asin(x)", 16)
-    assert formula.get({"x": "1"}) == "3.1415926535897932384626433832795"
+    formula = Formula("2*asin(x)", 24)
+    assert (
+        formula.get({"x": "1"}, digits=23, format=FmtFlags.fixed)
+        == "3.14159265358979323846264"
+    )
     assert formula.expression == "2*asin(x)"
     formula.set_expression("asin(x)")
-    assert formula.get({"x": "1"}) == "1.57079632679489661923132169163975"
+    assert (
+        formula.get({"x": "1"}, digits=23, format=FmtFlags.fixed)
+        == "1.57079632679489661923132"
+    )
     formula.expression = "sin(x)"
-    assert formula.get({"x": "1"}) == "0.8414709848078965066609974948209608755664"
+    assert (
+        formula.get({"x": "1"}, digits=23, format=FmtFlags.fixed)
+        == "0.84147098480789650665250"
+    )
 
 
 def test_formula_object_copy():
