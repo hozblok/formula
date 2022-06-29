@@ -2,7 +2,6 @@
 distributing, and installing formula using the Distutils."""
 
 import os
-import platform
 import sys
 
 from pybind11 import get_cmake_dir
