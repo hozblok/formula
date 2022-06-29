@@ -3,10 +3,10 @@
 # We don't need to update boost headers very often. So we can bootstrap all headers here
 # in the 'boost' catalog and use it everywhere.
 import argparse
-import urllib.request
 import os
 from pathlib import Path
 import shutil
+import urllib.request
 import zipfile
 
 parser = argparse.ArgumentParser(description="Download and update Boost headers.")
@@ -26,12 +26,13 @@ print("Output:", file_name_ext)
 
 print("Download...")
 
-# TODO
-# url = f"https://boostorg.jfrog.io/artifactory/main/release/{version}/source/{file_name_ext}"
-# chunk_size = 65536
-# with urllib.request.urlopen(url) as response, open(script_dir / file_name_ext, "wb") as out_file:
-#     while data := response.read(chunk_size):
-#         out_file.write(data)
+url = f"https://boostorg.jfrog.io/artifactory/main/release/{version}/source/{file_name_ext}"
+chunk_size = 65536
+with urllib.request.urlopen(url) as response, open(
+    script_dir / file_name_ext, "wb"
+) as out_file:
+    while data := response.read(chunk_size):
+        out_file.write(data)
 
 print("Unzip...")
 
@@ -59,8 +60,8 @@ allowed_libs = {
     "bind",
     "concept",
     "config",
-    "container",
     "container_hash",
+    "container",
     "core",
     "detail",
     "exception",
@@ -113,6 +114,5 @@ Path(boost_entry).rename(script_dir / "boost")
 
 print("Clean up...")
 shutil.rmtree(script_dir / file_name)
-# TODO
-# os.remove(script_dir / file_name_ext)
-print("*"*20)
+os.remove(script_dir / file_name_ext)
+print("*" * 20)
