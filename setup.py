@@ -35,10 +35,8 @@ class GetPybindInclude:
 DEV_BOOST_HEADERS = os.path.join(CURRENT_DIR, "boost", "boost")
 if __version__.startswith("dev") and os.path.exists(DEV_BOOST_HEADERS):
     BOOST_HEADERS = "boost/"
-elif platform.system() == "Windows":
-    BOOST_HEADERS = "boost_win_headers/"
 else:
-    BOOST_HEADERS = "boost_lin_headers/"
+    BOOST_HEADERS = "boost_headers/"
 
 
 EXT_MODULES = [

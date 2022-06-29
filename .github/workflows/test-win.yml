@@ -8,9 +8,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-2016, windows-latest]
+        os: [windows-2016]
         architecture: [x86, x64]
-        python: [3.6, 3.7, 3.8, 3.9, pypy3]
+        python: ["3.6", "3.7", "3.8", "3.9", "pypy-3.8"]
     steps:
       - uses: actions/checkout@v2
       - name: Set up Python ${{ matrix.python }}
