@@ -13,7 +13,6 @@
 ## Development status
 
 [![PyPI - Status](https://img.shields.io/pypi/status/formula)](https://pypi.org/project/formula/)
-[![python](https://img.shields.io/badge/python-3.6%7C3.7%7C3.8%7C3.9-blue)](https://pypi.org/project/formula/)
 
 Development plan:
 
