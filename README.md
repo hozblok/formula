@@ -2,9 +2,8 @@
 
 [![PyPI](https://img.shields.io/pypi/v/formula.svg)](https://pypi.org/project/formula/)
 [![PyPI - Format](https://img.shields.io/pypi/format/formula)](https://pypi.org/project/formula/)
-[![python](https://img.shields.io/badge/python-3.6%7C3.7%7C3.8%7C3.9-blue)](https://pypi.org/project/formula/)
-[![downloads](https://img.shields.io/pypi/dm/formula.svg)](https://pypistats.org/packages/formula)
-[![Travis (.com)](https://img.shields.io/travis/com/hozblok/formula)](https://travis-ci.com/github/hozblok/formula/branches)
+[![python](https://img.shields.io/badge/python-3.6%7C3.7%7C3.8%7C3.9%7C3.10%7C3.11-blue)](https://pypi.org/project/formula/)
+[![PyPI - Downloads](https://img.shields.io/pypi/dm/formula)](https://pypistats.org/packages/formula)
 [![GitHub license](https://img.shields.io/github/license/hozblok/formula)](https://github.com/hozblok/formula/blob/master/LICENSE)
 [![Gitter](https://badges.gitter.im/don_vanchos/Lobby.svg)](https://gitter.im/don_vanchos/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
 
