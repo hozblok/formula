@@ -1,4 +1,3 @@
 recursive-include boost_headers *.hpp *.cpp *.h
 recursive-include src *.hpp *.cpp
 include LICENSE
-include setup_helpers.py
