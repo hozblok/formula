@@ -5,6 +5,7 @@
         "austin.code-gnu-global",
         "mitaki28.vscode-clang",
         "ms-python.black-formatter",
-        "tamasfe.even-better-toml"
+        "tamasfe.even-better-toml",
+        "github.vscode-github-actions"
     ]
 }

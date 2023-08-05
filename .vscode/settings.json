@@ -126,6 +126,7 @@
         "libc",
         "mmacosx",
         "msvc",
+        "multiprecision",
         "pybind",
         "pylint",
         "pytest",
