@@ -128,7 +128,7 @@ And it is enough to call the `formula` object to calculate the value of the expr
 '3'
 >>> Solver("2*asin(x)", 32)(1, format_digits=0)
 # show the entire chunk of memory, including insignificant digits:
-'3.141592653589793238462643383279502884197169399374'
+'3.1415926535897932384626433832795028841971'
 ```
 
 #### Precision = 4096

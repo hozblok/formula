@@ -160,6 +160,15 @@ def test_solver_digits():
     assert (
         Solver("2*asin(x)", 32)(1, format_digits=28) == "3.141592653589793238462643383"
     )
+    assert Solver("2*asin(x)", 32)(1, format_digits=14) == "3.1415926535898"
+    assert Solver("2*asin(x)", 32)(1, format_digits=13) == "3.14159265359"
+    assert Solver("2*asin(x)", 32)(1, format_digits=12) == "3.14159265359"
+    assert Solver("2*asin(x)", 32)(1, format_digits=11) == "3.1415926536"
+    assert Solver("2*asin(x)", 32)(1, format_digits=10) == "3.141592654"
+    assert Solver("2*asin(x)", 32)(1, format_digits=9) == "3.14159265"
+    assert Solver("2*asin(x)", 32)(1, format_digits=8) == "3.1415927"
+    assert Solver("2*asin(x)", 32)(1, format_digits=7) == "3.141593"
+    assert Solver("2*asin(x)", 32)(1, format_digits=6) == "3.14159"
     assert Solver("2*asin(x)", 32)(1, format_digits=5) == "3.1416"
     assert Solver("2*asin(x)", 32)(1, format_digits=4) == "3.142"
     assert Solver("2*asin(x)", 32)(1, format_digits=3) == "3.14"
@@ -168,7 +177,7 @@ def test_solver_digits():
     # show the entire chunk of memory, including insignificant digits:
     assert (
         Solver("2*asin(x)", 32)(1, format_digits=0)
-        == "3.141592653589793238462643383279502884197169399374"
+        == "3.1415926535897932384626433832795028841971"
     )
 
 
