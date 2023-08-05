@@ -3,7 +3,7 @@ copying an object, getting variables, etc."""
 
 import pytest
 
-from formula import FmtFlags, Formula
+from formula import FmtFlags, Formula, Solver
 
 
 def test_evaluation():  # pylint: disable=too-many-statements
@@ -129,6 +129,61 @@ def test_changing_expression():
     assert (
         formula.get({"x": "1"}, digits=23, format=FmtFlags.fixed)
         == "0.84147098480789650665250"
+    )
+
+
+def test_solver_digits():
+    """Simple cases with Solver"""
+    # just 32 digits:
+    assert (
+        Solver("2*asin(x)", precision=32)({"x": "1"})
+        == "3.1415926535897932384626433832795"
+    )
+    # by default format_digits is equal to precision:
+    assert (
+        Solver("2*asin(x)", 32)({"x": "1"}, format_digits=32)
+        == "3.1415926535897932384626433832795"
+    )
+    # let's round in accordance with format_digits:
+    assert (
+        Solver("2*asin(x)", 32)({"x": "1"}, format_digits=31)
+        == "3.14159265358979323846264338328"
+    )
+    assert (
+        Solver("2*asin(x)", 32)({"x": "1"}, format_digits=30)
+        == "3.14159265358979323846264338328"
+    )
+    assert (
+        Solver("2*asin(x)", 32)({"x": "1"}, format_digits=29)
+        == "3.1415926535897932384626433833"
+    )
+    assert (
+        Solver("2*asin(x)", 32)(1, format_digits=28) == "3.141592653589793238462643383"
+    )
+    assert Solver("2*asin(x)", 32)(1, format_digits=5) == "3.1416"
+    assert Solver("2*asin(x)", 32)(1, format_digits=4) == "3.142"
+    assert Solver("2*asin(x)", 32)(1, format_digits=3) == "3.14"
+    assert Solver("2*asin(x)", 32)(1, format_digits=2) == "3.1"
+    assert Solver("2*asin(x)", 32)(1, format_digits=1) == "3"
+    # show the entire chunk of memory, including insignificant digits:
+    assert (
+        Solver("2*asin(x)", 32)(1, format_digits=0)
+        == "3.141592653589793238462643383279502884197169399374"
+    )
+
+
+def test_complex_numbers():
+    """Complex numbers."""
+    formula = Solver("2*asin(x)*i*i", 24)
+    assert (
+        formula.get({"x": "1"}, digits=23, format=FmtFlags.fixed)
+        == "-0.84147098480789650665250"
+    )
+
+    formula = Formula("2*asin(x)*i*i", 24)
+    assert (
+        formula.get({"x": "1"}, digits=23, format=FmtFlags.fixed)
+        == "-0.84147098480789650665250"
     )
 
 

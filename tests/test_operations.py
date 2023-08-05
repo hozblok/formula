@@ -33,7 +33,7 @@ def test_simple_sum(var1, var2, expected_result, precision):
     assert expected_result == Formula(var1 + "+" + var2, precision).get()
     assert expected_result == Formula(var1 + "+" + var2, precision).get({})
     assert expected_result == Formula(var1 + "+" + var2, precision).get(
-        {"qwer": "-1", u"й": "0"}
+        {"qwer": "-1", "й": "0"}
     )
 
 
@@ -64,7 +64,7 @@ def test_simple_subtract(var1, var2, expected_result, precision):
     assert expected_result == Formula(var1 + "-" + var2, precision).get()
     assert expected_result == Formula(var1 + "-" + var2, precision).get({})
     assert expected_result == Formula(var1 + "-" + var2, precision).get(
-        {u"asdf_фыва": "-1", u"й": "1e-100500"}
+        {"asdf_фыва": "-1", "й": "1e-100500"}
     )
 
 
