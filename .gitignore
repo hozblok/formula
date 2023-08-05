@@ -11,6 +11,7 @@ build
 dist
 tmp
 venv*
+.venv*
 formula-*
 .vscode/ipch
 .mypy_cache

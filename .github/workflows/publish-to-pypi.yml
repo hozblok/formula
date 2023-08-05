@@ -51,12 +51,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --upgrade setuptools wheel twine
+          python -m pip install --upgrade setuptools wheel twine build
       - name: Build and publish
         env:
           TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+# https://blog.ganssle.io/articles/2021/10/setup-py-deprecated.html
+# https://pypa-build.readthedocs.io/en/stable/#build
         run: |
-          python setup.py --quiet build sdist bdist_wheel bdist_egg
+          python -m build --sdist --wheel
           python -c "import os; paths = ' '.join(os.path.abspath(el.path) for el in os.scandir('dist')); os.system(f'python -m twine check {paths}')"
           python -c "import os; paths = ' '.join(os.path.abspath(el.path) for el in os.scandir('dist')); os.system(f'python -m twine upload --non-interactive --skip-existing {paths}')"
