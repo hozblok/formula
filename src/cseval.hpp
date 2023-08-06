@@ -176,7 +176,13 @@ const std::regex kWrongVariableRegex(
 template <unsigned N>
 using mp_real =
     boost::multiprecision::number<boost::multiprecision::cpp_dec_float<N>,
-                                  boost::multiprecision::et_on>;
+                                  boost::multiprecision::et_off>;
+
+/**
+ * Arbitrary-precision arithmetic with complex numbers.
+ */
+template <unsigned N>
+using mp_complex = boost::multiprecision::cpp_complex<N>;
 
 /**
  * All available precisions for high accuracy calculations.
@@ -273,18 +279,22 @@ class cseval {
    * "+","-","/","x","a"
    * (!) all variable names must be represented by one Latin letter (!).
    * (!) i, j - reserved for complex numbers. (!)
+   * TODO (?) real only one? Why?
    */
   std::string id_;
 
   /**
-   * Value which was parset from expression, value makes sense if kind is 'n'.
+   * Value which was parsed from expression, value makes sense if kind is 'n'.
    */
   Real value_;
 
   /** Child elements of the formula tree. */
   cseval *left_eval_, *right_eval_;
 
-  /** Symbol of the imaginary unit (by default - 'i'). */
+  /**
+   * Symbol of the imaginary unit (by default - 'i').
+   * Only one Latin character (!).
+   */
   char imaginary_unit_;
 
   /** Try to find each symbol of {symbols} string in the {str} string. */

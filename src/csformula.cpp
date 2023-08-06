@@ -6,10 +6,17 @@ Formula::Formula(const std::string &expression, const unsigned precision,
       precision_(AllowedPrecisions::p_16),
       expression_(""),
       imaginary_unit_(imaginary_unit),
+      is_complex_(false),
       case_insensitive_(case_insensitive) {
 #ifdef CSDEBUG
   std::cout << "constructor Formula +" << std::endl;
 #endif
+  if (imaginary_unit_.length() != 1) {
+    throw std::invalid_argument(
+        "Imaginary unit should be one Latin character (e.g. 'i'), but "
+        "received: " +
+        imaginary_unit);
+  }
   prepare_precision(precision);
   prepare_expression(expression);
   init_eval();
@@ -23,6 +30,7 @@ Formula::Formula(const Formula &other)
       precision_(other.precision_),
       expression_(std::string(other.expression_)),
       imaginary_unit_(other.imaginary_unit_),
+      is_complex_(other.is_complex_),
       case_insensitive_(other.case_insensitive_) {
 #ifdef CSDEBUG
   std::cout << "copy constructor Formula+" << std::endl;
@@ -150,7 +158,20 @@ location and / or number of brackets");
   boost::algorithm::erase_all(expression_, "\t");
   boost::algorithm::erase_all(expression_, "\v");
 
+  // Check whether expression_ contains complex numbers or not.
   if (case_insensitive_) {
+    std::regex regexp_check_complex_numbers("\\b(" + imaginary_unit_ + ")\\b",
+                                            std::regex_constants::icase);
+    is_complex_ = std::regex_search(expression_, regexp_check_complex_numbers);
+  } else {
+    std::regex rx("\\b(" + imaginary_unit_ + ")\\b");
+    is_complex_ = std::regex_search(expression_, regexp_check_complex_numbers);
+  }
+
+  if (case_insensitive_) {
+    // TODO cannot give back to user the original expression?
     boost::algorithm::to_lower(expression_);
+    // TODO cannot give back to user the original expression?
+    boost::algorithm::to_lower(imaginary_unit_);
   }
 }

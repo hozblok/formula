@@ -24,8 +24,7 @@ typedef boost::variant<
     EvalVariantSmall;
 
 /**
- * Visitor to get type of current Eval object and create the
- * copy of it.
+ * Visitor to get type of current Eval object and create the copy of it.
  */
 struct InitEvalFromCopyVisitor : public boost::static_visitor<void> {
   template <typename SHARED_PTR_CSEVAL_T>
@@ -71,8 +70,7 @@ struct GetCalculatedDerivativeStringVisitor
   std::string operator()(
       const T &eval, const std::string &variable,
       const std::map<std::string, std::string> &variables_to_values,
-      std::streamsize &digits,
-      std::ios_base::fmtflags &format) const {
+      std::streamsize &digits, std::ios_base::fmtflags &format) const {
     return eval->calculate_derivative(variable, variables_to_values).str();
   }
 };
@@ -121,13 +119,19 @@ class Formula {
    * "(x+1)*(y-0.004)*(sin(x))^2"
    * May differ from user input in the following:
    * Cannot contain whitespace symbols (' ', '\n', '\t', '\v')
-   * and mathes the case-sensitivity according to the
+   * and matches the case-sensitivity according to the
    * 'case_insensitive_' option.
    */
   std::string expression_;
 
-  /** Symbol - indicator of the imaginary unit. (dy default - 'i') */
-  char imaginary_unit_;
+  /**
+   * Symbol - indicator of the imaginary unit. (dy default - 'i')
+   * Only one Latin character (!).
+   */
+  const char imaginary_unit_;
+
+  /** Whether it contains complex numbers or not. */
+  bool is_complex_;
 
   /** Whether parse expression in case insensitive style or not. */
   bool case_insensitive_;
@@ -138,11 +142,17 @@ class Formula {
   /** Initialize СSEval object. */
   template <std::size_t I = 0>
   inline typename std::enable_if<I == kPrecisionsLength>::type init_eval() {}
+
   template <std::size_t I = 0>
-      inline typename std::enable_if < I<kPrecisionsLength>::type init_eval() {
+      inline typename std::enable_if < PI<kPrecisionsLength>::type init_eval() {
     if (static_cast<unsigned>(precision_) == precisions_array[I]) {
-      eval_ = std::make_shared<cseval<mp_real<precisions_array[I]>>>(
-          expression_, imaginary_unit_);
+      if (is_complex_) {
+        eval_ = std::make_shared<cseval<mp_complex<precisions_array[I]>>>(
+            expression_, imaginary_unit_);
+      } else {
+        eval_ = std::make_shared<cseval<mp_real<precisions_array[I]>>>(
+            expression_, imaginary_unit_);
+      }
     } else if (I + 1 < kPrecisionsLength) {
       init_eval<I + 1>();
     }
@@ -187,7 +197,8 @@ class Formula {
   /** Parse all variables from the formula expression. */
   std::unordered_set<std::string> variables() const {
     std::unordered_set<std::string> variables;
-    auto visitor = std::bind(CollectVariablesVisitor(), &variables, std::placeholders::_1);
+    auto visitor =
+        std::bind(CollectVariablesVisitor(), &variables, std::placeholders::_1);
     boost::apply_visitor(visitor, eval_);
     return variables;
   }
