@@ -11,12 +11,6 @@ Formula::Formula(const std::string &expression, const unsigned precision,
 #ifdef CSDEBUG
   std::cout << "constructor Formula +" << std::endl;
 #endif
-  if (imaginary_unit_.length() != 1) {
-    throw std::invalid_argument(
-        "Imaginary unit should be one Latin character (e.g. 'i'), but "
-        "received: " +
-        imaginary_unit);
-  }
   prepare_precision(precision);
   prepare_expression(expression);
   init_eval();
@@ -160,11 +154,13 @@ location and / or number of brackets");
 
   // Check whether expression_ contains complex numbers or not.
   if (case_insensitive_) {
-    std::regex regexp_check_complex_numbers("\\b(" + imaginary_unit_ + ")\\b",
-                                            std::regex_constants::icase);
+    std::regex regexp_check_complex_numbers(
+        "\\b(" + std::string(1, imaginary_unit_) + ")\\b",
+        std::regex_constants::icase);
     is_complex_ = std::regex_search(expression_, regexp_check_complex_numbers);
   } else {
-    std::regex rx("\\b(" + imaginary_unit_ + ")\\b");
+    std::regex regexp_check_complex_numbers(
+        "\\b(" + std::string(1, imaginary_unit_) + ")\\b");
     is_complex_ = std::regex_search(expression_, regexp_check_complex_numbers);
   }
 
@@ -172,6 +168,6 @@ location and / or number of brackets");
     // TODO cannot give back to user the original expression?
     boost::algorithm::to_lower(expression_);
     // TODO cannot give back to user the original expression?
-    boost::algorithm::to_lower(imaginary_unit_);
+    // boost::algorithm::to_lower(imaginary_unit_);
   }
 }

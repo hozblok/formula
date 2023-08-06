@@ -144,7 +144,7 @@ class Formula {
   inline typename std::enable_if<I == kPrecisionsLength>::type init_eval() {}
 
   template <std::size_t I = 0>
-      inline typename std::enable_if < PI<kPrecisionsLength>::type init_eval() {
+      inline typename std::enable_if < I<kPrecisionsLength>::type init_eval() {
     if (static_cast<unsigned>(precision_) == precisions_array[I]) {
       if (is_complex_) {
         eval_ = std::make_shared<cseval<mp_complex<precisions_array[I]>>>(

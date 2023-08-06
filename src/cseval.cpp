@@ -76,12 +76,6 @@ cseval<Real>::cseval(std::string expression, char imaginary_unit)
 #ifdef CSDEBUG
   std::cout << "constructor cseval, expression:" << expression << std::endl;
 #endif
-  if (imaginary_unit.length() > 1) {
-    throw std::invalid_argument(
-        "Imaginary unit must consist of one Latin character (e.g. 'i'), but "
-        "received: " +
-        imaginary_unit);
-  }
   if (expression.empty()) {
     throw std::invalid_argument(
         "Expression string is empty or \

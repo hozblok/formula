@@ -14,6 +14,7 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
 #include <boost/math/constants/constants.hpp>
+#include <boost/multiprecision/cpp_complex.hpp>
 #include <boost/multiprecision/cpp_dec_float.hpp>
 #include <boost/variant.hpp>
 
@@ -182,7 +183,10 @@ using mp_real =
  * Arbitrary-precision arithmetic with complex numbers.
  */
 template <unsigned N>
-using mp_complex = boost::multiprecision::cpp_complex<N>;
+using mp_complex =
+    boost::multiprecision::number<boost::multiprecision::cpp_dec_float<N>,
+                                  boost::multiprecision::et_off>;
+// boost::multiprecision::cpp_complex<N>;
 
 /**
  * All available precisions for high accuracy calculations.
@@ -295,7 +299,7 @@ class cseval {
    * Symbol of the imaginary unit (by default - 'i').
    * Only one Latin character (!).
    */
-  char imaginary_unit_;
+  const char imaginary_unit_;
 
   /** Try to find each symbol of {symbols} string in the {str} string. */
   std::unordered_map<char, size_t> operations_outside_parentheses(
