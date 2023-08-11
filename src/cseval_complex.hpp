@@ -1,10 +1,10 @@
-#ifndef EVAL_MPF_H
-#define EVAL_MPF_H
+#ifndef EVAL_COMPLEX_MPF_H
+#define EVAL_COMPLEX_MPF_H
 
 #include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
 #include <boost/math/constants/constants.hpp>
-#include <boost/multiprecision/cpp_dec_float.hpp>
+#include <boost/multiprecision/cpp_complex.hpp>
 #include <boost/variant.hpp>
 #include <map>
 #include <memory>
@@ -16,12 +16,15 @@
 #include "csconstants.hpp"
 
 /**
- * Arbitrary-precision arithmetic.
+ * Arbitrary-precision arithmetic with complex numbers.
  */
 template <unsigned N>
-using mp_real =
-    boost::multiprecision::number<boost::multiprecision::cpp_dec_float<N>,
+using mp_complex =
+    boost::multiprecision::number<boost::multiprecision::cpp_complex_backend<N>,
                                   boost::multiprecision::et_off>;
+
+// TODO Complex numbers
+// typedef std::complex<float100et> complexFloat100et;
 
 using boost::math::constants::pi;
 // TODO add log10 sinh cosh tanh asinh acosh atanh
@@ -40,10 +43,10 @@ using boost::multiprecision::tan;
 
 /**
  * Class for evaluating formula specified by the string
- * typename Real (not mp_real<NUMBER>) for double support.
+ * typename Complex (not mp_complex<NUMBER>) for double support.
  */
-template <typename Real>
-class cseval {
+template <typename Complex>
+class cseval_complex {
   /**
    * Kind of formula element:
    * 'n' - number, 'v' - variable, 'f' - function, 'e' - error.
@@ -62,10 +65,10 @@ class cseval {
   /**
    * Value which was parsed from expression, value makes sense if kind is 'n'.
    */
-  Real value_;
+  Complex value_;
 
   /** Child elements of the formula tree. */
-  cseval *left_eval_, *right_eval_;
+  cseval_complex *left_eval_, *right_eval_;
 
   /**
    * Symbol of the imaginary unit (by default - 'i').
@@ -81,23 +84,23 @@ class cseval {
   bool isThereSymbolsOutsideParentheses(const std::string &str) const;
 
  public:
-  cseval(std::string expression, char imaginary_unit = 'i');
+  cseval_complex(std::string expression, char imaginary_unit = 'i');
 
-  cseval(const cseval &other);
+  cseval_complex(const cseval_complex &other);
 
-  ~cseval();
+  ~cseval_complex();
 
-  cseval &operator=(const cseval &other) {
+  cseval_complex &operator=(const cseval_complex &other) {
     if (this != &other) {
       kind_ = other.kind_;
       id_ = std::string(other.id_);
-      value_ = Real(other.value_);
+      value_ = Complex(other.value_, "0");
       imaginary_unit_ = other.imaginary_unit_;
       if (left_eval_) {
         delete left_eval_;
       }
       if (other.left_eval_) {
-        left_eval_ = new cseval<Real>(other.left_eval_);
+        left_eval_ = new cseval_complex<Complex>(other.left_eval_);
       } else {
         left_eval_ = nullptr;
       }
@@ -105,7 +108,7 @@ class cseval {
         delete right_eval_;
       }
       if (other.right_eval_) {
-        right_eval_ = new cseval<Real>(other.right_eval_);
+        right_eval_ = new cseval_complex<Complex>(other.right_eval_);
       } else {
         right_eval_ = nullptr;
       }
@@ -130,72 +133,69 @@ class cseval {
   }
 
   // Evaluation of subformula.
-  Real calculate(const std::map<std::string, Real> &variables_to_values,
-                 const std::map<std::string, Real (*)(Real, Real)>
-                     &mapFunctionTwoArgsValue = functionsTwoArgs,
-                 const std::map<std::string, Real (*)(Real)>
-                     &mapFunctionOneArgValue = functionsOneArg) const;
-  Real calculate(const std::map<std::string, std::string> &variables_to_values,
-                 const std::map<std::string, Real (*)(Real, Real)>
-                     &mapFunctionTwoArgsValue = functionsTwoArgs,
-                 const std::map<std::string, Real (*)(Real)>
-                     &mapFunctionOneArgValue = functionsOneArg) const;
-  Real calculate(const std::map<std::string, double> &variables_to_values,
-                 const std::map<std::string, Real (*)(Real, Real)>
-                     &mapFunctionTwoArgsValue = functionsTwoArgs,
-                 const std::map<std::string, Real (*)(Real)>
-                     &mapFunctionOneArgValue = functionsOneArg) const;
-  // Evaluation derivative of subformula.
-  Real calculate_derivative(
-      const std::string &variable,
-      const std::map<std::string, Real> &variables_to_values,
-      const std::map<std::string, Real (*)(Real, Real)>
+  Complex calculate(const std::map<std::string, Complex> &variables_to_values,
+                    const std::map<std::string, Complex (*)(Complex, Complex)>
+                        &mapFunctionTwoArgsValue = functionsTwoArgs,
+                    const std::map<std::string, Complex (*)(Complex)>
+                        &mapFunctionOneArgValue = functionsOneArg) const;
+  Complex calculate(
+      const std::map<std::string, std::string> &variables_to_values,
+      const std::map<std::string, Complex (*)(Complex, Complex)>
           &mapFunctionTwoArgsValue = functionsTwoArgs,
-      const std::map<std::string, Real (*)(Real)> &mapFunctionOneArgValue =
-          functionsOneArg,
-      const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivLeft =
-          functionsTwoArgsDLeft,
-      const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivRight =
-          functionsTwoArgsDRight) const;
+      const std::map<std::string, Complex (*)(Complex)>
+          &mapFunctionOneArgValue = functionsOneArg) const;
+  Complex calculate(const std::map<std::string, double> &variables_to_values,
+                    const std::map<std::string, Complex (*)(Complex, Complex)>
+                        &mapFunctionTwoArgsValue = functionsTwoArgs,
+                    const std::map<std::string, Complex (*)(Complex)>
+                        &mapFunctionOneArgValue = functionsOneArg) const;
+  // Evaluation derivative of subformula.
+  Complex calculate_derivative(
+      const std::string &variable,
+      const std::map<std::string, Complex> &variables_to_values,
+      const std::map<std::string, Complex (*)(Complex, Complex)>
+          &mapFunctionTwoArgsValue = functionsTwoArgs,
+      const std::map<std::string, Complex (*)(Complex)>
+          &mapFunctionOneArgValue = functionsOneArg,
+      const std::map<std::string, Complex (*)(Complex, Complex)>
+          &mapFunctionDerivLeft = functionsTwoArgsDLeft,
+      const std::map<std::string, Complex (*)(Complex, Complex)>
+          &mapFunctionDerivRight = functionsTwoArgsDRight) const;
 
-  Real calculate_derivative(
+  Complex calculate_derivative(
       const std::string &variable,
       const std::map<std::string, std::string> &variables_to_values,
-      const std::map<std::string, Real (*)(Real, Real)>
+      const std::map<std::string, Complex (*)(Complex, Complex)>
           &mapFunctionTwoArgsValue = functionsTwoArgs,
-      const std::map<std::string, Real (*)(Real)> &mapFunctionOneArgValue =
-          functionsOneArg,
-      const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivLeft =
-          functionsTwoArgsDLeft,
-      const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivRight =
-          functionsTwoArgsDRight) const;
+      const std::map<std::string, Complex (*)(Complex)>
+          &mapFunctionOneArgValue = functionsOneArg,
+      const std::map<std::string, Complex (*)(Complex, Complex)>
+          &mapFunctionDerivLeft = functionsTwoArgsDLeft,
+      const std::map<std::string, Complex (*)(Complex, Complex)>
+          &mapFunctionDerivRight = functionsTwoArgsDRight) const;
 
   // Usefull constants.
-  const static Real ZERO;
-  const static Real ONE;
+  const static Complex ZERO;
+  const static Complex ONE;
 
   //+ general static methods that have a one-to-one correspondence
   // with the operations specified in the expression string
   // "+" - addition
-  static Real _add(Real a, Real b) { return a + b; }
+  static Complex _add(Complex a, Complex b) { return a + b; }
   // "-" - subtraction
-  static Real _sub(Real a, Real b) { return a - b; }
+  static Complex _sub(Complex a, Complex b) { return a - b; }
   // "&" - and
-  static Real _and(Real a, Real b) {
+  static Complex _and(Complex a, Complex b) {
     return a != ZERO && b != ZERO ? ONE : ZERO;
   }
   // "|" - or
-  static Real _or(Real a, Real b) {
+  static Complex _or(Complex a, Complex b) {
     return a != ZERO || b != ZERO ? ONE : ZERO;
   }
   // "=" - is equal to
-  static Real _eq(Real a, Real b) { return a == b ? ONE : ZERO; }
-  // "<"
-  static Real _lt(Real a, Real b) { return a < b ? ONE : ZERO; }
-  // ">"
-  static Real _gt(Real a, Real b) { return a > b ? ONE : ZERO; }
+  static Complex _eq(Complex a, Complex b) { return a == b ? ONE : ZERO; }
   // "/" - division
-  static Real _truediv(Real a, Real b) {
+  static Complex _truediv(Complex a, Complex b) {
     if (b == ZERO) {
       throw std::invalid_argument(
           "Division by zero during the \'/\' operation");
@@ -203,7 +203,7 @@ class cseval {
     return a / b;
   }
   // division for the computation of the derivative (left path)
-  static Real _truediv1(Real, Real b) {
+  static Complex _truediv1(Complex, Complex b) {
     if (b == ZERO) {
       throw std::invalid_argument(
           "Division by zero during the computation the left path \
@@ -212,7 +212,7 @@ of the derivative");
     return 1 / b;
   }
   // division for the computation of the derivative (right path)
-  static Real _truediv2(Real a, Real b) {
+  static Complex _truediv2(Complex a, Complex b) {
     if (b == ZERO) {
       throw std::invalid_argument(
           "Division by zero during the computation of \
@@ -221,30 +221,30 @@ right path of the derivative");
     return ZERO - a / (b * b);
   }
   // "*" - multiplication
-  static Real _mul(Real a, Real b) { return a * b; }
+  static Complex _mul(Complex a, Complex b) { return a * b; }
   // multiplication for the computation of the derivative (left path)
-  static Real _mul1(Real, Real b) { return b; }
+  static Complex _mul1(Complex, Complex b) { return b; }
   // multiplication for the computation of the derivative (right path)
-  static Real _mul2(Real a, Real) { return a; }
+  static Complex _mul2(Complex a, Complex) { return a; }
   // "^" - exponentiation
-  static Real _pow(Real a, Real b) { return pow(a, b); }
+  static Complex _pow(Complex a, Complex b) { return pow(a, b); }
   // exponentiation for the computation of the derivative (left path)
-  static Real _pow1(Real a, Real b) { return (b * _pow(a, b - ONE)); }
+  static Complex _pow1(Complex a, Complex b) { return (b * _pow(a, b - ONE)); }
   // exponentiation for the computation of the derivative (right path)
   // TODO test log()
-  static Real _pow2(Real a, Real b) { return (_log(a) * _pow(a, b)); }
+  static Complex _pow2(Complex a, Complex b) { return (_log(a) * _pow(a, b)); }
   //- general static methods
 
   //+ trigonometric functions, exp, log, sqrt and methods for the computation of
   // the derivative:
   // "sin"
-  static Real _sin(Real a) { return sin(a); }
+  static Complex _sin(Complex a) { return sin(a); }
   // "sin" for the derivative
-  static Real _sin_d(Real a, Real) { return cos(a); }
+  static Complex _sin_d(Complex a, Complex) { return cos(a); }
   // "asin"
-  static Real _asin(Real a) { return asin(a); }
+  static Complex _asin(Complex a) { return asin(a); }
   // "asin" for the derivative
-  static Real _asin_d(Real a, Real) {
+  static Complex _asin_d(Complex a, Complex) {
     if (a * a == ONE) {
       // TODO may be inf?
       throw std::invalid_argument(
@@ -253,12 +253,12 @@ right path of the derivative");
     return ONE / _sqrt(ONE - a * a);
   }
   // "cos"
-  static Real _cos(Real a) { return cos(a); }
+  static Complex _cos(Complex a) { return cos(a); }
   // "cos" for the derivative
-  static Real _cos_d(Real a, Real) { return ZERO - _sin(a); }
+  static Complex _cos_d(Complex a, Complex) { return ZERO - _sin(a); }
   // "acos"
-  static Real _acos(Real a) { return acos(a); }
-  static Real _acos_d(Real a, Real) {
+  static Complex _acos(Complex a) { return acos(a); }
+  static Complex _acos_d(Complex a, Complex) {
     if (a * a == ONE) {
       throw std::invalid_argument(
           "Division by zero during the computation of \
@@ -267,9 +267,9 @@ the arccos derivative");
     return ZERO - (ONE / _sqrt(ONE - a * a));
   }
   // "tan"
-  static Real _tan(Real a) { return tan(a); }
+  static Complex _tan(Complex a) { return tan(a); }
   // "tan" for the derivative
-  static Real _tan_d(Real a, Real) {
+  static Complex _tan_d(Complex a, Complex) {
     if (_cos(a) == ZERO) {
       throw std::invalid_argument(
           "Division by zero during the computation of \
@@ -278,17 +278,17 @@ the tangent derivative");
     return ONE / (_cos(a) * _cos(a));
   }
   // "atan"
-  static Real _atan(Real a) { return atan(a); }
+  static Complex _atan(Complex a) { return atan(a); }
   // "atan" for the derivative
-  static Real _atan_d(Real a, Real) { return ONE / (ONE + a * a); }
+  static Complex _atan_d(Complex a, Complex) { return ONE / (ONE + a * a); }
   // "exp"
-  static Real _exp(Real a) { return exp(a); }
+  static Complex _exp(Complex a) { return exp(a); }
   // "exp" for the derivative
-  static Real _exp_d(Real a, Real) { return exp(a); }
+  static Complex _exp_d(Complex a, Complex) { return exp(a); }
   // "log" - (!) Natural logarithm
-  static Real _log(Real a) { return log(a); }
+  static Complex _log(Complex a) { return log(a); }
   // "log" - (!) Natural logarithm for the derivative
-  static Real _log_d(Real a, Real) {
+  static Complex _log_d(Complex a, Complex) {
     if (a == ZERO) {
       throw std::invalid_argument(
           "Division by zero during the computation of \
@@ -297,10 +297,10 @@ the natural logarithm derivative");
     return ONE / a;
   }
   // "sqrt" - square root
-  static Real _sqrt(Real a) { return sqrt(a); }
+  static Complex _sqrt(Complex a) { return sqrt(a); }
   // TODO test _sqrt_d()
   // "sqrt" for the derivative
-  static Real _sqrt_d(Real a, Real) {
+  static Complex _sqrt_d(Complex a, Complex) {
     if (sqrt(a) == ZERO) {
       throw std::invalid_argument(
           "Division by zero during the computation of \
@@ -311,25 +311,26 @@ the sqrt derivative");
   //- trigonometric functions, exp, log, sqrt
 
   //+ auxiliary methods for the computation of the derivative:
-  static Real _zero(Real, Real) { return ZERO; }
-  static Real _one(Real, Real) { return ONE; }
-  static Real _m_one(Real, Real) { return ZERO - ONE; }
+  static Complex _zero(Complex, Complex) { return ZERO; }
+  static Complex _one(Complex, Complex) { return ONE; }
+  static Complex _m_one(Complex, Complex) { return ZERO - ONE; }
   //- auxiliary methods
 
   // dictionaries contain the appropriate names of operations and static methods
   // for evaluating, e.g.
   // "+" -> _add
   // "sin" -> _sin
-  static const std::map<std::string, Real (*)(Real, Real)> functionsTwoArgs;
-  static const std::map<std::string, Real (*)(Real)> functionsOneArg;
+  static const std::map<std::string, Complex (*)(Complex, Complex)>
+      functionsTwoArgs;
+  static const std::map<std::string, Complex (*)(Complex)> functionsOneArg;
 
   // dictionaries contain references to derivatives of basic functions and their
   // names:
-  static const std::map<std::string, Real (*)(Real, Real)>
+  static const std::map<std::string, Complex (*)(Complex, Complex)>
       functionsTwoArgsDLeft;
-  static const std::map<std::string, Real (*)(Real, Real)>
+  static const std::map<std::string, Complex (*)(Complex, Complex)>
       functionsTwoArgsDRight;
-  static const std::map<std::string, Real (*)(Real)> functionsOneArgD;
+  static const std::map<std::string, Complex (*)(Complex)> functionsOneArgD;
 };
 
-#endif  // EVAL_MPF_H
+#endif  // EVAL_COMPLEX_MPF_H

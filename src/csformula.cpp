@@ -29,9 +29,15 @@ Formula::Formula(const Formula &other)
 #ifdef CSDEBUG
   std::cout << "copy constructor Formula+" << std::endl;
 #endif
-  auto visitor =
-      std::bind(InitEvalFromCopyVisitor(), &eval_, std::placeholders::_1);
-  boost::apply_visitor(visitor, other.eval_);
+  if (is_complex_) {
+    auto visitor_complex =
+      std::bind(InitEvalFromCopyVisitor<EvalComplexVariantSmall>(), &eval_complex_, std::placeholders::_1);
+    boost::apply_visitor(visitor_complex, other.eval_complex_);
+  } else {
+    auto visitor =
+        std::bind(InitEvalFromCopyVisitor<EvalVariantSmall>(), &eval_, std::placeholders::_1);
+    boost::apply_visitor(visitor, other.eval_);
+  }
 #ifdef CSDEBUG
   std::cout << "copy constructor Formula-" << std::endl;
 #endif
@@ -62,14 +68,17 @@ bool Formula::validate_brackets(const std::string &str) const {
   return (count == 0);
 }
 
-// TODO support Real and double and ... values.
-template <typename Real>
-Real Formula::get(
-    const std::map<std::string, Real> &variables_to_values) const {
-  GetCalculatedRealVisitor<Real> visitor = GetCalculatedRealVisitor<Real>();
-  visitor.variables_to_values = &variables_to_values;
-  return boost::apply_visitor(visitor, eval_);
-}
+// template <typename RealOrComplex>
+// RealOrComplex Formula::get(
+//     const std::map<std::string, RealOrComplex> &variables_to_values) const {
+//   GetCalculatedRealVisitor<RealOrComplex> visitor = GetCalculatedRealVisitor<RealOrComplex>();
+//   visitor.variables_to_values = &variables_to_values;
+//   if (is_complex_) {
+//     return boost::apply_visitor(visitor, eval_);
+//   } else {
+//     return boost::apply_visitor(visitor, eval_complex_);
+//   }
+// }
 
 std::string Formula::get(
     const std::map<std::string, std::string> &variables_to_values,
@@ -79,7 +88,11 @@ std::string Formula::get(
   visitor.variables_to_values = &variables_to_values;
   visitor.digits = digits;
   visitor.format = format;
-  return boost::apply_visitor(visitor, eval_);
+  // if (is_complex_) {
+    return boost::apply_visitor<GetCalculatedStringVisitor<std::string>, const EvalVariantSmall &>(visitor, eval_);
+  // } else {
+    // return boost::apply_visitor<GetCalculatedStringVisitor<std::string>, const EvalComplexVariantSmall &>(visitor, eval_complex_);
+  // }
 }
 
 std::string Formula::get(
@@ -90,7 +103,11 @@ std::string Formula::get(
   visitor.variables_to_values = &variables_to_values;
   visitor.digits = digits;
   visitor.format = format;
-  return boost::apply_visitor(visitor, eval_);
+  // if (is_complex_) {
+    return boost::apply_visitor(visitor, eval_);
+  // } else {
+    // return boost::apply_visitor(visitor, eval_complex_);
+  // }
 }
 
 // TODO support Real and double and ... values.
@@ -108,7 +125,11 @@ std::string Formula::get_derivative(
   auto visitor =
       std::bind(GetCalculatedDerivativeStringVisitor(), std::placeholders::_1,
                 variable, variables_to_values, digits, format);
-  return boost::apply_visitor(visitor, eval_);
+  // if (is_complex_) {
+    return boost::apply_visitor(visitor, eval_);
+  // } else {
+    // return boost::apply_visitor(visitor, eval_complex_);
+  // }
 }
 
 void Formula::prepare_precision(const unsigned &precision) {

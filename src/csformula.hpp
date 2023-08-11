@@ -1,6 +1,7 @@
 #ifndef CSFORMULA_H
 #define CSFORMULA_H
 #include "cseval.cpp"
+#include "cseval_complex.hpp"
 
 typedef boost::variant<
     std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_16>>>,
@@ -23,17 +24,51 @@ typedef boost::variant<
     std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_8192>>>>
     EvalVariantSmall;
 
+typedef boost::variant<
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_16>>>,
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_24>>>,
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_32>>>,
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_48>>>,
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_64>>>,
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_96>>>,
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_128>>>,
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_192>>>,
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_256>>>,
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_384>>>,
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_512>>>,
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_768>>>,
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_1024>>>,
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_2048>>>,
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_3072>>>,
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_4096>>>,
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_6144>>>,
+    std::shared_ptr<cseval<mp_complex<AllowedPrecisions::p_8192>>>>
+    EvalComplexVariantSmall;
+
 /**
  * Visitor to get type of current Eval object and create the copy of it.
  */
+template <typename VariantSmall>
 struct InitEvalFromCopyVisitor : public boost::static_visitor<void> {
   template <typename SHARED_PTR_CSEVAL_T>
-  void operator()(EvalVariantSmall *eval,
+  void operator()(VariantSmall *eval,
                   const SHARED_PTR_CSEVAL_T &other_eval) {
     this->set_eval(eval, other_eval.get());
   }
   template <typename CSEVAL_T>
-  void set_eval(EvalVariantSmall *eval, const CSEVAL_T *other_eval_raw) {
+  void set_eval(VariantSmall *eval, const CSEVAL_T *other_eval_raw) {
+    *eval = std::make_shared<CSEVAL_T>(*other_eval_raw);
+  }
+};
+
+struct InitEvalComplexFromCopyVisitor : public boost::static_visitor<void> {
+  template <typename SHARED_PTR_CSEVAL_T>
+  void operator()(EvalComplexVariantSmall *eval,
+                  const SHARED_PTR_CSEVAL_T &other_eval) {
+    this->set_eval(eval, other_eval.get());
+  }
+  template <typename CSEVAL_T>
+  void set_eval(EvalComplexVariantSmall *eval, const CSEVAL_T *other_eval_raw) {
     *eval = std::make_shared<CSEVAL_T>(*other_eval_raw);
   }
 };
@@ -53,14 +88,14 @@ struct GetCalculatedStringVisitor : public boost::static_visitor<std::string> {
   std::ios_base::fmtflags format;
 };
 
-/** Visitor to get Real value after calculating the formula. */
-template <typename Real>
-struct GetCalculatedRealVisitor : public boost::static_visitor<Real> {
+/** Visitor to get Real or Complex value after calculating the formula. */
+template <typename RealOrComplex>
+struct GetCalculatedRealVisitor : public boost::static_visitor<RealOrComplex> {
   template <typename T>
-  Real operator()(const T &eval) const {
+  RealOrComplex operator()(const T &eval) const {
     return eval->calculate(*variables_to_values);
   }
-  const std::map<std::string, Real> *variables_to_values;
+  const std::map<std::string, RealOrComplex> *variables_to_values;
 };
 
 /** Visitor to calculate partial derivative of the formula. */
@@ -138,6 +173,7 @@ class Formula {
 
   /** Pointer to a recursive, smart formula string parser object. */
   EvalVariantSmall eval_;
+  EvalComplexVariantSmall eval_complex_;
 
   /** Initialize СSEval object. */
   template <std::size_t I = 0>
@@ -146,13 +182,13 @@ class Formula {
   template <std::size_t I = 0>
       inline typename std::enable_if < I<kPrecisionsLength>::type init_eval() {
     if (static_cast<unsigned>(precision_) == precisions_array[I]) {
-      if (is_complex_) {
-        eval_ = std::make_shared<cseval<mp_complex<precisions_array[I]>>>(
-            expression_, imaginary_unit_);
-      } else {
+      // if (is_complex_) {
+        // eval_complex_ = std::make_shared<cseval_complex<mp_complex<precisions_array[I]>>>(
+        //     expression_, imaginary_unit_);
+      // } else {
         eval_ = std::make_shared<cseval<mp_real<precisions_array[I]>>>(
             expression_, imaginary_unit_);
-      }
+      // }
     } else if (I + 1 < kPrecisionsLength) {
       init_eval<I + 1>();
     }
@@ -209,10 +245,10 @@ class Formula {
    * the variables.
    * NOTE: Variables can be only letters of the Latin alphabet
    * ('a','b',...,'z') and 'i' (by default) reserved for complex
-   * number.
+   * number. TODO: why so?
    */
-  template <typename Real>
-  Real get(const std::map<std::string, Real> &variables_to_values = {}) const;
+  template <typename RealOrComplex>
+  RealOrComplex get(const std::map<std::string, RealOrComplex> &variables_to_values = {}) const;
 
   std::string get(
       const std::map<std::string, std::string> &variables_to_values = {},
