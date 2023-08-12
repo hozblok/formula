@@ -8,7 +8,7 @@ const Real cseval<Real>::ONE = Real("1");
 
 template <typename Real>
 const std::map<std::string, Real (*)(Real, Real)>
-    cseval<Real>::functionsTwoArgs = {
+    functionsTwoArgs = {
         {std::string("|"), cseval<Real>::_or},  {std::string("&"), cseval<Real>::_and},
         {std::string("="), cseval<Real>::_eq},  {std::string(">"), cseval<Real>::_gt},
         {std::string("<"), cseval<Real>::_lt},  {std::string("+"), cseval<Real>::_add},

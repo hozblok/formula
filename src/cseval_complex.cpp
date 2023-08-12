@@ -7,14 +7,6 @@ template <typename Complex>
 const Complex cseval_complex<Complex>::ONE = Complex("1", "0");
 
 template <typename Complex>
-const std::map<std::string, Complex (*)(Complex, Complex)>
-    cseval_complex<Complex>::functionsTwoArgs = {
-        {std::string("|"), cseval_complex<Complex>::_or},  {std::string("&"), cseval_complex<Complex>::_and},
-        {std::string("="), cseval_complex<Complex>::_eq},  {std::string("+"), cseval_complex<Complex>::_add},
-        {std::string("-"), cseval_complex<Complex>::_sub}, {std::string("/"), cseval_complex<Complex>::_truediv},
-        {std::string("*"), cseval_complex<Complex>::_mul}, {std::string("^"), cseval_complex<Complex>::_pow}};
-
-template <typename Complex>
 const std::map<std::string, Complex (*)(Complex)> cseval_complex<Complex>::functionsOneArg = {
     {std::string("sin"), cseval_complex<Complex>::_sin}, {std::string("asin"), cseval_complex<Complex>::_asin},
     {std::string("cos"), cseval_complex<Complex>::_cos}, {std::string("acos"), cseval_complex<Complex>::_acos},

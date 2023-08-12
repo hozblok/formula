@@ -134,17 +134,17 @@ class cseval {
                  const std::map<std::string, Real (*)(Real, Real)>
                      &mapFunctionTwoArgsValue = functionsTwoArgs,
                  const std::map<std::string, Real (*)(Real)>
-                     &mapFunctionOneArgValue = functionsOneArg) const;
+                     &mapFunctionOneArgValue = cseval<Real>::functionsOneArg) const;
   Real calculate(const std::map<std::string, std::string> &variables_to_values,
                  const std::map<std::string, Real (*)(Real, Real)>
                      &mapFunctionTwoArgsValue = functionsTwoArgs,
                  const std::map<std::string, Real (*)(Real)>
-                     &mapFunctionOneArgValue = functionsOneArg) const;
+                     &mapFunctionOneArgValue = cseval<Real>::functionsOneArg) const;
   Real calculate(const std::map<std::string, double> &variables_to_values,
                  const std::map<std::string, Real (*)(Real, Real)>
                      &mapFunctionTwoArgsValue = functionsTwoArgs,
                  const std::map<std::string, Real (*)(Real)>
-                     &mapFunctionOneArgValue = functionsOneArg) const;
+                     &mapFunctionOneArgValue = cseval<Real>::functionsOneArg) const;
   // Evaluation derivative of subformula.
   Real calculate_derivative(
       const std::string &variable,
@@ -152,11 +152,11 @@ class cseval {
       const std::map<std::string, Real (*)(Real, Real)>
           &mapFunctionTwoArgsValue = functionsTwoArgs,
       const std::map<std::string, Real (*)(Real)> &mapFunctionOneArgValue =
-          functionsOneArg,
+          cseval<Real>::functionsOneArg,
       const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivLeft =
-          functionsTwoArgsDLeft,
+          cseval<Real>::functionsTwoArgsDLeft,
       const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivRight =
-          functionsTwoArgsDRight) const;
+          cseval<Real>::functionsTwoArgsDRight) const;
 
   Real calculate_derivative(
       const std::string &variable,
@@ -164,11 +164,11 @@ class cseval {
       const std::map<std::string, Real (*)(Real, Real)>
           &mapFunctionTwoArgsValue = functionsTwoArgs,
       const std::map<std::string, Real (*)(Real)> &mapFunctionOneArgValue =
-          functionsOneArg,
+          cseval<Real>::functionsOneArg,
       const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivLeft =
-          functionsTwoArgsDLeft,
+          cseval<Real>::functionsTwoArgsDLeft,
       const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivRight =
-          functionsTwoArgsDRight) const;
+          cseval<Real>::functionsTwoArgsDRight) const;
 
   // Usefull constants.
   const static Real ZERO;
