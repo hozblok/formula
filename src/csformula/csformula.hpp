@@ -1,7 +1,9 @@
 #ifndef CSFORMULA_H
 #define CSFORMULA_H
-#include "cseval.cpp"
-#include "cseval_complex.cpp"
+
+#include "../cseval/cseval.cpp"
+#include "../cseval/cseval_complex.cpp"
+#include "./csvisitors.hpp"
 
 typedef boost::variant<
     std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_16>>>,
@@ -44,67 +46,6 @@ typedef boost::variant<
     std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_6144>>>,
     std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_8192>>>>
     CSEvalComplexVariant;
-
-/**
- * Visitor to get type of current Eval object and create the copy of it.
- */
-template <typename VARIANT_T>
-struct InitEvalFromCopyVisitor : public boost::static_visitor<void> {
-  template <typename SHARED_PTR_CSEVAL_T>
-  void operator()(VARIANT_T *eval,
-                  const SHARED_PTR_CSEVAL_T &other_eval) {
-    this->set_eval(eval, other_eval.get());
-  }
-  template <typename CSEVAL_T>
-  void set_eval(VARIANT_T *eval, const CSEVAL_T *other_eval_raw) {
-    *eval = std::make_shared<CSEVAL_T>(*other_eval_raw);
-  }
-};
-
-/**
- * Visitor to get string value after calculating the formula.
- * ArgType: string or double.
- */
-template <typename ARG_T>
-struct GetCalculatedStringVisitor : public boost::static_visitor<std::string> {
-  template <typename CSEVAL_T>
-  std::string operator()(const CSEVAL_T &eval_any) const {
-    return eval_any->calculate(*variables_to_values).str(digits, format);
-  }
-  const std::map<std::string, ARG_T> *variables_to_values;
-  std::streamsize digits;
-  std::ios_base::fmtflags format;
-  bool is_complex;
-};
-
-/** Visitor to get Real or Complex value after calculating the formula. */
-template <typename RealOrComplex>
-struct GetCalculatedVisitor : public boost::static_visitor<RealOrComplex> {
-  template <typename T>
-  RealOrComplex operator()(const T &eval) const {
-    return eval->calculate(*variables_to_values);
-  }
-  const std::map<std::string, RealOrComplex> *variables_to_values;
-};
-
-/** Visitor to calculate partial derivative of the formula. */
-struct GetCalculatedDerivativeStringVisitor
-    : public boost::static_visitor<std::string> {
-  template <typename T>
-  std::string operator()(
-      const T &eval, const std::string &variable,
-      const std::map<std::string, std::string> &variables_to_values,
-      std::streamsize &digits, std::ios_base::fmtflags &format) const {
-    return eval->calculate_derivative(variable, variables_to_values).str();
-  }
-};
-
-struct CollectVariablesVisitor : public boost::static_visitor<void> {
-  template <typename T>
-  void operator()(std::unordered_set<std::string> *variables, const T &eval) {
-    eval->collect_variables(variables);
-  }
-};
 
 //  * To calculate the value of the derivative of a function, we use
 //  * the following simple transformations:
@@ -172,8 +113,9 @@ class Formula {
       inline typename std::enable_if < I<kPrecisionsLength>::type init_eval() {
     if (static_cast<unsigned>(precision_) == precisions_array[I]) {
       if (is_complex_) {
-        eval_complex_ = std::make_shared<cseval_complex<mp_complex<precisions_array[I]>>>(
-            expression_, imaginary_unit_);
+        eval_complex_ =
+            std::make_shared<cseval_complex<mp_complex<precisions_array[I]>>>(
+                expression_, imaginary_unit_);
       } else {
         // TODO: delete imaginary_unit_
         eval_ = std::make_shared<cseval<mp_real<precisions_array[I]>>>(
@@ -238,7 +180,8 @@ class Formula {
    * number. TODO: why so?
    */
   template <typename RealOrComplex>
-  RealOrComplex get(const std::map<std::string, RealOrComplex> &variables_to_values = {}) const;
+  RealOrComplex get(const std::map<std::string, RealOrComplex>
+                        &variables_to_values = {}) const;
 
   std::string get(
       const std::map<std::string, std::string> &variables_to_values = {},

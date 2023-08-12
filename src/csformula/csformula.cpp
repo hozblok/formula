@@ -1,4 +1,4 @@
-#include "csformula.hpp"
+#include "./csformula.hpp"
 
 Formula::Formula(const std::string &expression, const unsigned precision,
                  const char imaginary_unit, const bool case_insensitive)
@@ -35,8 +35,8 @@ Formula::Formula(const Formula &other)
                   &eval_complex_, std::placeholders::_1);
     boost::apply_visitor(visitor_complex, other.eval_complex_);
   } else {
-    auto visitor = std::bind(InitEvalFromCopyVisitor<CSEvalVariant>(),
-                             &eval_, std::placeholders::_1);
+    auto visitor = std::bind(InitEvalFromCopyVisitor<CSEvalVariant>(), &eval_,
+                             std::placeholders::_1);
     boost::apply_visitor(visitor, other.eval_);
   }
 #ifdef CSDEBUG
