@@ -3,7 +3,6 @@
 
 #include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
-#include <boost/math/constants/constants.hpp>
 #include <boost/multiprecision/cpp_dec_float.hpp>
 #include <boost/variant.hpp>
 #include <map>
@@ -23,21 +22,6 @@ using mp_real =
     boost::multiprecision::number<boost::multiprecision::cpp_dec_float<N>,
                                   boost::multiprecision::et_off>;
 
-using boost::math::constants::pi;
-// TODO add log10 sinh cosh tanh asinh acosh atanh
-using boost::multiprecision::acos;
-using boost::multiprecision::asin;
-using boost::multiprecision::atan;
-using boost::multiprecision::cos;
-using boost::multiprecision::exp;
-using boost::multiprecision::fabs;  // TODO non complex? log2?
-using boost::multiprecision::log;
-using boost::multiprecision::pow;
-using boost::multiprecision::sin;
-using boost::multiprecision::sqrt;
-using boost::multiprecision::swap;
-using boost::multiprecision::tan;
-
 /**
  * Class for evaluating formula specified by the string
  * typename Real (not mp_real<NUMBER>) for double support.
@@ -52,10 +36,8 @@ class cseval {
 
   /**
    * The function name or variable name for current node. e.g.
-   * "+","-","/","x","a"
-   * (!) all variable names must be represented by one Latin letter (!).
-   * (!) i, j - reserved for complex numbers. (!)
-   * TODO (?) real only one? Why?
+   * "+","-","/","x","a","sin"
+   * (!) "i" - by default reserved for complex numbers. (!)
    */
   std::string id_;
 
@@ -70,6 +52,7 @@ class cseval {
   /**
    * Symbol of the imaginary unit (by default - 'i').
    * Only one Latin character (!).
+   * TODO: delete me.
    */
   const char imaginary_unit_;
 
@@ -130,21 +113,24 @@ class cseval {
   }
 
   // Evaluation of subformula.
-  Real calculate(const std::map<std::string, Real> &variables_to_values,
-                 const std::map<std::string, Real (*)(Real, Real)>
-                     &mapFunctionTwoArgsValue = functionsTwoArgs,
-                 const std::map<std::string, Real (*)(Real)>
-                     &mapFunctionOneArgValue = cseval<Real>::functionsOneArg) const;
-  Real calculate(const std::map<std::string, std::string> &variables_to_values,
-                 const std::map<std::string, Real (*)(Real, Real)>
-                     &mapFunctionTwoArgsValue = functionsTwoArgs,
-                 const std::map<std::string, Real (*)(Real)>
-                     &mapFunctionOneArgValue = cseval<Real>::functionsOneArg) const;
-  Real calculate(const std::map<std::string, double> &variables_to_values,
-                 const std::map<std::string, Real (*)(Real, Real)>
-                     &mapFunctionTwoArgsValue = functionsTwoArgs,
-                 const std::map<std::string, Real (*)(Real)>
-                     &mapFunctionOneArgValue = cseval<Real>::functionsOneArg) const;
+  Real calculate(
+      const std::map<std::string, Real> &variables_to_values,
+      const std::map<std::string, Real (*)(Real, Real)>
+          &mapFunctionTwoArgsValue = functionsTwoArgs,
+      const std::map<std::string, Real (*)(Real)> &mapFunctionOneArgValue =
+          cseval<Real>::functionsOneArg) const;
+  Real calculate(
+      const std::map<std::string, std::string> &variables_to_values,
+      const std::map<std::string, Real (*)(Real, Real)>
+          &mapFunctionTwoArgsValue = functionsTwoArgs,
+      const std::map<std::string, Real (*)(Real)> &mapFunctionOneArgValue =
+          cseval<Real>::functionsOneArg) const;
+  Real calculate(
+      const std::map<std::string, double> &variables_to_values,
+      const std::map<std::string, Real (*)(Real, Real)>
+          &mapFunctionTwoArgsValue = functionsTwoArgs,
+      const std::map<std::string, Real (*)(Real)> &mapFunctionOneArgValue =
+          cseval<Real>::functionsOneArg) const;
   // Evaluation derivative of subformula.
   Real calculate_derivative(
       const std::string &variable,

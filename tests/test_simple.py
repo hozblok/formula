@@ -72,7 +72,7 @@ def test_evaluation():  # pylint: disable=too-many-statements
 
 
 def test_getting_variables():
-    """Check that formula return correct varables."""
+    """Check that formula return correct variables."""
     formula = Formula("a*b+c+D/qwe+s_s_s.*16+3^йцу4^f^t+a+xx+x+x+x")
     assert formula.variables() == {
         "a",
@@ -181,18 +181,33 @@ def test_solver_digits():
     )
 
 
-def test_complex_numbers():
+def test_complex_numbers_1():
     """Complex numbers."""
     formula = Solver("2*asin(x)*i*i", 24)
     assert (
         formula.get({"x": "1"}, digits=23, format=FmtFlags.fixed)
-        == "-0.84147098480789650665250"
+        == "-3.14159265358979323846264"
     )
 
-    formula = Formula("2*asin(x)*i*i", 24)
+    formula = Formula("2*asin(x)*i*i*i^2", 24)
     assert (
         formula.get({"x": "1"}, digits=23, format=FmtFlags.fixed)
-        == "-0.84147098480789650665250"
+        == "3.14159265358979323846264"
+    )
+
+
+def test_complex_numbers_2():
+    """Complex numbers."""
+    formula = Solver("2*asin(x)*i*i*i", 24)
+    assert (
+        formula.get({"x": "1"}, digits=23, format=FmtFlags.fixed)
+        == "-3.14159265358979323846264*i"
+    )
+
+    formula = Formula("asin(x)*i*i*i^2*(i+i)", 24)
+    assert (
+        formula.get({"x": "1"}, digits=23, format=FmtFlags.fixed)
+        == "3.14159265358979323846264*i"
     )
 
 

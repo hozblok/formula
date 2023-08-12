@@ -1,12 +1,15 @@
 #ifndef CS_CONSTANTS_MPF_H
 #define CS_CONSTANTS_MPF_H
 
+#include <boost/math/constants/constants.hpp>
+#include <boost/multiprecision/cpp_dec_float.hpp>
+#include <boost/multiprecision/number.hpp>
 #include <regex>
 #include <string>
 #include <tuple>
 #include <type_traits>
 
-// TODO: uncomment to debug
+// Uncomment to debug
 // #ifndef CSDEBUG
 // #include <iostream>
 // #define CSDEBUG
@@ -183,7 +186,6 @@ enum AllowedPrecisions : unsigned {
   p_8192 = 8192U,
 };
 
-// TODO support more precision options.
 /**
  * Allowed precisions sorted in ascending order.
  */
@@ -216,5 +218,20 @@ template <std::size_t I = 0, typename FuncT, typename... Tp>
     for_each<I + 1, FuncT, Tp...>(t, f);
   }
 }
+
+// TODO add log10 sinh cosh tanh asinh acosh atanh
+// using boost::math::constants::pi;
+using boost::multiprecision::acos;
+using boost::multiprecision::asin;
+using boost::multiprecision::atan;
+using boost::multiprecision::cos;
+using boost::multiprecision::exp;
+using boost::multiprecision::fabs;  // TODO non complex? log2?
+using boost::multiprecision::log;
+using boost::multiprecision::pow;
+using boost::multiprecision::sin;
+using boost::multiprecision::sqrt;
+using boost::multiprecision::swap;
+using boost::multiprecision::tan;
 
 #endif  // CS_CONSTANTS_MPF_H

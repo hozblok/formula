@@ -7,39 +7,57 @@ template <typename Real>
 const Real cseval<Real>::ONE = Real("1");
 
 template <typename Real>
-const std::map<std::string, Real (*)(Real, Real)> cseval<Real>::functionsTwoArgs = {
-        {std::string("|"), cseval<Real>::_or},  {std::string("&"), cseval<Real>::_and},
-        {std::string("="), cseval<Real>::_eq},  {std::string(">"), cseval<Real>::_gt},
-        {std::string("<"), cseval<Real>::_lt},  {std::string("+"), cseval<Real>::_add},
-        {std::string("-"), cseval<Real>::_sub}, {std::string("/"), cseval<Real>::_truediv},
-        {std::string("*"), cseval<Real>::_mul}, {std::string("^"), cseval<Real>::_pow}};
+const std::map<std::string, Real (*)(Real, Real)>
+    cseval<Real>::functionsTwoArgs = {
+        {std::string("|"), cseval<Real>::_or},
+        {std::string("&"), cseval<Real>::_and},
+        {std::string("="), cseval<Real>::_eq},
+        {std::string(">"), cseval<Real>::_gt},
+        {std::string("<"), cseval<Real>::_lt},
+        {std::string("+"), cseval<Real>::_add},
+        {std::string("-"), cseval<Real>::_sub},
+        {std::string("/"), cseval<Real>::_truediv},
+        {std::string("*"), cseval<Real>::_mul},
+        {std::string("^"), cseval<Real>::_pow}};
 
 template <typename Real>
 const std::map<std::string, Real (*)(Real)> cseval<Real>::functionsOneArg = {
-    {std::string("sin"), cseval<Real>::_sin}, {std::string("asin"), cseval<Real>::_asin},
-    {std::string("cos"), cseval<Real>::_cos}, {std::string("acos"), cseval<Real>::_acos},
-    {std::string("tan"), cseval<Real>::_tan}, {std::string("atan"), cseval<Real>::_atan},
-    {std::string("log"), cseval<Real>::_log}, {std::string("sqrt"), cseval<Real>::_sqrt},
+    {std::string("sin"), cseval<Real>::_sin},
+    {std::string("asin"), cseval<Real>::_asin},
+    {std::string("cos"), cseval<Real>::_cos},
+    {std::string("acos"), cseval<Real>::_acos},
+    {std::string("tan"), cseval<Real>::_tan},
+    {std::string("atan"), cseval<Real>::_atan},
+    {std::string("log"), cseval<Real>::_log},
+    {std::string("sqrt"), cseval<Real>::_sqrt},
     {std::string("exp"), cseval<Real>::_exp}};
 
 template <typename Real>
 const std::map<std::string, Real (*)(Real, Real)>
     cseval<Real>::functionsTwoArgsDLeft = {
-        {std::string("+"), cseval<Real>::_one},       {std::string("-"), cseval<Real>::_one},
-        {std::string("*"), cseval<Real>::_mul1},      {std::string("/"), cseval<Real>::_truediv1},
-        {std::string("^"), cseval<Real>::_pow1},      {std::string("sin"), cseval<Real>::_sin_d},
-        {std::string("asin"), cseval<Real>::_asin_d}, {std::string("cos"), cseval<Real>::_cos_d},
-        {std::string("acos"), cseval<Real>::_acos_d}, {std::string("tan"), cseval<Real>::_tan_d},
-        {std::string("atan"), cseval<Real>::_atan_d}, {std::string("log"), cseval<Real>::_log_d},
-        {std::string("sqrt"), cseval<Real>::_sqrt_d}, {std::string("exp"), cseval<Real>::_exp_d}};
+        {std::string("+"), cseval<Real>::_one},
+        {std::string("-"), cseval<Real>::_one},
+        {std::string("*"), cseval<Real>::_mul1},
+        {std::string("/"), cseval<Real>::_truediv1},
+        {std::string("^"), cseval<Real>::_pow1},
+        {std::string("sin"), cseval<Real>::_sin_d},
+        {std::string("asin"), cseval<Real>::_asin_d},
+        {std::string("cos"), cseval<Real>::_cos_d},
+        {std::string("acos"), cseval<Real>::_acos_d},
+        {std::string("tan"), cseval<Real>::_tan_d},
+        {std::string("atan"), cseval<Real>::_atan_d},
+        {std::string("log"), cseval<Real>::_log_d},
+        {std::string("sqrt"), cseval<Real>::_sqrt_d},
+        {std::string("exp"), cseval<Real>::_exp_d}};
 
 template <typename Real>
 const std::map<std::string, Real (*)(Real, Real)>
-    cseval<Real>::functionsTwoArgsDRight = {{std::string("+"), cseval<Real>::_one},
-                                            {std::string("-"), cseval<Real>::_m_one},
-                                            {std::string("*"), cseval<Real>::_mul2},
-                                            {std::string("/"), cseval<Real>::_truediv2},
-                                            {std::string("^"), cseval<Real>::_pow2}};
+    cseval<Real>::functionsTwoArgsDRight = {
+        {std::string("+"), cseval<Real>::_one},
+        {std::string("-"), cseval<Real>::_m_one},
+        {std::string("*"), cseval<Real>::_mul2},
+        {std::string("/"), cseval<Real>::_truediv2},
+        {std::string("^"), cseval<Real>::_pow2}};
 
 template <typename Real>
 cseval<Real>::cseval(const cseval<Real> &other)
@@ -77,9 +95,7 @@ cseval<Real>::cseval(std::string expression, char imaginary_unit)
 #endif
   if (expression.empty()) {
     throw std::invalid_argument(
-        "Expression string is empty or \
-some substring within brackets \
-is empty");
+        "Expression string is empty or some substring within brackets is empty");
   }
 
   // Remove braces.

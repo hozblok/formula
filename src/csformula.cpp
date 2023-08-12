@@ -31,11 +31,11 @@ Formula::Formula(const Formula &other)
 #endif
   if (is_complex_) {
     auto visitor_complex =
-        std::bind(InitEvalFromCopyVisitor<EvalComplexVariantSmall>(),
+        std::bind(InitEvalFromCopyVisitor<CSEvalComplexVariant>(),
                   &eval_complex_, std::placeholders::_1);
     boost::apply_visitor(visitor_complex, other.eval_complex_);
   } else {
-    auto visitor = std::bind(InitEvalFromCopyVisitor<EvalVariantSmall>(),
+    auto visitor = std::bind(InitEvalFromCopyVisitor<CSEvalVariant>(),
                              &eval_, std::placeholders::_1);
     boost::apply_visitor(visitor, other.eval_);
   }
@@ -72,8 +72,8 @@ bool Formula::validate_brackets(const std::string &str) const {
 template <typename RealOrComplex>
 RealOrComplex Formula::get(
     const std::map<std::string, RealOrComplex> &variables_to_values) const {
-  GetCalculatedRealVisitor<RealOrComplex> visitor =
-      GetCalculatedRealVisitor<RealOrComplex>();
+  GetCalculatedVisitor<RealOrComplex> visitor =
+      GetCalculatedVisitor<RealOrComplex>();
   visitor.variables_to_values = &variables_to_values;
   if (is_complex_) {
     return boost::apply_visitor(visitor, eval_complex_);
@@ -85,11 +85,11 @@ RealOrComplex Formula::get(
 std::string Formula::get(
     const std::map<std::string, std::string> &variables_to_values,
     std::streamsize digits, std::ios_base::fmtflags format) const {
-  GetCalculatedStringVisitor<std::string> visitor =
-      GetCalculatedStringVisitor<std::string>();
+  auto visitor = GetCalculatedStringVisitor<std::string>();
   visitor.variables_to_values = &variables_to_values;
   visitor.digits = digits;
   visitor.format = format;
+  visitor.is_complex = is_complex_;
   if (is_complex_) {
     return boost::apply_visitor(visitor, eval_complex_);
   } else {
@@ -100,11 +100,11 @@ std::string Formula::get(
 std::string Formula::get(
     const std::map<std::string, double> &variables_to_values,
     std::streamsize digits, std::ios_base::fmtflags format) const {
-  GetCalculatedStringVisitor<double> visitor =
-      GetCalculatedStringVisitor<double>();
+  auto visitor = GetCalculatedStringVisitor<double>();
   visitor.variables_to_values = &variables_to_values;
   visitor.digits = digits;
   visitor.format = format;
+  visitor.is_complex = is_complex_;
   if (is_complex_) {
     return boost::apply_visitor(visitor, eval_complex_);
   } else {
@@ -186,8 +186,6 @@ location and / or number of brackets");
         "\\b(" + std::string(1, imaginary_unit_) + ")\\b");
     is_complex_ = std::regex_search(expression_, regexp_check_complex_numbers);
   }
-  // TODO: delete me
-  is_complex_ = false;
 
   if (case_insensitive_) {
     // TODO cannot give back to user the original expression?
