@@ -95,8 +95,9 @@ cseval<Real>::cseval(std::string expression, char imaginary_unit)
 #endif
   if (expression.empty()) {
     throw std::invalid_argument(
-        "Expression string is empty or some substring within brackets is "
-        "empty");
+        "Expression string is empty or \
+some substring within brackets \
+is empty");
   }
 
   // Remove braces.

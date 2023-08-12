@@ -167,6 +167,7 @@ the string is empty");
         "The given expression contains the wrong \
 location and / or number of brackets");
   }
+  // TODO check for forbidden symbols for complex: < or >, <= or >=.
   expression_ = expression;
   // Remove spaces, tabs, \n, \r, \t, \v.
   boost::algorithm::erase_all(expression_, " ");
