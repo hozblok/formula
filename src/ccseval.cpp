@@ -1,63 +1,86 @@
-#include "cseval_complex.hpp"
+#include "ccseval.hpp"
 
 template <typename Complex>
-const Complex cseval_complex<Complex>::ZERO = Complex("0", "0");
+const Complex ccseval<Complex>::ZERO = Complex("0", "0");
 
 template <typename Complex>
-const Complex cseval_complex<Complex>::ONE = Complex("1", "0");
+const Complex ccseval<Complex>::ONE = Complex("1", "0");
 
 template <typename Complex>
-const std::map<std::string, Complex (*)(Complex)> cseval_complex<Complex>::functionsOneArg = {
-    {std::string("sin"), cseval_complex<Complex>::_sin}, {std::string("asin"), cseval_complex<Complex>::_asin},
-    {std::string("cos"), cseval_complex<Complex>::_cos}, {std::string("acos"), cseval_complex<Complex>::_acos},
-    {std::string("tan"), cseval_complex<Complex>::_tan}, {std::string("atan"), cseval_complex<Complex>::_atan},
-    {std::string("log"), cseval_complex<Complex>::_log}, {std::string("sqrt"), cseval_complex<Complex>::_sqrt},
-    {std::string("exp"), cseval_complex<Complex>::_exp}};
+const std::map<std::string, Complex (*)(Complex, Complex)> ccseval<Complex>::funcs2Args = {
+        {std::string("|"), ccseval<Complex>::_or},
+        {std::string("&"), ccseval<Complex>::_and},
+        {std::string("="), ccseval<Complex>::_eq},
+        {std::string("+"), ccseval<Complex>::_add},
+        {std::string("-"), ccseval<Complex>::_sub},
+        {std::string("/"), ccseval<Complex>::_truediv},
+        {std::string("*"), ccseval<Complex>::_mul},
+        {std::string("^"), ccseval<Complex>::_pow}};
+
+template <typename Complex>
+const std::map<std::string, Complex (*)(Complex)> ccseval<Complex>::funcs1Arg =
+    {{std::string("sin"), ccseval<Complex>::_sin},
+     {std::string("asin"), ccseval<Complex>::_asin},
+     {std::string("cos"), ccseval<Complex>::_cos},
+     {std::string("acos"), ccseval<Complex>::_acos},
+     {std::string("tan"), ccseval<Complex>::_tan},
+     {std::string("atan"), ccseval<Complex>::_atan},
+     {std::string("log"), ccseval<Complex>::_log},
+     {std::string("sqrt"), ccseval<Complex>::_sqrt},
+     {std::string("exp"), ccseval<Complex>::_exp}};
 
 template <typename Complex>
 const std::map<std::string, Complex (*)(Complex, Complex)>
-    cseval_complex<Complex>::functionsTwoArgsDLeft = {
-        {std::string("+"), cseval_complex<Complex>::_one},       {std::string("-"), cseval_complex<Complex>::_one},
-        {std::string("*"), cseval_complex<Complex>::_mul1},      {std::string("/"), cseval_complex<Complex>::_truediv1},
-        {std::string("^"), cseval_complex<Complex>::_pow1},      {std::string("sin"), cseval_complex<Complex>::_sin_d},
-        {std::string("asin"), cseval_complex<Complex>::_asin_d}, {std::string("cos"), cseval_complex<Complex>::_cos_d},
-        {std::string("acos"), cseval_complex<Complex>::_acos_d}, {std::string("tan"), cseval_complex<Complex>::_tan_d},
-        {std::string("atan"), cseval_complex<Complex>::_atan_d}, {std::string("log"), cseval_complex<Complex>::_log_d},
-        {std::string("sqrt"), cseval_complex<Complex>::_sqrt_d}, {std::string("exp"), cseval_complex<Complex>::_exp_d}};
+    ccseval<Complex>::funcs2ArgsDLeft = {
+        {std::string("+"), ccseval<Complex>::_one},
+        {std::string("-"), ccseval<Complex>::_one},
+        {std::string("*"), ccseval<Complex>::_mul1},
+        {std::string("/"), ccseval<Complex>::_truediv1},
+        {std::string("^"), ccseval<Complex>::_pow1},
+        {std::string("sin"), ccseval<Complex>::_sin_d},
+        {std::string("asin"), ccseval<Complex>::_asin_d},
+        {std::string("cos"), ccseval<Complex>::_cos_d},
+        {std::string("acos"), ccseval<Complex>::_acos_d},
+        {std::string("tan"), ccseval<Complex>::_tan_d},
+        {std::string("atan"), ccseval<Complex>::_atan_d},
+        {std::string("log"), ccseval<Complex>::_log_d},
+        {std::string("sqrt"), ccseval<Complex>::_sqrt_d},
+        {std::string("exp"), ccseval<Complex>::_exp_d}};
 
 template <typename Complex>
 const std::map<std::string, Complex (*)(Complex, Complex)>
-    cseval_complex<Complex>::functionsTwoArgsDRight = {{std::string("+"), cseval_complex<Complex>::_one},
-                                                      {std::string("-"), cseval_complex<Complex>::_m_one},
-                                                      {std::string("*"), cseval_complex<Complex>::_mul2},
-                                                      {std::string("/"), cseval_complex<Complex>::_truediv2},
-                                                      {std::string("^"), cseval_complex<Complex>::_pow2}};
+    ccseval<Complex>::funcs2ArgsDRight = {
+        {std::string("+"), ccseval<Complex>::_one},
+        {std::string("-"), ccseval<Complex>::_m_one},
+        {std::string("*"), ccseval<Complex>::_mul2},
+        {std::string("/"), ccseval<Complex>::_truediv2},
+        {std::string("^"), ccseval<Complex>::_pow2}};
 
 template <typename Complex>
-cseval_complex<Complex>::cseval_complex(const cseval_complex<Complex> &other)
+ccseval<Complex>::ccseval(const ccseval<Complex> &other)
     : kind_(other.kind_),
       id_(std::string(other.id_)),
-      value_(Complex(other.value_, "0")),
+      value_(Complex(other.value_)),
       left_eval_(nullptr),
       right_eval_(nullptr),
       imaginary_unit_(other.imaginary_unit_) {
 #ifdef CSDEBUG
-  std::cout << "copy constructor cseval_complex+, kind: " << kind_ << ", id: " << id_
+  std::cout << "copy constructor ccseval+, kind: " << kind_ << ", id: " << id_
             << std::endl;
 #endif
   if (other.left_eval_) {
-    left_eval_ = new cseval_complex<Complex>(*other.left_eval_);
+    left_eval_ = new ccseval<Complex>(*other.left_eval_);
   }
   if (other.right_eval_) {
-    right_eval_ = new cseval_complex<Complex>(*other.right_eval_);
+    right_eval_ = new ccseval<Complex>(*other.right_eval_);
   }
 #ifdef CSDEBUG
-  std::cout << "copy constructor cseval_complex-" << std::endl;
+  std::cout << "copy constructor ccseval-" << std::endl;
 #endif
 }
 
 template <typename Complex>
-cseval_complex<Complex>::cseval_complex(std::string expression, char imaginary_unit)
+ccseval<Complex>::ccseval(std::string expression, char imaginary_unit)
     : kind_('e'),
       id_(""),
       value_("0"),
@@ -65,7 +88,7 @@ cseval_complex<Complex>::cseval_complex(std::string expression, char imaginary_u
       right_eval_(nullptr),
       imaginary_unit_(imaginary_unit) {
 #ifdef CSDEBUG
-  std::cout << "constructor cseval_complex, expression:" << expression << std::endl;
+  std::cout << "constructor ccseval, expression:" << expression << std::endl;
 #endif
   if (expression.empty()) {
     throw std::invalid_argument(
@@ -95,8 +118,8 @@ is empty");
           // allowed '-x', '--x', '---x*y', '-.01' etc.
           kind_ = 'f';
           id_ = *it;
-          left_eval_ = new cseval_complex<Complex>(std::string("0"));
-          right_eval_ = new cseval_complex<Complex>(expression.substr(1));
+          left_eval_ = new ccseval<Complex>(std::string("0"));
+          right_eval_ = new ccseval<Complex>(expression.substr(1));
           return;
         } else if (kOperations.find(expression.at(op_index - 1)) !=
                    std::string::npos) {
@@ -108,9 +131,10 @@ is empty");
       kind_ = 'f';
       id_ = *it;
       // Split the string into two parts by the separator (operation).
-      left_eval_ = new cseval_complex<Complex>(expression.substr(0, op_to_index.at(*it)));
+      left_eval_ =
+          new ccseval<Complex>(expression.substr(0, op_to_index.at(*it)));
       right_eval_ =
-          new cseval_complex<Complex>(expression.substr(op_to_index.at(*it) + 1));
+          new ccseval<Complex>(expression.substr(op_to_index.at(*it) + 1));
       return;
     }
   }
@@ -180,18 +204,18 @@ location and / or number of brackets");
     id_ = name_fun;
     size_t index_comma = expression.find(',');
     if (index_comma != std::string::npos) {
-      left_eval_ = new cseval_complex<Complex>(expression.substr(0, index_comma));
-      right_eval_ = new cseval_complex<Complex>(expression.substr(index_comma + 1));
+      left_eval_ = new ccseval<Complex>(expression.substr(0, index_comma));
+      right_eval_ = new ccseval<Complex>(expression.substr(index_comma + 1));
     } else {
-      left_eval_ = new cseval_complex<Complex>(expression);
+      left_eval_ = new ccseval<Complex>(expression);
     }
   }
 }
 
 template <typename Complex>
-cseval_complex<Complex>::~cseval_complex() {
+ccseval<Complex>::~ccseval() {
 #ifdef CSDEBUG
-  std::cout << "desctructor cseval_complex, id:" << id_ << " kind:" << kind_
+  std::cout << "desctructor ccseval, id:" << id_ << " kind:" << kind_
             << std::endl;
 #endif
   if (left_eval_) {
@@ -205,10 +229,12 @@ cseval_complex<Complex>::~cseval_complex() {
 }
 
 template <typename Complex>
-Complex cseval_complex<Complex>::calculate(
+Complex ccseval<Complex>::calculate(
     const std::map<std::string, Complex> &variables_to_values,
-    const std::map<std::string, Complex (*)(Complex, Complex)> &mapFunctionTwoArgsValue,
-    const std::map<std::string, Complex (*)(Complex)> &mapFunctionOneArgValue) const {
+    const std::map<std::string, Complex (*)(Complex, Complex)>
+        &mapFunctionTwoArgsValue,
+    const std::map<std::string, Complex (*)(Complex)> &mapFunctionOneArgValue)
+    const {
   if (kind_ == 'n') {
     return value_;
   } else if (kind_ == 'v') {
@@ -233,7 +259,8 @@ calculation of the expression, variable name: '%s'") %
                                    mapFunctionOneArgValue);
       right = right_eval_->calculate(
           variables_to_values, mapFunctionTwoArgsValue, mapFunctionOneArgValue);
-      typename std::map<std::string, Complex (*)(Complex, Complex)>::const_iterator
+      typename std::map<std::string,
+                        Complex (*)(Complex, Complex)>::const_iterator
           itFunction;
       itFunction = mapFunctionTwoArgsValue.find(id_);
       if (itFunction != mapFunctionTwoArgsValue.cend()) {
@@ -244,7 +271,8 @@ calculation of the expression, variable name: '%s'") %
       Complex left("0");
       left = left_eval_->calculate(variables_to_values, mapFunctionTwoArgsValue,
                                    mapFunctionOneArgValue);
-      typename std::map<std::string, Complex (*)(Complex)>::const_iterator itFunction;
+      typename std::map<std::string, Complex (*)(Complex)>::const_iterator
+          itFunction;
       itFunction = mapFunctionOneArgValue.find(id_);
       if (itFunction != mapFunctionOneArgValue.cend()) {
         return itFunction->second(left);
@@ -264,10 +292,12 @@ id: %s, kind: %s") %
 }
 
 template <typename Complex>
-Complex cseval_complex<Complex>::calculate(
+Complex ccseval<Complex>::calculate(
     const std::map<std::string, std::string> &variables_to_values,
-    const std::map<std::string, Complex (*)(Complex, Complex)> &mapFunctionTwoArgsValue,
-    const std::map<std::string, Complex (*)(Complex)> &mapFunctionOneArgValue) const {
+    const std::map<std::string, Complex (*)(Complex, Complex)>
+        &mapFunctionTwoArgsValue,
+    const std::map<std::string, Complex (*)(Complex)> &mapFunctionOneArgValue)
+    const {
   typename std::map<std::string, Complex> values;
   typename std::map<std::string, std::string>::const_iterator it;
   for (it = variables_to_values.cbegin(); it != variables_to_values.cend();
@@ -278,10 +308,12 @@ Complex cseval_complex<Complex>::calculate(
 }
 
 template <typename Complex>
-Complex cseval_complex<Complex>::calculate(
+Complex ccseval<Complex>::calculate(
     const std::map<std::string, double> &variables_to_values,
-    const std::map<std::string, Complex (*)(Complex, Complex)> &mapFunctionTwoArgsValue,
-    const std::map<std::string, Complex (*)(Complex)> &mapFunctionOneArgValue) const {
+    const std::map<std::string, Complex (*)(Complex, Complex)>
+        &mapFunctionTwoArgsValue,
+    const std::map<std::string, Complex (*)(Complex)> &mapFunctionOneArgValue)
+    const {
   typename std::map<std::string, Complex> values;
   typename std::map<std::string, double>::const_iterator it;
   for (it = variables_to_values.cbegin(); it != variables_to_values.cend();
@@ -292,14 +324,16 @@ Complex cseval_complex<Complex>::calculate(
 }
 
 template <typename Complex>
-Complex cseval_complex<Complex>::calculate_derivative(
+Complex ccseval<Complex>::calculate_derivative(
     const std::string &variable,
     const std::map<std::string, Complex> &variables_to_values,
-    const std::map<std::string, Complex (*)(Complex, Complex)> &mapFunctionTwoArgsValue,
+    const std::map<std::string, Complex (*)(Complex, Complex)>
+        &mapFunctionTwoArgsValue,
     const std::map<std::string, Complex (*)(Complex)> &mapFunctionOneArgValue,
-    const std::map<std::string, Complex (*)(Complex, Complex)> &mapFunctionDerivLeft,
-    const std::map<std::string, Complex (*)(Complex, Complex)> &mapFunctionDerivRight)
-    const {
+    const std::map<std::string, Complex (*)(Complex, Complex)>
+        &mapFunctionDerivLeft,
+    const std::map<std::string, Complex (*)(Complex, Complex)>
+        &mapFunctionDerivRight) const {
   if (kind_ == 'n') {
     return ZERO;
   } else if (kind_ == 'v') {
@@ -325,10 +359,12 @@ Complex cseval_complex<Complex>::calculate_derivative(
       Complex c = right_eval_->calculate_derivative(
           variable, variables_to_values, mapFunctionTwoArgsValue,
           mapFunctionOneArgValue, mapFunctionDerivLeft, mapFunctionDerivRight);
-      typename std::map<std::string, Complex (*)(Complex, Complex)>::const_iterator
+      typename std::map<std::string,
+                        Complex (*)(Complex, Complex)>::const_iterator
           itFunction_1;
       itFunction_1 = mapFunctionDerivLeft.find(id_);
-      typename std::map<std::string, Complex (*)(Complex, Complex)>::const_iterator
+      typename std::map<std::string,
+                        Complex (*)(Complex, Complex)>::const_iterator
           itFunction_2;
       itFunction_2 = mapFunctionDerivRight.find(id_);
       if (itFunction_1 != mapFunctionDerivLeft.cend() &&
@@ -342,7 +378,8 @@ Complex cseval_complex<Complex>::calculate_derivative(
       Complex d = left_eval_->calculate_derivative(
           variable, variables_to_values, mapFunctionTwoArgsValue,
           mapFunctionOneArgValue, mapFunctionDerivLeft, mapFunctionDerivRight);
-      typename std::map<std::string, Complex (*)(Complex, Complex)>::const_iterator
+      typename std::map<std::string,
+                        Complex (*)(Complex, Complex)>::const_iterator
           itFunction;
       itFunction = mapFunctionDerivLeft.find(id_);
       if (itFunction != mapFunctionDerivLeft.cend()) {
@@ -363,14 +400,16 @@ id: %s, kind: %s") %
 }
 
 template <typename Complex>
-Complex cseval_complex<Complex>::calculate_derivative(
+Complex ccseval<Complex>::calculate_derivative(
     const std::string &variable,
     const std::map<std::string, std::string> &variables_to_values,
-    const std::map<std::string, Complex (*)(Complex, Complex)> &mapFunctionTwoArgsValue,
+    const std::map<std::string, Complex (*)(Complex, Complex)>
+        &mapFunctionTwoArgsValue,
     const std::map<std::string, Complex (*)(Complex)> &mapFunctionOneArgValue,
-    const std::map<std::string, Complex (*)(Complex, Complex)> &mapFunctionDerivLeft,
-    const std::map<std::string, Complex (*)(Complex, Complex)> &mapFunctionDerivRight)
-    const {
+    const std::map<std::string, Complex (*)(Complex, Complex)>
+        &mapFunctionDerivLeft,
+    const std::map<std::string, Complex (*)(Complex, Complex)>
+        &mapFunctionDerivRight) const {
   typename std::map<std::string, Complex> values;
   typename std::map<std::string, std::string>::const_iterator it;
   for (it = variables_to_values.cbegin(); it != variables_to_values.cend();
@@ -383,7 +422,8 @@ Complex cseval_complex<Complex>::calculate_derivative(
 }
 
 template <typename Complex>
-std::unordered_map<char, size_t> cseval_complex<Complex>::operations_outside_parentheses(
+std::unordered_map<char, size_t>
+ccseval<Complex>::operations_outside_parentheses(
     const std::string &str, const std::string &symbols) const {
   size_t countBraces = 0;
 
@@ -450,7 +490,7 @@ std::unordered_map<char, size_t> cseval_complex<Complex>::operations_outside_par
 }
 
 template <typename Complex>
-bool cseval_complex<Complex>::isThereSymbolsOutsideParentheses(
+bool ccseval<Complex>::isThereSymbolsOutsideParentheses(
     const std::string &str) const {
   unsigned int countBraces = 0;
   std::string::const_iterator it = str.cbegin();

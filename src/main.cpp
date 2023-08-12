@@ -134,16 +134,16 @@ using the passed real values of the variables.",
            py::arg("digits") = 0,
            py::arg("format") = std::ios_base::fmtflags(0));
 
-  // TODO support all mp_real
-  // py::class_<mp_real<24>>(m, "mp_real_24")
-  //     .def(py::init<const std::string &>())
-  //     .def("str",
-  //          (std::string(mp_real<24>::*)(std::streamsize digits,
-  //                                       std::ios_base::fmtflags) const) &
-  //              mp_real<24>::str,
-  //          "Returns the number formatted as a string, with at least precision "
-  //          "digits.",
-  //          py::arg("digits") = 0, py::arg("f") = std::ios_base::fmtflags(0));
+// TODO support all mp_real
+py::class_<mp_real<24>>(m, "mp_real_24")
+    .def(py::init<const std::string &>())
+    .def("str",
+          (std::string(mp_real<24>::*)(std::streamsize digits,
+                                      std::ios_base::fmtflags) const) &
+              mp_real<24>::str,
+          "Returns the number formatted as a string, with at least precision "
+          "digits.",
+          py::arg("digits") = 0, py::arg("f") = std::ios_base::fmtflags(0));
 
 #ifdef VERSION_INFO
   m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);

@@ -4,8 +4,8 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
 #include <boost/math/constants/constants.hpp>
-#include <boost/multiprecision/cpp_dec_float.hpp>
 #include <boost/multiprecision/cpp_complex.hpp>
+#include <boost/multiprecision/cpp_dec_float.hpp>
 #include <boost/variant.hpp>
 #include <map>
 #include <memory>
@@ -21,8 +21,8 @@
  */
 template <unsigned N>
 using mp_complex = boost::multiprecision::cpp_complex<N>;
-    // boost::multiprecision::number<boost::multiprecision::cpp_complex_backend<N>,
-                                  // boost::multiprecision::et_off>;
+// boost::multiprecision::number<boost::multiprecision::cpp_complex_backend<N>,
+// boost::multiprecision::et_off>;
 
 // TODO Complex numbers
 // typedef std::complex<float100et> complexFloat100et;
@@ -48,7 +48,7 @@ using boost::multiprecision::tan;
  * typename Complex (not mp_complex<NUMBER>) for double support.
  */
 template <typename Complex>
-class cseval_complex {
+class ccseval {
   /**
    * Kind of formula element:
    * 'n' - number, 'v' - variable, 'f' - function, 'e' - error.
@@ -70,7 +70,7 @@ class cseval_complex {
   Complex value_;
 
   /** Child elements of the formula tree. */
-  cseval_complex *left_eval_, *right_eval_;
+  ccseval *left_eval_, *right_eval_;
 
   /**
    * Symbol of the imaginary unit (by default - 'i').
@@ -86,13 +86,13 @@ class cseval_complex {
   bool isThereSymbolsOutsideParentheses(const std::string &str) const;
 
  public:
-  cseval_complex(std::string expression, char imaginary_unit = 'i');
+  ccseval(std::string expression, char imaginary_unit = 'i');
 
-  cseval_complex(const cseval_complex &other);
+  ccseval(const ccseval &other);
 
-  ~cseval_complex();
+  ~ccseval();
 
-  cseval_complex &operator=(const cseval_complex &other) {
+  ccseval &operator=(const ccseval &other) {
     if (this != &other) {
       kind_ = other.kind_;
       id_ = std::string(other.id_);
@@ -102,7 +102,7 @@ class cseval_complex {
         delete left_eval_;
       }
       if (other.left_eval_) {
-        left_eval_ = new cseval_complex<Complex>(other.left_eval_);
+        left_eval_ = new ccseval<Complex>(other.left_eval_);
       } else {
         left_eval_ = nullptr;
       }
@@ -110,7 +110,7 @@ class cseval_complex {
         delete right_eval_;
       }
       if (other.right_eval_) {
-        right_eval_ = new cseval_complex<Complex>(other.right_eval_);
+        right_eval_ = new ccseval<Complex>(other.right_eval_);
       } else {
         right_eval_ = nullptr;
       }
@@ -137,44 +137,44 @@ class cseval_complex {
   // Evaluation of subformula.
   Complex calculate(const std::map<std::string, Complex> &variables_to_values,
                     const std::map<std::string, Complex (*)(Complex, Complex)>
-                        &mapFunctionTwoArgsValue = complFunctionsTwoArgs,
+                        &mapFunctionTwoArgsValue = funcs2Args,
                     const std::map<std::string, Complex (*)(Complex)>
-                        &mapFunctionOneArgValue = cseval_complex<Complex>::functionsOneArg) const;
+                        &mapFunctionOneArgValue = funcs1Arg) const;
   Complex calculate(
       const std::map<std::string, std::string> &variables_to_values,
       const std::map<std::string, Complex (*)(Complex, Complex)>
-          &mapFunctionTwoArgsValue = complFunctionsTwoArgs,
+          &mapFunctionTwoArgsValue = funcs2Args,
       const std::map<std::string, Complex (*)(Complex)>
-          &mapFunctionOneArgValue = cseval_complex<Complex>::functionsOneArg) const;
+          &mapFunctionOneArgValue = funcs1Arg) const;
   Complex calculate(const std::map<std::string, double> &variables_to_values,
                     const std::map<std::string, Complex (*)(Complex, Complex)>
-                        &mapFunctionTwoArgsValue = complFunctionsTwoArgs,
+                        &mapFunctionTwoArgsValue = funcs2Args,
                     const std::map<std::string, Complex (*)(Complex)>
-                        &mapFunctionOneArgValue = cseval_complex<Complex>::functionsOneArg) const;
+                        &mapFunctionOneArgValue = funcs1Arg) const;
   // Evaluation derivative of subformula.
   Complex calculate_derivative(
       const std::string &variable,
       const std::map<std::string, Complex> &variables_to_values,
       const std::map<std::string, Complex (*)(Complex, Complex)>
-          &mapFunctionTwoArgsValue = complFunctionsTwoArgs,
+          &mapFunctionTwoArgsValue = funcs2Args,
       const std::map<std::string, Complex (*)(Complex)>
-          &mapFunctionOneArgValue = cseval_complex<Complex>::functionsOneArg,
+          &mapFunctionOneArgValue = funcs1Arg,
       const std::map<std::string, Complex (*)(Complex, Complex)>
-          &mapFunctionDerivLeft = cseval_complex<Complex>::functionsTwoArgsDLeft,
+          &mapFunctionDerivLeft = funcs2ArgsDLeft,
       const std::map<std::string, Complex (*)(Complex, Complex)>
-          &mapFunctionDerivRight = cseval_complex<Complex>::functionsTwoArgsDRight) const;
+          &mapFunctionDerivRight = funcs2ArgsDRight) const;
 
   Complex calculate_derivative(
       const std::string &variable,
       const std::map<std::string, std::string> &variables_to_values,
       const std::map<std::string, Complex (*)(Complex, Complex)>
-          &mapFunctionTwoArgsValue = complFunctionsTwoArgs,
+          &mapFunctionTwoArgsValue = funcs2Args,
       const std::map<std::string, Complex (*)(Complex)>
-          &mapFunctionOneArgValue = cseval_complex<Complex>::functionsOneArg,
+          &mapFunctionOneArgValue = funcs1Arg,
       const std::map<std::string, Complex (*)(Complex, Complex)>
-          &mapFunctionDerivLeft = cseval_complex<Complex>::functionsTwoArgsDLeft,
+          &mapFunctionDerivLeft = funcs2ArgsDLeft,
       const std::map<std::string, Complex (*)(Complex, Complex)>
-          &mapFunctionDerivRight = cseval_complex<Complex>::functionsTwoArgsDRight) const;
+          &mapFunctionDerivRight = funcs2ArgsDRight) const;
 
   // Usefull constants.
   const static Complex ZERO;
@@ -322,20 +322,16 @@ the sqrt derivative");
   // for evaluating, e.g.
   // "+" -> _add
   // "sin" -> _sin
-  static const std::map<std::string, Complex (*)(Complex, Complex)> complFunctionsTwoArgs = {
-        {std::string("|"), cseval_complex<Complex>::_or},  {std::string("&"), cseval_complex<Complex>::_and},
-        {std::string("="), cseval_complex<Complex>::_eq},  {std::string("+"), cseval_complex<Complex>::_add},
-        {std::string("-"), cseval_complex<Complex>::_sub}, {std::string("/"), cseval_complex<Complex>::_truediv},
-        {std::string("*"), cseval_complex<Complex>::_mul}, {std::string("^"), cseval_complex<Complex>::_pow}};
-  static const std::map<std::string, Complex (*)(Complex)> functionsOneArg;
+  static const std::map<std::string, Complex (*)(Complex, Complex)> funcs2Args;
+  static const std::map<std::string, Complex (*)(Complex)> funcs1Arg;
 
   // dictionaries contain references to derivatives of basic functions and their
   // names:
   static const std::map<std::string, Complex (*)(Complex, Complex)>
-      functionsTwoArgsDLeft;
+      funcs2ArgsDLeft;
   static const std::map<std::string, Complex (*)(Complex, Complex)>
-      functionsTwoArgsDRight;
-  static const std::map<std::string, Complex (*)(Complex)> functionsOneArgD;
+      funcs2ArgsDRight;
+  static const std::map<std::string, Complex (*)(Complex)> funcs1ArgD;
 };
 
 #endif  // EVAL_COMPLEX_MPF_H

@@ -1,7 +1,7 @@
 #ifndef CSFORMULA_H
 #define CSFORMULA_H
 #include "cseval.cpp"
-#include "cseval_complex.hpp"
+#include "ccseval.cpp"
 
 typedef boost::variant<
     std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_16>>>,
@@ -25,24 +25,24 @@ typedef boost::variant<
     EvalVariantSmall;
 
 typedef boost::variant<
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_16>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_24>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_32>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_48>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_64>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_96>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_128>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_192>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_256>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_384>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_512>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_768>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_1024>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_2048>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_3072>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_4096>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_6144>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_8192>>>>
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_16>>>,
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_24>>>,
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_32>>>,
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_48>>>,
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_64>>>,
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_96>>>,
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_128>>>,
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_192>>>,
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_256>>>,
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_384>>>,
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_512>>>,
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_768>>>,
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_1024>>>,
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_2048>>>,
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_3072>>>,
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_4096>>>,
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_6144>>>,
+    std::shared_ptr<ccseval<mp_complex<AllowedPrecisions::p_8192>>>>
     EvalComplexVariantSmall;
 
 /**
@@ -171,7 +171,7 @@ class Formula {
       inline typename std::enable_if < I<kPrecisionsLength>::type init_eval() {
     if (static_cast<unsigned>(precision_) == precisions_array[I]) {
       if (is_complex_) {
-        eval_complex_ = std::make_shared<cseval_complex<mp_complex<precisions_array[I]>>>(
+        eval_complex_ = std::make_shared<ccseval<mp_complex<precisions_array[I]>>>(
             expression_, imaginary_unit_);
       } else {
         // TODO: delete imaginary_unit_
