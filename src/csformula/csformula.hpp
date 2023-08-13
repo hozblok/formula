@@ -1,6 +1,9 @@
 #ifndef CSFORMULA_H
 #define CSFORMULA_H
-#include "cseval.cpp"
+
+#include "../cseval/cseval.cpp"
+#include "../cseval/cseval_complex.cpp"
+#include "./csvisitors.hpp"
 
 typedef boost::variant<
     std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_16>>>,
@@ -21,68 +24,28 @@ typedef boost::variant<
     std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_4096>>>,
     std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_6144>>>,
     std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_8192>>>>
-    EvalVariantSmall;
+    CSEvalVariant;
 
-/**
- * Visitor to get type of current Eval object and create the
- * copy of it.
- */
-struct InitEvalFromCopyVisitor : public boost::static_visitor<void> {
-  template <typename SHARED_PTR_CSEVAL_T>
-  void operator()(EvalVariantSmall *eval,
-                  const SHARED_PTR_CSEVAL_T &other_eval) {
-    this->set_eval(eval, other_eval.get());
-  }
-  template <typename CSEVAL_T>
-  void set_eval(EvalVariantSmall *eval, const CSEVAL_T *other_eval_raw) {
-    *eval = std::make_shared<CSEVAL_T>(*other_eval_raw);
-  }
-};
-
-/**
- * Visitor to get string value after calculating the formula.
- * ArgType: string or double.
- */
-template <typename ArgType>
-struct GetCalculatedStringVisitor : public boost::static_visitor<std::string> {
-  template <typename T>
-  std::string operator()(const T &eval) const {
-    return eval->calculate(*variables_to_values).str(digits, format);
-  }
-  const std::map<std::string, ArgType> *variables_to_values;
-  std::streamsize digits;
-  std::ios_base::fmtflags format;
-};
-
-/** Visitor to get Real value after calculating the formula. */
-template <typename Real>
-struct GetCalculatedRealVisitor : public boost::static_visitor<Real> {
-  template <typename T>
-  Real operator()(const T &eval) const {
-    return eval->calculate(*variables_to_values);
-  }
-  const std::map<std::string, Real> *variables_to_values;
-};
-
-/** Visitor to calculate partial derivative of the formula. */
-struct GetCalculatedDerivativeStringVisitor
-    : public boost::static_visitor<std::string> {
-  template <typename T>
-  std::string operator()(
-      const T &eval, const std::string &variable,
-      const std::map<std::string, std::string> &variables_to_values,
-      std::streamsize &digits,
-      std::ios_base::fmtflags &format) const {
-    return eval->calculate_derivative(variable, variables_to_values).str();
-  }
-};
-
-struct CollectVariablesVisitor : public boost::static_visitor<void> {
-  template <typename T>
-  void operator()(std::unordered_set<std::string> *variables, const T &eval) {
-    eval->collect_variables(variables);
-  }
-};
+typedef boost::variant<
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_16>>>,
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_24>>>,
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_32>>>,
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_48>>>,
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_64>>>,
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_96>>>,
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_128>>>,
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_192>>>,
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_256>>>,
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_384>>>,
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_512>>>,
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_768>>>,
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_1024>>>,
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_2048>>>,
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_3072>>>,
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_4096>>>,
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_6144>>>,
+    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_8192>>>>
+    CSEvalComplexVariant;
 
 //  * To calculate the value of the derivative of a function, we use
 //  * the following simple transformations:
@@ -121,28 +84,43 @@ class Formula {
    * "(x+1)*(y-0.004)*(sin(x))^2"
    * May differ from user input in the following:
    * Cannot contain whitespace symbols (' ', '\n', '\t', '\v')
-   * and mathes the case-sensitivity according to the
+   * and matches the case-sensitivity according to the
    * 'case_insensitive_' option.
    */
   std::string expression_;
 
-  /** Symbol - indicator of the imaginary unit. (dy default - 'i') */
-  char imaginary_unit_;
+  /**
+   * Symbol - indicator of the imaginary unit. (dy default - 'i')
+   * Only one Latin character (!).
+   */
+  const char imaginary_unit_;
+
+  /** Whether it contains complex numbers or not. */
+  bool is_complex_;
 
   /** Whether parse expression in case insensitive style or not. */
   bool case_insensitive_;
 
   /** Pointer to a recursive, smart formula string parser object. */
-  EvalVariantSmall eval_;
+  CSEvalVariant eval_;
+  CSEvalComplexVariant eval_complex_;
 
   /** Initialize СSEval object. */
   template <std::size_t I = 0>
   inline typename std::enable_if<I == kPrecisionsLength>::type init_eval() {}
+
   template <std::size_t I = 0>
       inline typename std::enable_if < I<kPrecisionsLength>::type init_eval() {
     if (static_cast<unsigned>(precision_) == precisions_array[I]) {
-      eval_ = std::make_shared<cseval<mp_real<precisions_array[I]>>>(
-          expression_, imaginary_unit_);
+      if (is_complex_) {
+        eval_complex_ =
+            std::make_shared<cseval_complex<mp_complex<precisions_array[I]>>>(
+                expression_, imaginary_unit_);
+      } else {
+        // TODO: delete imaginary_unit_
+        eval_ = std::make_shared<cseval<mp_real<precisions_array[I]>>>(
+            expression_, imaginary_unit_);
+      }
     } else if (I + 1 < kPrecisionsLength) {
       init_eval<I + 1>();
     }
@@ -187,7 +165,8 @@ class Formula {
   /** Parse all variables from the formula expression. */
   std::unordered_set<std::string> variables() const {
     std::unordered_set<std::string> variables;
-    auto visitor = std::bind(CollectVariablesVisitor(), &variables, std::placeholders::_1);
+    auto visitor =
+        std::bind(CollectVariablesVisitor(), &variables, std::placeholders::_1);
     boost::apply_visitor(visitor, eval_);
     return variables;
   }
@@ -198,10 +177,11 @@ class Formula {
    * the variables.
    * NOTE: Variables can be only letters of the Latin alphabet
    * ('a','b',...,'z') and 'i' (by default) reserved for complex
-   * number.
+   * number. TODO: why so?
    */
-  template <typename Real>
-  Real get(const std::map<std::string, Real> &variables_to_values = {}) const;
+  template <typename RealOrComplex>
+  RealOrComplex get(const std::map<std::string, RealOrComplex>
+                        &variables_to_values = {}) const;
 
   std::string get(
       const std::map<std::string, std::string> &variables_to_values = {},

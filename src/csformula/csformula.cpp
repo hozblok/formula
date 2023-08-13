@@ -1,4 +1,4 @@
-#include "csformula.hpp"
+#include "./csformula.hpp"
 
 Formula::Formula(const std::string &expression, const unsigned precision,
                  const char imaginary_unit, const bool case_insensitive)
@@ -6,6 +6,7 @@ Formula::Formula(const std::string &expression, const unsigned precision,
       precision_(AllowedPrecisions::p_16),
       expression_(""),
       imaginary_unit_(imaginary_unit),
+      is_complex_(false),
       case_insensitive_(case_insensitive) {
 #ifdef CSDEBUG
   std::cout << "constructor Formula +" << std::endl;
@@ -23,13 +24,21 @@ Formula::Formula(const Formula &other)
       precision_(other.precision_),
       expression_(std::string(other.expression_)),
       imaginary_unit_(other.imaginary_unit_),
+      is_complex_(other.is_complex_),
       case_insensitive_(other.case_insensitive_) {
 #ifdef CSDEBUG
   std::cout << "copy constructor Formula+" << std::endl;
 #endif
-  auto visitor =
-      std::bind(InitEvalFromCopyVisitor(), &eval_, std::placeholders::_1);
-  boost::apply_visitor(visitor, other.eval_);
+  if (is_complex_) {
+    auto visitor_complex =
+        std::bind(InitEvalFromCopyVisitor<CSEvalComplexVariant>(),
+                  &eval_complex_, std::placeholders::_1);
+    boost::apply_visitor(visitor_complex, other.eval_complex_);
+  } else {
+    auto visitor = std::bind(InitEvalFromCopyVisitor<CSEvalVariant>(), &eval_,
+                             std::placeholders::_1);
+    boost::apply_visitor(visitor, other.eval_);
+  }
 #ifdef CSDEBUG
   std::cout << "copy constructor Formula-" << std::endl;
 #endif
@@ -60,35 +69,47 @@ bool Formula::validate_brackets(const std::string &str) const {
   return (count == 0);
 }
 
-// TODO support Real and double and ... values.
-template <typename Real>
-Real Formula::get(
-    const std::map<std::string, Real> &variables_to_values) const {
-  GetCalculatedRealVisitor<Real> visitor = GetCalculatedRealVisitor<Real>();
+template <typename RealOrComplex>
+RealOrComplex Formula::get(
+    const std::map<std::string, RealOrComplex> &variables_to_values) const {
+  GetCalculatedVisitor<RealOrComplex> visitor =
+      GetCalculatedVisitor<RealOrComplex>();
   visitor.variables_to_values = &variables_to_values;
-  return boost::apply_visitor(visitor, eval_);
+  if (is_complex_) {
+    return boost::apply_visitor(visitor, eval_complex_);
+  } else {
+    return boost::apply_visitor(visitor, eval_);
+  }
 }
 
 std::string Formula::get(
     const std::map<std::string, std::string> &variables_to_values,
     std::streamsize digits, std::ios_base::fmtflags format) const {
-  GetCalculatedStringVisitor<std::string> visitor =
-      GetCalculatedStringVisitor<std::string>();
+  auto visitor = GetCalculatedStringVisitor<std::string>();
   visitor.variables_to_values = &variables_to_values;
   visitor.digits = digits;
   visitor.format = format;
-  return boost::apply_visitor(visitor, eval_);
+  visitor.is_complex = is_complex_;
+  if (is_complex_) {
+    return boost::apply_visitor(visitor, eval_complex_);
+  } else {
+    return boost::apply_visitor(visitor, eval_);
+  }
 }
 
 std::string Formula::get(
     const std::map<std::string, double> &variables_to_values,
     std::streamsize digits, std::ios_base::fmtflags format) const {
-  GetCalculatedStringVisitor<double> visitor =
-      GetCalculatedStringVisitor<double>();
+  auto visitor = GetCalculatedStringVisitor<double>();
   visitor.variables_to_values = &variables_to_values;
   visitor.digits = digits;
   visitor.format = format;
-  return boost::apply_visitor(visitor, eval_);
+  visitor.is_complex = is_complex_;
+  if (is_complex_) {
+    return boost::apply_visitor(visitor, eval_complex_);
+  } else {
+    return boost::apply_visitor(visitor, eval_);
+  }
 }
 
 // TODO support Real and double and ... values.
@@ -106,7 +127,11 @@ std::string Formula::get_derivative(
   auto visitor =
       std::bind(GetCalculatedDerivativeStringVisitor(), std::placeholders::_1,
                 variable, variables_to_values, digits, format);
-  return boost::apply_visitor(visitor, eval_);
+  if (is_complex_) {
+    return boost::apply_visitor(visitor, eval_complex_);
+  } else {
+    return boost::apply_visitor(visitor, eval_);
+  }
 }
 
 void Formula::prepare_precision(const unsigned &precision) {
@@ -142,6 +167,7 @@ the string is empty");
         "The given expression contains the wrong \
 location and / or number of brackets");
   }
+  // TODO check for forbidden symbols for complex: < or >, <= or >=.
   expression_ = expression;
   // Remove spaces, tabs, \n, \r, \t, \v.
   boost::algorithm::erase_all(expression_, " ");
@@ -150,7 +176,22 @@ location and / or number of brackets");
   boost::algorithm::erase_all(expression_, "\t");
   boost::algorithm::erase_all(expression_, "\v");
 
+  // Check whether expression_ contains complex numbers or not.
   if (case_insensitive_) {
+    std::regex regexp_check_complex_numbers(
+        "\\b(" + std::string(1, imaginary_unit_) + ")\\b",
+        std::regex_constants::icase);
+    is_complex_ = std::regex_search(expression_, regexp_check_complex_numbers);
+  } else {
+    std::regex regexp_check_complex_numbers(
+        "\\b(" + std::string(1, imaginary_unit_) + ")\\b");
+    is_complex_ = std::regex_search(expression_, regexp_check_complex_numbers);
+  }
+
+  if (case_insensitive_) {
+    // TODO cannot give back to user the original expression?
     boost::algorithm::to_lower(expression_);
+    // TODO cannot give back to user the original expression?
+    // boost::algorithm::to_lower(imaginary_unit_);
   }
 }

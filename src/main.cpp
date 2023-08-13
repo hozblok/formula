@@ -5,8 +5,7 @@
 #define STRINGIFY(x) #x
 #define MACRO_STRINGIFY(x) STRINGIFY(x)
 
-#include <cseval.hpp>
-#include <csformula.cpp>
+#include <csformula/csformula.cpp>
 
 namespace py = pybind11;
 

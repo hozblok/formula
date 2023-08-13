@@ -1,4 +1,4 @@
-#include "cseval.hpp"
+#include "./cseval.hpp"
 
 template <typename Real>
 const Real cseval<Real>::ZERO = Real("0");
@@ -9,38 +9,55 @@ const Real cseval<Real>::ONE = Real("1");
 template <typename Real>
 const std::map<std::string, Real (*)(Real, Real)>
     cseval<Real>::functionsTwoArgs = {
-        {std::string("|"), _or},  {std::string("&"), _and},
-        {std::string("="), _eq},  {std::string(">"), _gt},
-        {std::string("<"), _lt},  {std::string("+"), _add},
-        {std::string("-"), _sub}, {std::string("/"), _truediv},
-        {std::string("*"), _mul}, {std::string("^"), _pow}};
+        {std::string("|"), cseval<Real>::_or},
+        {std::string("&"), cseval<Real>::_and},
+        {std::string("="), cseval<Real>::_eq},
+        {std::string(">"), cseval<Real>::_gt},
+        {std::string("<"), cseval<Real>::_lt},
+        {std::string("+"), cseval<Real>::_add},
+        {std::string("-"), cseval<Real>::_sub},
+        {std::string("/"), cseval<Real>::_truediv},
+        {std::string("*"), cseval<Real>::_mul},
+        {std::string("^"), cseval<Real>::_pow}};
 
 template <typename Real>
 const std::map<std::string, Real (*)(Real)> cseval<Real>::functionsOneArg = {
-    {std::string("sin"), _sin}, {std::string("asin"), _asin},
-    {std::string("cos"), _cos}, {std::string("acos"), _acos},
-    {std::string("tan"), _tan}, {std::string("atan"), _atan},
-    {std::string("log"), _log}, {std::string("sqrt"), _sqrt},
-    {std::string("exp"), _exp}};
+    {std::string("sin"), cseval<Real>::_sin},
+    {std::string("asin"), cseval<Real>::_asin},
+    {std::string("cos"), cseval<Real>::_cos},
+    {std::string("acos"), cseval<Real>::_acos},
+    {std::string("tan"), cseval<Real>::_tan},
+    {std::string("atan"), cseval<Real>::_atan},
+    {std::string("log"), cseval<Real>::_log},
+    {std::string("sqrt"), cseval<Real>::_sqrt},
+    {std::string("exp"), cseval<Real>::_exp}};
 
 template <typename Real>
 const std::map<std::string, Real (*)(Real, Real)>
     cseval<Real>::functionsTwoArgsDLeft = {
-        {std::string("+"), _one},       {std::string("-"), _one},
-        {std::string("*"), _mul1},      {std::string("/"), _truediv1},
-        {std::string("^"), _pow1},      {std::string("sin"), _sin_d},
-        {std::string("asin"), _asin_d}, {std::string("cos"), _cos_d},
-        {std::string("acos"), _acos_d}, {std::string("tan"), _tan_d},
-        {std::string("atan"), _atan_d}, {std::string("log"), _log_d},
-        {std::string("sqrt"), _sqrt_d}, {std::string("exp"), _exp_d}};
+        {std::string("+"), cseval<Real>::_one},
+        {std::string("-"), cseval<Real>::_one},
+        {std::string("*"), cseval<Real>::_mul1},
+        {std::string("/"), cseval<Real>::_truediv1},
+        {std::string("^"), cseval<Real>::_pow1},
+        {std::string("sin"), cseval<Real>::_sin_d},
+        {std::string("asin"), cseval<Real>::_asin_d},
+        {std::string("cos"), cseval<Real>::_cos_d},
+        {std::string("acos"), cseval<Real>::_acos_d},
+        {std::string("tan"), cseval<Real>::_tan_d},
+        {std::string("atan"), cseval<Real>::_atan_d},
+        {std::string("log"), cseval<Real>::_log_d},
+        {std::string("sqrt"), cseval<Real>::_sqrt_d},
+        {std::string("exp"), cseval<Real>::_exp_d}};
 
 template <typename Real>
 const std::map<std::string, Real (*)(Real, Real)>
-    cseval<Real>::functionsTwoArgsDRight = {{std::string("+"), _one},
-                                            {std::string("-"), _m_one},
-                                            {std::string("*"), _mul2},
-                                            {std::string("/"), _truediv2},
-                                            {std::string("^"), _pow2}};
+    cseval<Real>::functionsTwoArgsDRight = {
+        {std::string("+"), cseval<Real>::_one},
+        {std::string("-"), cseval<Real>::_m_one},
+        {std::string("*"), cseval<Real>::_mul2},
+        {std::string("/"), cseval<Real>::_truediv2},
+        {std::string("^"), cseval<Real>::_pow2}};
 
 template <typename Real>
 cseval<Real>::cseval(const cseval<Real> &other)
@@ -140,8 +157,7 @@ location and / or number of brackets");
     } else if (expression == std::string(1, imaginary_unit_)) {
       throw std::invalid_argument(
           (boost::format("Complex number indicator was founded in \
-the expression: %s. Not implemented \
-at the moment") %
+the expression: %s. Not implemented at the class for Real numbers") %
            expression)
               .str());
     } else if (std::regex_match(expression, kIsNumberRegex)) {

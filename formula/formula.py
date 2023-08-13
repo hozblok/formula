@@ -53,7 +53,7 @@ class Solver(Formula):
             format_flags: Flags to format the return value.
                 If omitted output is generated in fixed-point notation and
                 decimal base.
-        Resturns:
+        Returns:
             Calculated value: string or the list of strings if the
                 'derivative' parameter is passed.
         """
