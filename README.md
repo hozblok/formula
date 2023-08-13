@@ -15,9 +15,13 @@
 
 Development plan:
 
--   Complex numbers support. (Character `i` are reserved for this by default.)
+-   Deploy new verion with complex numbers support. (v4.0)
+-   Complex numbers tests and examples. (Character `i` are reserved for this by default.)
+-   Simple usage example and tests. Functions and rounding description.
+-   Formatting documenation. Limits and caveats.
+-   Deploy wheels or eggs for Linux.
 
-This project built with [pybind11](https://github.com/pybind/pybind11).
+This project built with [pybind11](https://github.com/pybind/pybind11) and [boost](https://www.boost.org/doc/libs/1_83_0/libs/multiprecision/doc/html/index.html).
 
 ## Installation
 
