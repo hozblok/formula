@@ -12,7 +12,7 @@ from setuptools import find_packages, setup
 from setuptools.command.test import test as TestCommand
 
 
-__version__ = "3.0.0"
+__version__ = "4.0.0"
 
 CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
 
