@@ -167,7 +167,11 @@ class Formula {
     std::unordered_set<std::string> variables;
     auto visitor =
         std::bind(CollectVariablesVisitor(), &variables, std::placeholders::_1);
-    boost::apply_visitor(visitor, eval_);
+    if (is_complex_) {
+        boost::apply_visitor(visitor, eval_complex_);
+    } else {
+        boost::apply_visitor(visitor, eval_);
+    }
     return variables;
   }
 
