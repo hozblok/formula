@@ -22,13 +22,9 @@ using mp_complex =
     boost::multiprecision::number<boost::multiprecision::cpp_complex_backend<N>,
                                   boost::multiprecision::et_off>;
 
-// TODO Complex numbers
-// typedef std::complex<float100et> complexFloat100et;
-
 /**
  * Class for evaluating formula specified by the string
- * TODO: which double?
- * typename Complex (not mp_complex<NUMBER>) for double support.
+ * typename Complex (de facto mp_complex<NUMBER>).
  */
 template <typename Complex>
 class cseval_complex {

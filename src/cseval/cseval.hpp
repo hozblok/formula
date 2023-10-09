@@ -49,13 +49,6 @@ class cseval {
   /** Child elements of the formula tree. */
   cseval *left_eval_, *right_eval_;
 
-  /**
-   * Symbol of the imaginary unit (by default - 'i').
-   * Only one Latin character (!).
-   * TODO: delete me.
-   */
-  const char imaginary_unit_;
-
   /** Try to find each symbol of {symbols} string in the {str} string. */
   std::unordered_map<char, size_t> operations_outside_parentheses(
       const std::string &str, const std::string &symbols) const;
@@ -64,7 +57,7 @@ class cseval {
   bool isThereSymbolsOutsideParentheses(const std::string &str) const;
 
  public:
-  cseval(std::string expression, char imaginary_unit = 'i');
+  cseval(std::string expression);
 
   cseval(const cseval &other);
 
@@ -75,7 +68,6 @@ class cseval {
       kind_ = other.kind_;
       id_ = std::string(other.id_);
       value_ = Real(other.value_);
-      imaginary_unit_ = other.imaginary_unit_;
       if (left_eval_) {
         delete left_eval_;
       }

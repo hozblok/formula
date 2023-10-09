@@ -65,8 +65,7 @@ cseval<Real>::cseval(const cseval<Real> &other)
       id_(std::string(other.id_)),
       value_(Real(other.value_)),
       left_eval_(nullptr),
-      right_eval_(nullptr),
-      imaginary_unit_(other.imaginary_unit_) {
+      right_eval_(nullptr) {
 #ifdef CSDEBUG
   std::cout << "copy constructor cseval+, kind: " << kind_ << ", id: " << id_
             << std::endl;
@@ -83,13 +82,12 @@ cseval<Real>::cseval(const cseval<Real> &other)
 }
 
 template <typename Real>
-cseval<Real>::cseval(std::string expression, char imaginary_unit)
+cseval<Real>::cseval(std::string expression)
     : kind_('e'),
       id_(""),
       value_("0"),
       left_eval_(nullptr),
-      right_eval_(nullptr),
-      imaginary_unit_(imaginary_unit) {
+      right_eval_(nullptr) {
 #ifdef CSDEBUG
   std::cout << "constructor cseval, expression:" << expression << std::endl;
 #endif
@@ -154,12 +152,6 @@ location and / or number of brackets");
       kind_ = 'n';
       id_ = "pi";
       value_ = Real(M_PI_STR);
-    } else if (expression == std::string(1, imaginary_unit_)) {
-      throw std::invalid_argument(
-          (boost::format("Complex number indicator was founded in \
-the expression: %s. Not implemented at the class for Real numbers") %
-           expression)
-              .str());
     } else if (std::regex_match(expression, kIsNumberRegex)) {
       kind_ = 'n';
       id_ = expression;

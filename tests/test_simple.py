@@ -189,10 +189,29 @@ def test_complex_numbers_1():
         == "-3.14159265358979323846264+i*(0.00000000000000000000000)"
     )
 
+    formula = Formula("2*asin(x)*i*i", 24)
+    assert (
+        formula.get({"x": "1"}, digits=23, format=FmtFlags.scientific)
+        == "-3.14159265358979323846264e+00+i*(0.00000000000000000000000e+00)"
+    )
+
     formula = Formula("2*asin(x)*i*i*i^2", 24)
     assert (
         formula.get({"x": "1"}, digits=23, format=FmtFlags.fixed)
         == "3.14159265358979323846264+i*(0.00000000000000000000000)"
+    )
+
+
+def test_complex_numbers_variables():
+    """Complex numbers."""
+    formula = Solver("2*asin(x)*i*i", 24)
+    assert (
+        formula.variables() == {"x"}
+    )
+
+    formula = Solver("2*asin(x*y*z)*i*i/qwerty/asdfg", 24)
+    assert (
+        formula.variables() == {"x", "y", "z", "qwerty", "asdfg"}
     )
 
 

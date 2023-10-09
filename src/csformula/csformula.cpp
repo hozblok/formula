@@ -176,6 +176,17 @@ location and / or number of brackets");
   boost::algorithm::erase_all(expression_, "\t");
   boost::algorithm::erase_all(expression_, "\v");
 
+  if (case_insensitive_) {
+    // TODO cannot give back to user the original expression?
+    boost::algorithm::to_lower(expression_);
+    if (imaginary_unit_ != tolower(imaginary_unit_)) {
+      throw std::invalid_argument(
+          "Uppercase imaginary unit for case insensitive expressions \
+is not supported. Specify imaginary unit in lower \
+case for case insensitive expressions.");
+    }
+  }
+
   // Check whether expression_ contains complex numbers or not.
   if (case_insensitive_) {
     std::regex regexp_check_complex_numbers(
@@ -188,10 +199,10 @@ location and / or number of brackets");
     is_complex_ = std::regex_search(expression_, regexp_check_complex_numbers);
   }
 
-  if (case_insensitive_) {
-    // TODO cannot give back to user the original expression?
-    boost::algorithm::to_lower(expression_);
-    // TODO cannot give back to user the original expression?
-    // boost::algorithm::to_lower(imaginary_unit_);
+  if (is_complex_ && expression_.find("<") != std::string::npos or
+      expression_.find(">") != std::string::npos) {
+    throw std::invalid_argument(
+        "The given formula expression with complex numbers contains wrong \
+symbols: '<' or '>'");
   }
 }

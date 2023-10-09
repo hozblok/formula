@@ -117,9 +117,8 @@ class Formula {
             std::make_shared<cseval_complex<mp_complex<precisions_array[I]>>>(
                 expression_, imaginary_unit_);
       } else {
-        // TODO: delete imaginary_unit_
-        eval_ = std::make_shared<cseval<mp_real<precisions_array[I]>>>(
-            expression_, imaginary_unit_);
+        eval_ =
+            std::make_shared<cseval<mp_real<precisions_array[I]>>>(expression_);
       }
     } else if (I + 1 < kPrecisionsLength) {
       init_eval<I + 1>();
@@ -167,7 +166,11 @@ class Formula {
     std::unordered_set<std::string> variables;
     auto visitor =
         std::bind(CollectVariablesVisitor(), &variables, std::placeholders::_1);
-    boost::apply_visitor(visitor, eval_);
+    if (is_complex_) {
+      boost::apply_visitor(visitor, eval_complex_);
+    } else {
+      boost::apply_visitor(visitor, eval_);
+    }
     return variables;
   }
 
