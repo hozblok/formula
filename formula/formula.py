@@ -103,3 +103,94 @@ class Solver(Formula):
             result = self.get(variables_to_values, format_digits, format_flags)
 
         return result
+
+
+class Number:
+    def __init__(
+        self,
+        expression: str,
+        precision: int = 24,
+        imaginary_unit: str = "i",
+        case_insensitive: bool = False,
+    ):
+        self._expression = expression
+        self._precision = precision
+        self._imaginary_unit = imaginary_unit
+        self._case_insensitive = case_insensitive
+
+    @property
+    def expression(self):
+        return self._expression
+
+    @property
+    def params(self):
+        return {
+            "precision": self._precision,
+            "imaginary_unit": self._imaginary_unit,
+            "case_insensitive": self._case_insensitive,
+        }
+
+    def __make_operation(self, __value: object, operator: str) -> "Number":
+        val = __value.expression if isinstance(__value, Number) else str(__value)
+        solver = Solver(f"(({self.expression}) {operator} ({val}))", **self.params)
+        return Number(solver(), **self.params)
+
+    def __prepare_comparison(self, __value: object) -> List[str]:
+        left = Solver(self.expression, **self.params)(format_flags=FmtFlags.fixed)
+        val = __value.expression if isinstance(__value, Number) else str(__value)
+        right = Solver(val, **self.params)(format_flags=FmtFlags.fixed)
+        return [left, right]
+
+    def __make_comparison(self, left: str, right: str, operator: str) -> bool:
+        solver = Solver(f"(({left}) {operator} ({right}))")
+        return solver(format_digits=1) == "1"
+
+    def __eq__(self, __value: object) -> bool:
+        left, right = self.__prepare_comparison(__value)
+        return left == right
+
+    def __str__(self) -> str:
+        return self.expression
+
+    def __abs__(self) -> "Number":
+        solver = Solver(f"abs({self.expression})", **self.params)
+        return Number(solver(), **self.params)
+
+    def __add__(self, __value: Union["Number", str]) -> "Number":
+        return self.__make_operation(__value, "+")
+
+    def __sub__(self, __value: Union["Number", str]) -> "Number":
+        return self.__make_operation(__value, "-")
+
+    def __mul__(self, __value: Union["Number", str]) -> "Number":
+        return self.__make_operation(__value, "*")
+
+    def __truediv__(self, __value: Union["Number", str]) -> "Number":
+        return self.__make_operation(__value, "/")
+
+    def __pow__(self, __value: Union["Number", str]) -> "Number":
+        return self.__make_operation(__value, "^")
+
+    def __ge__(self, __value: Union["Number", str]) -> bool:
+        left, right = self.__prepare_comparison(__value)
+        if left == right:
+            return True
+        return self.__make_comparison(left, right, ">")
+
+    def __gt__(self, __value: Union["Number", str]) -> bool:
+        left, right = self.__prepare_comparison(__value)
+        if left == right:
+            return False
+        return self.__make_comparison(left, right, ">")
+
+    def __le__(self, __value: Union["Number", str]) -> bool:
+        left, right = self.__prepare_comparison(__value)
+        if left == right:
+            return True
+        return self.__make_comparison(left, right, "<")
+
+    def __lt__(self, __value: Union["Number", str]) -> bool:
+        left, right = self.__prepare_comparison(__value)
+        if left == right:
+            return False
+        return self.__make_comparison(left, right, "<")

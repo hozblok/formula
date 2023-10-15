@@ -29,7 +29,8 @@ const std::map<std::string, Complex (*)(Complex)>
         {std::string("atan"), cseval_complex<Complex>::_atan},
         {std::string("log"), cseval_complex<Complex>::_log},
         {std::string("sqrt"), cseval_complex<Complex>::_sqrt},
-        {std::string("exp"), cseval_complex<Complex>::_exp}};
+        {std::string("exp"), cseval_complex<Complex>::_exp},
+        {std::string("abs"), cseval_complex<Complex>::_abs}};
 
 template <typename Complex>
 const std::map<std::string, Complex (*)(Complex, Complex)>
@@ -47,7 +48,8 @@ const std::map<std::string, Complex (*)(Complex, Complex)>
         {std::string("atan"), cseval_complex<Complex>::_atan_d},
         {std::string("log"), cseval_complex<Complex>::_log_d},
         {std::string("sqrt"), cseval_complex<Complex>::_sqrt_d},
-        {std::string("exp"), cseval_complex<Complex>::_exp_d}};
+        {std::string("exp"), cseval_complex<Complex>::_exp_d},
+        {std::string("abs"), cseval_complex<Complex>::_abs_d}};
 
 template <typename Complex>
 const std::map<std::string, Complex (*)(Complex, Complex)>

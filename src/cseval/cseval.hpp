@@ -148,7 +148,7 @@ class cseval {
       const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivRight =
           cseval<Real>::functionsTwoArgsDRight) const;
 
-  // Usefull constants.
+  // Useful constants.
   const static Real ZERO;
   const static Real ONE;
 
@@ -263,6 +263,12 @@ the tangent derivative");
   static Real _exp(Real a) { return exp(a); }
   // "exp" for the derivative
   static Real _exp_d(Real a, Real) { return exp(a); }
+  // "sign"
+  static Real _sign(Real a) { return sign(a); }
+  // "abs"
+  static Real _abs(Real a) { return fabs(a); }
+  // "abs" for the derivative
+  static Real _abs_d(Real a, Real) { return sign(a); }
   // "log" - (!) Natural logarithm
   static Real _log(Real a) { return log(a); }
   // "log" - (!) Natural logarithm for the derivative
