@@ -219,14 +219,15 @@ template <std::size_t I = 0, typename FuncT, typename... Tp>
   }
 }
 
-// TODO add log10 sinh cosh tanh asinh acosh atanh
-// using boost::math::constants::pi;
+// TODO add log2 log10 sinh cosh tanh asinh acosh atanh
 using boost::multiprecision::acos;
 using boost::multiprecision::asin;
 using boost::multiprecision::atan;
 using boost::multiprecision::cos;
 using boost::multiprecision::exp;
-using boost::multiprecision::fabs;  // TODO non complex? log2?
+using boost::multiprecision::abs;
+using boost::multiprecision::fabs;
+using boost::multiprecision::sign;
 using boost::multiprecision::log;
 using boost::multiprecision::pow;
 using boost::multiprecision::sin;

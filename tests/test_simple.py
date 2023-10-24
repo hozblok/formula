@@ -3,7 +3,7 @@ copying an object, getting variables, etc."""
 
 import pytest
 
-from formula import FmtFlags, Formula, Solver
+from formula import FmtFlags, Formula, Solver, Number
 
 
 def test_evaluation():  # pylint: disable=too-many-statements
@@ -243,3 +243,32 @@ def test_formula_object_copy():
     formula.expression = "1"
     assert formula.get() == "1"
     assert formula2.get() != formula.get()
+
+
+def test_number():
+    a = Number("1.1")
+    b = Number("-1.1")
+    c = Number("1.100000000000000000000000000000000000000000000001")
+    assert c == a
+    assert c >= a
+    assert a <= c
+    assert c <= a
+    assert a >= c
+    assert b < a
+    assert a > b
+    assert str(a + "1.1") == "2.2"
+    assert str(a - "1.2") == "-0.1"
+    assert str(a / b) == "-1"
+    assert str(a * "2") == "2.2"
+    assert (a * Number("2") + Number("0.8")) ** 2 == "9"
+    d = abs(b)
+    assert d == a
+
+
+def test_number_complex():
+    assert str(Number("5")) == "5"
+    assert str(abs(Number("4-3*i"))) == "5+i*(0)"
+    # TODO: support comparison complex and real numbers
+    assert abs(Number("4-3*i")) == Number("5+i*(0)")
+    assert abs(Number('-sin(pi/8)-i*cos(pi/8)')) == Number("1+i*(0)")
+    assert Number("2+1*i") == Number("-(i)^2-1+1+5-4/2*2-(i)^2*1*i")

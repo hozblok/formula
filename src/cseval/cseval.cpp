@@ -30,7 +30,9 @@ const std::map<std::string, Real (*)(Real)> cseval<Real>::functionsOneArg = {
     {std::string("atan"), cseval<Real>::_atan},
     {std::string("log"), cseval<Real>::_log},
     {std::string("sqrt"), cseval<Real>::_sqrt},
-    {std::string("exp"), cseval<Real>::_exp}};
+    {std::string("exp"), cseval<Real>::_exp},
+    {std::string("sign"), cseval<Real>::_sign},
+    {std::string("abs"), cseval<Real>::_abs}};
 
 template <typename Real>
 const std::map<std::string, Real (*)(Real, Real)>
@@ -48,7 +50,9 @@ const std::map<std::string, Real (*)(Real, Real)>
         {std::string("atan"), cseval<Real>::_atan_d},
         {std::string("log"), cseval<Real>::_log_d},
         {std::string("sqrt"), cseval<Real>::_sqrt_d},
-        {std::string("exp"), cseval<Real>::_exp_d}};
+        {std::string("exp"), cseval<Real>::_exp_d},
+        {std::string("sign"), cseval<Real>::_one},
+        {std::string("abs"), cseval<Real>::_abs_d}};
 
 template <typename Real>
 const std::map<std::string, Real (*)(Real, Real)>

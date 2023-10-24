@@ -264,6 +264,12 @@ the tangent derivative");
   static Complex _exp(Complex a) { return exp(a); }
   // "exp" for the derivative
   static Complex _exp_d(Complex a, Complex) { return exp(a); }
+  // "abs"
+  static Complex _abs(Complex a) { return abs(a); }
+  // TODO: "abs" for the derivative
+  static Complex _abs_d(Complex a, Complex) {
+    throw std::invalid_argument("Not implemented: abs() derivative");
+  }
   // "log" - (!) Natural logarithm
   static Complex _log(Complex a) { return log(a); }
   // "log" - (!) Natural logarithm for the derivative
