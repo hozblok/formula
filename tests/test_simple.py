@@ -263,3 +263,12 @@ def test_number():
     assert (a * Number("2") + Number("0.8")) ** 2 == "9"
     d = abs(b)
     assert d == a
+
+
+def test_number_complex():
+    assert str(Number("5")) == "5"
+    assert str(abs(Number("4-3*i"))) == "5+i*(0)"
+    # TODO: support comparison complex and real numbers
+    assert abs(Number("4-3*i")) == Number("5+i*(0)")
+    assert abs(Number('-sin(pi/8)-i*cos(pi/8)')) == Number("1+i*(0)")
+    assert Number("2+1*i") == Number("-(i)^2-1+1+5-4/2*2-(i)^2*1*i")
