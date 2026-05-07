@@ -11,22 +11,19 @@ concurrency:
 
 jobs:
   test:
-    name: Test on python ${{ matrix.python }} ${{ matrix.os }} (${{ matrix.architecture }})
+    name: Test on python ${{ matrix.python }} ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-20.04, ubuntu-latest]
+        os: [ubuntu-22.04, ubuntu-latest]
         architecture: [x64]
-        python: ["3.8", "3.9", "3.10", "3.11", "pypy-3.8", "pypy-3.9"]
-        include:
-          - os: ubuntu-20.04
-            architecture: x64
-            python: "3.6"
-          - os: ubuntu-20.04
-            architecture: x64
-            python: "3.7"
+        python: ["3.9", "3.10", "3.11", "3.12", "pypy-3.9", "pypy-3.10"]
+    env:
+      # PyPy on Linux may ship with an empty LDSHARED, breaking C++ extension
+      # links. The default is harmless for CPython (it overrides from sysconfig).
+      LDSHARED: ${{ startsWith(matrix.python, 'pypy') && 'g++ -shared' || '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python }}
@@ -42,11 +39,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --upgrade setuptools wheel
-          # installs the package and the extra test deps
           python -m pip install .[test]
-      - name: Build extension
-        run: |
-          python setup.py build_ext --inplace
       - name: Test
         run: |
           python -m pytest -q

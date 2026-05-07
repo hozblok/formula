@@ -1,3 +1,6 @@
 recursive-include boost_headers *.hpp *.cpp *.h
 recursive-include src *.hpp *.cpp
+recursive-include tests *.py
 include LICENSE
+include README.md
+include pyproject.toml
