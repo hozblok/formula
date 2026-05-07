@@ -3,14 +3,11 @@ distributing, and installing formula using the Distutils."""
 
 import os
 import sys
-
-from pybind11 import get_cmake_dir
+import sysconfig
 
 # Available at setup time due to pyproject.toml
 from pybind11.setup_helpers import Pybind11Extension, build_ext
 from setuptools import find_packages, setup
-from setuptools.command.test import test as TestCommand
-
 
 __version__ = "4.0.3"
 
@@ -40,6 +37,12 @@ else:
     BOOST_HEADERS = "boost_headers/"
 
 
+EXTRA_COMPILE_ARGS = []
+if sys.platform == "darwin":
+    # macOS libc++ removes std::unary_function in C++17; enable compatibility
+    # for bundled Boost headers.
+    EXTRA_COMPILE_ARGS.append("-D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION")
+
 EXT_MODULES = [
     Pybind11Extension(
         "formula._formula",
@@ -54,29 +57,26 @@ EXT_MODULES = [
             GetPybindInclude(user=True),
         ],
         define_macros=[("VERSION_INFO", __version__)],
+        extra_compile_args=EXTRA_COMPILE_ARGS,
         language="c++",
     )
 ]
 
+TEST_DEPS = ["pytest"]
 
-class PyTest(TestCommand):
-    """Setuptools Test command for invoking pytest."""
-
-    user_options = [("pytest-args=", "a", "Arguments to pass to pytest")]
-
-    def initialize_options(self):
-        TestCommand.initialize_options(self)
-        self.pytest_args = ""  # pylint: disable=attribute-defined-outside-init
-
-    def run_tests(self):
-        import shlex  # pylint: disable=import-outside-toplevel
-
-        # import here, cause outside the eggs aren't loaded
-        import pytest  # pylint: disable=import-outside-toplevel
-
-        errno = pytest.main(shlex.split(self.pytest_args))
-        sys.exit(errno)
-
+# PyPy 3.8 on Ubuntu may not define LDSHARED, which breaks linking during
+# extension builds. Provide a safe default for Linux/PyPy environments.
+if sys.implementation.name == "pypy" and sys.platform.startswith("linux"):
+    ldshared = sysconfig.get_config_var("LDSHARED")
+    if not ldshared:
+        cxx = os.environ.get("CXX", "g++")
+        ldshared = f"{cxx} -shared"
+        os.environ.setdefault("LDSHARED", ldshared)
+        config_vars = sysconfig.get_config_vars()
+        if config_vars is not None:
+            config_vars["LDSHARED"] = ldshared
+        if getattr(sysconfig, "_CONFIG_VARS", None) is not None:
+            sysconfig._CONFIG_VARS["LDSHARED"] = ldshared
 
 # Read the contents of the README file.
 with open(os.path.join(CURRENT_DIR, "README.md")) as readme_file:
@@ -88,20 +88,22 @@ setup(
     author="Ivan Ergunov",
     classifiers=[
         "Development Status :: 5 - Production/Stable",
-        "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
         "Programming Language :: C++",
         "Programming Language :: Python",
         "Topic :: Scientific/Engineering :: Mathematics",
         "Topic :: Scientific/Engineering :: Physics",
     ],
-    cmdclass={"build_ext": build_ext, "pytest": PyTest},
+    cmdclass={"build_ext": build_ext},
     description="Arbitrary-precision formula parser and solver.",
     # Currently, build_ext only provides an optional "highest supported C++
     # level" feature, but in the future it may provide more features.
     ext_modules=EXT_MODULES,
-    extras_require={"test": "pytest"},
-    install_requires=["pybind11>=2.6"],
+    extras_require={
+        "test": TEST_DEPS,
+        "dev": TEST_DEPS,
+    },
+    install_requires=["pybind11>=2.6,<3"],
     license="Apache-2.0",
     long_description_content_type="text/markdown",
     long_description=LONG_DESCRIPTION,

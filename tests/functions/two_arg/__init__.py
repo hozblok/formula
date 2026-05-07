@@ -1,0 +1,1 @@
+"""Two-argument function tests."""
