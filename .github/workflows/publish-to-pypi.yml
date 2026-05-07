@@ -1,8 +1,6 @@
 name: Publish to PyPI
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       version_bump:
@@ -11,7 +9,7 @@ on:
         options: [patch, minor, major, none]
         default: patch
       dry_run:
-        description: Skip upload to PyPI (build + twine check only)
+        description: Skip PyPI upload; create the GitHub release as a draft
         type: boolean
         default: false
 
@@ -26,9 +24,9 @@ concurrency:
 
 jobs:
   bump_version:
-    name: Bump version (workflow_dispatch only)
+    name: Bump version
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && inputs.version_bump != 'none'
+    if: inputs.version_bump != 'none'
     outputs:
       new_version: ${{ steps.bump.outputs.new_version }}
     steps:
@@ -167,12 +165,93 @@ jobs:
       - name: Verify distributions
         run: python -m twine check --strict dist/*
       - name: Publish to PyPI
-        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        if: ${{ !inputs.dry_run }}
         env:
           TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
         run: python -m twine upload --non-interactive --skip-existing dist/*
       - name: Dry-run notice
-        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        if: ${{ inputs.dry_run }}
         run: |
-          echo "Dry run enabled: skipping upload."
+          echo "Dry run enabled: skipping PyPI upload."
+
+  # Commit the version bump back to the branch, tag the commit, and create a
+  # GitHub release with auto-generated notes + the wheels and sdist attached.
+  # In dry-run mode, the commit and tag push are skipped and the GitHub
+  # release is created as a *draft* (pinned to the workflow's commit SHA)
+  # so the user can preview the assets and notes without publishing.
+  #
+  # GitHub releases created with GITHUB_TOKEN do not re-trigger workflows
+  # (intentional GitHub design), so this won't loop back into the publish
+  # workflow.
+  create_release:
+    name: Tag and create GitHub release
+    needs: [bump_version, upload_pypi]
+    if: |
+      needs.bump_version.result == 'success' &&
+      needs.upload_pypi.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Use the GITHUB_TOKEN to push the bump commit and tag back. If the
+          # target branch has branch protection requiring reviews, this push
+          # will fail; in that case allow the workflow's bot to bypass
+          # protection or switch to a PAT with the appropriate permissions.
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Restore bumped __init__.py
+        uses: actions/download-artifact@v4
+        with:
+          name: bumped-source
+          path: src/formula/
+      - name: Configure git for github-actions bot
+        if: ${{ !inputs.dry_run }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Commit and push version bump
+        if: ${{ !inputs.dry_run }}
+        env:
+          NEW_VERSION: ${{ needs.bump_version.outputs.new_version }}
+        run: |
+          git add src/formula/__init__.py
+          git commit -m "chore: release v${NEW_VERSION}"
+          git push
+      - name: Create and push tag
+        if: ${{ !inputs.dry_run }}
+        env:
+          NEW_VERSION: ${{ needs.bump_version.outputs.new_version }}
+        run: |
+          git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
+          git push origin "v${NEW_VERSION}"
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-staging
+      - name: Collect distribution files
+        run: |
+          mkdir -p dist
+          find dist-staging -type f \( -name '*.whl' -o -name '*.tar.gz' \) -exec cp {} dist/ \;
+          ls -la dist
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ needs.bump_version.outputs.new_version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          args=(
+            "v${NEW_VERSION}"
+            --title "v${NEW_VERSION}"
+            --generate-notes
+          )
+          if [[ "$DRY_RUN" == "true" ]]; then
+            # No tag was pushed in dry-run; pin the draft to the workflow's
+            # source commit so `gh` doesn't try to resolve a non-existent tag.
+            args+=( --draft --target "$COMMIT_SHA" )
+            echo "Dry run: creating draft release v${NEW_VERSION}."
+          fi
+          gh release create "${args[@]}" dist/*

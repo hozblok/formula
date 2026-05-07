@@ -23,6 +23,13 @@ jobs:
         # macos-13 = x86_64, macos-14 = arm64 (Apple Silicon).
         os: [macos-13, macos-14]
         python: ["3.9", "3.10", "3.11", "3.12", "pypy-3.9", "pypy-3.10"]
+        exclude:
+          # PyPy does not ship arm64 macOS builds (as of late 2025); skip
+          # rather than let setup-python fail to find a distribution.
+          - os: macos-14
+            python: pypy-3.9
+          - os: macos-14
+            python: pypy-3.10
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python }}
@@ -33,6 +40,15 @@ jobs:
           cache-dependency-path: |
             setup.py
             pyproject.toml
+      - name: Configure PyPy linker (macOS)
+        # Same setuptools 70+ issue as Linux: PyPy's sysconfig does not
+        # populate LDSHARED/LDCXXSHARED, so the C++ link step crashes with
+        # `'NoneType' object is not subscriptable`. macOS extensions are
+        # built as bundles with weak undefined symbols.
+        if: startsWith(matrix.python, 'pypy')
+        run: |
+          echo "LDSHARED=clang++ -bundle -undefined dynamic_lookup" >> "$GITHUB_ENV"
+          echo "LDCXXSHARED=clang++ -bundle -undefined dynamic_lookup" >> "$GITHUB_ENV"
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
