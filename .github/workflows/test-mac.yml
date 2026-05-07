@@ -37,8 +37,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --upgrade setuptools wheel
-          # Installs the package (which builds the C++ extension) and test deps.
-          python -m pip install .[test]
+          # Editable install: the compiled _formula.so lands in the source
+          # tree, so `pytest` from the repo root resolves the package
+          # correctly (a non-editable install puts the .so in site-packages,
+          # which is shadowed by the source-tree formula/ directory).
+          python -m pip install -e .[test]
       - name: Test
         run: |
           python -m pytest -q

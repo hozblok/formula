@@ -7,7 +7,10 @@ build = "cp39-* cp310-* cp311-* cp312-* pp39-* pp310-*"
 skip = "*-musllinux_i686 *-win32 pp*-win_*"
 build-verbosity = 1
 test-requires = ["pytest"]
-test-command = "python -m pytest --verbose {project}/tests"
+# --import-mode=importlib avoids pytest prepending {project} to sys.path,
+# which would otherwise let the source-tree formula/ package shadow the
+# installed wheel (the source tree has no compiled _formula.so).
+test-command = "python -m pytest --verbose --import-mode=importlib {project}/tests"
 test-skip = "*universal2:arm64 pp*"
 
 [tool.cibuildwheel.macos]
