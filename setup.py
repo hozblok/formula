@@ -1,7 +1,8 @@
 """Setup script for the formula C++/Python extension.
 
-Most metadata lives in the ``setup()`` call below; the version string is
-sourced from ``formula/__init__.py`` so there is a single source of truth.
+The Python package lives in ``src/formula/`` and the C++ extension sources
+live in ``src/cpp/`` (src-layout). The version string is sourced from
+``src/formula/__init__.py`` so there is a single source of truth.
 """
 
 import os
@@ -16,11 +17,11 @@ CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
 
 
 def _read_version():
-    init_path = os.path.join(CURRENT_DIR, "formula", "__init__.py")
+    init_path = os.path.join(CURRENT_DIR, "src", "formula", "__init__.py")
     with open(init_path, encoding="utf-8") as fh:
         match = re.search(r'^__version__\s*=\s*"([^"]+)"', fh.read(), re.MULTILINE)
     if not match:
-        raise RuntimeError("Unable to find __version__ in formula/__init__.py")
+        raise RuntimeError("Unable to find __version__ in src/formula/__init__.py")
     return match.group(1)
 
 
@@ -48,10 +49,10 @@ if sys.platform == "darwin":
 EXT_MODULES = [
     Pybind11Extension(
         "formula._formula",
-        ["src/main.cpp"],
+        ["src/cpp/main.cpp"],
         include_dirs=[
             BOOST_HEADERS,
-            "src/",
+            "src/cpp/",
         ],
         define_macros=[("VERSION_INFO", __version__)],
         extra_compile_args=EXTRA_COMPILE_ARGS,
@@ -92,7 +93,8 @@ setup(
     long_description_content_type="text/markdown",
     long_description=LONG_DESCRIPTION,
     name="formula",
-    packages=find_packages(exclude=["tests", "tests.*"]),
+    package_dir={"": "src"},
+    packages=find_packages(where="src"),
     python_requires=">=3.9, <4",
     url="https://github.com/hozblok/formula",
     version=__version__,

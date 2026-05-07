@@ -33,7 +33,7 @@ jobs:
       new_version: ${{ steps.bump.outputs.new_version }}
     steps:
       - uses: actions/checkout@v4
-      - name: Bump version in formula/__init__.py
+      - name: Bump version in src/formula/__init__.py
         id: bump
         env:
           VERSION_BUMP: ${{ inputs.version_bump }}
@@ -44,12 +44,12 @@ jobs:
           from pathlib import Path
 
           bump = os.environ["VERSION_BUMP"]
-          path = Path("formula/__init__.py")
+          path = Path("src/formula/__init__.py")
           text = path.read_text()
 
           match = re.search(r'__version__\s*=\s*"(\d+)\.(\d+)\.(\d+)"', text)
           if not match:
-              raise SystemExit("Unable to find __version__ in formula/__init__.py")
+              raise SystemExit("Unable to find __version__ in src/formula/__init__.py")
 
           major, minor, patch = map(int, match.groups())
           if bump == "major":
@@ -76,7 +76,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bumped-source
-          path: formula/__init__.py
+          path: src/formula/__init__.py
           retention-days: 1
 
   build_wheels:
@@ -98,7 +98,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: bumped-source
-          path: formula/
+          path: src/formula/
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.21.3
       - name: Upload wheel artifacts
@@ -122,7 +122,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: bumped-source
-          path: formula/
+          path: src/formula/
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
