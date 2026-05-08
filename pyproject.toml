@@ -1,8 +1,21 @@
 [build-system]
-requires = ["setuptools>=42", "wheel", "pybind11>=2.8.0"]
+requires = ["setuptools>=61", "wheel", "pybind11>=2.10,<3"]
 build-backend = "setuptools.build_meta"
 
 [tool.cibuildwheel]
-test-requires = ["pytest>=2.1"]
-test-command = "python -m pytest --verbose {project}"
-test-skip = "*universal2:arm64"
+build = "cp39-* cp310-* cp311-* cp312-* pp39-* pp310-*"
+skip = "*-musllinux_i686 *-win32 pp*-win_*"
+build-verbosity = 1
+test-requires = ["pytest"]
+test-command = "python -m pytest --verbose {project}/tests"
+test-skip = "*universal2:arm64 pp*"
+
+[tool.cibuildwheel.macos]
+archs = ["x86_64", "arm64", "universal2"]
+environment = { MACOSX_DEPLOYMENT_TARGET = "10.15" }
+
+[tool.cibuildwheel.linux]
+archs = ["x86_64"]
+
+[tool.cibuildwheel.windows]
+archs = ["AMD64", "x86"]

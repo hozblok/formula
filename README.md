@@ -2,8 +2,11 @@
 
 [![PyPI](https://img.shields.io/pypi/v/formula.svg)](https://pypi.org/project/formula/)
 [![PyPI - Format](https://img.shields.io/pypi/format/formula)](https://pypi.org/project/formula/)
-[![python](https://img.shields.io/badge/python-3.6%7C3.7%7C3.8%7C3.9%7C3.10%7C3.11-blue)](https://pypi.org/project/formula/)
+[![python](https://img.shields.io/badge/python-3.9%7C3.10%7C3.11%7C3.12-blue)](https://pypi.org/project/formula/)
 [![PyPI - Downloads](https://img.shields.io/pypi/dm/formula)](https://pypistats.org/packages/formula)
+[![Test on Ubuntu](https://github.com/hozblok/formula/actions/workflows/test-ubu.yml/badge.svg)](https://github.com/hozblok/formula/actions/workflows/test-ubu.yml)
+[![Test on macOS](https://github.com/hozblok/formula/actions/workflows/test-mac.yml/badge.svg)](https://github.com/hozblok/formula/actions/workflows/test-mac.yml)
+[![Test on Windows](https://github.com/hozblok/formula/actions/workflows/test-win.yml/badge.svg)](https://github.com/hozblok/formula/actions/workflows/test-win.yml)
 [![GitHub license](https://img.shields.io/github/license/hozblok/formula)](https://github.com/hozblok/formula/blob/master/LICENSE)
 [![Gitter](https://badges.gitter.im/don_vanchos/Lobby.svg)](https://gitter.im/don_vanchos/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
 
@@ -15,20 +18,32 @@
 
 Development plan:
 
--   Deploy new version with complex numbers support. (v4.0)
--   Complex numbers tests and examples. (Character `i` are reserved for this by default.)
--   Simple usage example and tests. Functions and rounding description.
--   Formatting documenation. Limits and caveats.
--   Deploy wheels or eggs for Linux.
--   Support `rand` for random number in [0.0 - 1.0].
+-   [x] Deploy new version with complex numbers support. (v4.0)
+-   [x] Deploy prebuilt wheels for Linux, macOS (Intel + Apple Silicon), and Windows via [cibuildwheel](https://cibuildwheel.pypa.io/).
+-   [x] Add per-function regression tests covering all built-in math functions (see [tests/functions/](tests/functions/)).
+-   [x] Support `sign()`, `abs()` and a Pythonic `Number` wrapper class.
+-   [ ] Complex numbers tests and examples. (Character `i` is reserved for this by default.)
+-   [ ] Formatting documentation. Limits and caveats.
+-   [ ] Support `rand` for random number in [0.0 - 1.0].
 
-This project built with [pybind11](https://github.com/pybind/pybind11) and [boost](https://www.boost.org/doc/libs/1_83_0/libs/multiprecision/doc/html/index.html).
+This project is built with [pybind11](https://github.com/pybind/pybind11) and [boost](https://www.boost.org/doc/libs/1_83_0/libs/multiprecision/doc/html/index.html).
 
 ## Installation
 
-### On Unix (Linux or OS X)
+```bash
+pip install formula
+```
 
--   `pip install formula`
+Prebuilt wheels are published to PyPI for **Python 3.9 – 3.12** (and PyPy
+3.9 / 3.10) on:
+
+-   **Linux** — `manylinux` x86_64
+-   **macOS** — x86_64, arm64 (Apple Silicon), and `universal2`
+-   **Windows** — AMD64 and x86
+
+If a wheel is unavailable for your platform, `pip` will fall back to
+building from the source distribution; in that case a working C++
+toolchain is required. See [Development → Building from source](#building-from-source).
 
 ### On Windows
 
@@ -207,6 +222,73 @@ And it is enough to call the `formula` object to calculate the value of the expr
 >>> Solver("0 + 9e-20 + 9e-51", 64)(None, None, 31, FmtFlags.scientific)
 '9.0000000000000000000000000000009e-20'
 ```
+
+### Using `Number` as an arbitrary-precision Python value
+
+`Number` is a small Pythonic wrapper around `Solver` that lets you compose
+expressions with the standard arithmetic and comparison operators while
+keeping arbitrary precision throughout:
+
+```python
+>>> from formula import Number
+>>> a = Number("1.0000000000000000000000000001", precision=64)
+>>> b = Number("2", precision=64)
+>>> str(a + b)
+'3.0000000000000000000000000001'
+>>> str(a * b)
+'2.0000000000000000000000000002'
+>>> str(abs(Number("-3.14", precision=32)))
+'3.14'
+>>> a > b
+False
+>>> a == Number("1.0000000000000000000000000001", precision=64)
+True
+```
+
+Supported operators: `+`, `-`, `*`, `/`, `**` (also written as `^` inside
+expressions), `abs()`, `==`, `<`, `<=`, `>`, `>=`.
+
+## Supported functions
+
+These built-in functions are recognized inside expression strings and
+covered by the per-function test suite under
+[tests/functions/](tests/functions/):
+
+| Arity | Functions                                                            |
+|-------|----------------------------------------------------------------------|
+| 1     | `abs`, `sign`, `sqrt`, `exp`, `log`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan` |
+| 2     | `+` (add), `-` (sub), `*` (mul), `/` (div), `^` / `**` (pow)         |
+
+Constants: `pi`, `e`. Imaginary unit: `i` (configurable via the
+`imaginary_unit` argument).
+
+## Development
+
+### Building from source
+
+A working C++ toolchain is required when no wheel matches your platform
+or when you check the project out for development:
+
+| OS       | Toolchain                                                       |
+|----------|-----------------------------------------------------------------|
+| Linux    | `g++` (or `clang++`); `python3-dev`                             |
+| macOS    | Xcode Command Line Tools (`xcode-select --install`)             |
+| Windows  | Visual Studio Build Tools (C++ workload)                        |
+
+```bash
+git clone https://github.com/hozblok/formula.git
+cd formula
+python -m venv .venv && source .venv/bin/activate
+python -m pip install -e .[test]
+```
+
+The editable install builds the C++ extension and places the resulting
+`_formula.so` (or `.pyd`) directly into the source tree, so `pytest` from
+the repo root resolves `formula._formula` correctly.
+
+### Running tests
+
+See [doc/tests.md](doc/tests.md).
 
 ## License
 

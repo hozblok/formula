@@ -1,38 +1,50 @@
-name: Test on ubuntu (x64)
+name: Test on Ubuntu (x64)
 
 on: [pull_request]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    name: Test on python ${{ matrix.python }} ${{ matrix.os }} (${{ matrix.architecture }})
+    name: Test on python ${{ matrix.python }} ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-20.04, ubuntu-latest]
+        os: [ubuntu-22.04, ubuntu-latest]
         architecture: [x64]
-        python: ["3.7", "3.8", "3.9", "3.10", "3.11", "pypy-3.8", "pypy-3.9"]
-        include:
-          - python-version: "3.6"
-            os: ubuntu-20.04
-            architecture: x64
+        python: ["3.9", "3.10", "3.11", "3.12", "pypy-3.9", "pypy-3.10"]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
           architecture: ${{ matrix.architecture }}
+          cache: "pip"
+          cache-dependency-path: |
+            setup.py
+            pyproject.toml
+      - name: Configure PyPy linker (Linux)
+        # PyPy's sysconfig on Linux does not populate LDSHARED/LDCXXSHARED, so
+        # setuptools >= 70 ends up with linker_so_cxx == None and crashes at
+        # link time with `'NoneType' object is not subscriptable`. Set both
+        # vars explicitly for PyPy only — CPython uses its sysconfig values.
+        if: startsWith(matrix.python, 'pypy')
+        run: |
+          echo "LDSHARED=g++ -shared" >> "$GITHUB_ENV"
+          echo "LDCXXSHARED=g++ -shared" >> "$GITHUB_ENV"
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --upgrade setuptools wheel pytest
-      - name: Display Python version
-        run: |
-          python -m pip --version
-          python -c "import sys; print(sys.version)"
-      - name: Build and install
-        run: |
-          python -m pip install --verbose --target formula-tmp .
+          python -m pip install --upgrade setuptools wheel
+          python -m pip install .[test]
       - name: Test
         run: |
-          python -m pytest --verbose formula-tmp
+          python -m pytest -q

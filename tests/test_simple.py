@@ -6,69 +6,72 @@ import pytest
 from formula import FmtFlags, Formula, Solver, Number
 
 
-def test_evaluation():  # pylint: disable=too-many-statements
+@pytest.mark.parametrize(
+    "expr, variables, expected",
+    [
+        ("2--1", None, "3"),
+        ("2-0-1", None, "1"),
+        ("2-(0-1)", None, "3"),
+        ("(2-0)-1", None, "1"),
+        ("1 + .0e0 + 1", None, "2"),
+        ("1 + .0e+0 + 1", None, "2"),
+        ("1 + +.0e0 + +1", None, "2"),
+        ("1 + 0.e+0 + +1", None, "2"),
+        ("1 + +1.e+0", None, "2"),
+        ("1 + +1.e+0 + x", {"x": "1"}, "3"),
+        ("1 - -1.e-1 - x", {"x": "1"}, "0.1"),
+        ("1 + -1.e0 + x", {"x": "1"}, "1"),
+        ("-1 - 0.e-0 - x", {"x": "1", "y": "0000000000.000000"}, "-2"),
+        ("1 - +0.e-0 - x", {"x": "1"}, "0"),
+        ("-e - +0.e-0 - e", {"e": "1"}, "-2"),
+        ("-e - +.9e-0 - - e", {"e": "1"}, "-0.9"),
+        ("0-+0.9e-0", None, "-0.9"),
+        ("1-0-1", None, "0"),
+        ("1-0--1", None, "2"),
+        ("1--0-1", None, "0"),
+        ("1--0+-1", None, "0"),
+        ("1-+0e-0-1--1", None, "1"),
+        ("2^5/2^2/2^2", None, "2"),
+        ("00000000000000000000000000000000009", None, "9"),
+        ("0000000000000000+0000000000000000008", None, "8"),
+        ("0000000000000000+.08", None, "0.08"),
+        ("000000000000000008.", None, "8"),
+        ("--000000000000000008.+0+aA.dF_gH+(.0+0.-0e0)", {"aA.dF_gH": "1"}, "9"),
+        ("(0+(1+2)/3)*((3+-5)^3)", None, "-8"),
+    ],
+)
+def test_evaluation(expr, variables, expected):
     """Evaluate several simple expressions."""
-    assert Formula("2--1").get() == "3"
-    assert Formula("2-0-1").get() == "1"
-    assert Formula("2-(0-1)").get() == "3"
-    assert Formula("(2-0)-1").get() == "1"
-    assert Formula("1 + .0e0 + 1").get() == "2"
-    assert Formula("1 + .0e0 + 1").get() == "2"
-    assert Formula("1 + .0e+0 + 1").get() == "2"
-    assert Formula("1 + +.0e0 + +1").get() == "2"
-    assert Formula("1 + 0.e+0 + +1").get() == "2"
-    assert Formula("1 + +1.e+0").get() == "2"
-    assert Formula("1 + +1.e+0 + x").get({"x": "1"}) == "3"
-    assert Formula("1 - -1.e-1 - x").get({"x": "1"}) == "0.1"
-    assert Formula("1 + -1.e0 + x").get({"x": "1"}) == "1"
-    assert Formula("-1 - 0.e-0 - x").get({"x": "1", "y": "0000000000.000000"}) == "-2"
-    assert Formula("1 - +0.e-0 - x").get({"x": "1"}) == "0"
-    assert Formula("-e - +0.e-0 - e").get({"e": "1"}) == "-2"
-    assert Formula("-e - +.9e-0 - - e").get({"e": "1"}) == "-0.9"
-    assert Formula("0-+0.9e-0").get() == "-0.9"
-    assert Formula("1-0-1").get() == "0"
-    assert Formula("1-0--1").get() == "2"
-    assert Formula("1--0-1").get() == "0"
-    assert Formula("1--0+-1").get() == "0"
-    assert Formula("1-+0e-0-1--1").get() == "1"
-    assert Formula("2^5/2^2/2^2").get() == "2"
-    assert Formula("00000000000000000000000000000000009").get() == "9"
-    assert Formula("0000000000000000+0000000000000000008").get() == "8"
-    assert Formula("0000000000000000+.08").get() == "0.08"
-    assert Formula("000000000000000008.").get() == "8"
-    assert (
-        Formula("--000000000000000008.+0+aA.dF_gH+(.0+0.-0e0)").get({"aA.dF_gH": "1"})
-        == "9"
-    )
+    formula = Formula(expr)
+    if variables is None:
+        assert formula.get() == expected
+    else:
+        assert formula.get(variables) == expected
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "-e - +.0e*0 - e",
+        ".e - 1",
+        "0eb - 1",
+        "1e - .1",
+        "2eq - 1e",
+        "3eq - 1",
+        "4eq - 1",
+        "5eq - 1",
+        "6eq - 1",
+        "7eq - 1",
+        "8eq - 1",
+        "9eq - 1",
+        ".0.e - 1",
+        "(((((0))))",
+    ],
+)
+def test_evaluation_invalid_expressions(expr):
+    """Ensure invalid expressions fail fast with ValueError."""
     with pytest.raises(ValueError):
-        Formula("-e - +.0e*0 - e").get()
-    with pytest.raises(ValueError):
-        Formula(".e - 1").get()
-    with pytest.raises(ValueError):
-        Formula("0eb - 1").get()
-    with pytest.raises(ValueError):
-        Formula("1e - .1").get()
-    with pytest.raises(ValueError):
-        Formula("2eq - 1e").get()
-    with pytest.raises(ValueError):
-        Formula("3eq - 1").get()
-    with pytest.raises(ValueError):
-        Formula("4eq - 1").get()
-    with pytest.raises(ValueError):
-        Formula("5eq - 1").get()
-    with pytest.raises(ValueError):
-        Formula("6eq - 1").get()
-    with pytest.raises(ValueError):
-        Formula("7eq - 1").get()
-    with pytest.raises(ValueError):
-        Formula("8eq - 1").get()
-    with pytest.raises(ValueError):
-        Formula("9eq - 1").get()
-    with pytest.raises(ValueError):
-        Formula(".0.e - 1").get()
-    with pytest.raises(ValueError):
-        Formula("(((((0))))").get()
-    assert Formula("(0+(1+2)/3)*((3+-5)^3)").get() == "-8"
+        Formula(expr).get()
 
 
 def test_getting_variables():
@@ -205,14 +208,10 @@ def test_complex_numbers_1():
 def test_complex_numbers_variables():
     """Complex numbers."""
     formula = Solver("2*asin(x)*i*i", 24)
-    assert (
-        formula.variables() == {"x"}
-    )
+    assert formula.variables() == {"x"}
 
     formula = Solver("2*asin(x*y*z)*i*i/qwerty/asdfg", 24)
-    assert (
-        formula.variables() == {"x", "y", "z", "qwerty", "asdfg"}
-    )
+    assert formula.variables() == {"x", "y", "z", "qwerty", "asdfg"}
 
 
 def test_complex_numbers_2():
@@ -270,5 +269,5 @@ def test_number_complex():
     assert str(abs(Number("4-3*i"))) == "5+i*(0)"
     # TODO: support comparison complex and real numbers
     assert abs(Number("4-3*i")) == Number("5+i*(0)")
-    assert abs(Number('-sin(pi/8)-i*cos(pi/8)')) == Number("1+i*(0)")
+    assert abs(Number("-sin(pi/8)-i*cos(pi/8)")) == Number("1+i*(0)")
     assert Number("2+1*i") == Number("-(i)^2-1+1+5-4/2*2-(i)^2*1*i")
