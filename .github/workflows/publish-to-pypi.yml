@@ -88,7 +88,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-13, macos-14, windows-latest]
+        os: [ubuntu-latest, macos-14, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - name: Restore bumped __init__.py
@@ -98,7 +98,10 @@ jobs:
           name: bumped-source
           path: src/formula/
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.21.3
+        # v2.23.x is the last 2.x series before cibuildwheel 3.0 (which
+        # requires Python >= 3.11 to *run* and changes PyPy enablement).
+        # 2.23 has stable PyPy 3.11 support.
+        uses: pypa/cibuildwheel@v2.23.3
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v4
         with:
