@@ -17,13 +17,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, windows-latest]
+        os: [windows-latest]
         architecture: [x86, x64]
-        python: ["3.9", "3.10", "3.11", "3.12", "pypy-3.9", "pypy-3.10"]
+        python: ["3.9", "3.12", "pypy-3.9", "pypy-3.11"]
         exclude:
           - python: "pypy-3.9"
             architecture: x86
-          - python: "pypy-3.10"
+          - python: "pypy-3.11"
             architecture: x86
     steps:
       - uses: actions/checkout@v4
