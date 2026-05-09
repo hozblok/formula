@@ -6,10 +6,13 @@ build-backend = "setuptools.build_meta"
 build = "cp39-* cp310-* cp311-* cp312-* pp39-* pp310-* pp311-*"
 # Skip patterns:
 # - *-musllinux_i686: 32-bit Alpine; vanishingly small audience.
+# - pp*-musllinux_*: PyPy on Alpine compounds two problems (musllinux GCC
+#   memory + PyPy LDSHARED) for almost no users. Build CPython musllinux
+#   wheels (via clang override below); PyPy users on Alpine fall back to sdist.
 # - pp*-win*: PyPy on Windows is not shipped upstream. The trailing `*` (no
 #   underscore) catches both `pp*-win_amd64` and `pp*-win32`.
-# CPython Windows x86 (cp*-win32) is built.
-skip = "*-musllinux_i686 pp*-win*"
+# CPython Windows x86 (cp*-win32) and CPython musllinux x86_64 are built.
+skip = "*-musllinux_i686 pp*-musllinux_* pp*-win*"
 build-verbosity = 1
 test-requires = ["pytest"]
 test-command = "python -m pytest --verbose {project}/tests"
@@ -41,3 +44,12 @@ environment = { LDSHARED = "clang++ -bundle -undefined dynamic_lookup", LDCXXSHA
 select = "pp*-manylinux_*"
 inherit.environment = "append"
 environment = { LDSHARED = "g++ -shared", LDCXXSHARED = "g++ -shared" }
+
+# musllinux (Alpine) ships an older GCC that runs out of memory on Boost's
+# heavily-templated cpp_bin_float<N> + variant explosion. clang handles this
+# class of metaprogramming with much lower memory pressure. We also drop to
+# -O1 and MAKEFLAGS=-j1 as defensive measures.
+[[tool.cibuildwheel.overrides]]
+select = "*-musllinux_*"
+before-build = "apk update && apk add clang"
+environment = { CC = "clang", CXX = "clang++", CFLAGS = "-O1", CXXFLAGS = "-O1", MAKEFLAGS = "-j1" }
