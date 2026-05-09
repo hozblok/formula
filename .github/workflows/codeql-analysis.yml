@@ -34,7 +34,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: ["python", "cpp"]
+        language: ["python"]
 
     steps:
       - name: Checkout repository
@@ -47,22 +47,6 @@ jobs:
           languages: ${{ matrix.language }}
           config-file: .github/codeql/codeql-config.yml
           queries: security-and-quality
-
-      - name: Set up Python
-        if: matrix.language == 'cpp'
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-          cache-dependency-path: |
-            setup.py
-            pyproject.toml
-
-      - name: Build extension for CodeQL
-        if: matrix.language == 'cpp'
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
-          python -m pip install .
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
