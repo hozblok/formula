@@ -149,6 +149,14 @@ class Number:
         left, right = self.__prepare_comparison(__value)
         return left == right
 
+    def __hash__(self) -> int:
+        # Canonical hash key: the value formatted in fixed-point at the
+        # configured precision. Two Numbers that compare equal via __eq__
+        # share that formatted form, so this satisfies the Python contract
+        # that a == b implies hash(a) == hash(b).
+        canonical = Solver(self.expression, **self.params)(format_flags=FmtFlags.fixed)
+        return hash(canonical)
+
     def __str__(self) -> str:
         return self.expression
 
