@@ -2,6 +2,51 @@
 requires = ["setuptools>=61", "wheel", "pybind11>=2.10,<3"]
 build-backend = "setuptools.build_meta"
 
+# Project metadata.
+#
+# version is provided dynamically from src/formula/__init__.py via the
+# imperative setup() call in setup.py — there's a single source of truth
+# for the version string, and setup.py also needs it to populate the
+# VERSION_INFO macro on the C++ extension.
+[project]
+name = "formula"
+dynamic = ["version"]
+description = "Arbitrary-precision formula parser and solver."
+readme = { file = "README.md", content-type = "text/markdown" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Ivan Ergunov", email = "hozblok@gmail.com" }]
+requires-python = ">=3.9, <4"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Operating System :: OS Independent",
+    "Programming Language :: C++",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.urls]
+Homepage = "https://github.com/hozblok/formula"
+
+[project.optional-dependencies]
+test = ["pytest"]
+dev = ["pytest"]
+
+[tool.setuptools]
+zip-safe = false
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.cibuildwheel]
 build = "cp39-* cp310-* cp311-* cp312-* pp39-* pp310-* pp311-*"
 # Skip patterns:
