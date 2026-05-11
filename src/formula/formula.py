@@ -108,37 +108,53 @@ class Solver(Formula):
 class Number:
     def __init__(
         self,
-        expression: str,
+        expression: Union["Number", str, int, float],
         precision: int = 24,
-        imaginary_unit: str = "i",
-        case_insensitive: bool = False,
     ):
-        self._expression = expression
+        if isinstance(expression, Number):
+            self._expression = expression.expression
+        elif isinstance(expression, bool):
+            # bool is an int subclass; reject explicitly so Number(True) doesn't
+            # silently become Number("True").
+            raise TypeError(
+                "Number expression must be Number, str, int, or float; got bool"
+            )
+        elif isinstance(expression, (str, int, float)):
+            self._expression = str(expression)
+        else:
+            raise TypeError(
+                f"Number expression must be Number, str, int, or float; "
+                f"got {type(expression).__name__}"
+            )
         self._precision = precision
-        self._imaginary_unit = imaginary_unit
-        self._case_insensitive = case_insensitive
 
     @property
     def expression(self):
         return self._expression
 
     @property
-    def params(self):
-        return {
-            "precision": self._precision,
-            "imaginary_unit": self._imaginary_unit,
-            "case_insensitive": self._case_insensitive,
-        }
+    def params(self) -> dict:
+        return {"precision": self._precision}
 
     def __make_operation(self, __value: object, operator: str) -> "Number":
-        val = __value.expression if isinstance(__value, Number) else str(__value)
-        solver = Solver(f"(({self.expression}) {operator} ({val}))", **self.params)
+        other = (
+            __value
+            if isinstance(__value, Number)
+            else Number(__value, precision=self._precision)
+        )
+        solver = Solver(
+            f"(({self.expression}) {operator} ({other.expression}))", **self.params
+        )
         return Number(solver(), **self.params)
 
     def __prepare_comparison(self, __value: object) -> List[str]:
         left = Solver(self.expression, **self.params)(format_flags=FmtFlags.fixed)
-        val = __value.expression if isinstance(__value, Number) else str(__value)
-        right = Solver(val, **self.params)(format_flags=FmtFlags.fixed)
+        other = (
+            __value
+            if isinstance(__value, Number)
+            else Number(__value, precision=self._precision)
+        )
+        right = Solver(other.expression, **self.params)(format_flags=FmtFlags.fixed)
         return [left, right]
 
     def __make_comparison(self, left: str, right: str, operator: str) -> bool:
@@ -156,40 +172,55 @@ class Number:
         solver = Solver(f"abs({self.expression})", **self.params)
         return Number(solver(), **self.params)
 
-    def __add__(self, __value: Union["Number", str]) -> "Number":
+    def __add__(self, __value: Union["Number", str, int, float]) -> "Number":
         return self.__make_operation(__value, "+")
 
-    def __sub__(self, __value: Union["Number", str]) -> "Number":
+    def __sub__(self, __value: Union["Number", str, int, float]) -> "Number":
         return self.__make_operation(__value, "-")
 
-    def __mul__(self, __value: Union["Number", str]) -> "Number":
+    def __mul__(self, __value: Union["Number", str, int, float]) -> "Number":
         return self.__make_operation(__value, "*")
 
-    def __truediv__(self, __value: Union["Number", str]) -> "Number":
+    def __truediv__(self, __value: Union["Number", str, int, float]) -> "Number":
         return self.__make_operation(__value, "/")
 
-    def __pow__(self, __value: Union["Number", str]) -> "Number":
+    def __pow__(self, __value: Union["Number", str, int, float]) -> "Number":
         return self.__make_operation(__value, "^")
 
-    def __ge__(self, __value: Union["Number", str]) -> bool:
+    def __radd__(self, __value: Union["Number", str, int, float]) -> "Number":
+        return Number(__value, precision=self._precision).__add__(self)
+
+    def __rsub__(self, __value: Union["Number", str, int, float]) -> "Number":
+        return Number(__value, precision=self._precision).__sub__(self)
+
+    def __rmul__(self, __value: Union["Number", str, int, float]) -> "Number":
+        return Number(__value, precision=self._precision).__mul__(self)
+
+    def __rtruediv__(self, __value: Union["Number", str, int, float]) -> "Number":
+        return Number(__value, precision=self._precision).__truediv__(self)
+
+    def __rpow__(self, __value: Union["Number", str, int, float]) -> "Number":
+        return Number(__value, precision=self._precision).__pow__(self)
+
+    def __ge__(self, __value: Union["Number", str, int, float]) -> bool:
         left, right = self.__prepare_comparison(__value)
         if left == right:
             return True
         return self.__make_comparison(left, right, ">")
 
-    def __gt__(self, __value: Union["Number", str]) -> bool:
+    def __gt__(self, __value: Union["Number", str, int, float]) -> bool:
         left, right = self.__prepare_comparison(__value)
         if left == right:
             return False
         return self.__make_comparison(left, right, ">")
 
-    def __le__(self, __value: Union["Number", str]) -> bool:
+    def __le__(self, __value: Union["Number", str, int, float]) -> bool:
         left, right = self.__prepare_comparison(__value)
         if left == right:
             return True
         return self.__make_comparison(left, right, "<")
 
-    def __lt__(self, __value: Union["Number", str]) -> bool:
+    def __lt__(self, __value: Union["Number", str, int, float]) -> bool:
         left, right = self.__prepare_comparison(__value)
         if left == right:
             return False
