@@ -37,6 +37,17 @@ with urllib.request.urlopen(url) as response, open(
 print("Unzip...")
 
 with zipfile.ZipFile(script_dir / file_name_ext, "r") as zip_ref:
+    # Zip-slip guard: refuse archives whose entries would write outside
+    # script_dir. Boost releases are trusted, but the URL is unauthenticated
+    # so a mirror compromise (or a typo in --version pointing at the wrong
+    # asset) shouldn't be able to overwrite arbitrary files on the host.
+    target_root = script_dir.resolve()
+    for member in zip_ref.namelist():
+        dest = (target_root / member).resolve()
+        try:
+            dest.relative_to(target_root)
+        except ValueError:
+            raise RuntimeError(f"Unsafe path in archive: {member!r}")
     zip_ref.extractall(script_dir)
 
 print("Delete all except the 'boost' catalog with headers...")
