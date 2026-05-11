@@ -61,19 +61,15 @@ class Solver(Formula):
         if format_digits is None:
             format_digits = self.precision
 
-        variables_to_values: Dict[str, str] = dict() if values is None else values
-        if not isinstance(values, Mapping):
-            variables = self.variables()
-            if not variables:
-                pass
-            elif values is not None and len(variables) == 1:
-                variables_to_values = {variables.pop(): str(values)}
-            else:
-                raise ValueError(
-                    "The value of the 'values' parameter is not a dict!"
-                    " Its type is %s A dictionary is expected with values for"
-                    " the following variables: %s" % (type(values), str(variables))
-                )
+        if values is None:
+            variables_to_values: Dict[str, str] = {}
+        elif isinstance(values, Mapping):
+            variables_to_values = values
+        else:
+            raise TypeError(
+                f"Solver.__call__ values must be a Mapping; "
+                f"got {type(values).__name__}"
+            )
 
         for key in variables_to_values:
             val = variables_to_values[key]
