@@ -26,7 +26,7 @@ print("Output:", file_name_ext)
 
 print("Download...")
 
-url = f"https://boostorg.jfrog.io/artifactory/main/release/{version}/source/{file_name_ext}"
+url = f"https://archives.boost.io/release/{version}/source/{file_name_ext}"
 chunk_size = 65536
 with urllib.request.urlopen(url) as response, open(
     script_dir / file_name_ext, "wb"
