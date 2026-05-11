@@ -88,17 +88,18 @@ class Solver(Formula):
                 )
             else:
                 try:
-                    result = [
-                        self.get_derivative(
-                            der, variables_to_values, format_digits, format_flags
-                        )
-                        for der in derivative
-                    ]
+                    iter(derivative)
                 except TypeError as ex:
                     raise ValueError(
-                        "The value of the 'derivative' is not"
-                        " a string or iterable! Its type is %s." % type(derivative)
+                        f"'derivative' must be a str or iterable of str "
+                        f"(got {type(derivative).__name__})"
                     ) from ex
+                result = [
+                    self.get_derivative(
+                        der, variables_to_values, format_digits, format_flags
+                    )
+                    for der in derivative
+                ]
         else:
             result = self.get(variables_to_values, format_digits, format_flags)
 
