@@ -22,7 +22,12 @@ class Solver(Formula):
         imaginary_unit: str = "i",
         case_insensitive: bool = False,
     ):
-        # pylint: disable=useless-super-delegation
+        from formula import MAX_PRECISION
+
+        if not 0 <= precision <= MAX_PRECISION:
+            raise ValueError(
+                f"precision must be in [0, {MAX_PRECISION}] (got {precision})"
+            )
         super().__init__(expression, precision, imaginary_unit, case_insensitive)
 
     def __call__(
