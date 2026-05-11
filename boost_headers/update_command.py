@@ -1,11 +1,15 @@
-# Use Python 3.10.
 # Script to precollect boost headers in the 'boost' catalog.
-# We don't need to update boost headers very often. So we can bootstrap all headers here
-# in the 'boost' catalog and use it everywhere.
+# We don't need to update boost headers very often. So we can bootstrap all
+# headers here in the 'boost' catalog and use it everywhere.
+#
+# Runs under any Python supported by the package (>= 3.9). Avoid PEP 604
+# union syntax (`X | None`) since it only became a runtime-evaluatable
+# expression in 3.10.
 import argparse
 import os
 from pathlib import Path
 import shutil
+from typing import Optional
 import urllib.request
 import zipfile
 
@@ -40,7 +44,7 @@ with zipfile.ZipFile(script_dir / file_name_ext, "r") as zip_ref:
     zip_ref.extractall(script_dir)
 
 print("Delete all except the 'boost' catalog with headers...")
-boost_entry: os.DirEntry | None = None
+boost_entry: Optional[os.DirEntry] = None
 for el in os.scandir(script_dir / file_name):
     if el.name != "boost":
         if el.is_dir():
