@@ -1,5 +1,6 @@
 """Solver wrapper to simplify calculations with Formula."""
 
+import warnings
 from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional, Union
 
@@ -31,6 +32,7 @@ class Solver(Formula):
         derivative: Optional[Union[str, Iterable[str]]] = None,
         format_digits: Optional[int] = None,
         format_flags=FmtFlags.default,
+        format=None,
     ) -> Union[List[str], str]:
         """Calculate the value of the parsed formula string.
 
@@ -53,10 +55,22 @@ class Solver(Formula):
             format_flags: Flags to format the return value.
                 If omitted output is generated in fixed-point notation and
                 decimal base.
+            format: Deprecated alias for ``format_flags``, kept for parity
+                with ``Formula.get``'s keyword name. Will be removed in a
+                future release; prefer ``format_flags``.
         Returns:
             Calculated value: string or the list of strings if the
                 'derivative' parameter is passed.
         """
+
+        if format is not None:
+            warnings.warn(
+                "Solver.__call__ 'format' keyword is deprecated; "
+                "use 'format_flags' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            format_flags = format
 
         if format_digits is None:
             format_digits = self.precision
