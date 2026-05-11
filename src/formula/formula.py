@@ -68,11 +68,14 @@ class Solver(Formula):
                 pass
             elif values is not None and len(variables) == 1:
                 variables_to_values = {variables.pop(): str(values)}
+            elif values is None:
+                raise ValueError(
+                    f"Missing values for variables: {variables}"
+                )
             else:
                 raise ValueError(
-                    "The value of the 'values' parameter is not a dict!"
-                    " Its type is %s A dictionary is expected with values for"
-                    " the following variables: %s" % (type(values), str(variables))
+                    f"Expected a Mapping for 'values' (got "
+                    f"{type(values).__name__}); variables to provide: {variables}"
                 )
 
         for key in variables_to_values:
