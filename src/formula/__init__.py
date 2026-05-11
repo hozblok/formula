@@ -7,3 +7,5 @@ from ._formula import FmtFlags, Formula
 from .formula import Solver, Number
 
 MAX_PRECISION = 8192
+
+__all__ = ["FmtFlags", "Formula", "Solver", "Number", "MAX_PRECISION"]
