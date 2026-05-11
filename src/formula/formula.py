@@ -67,7 +67,8 @@ class Solver(Formula):
             if not variables:
                 pass
             elif values is not None and len(variables) == 1:
-                variables_to_values = {variables.pop(): str(values)}
+                (only_var,) = variables
+                variables_to_values = {only_var: str(values)}
             else:
                 raise ValueError(
                     "The value of the 'values' parameter is not a dict!"
