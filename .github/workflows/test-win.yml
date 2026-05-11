@@ -1,6 +1,12 @@
 name: Test on Windows (x86-x64)
 
-on: [pull_request]
+# Opt-in only: tests run on a PR when the `run-tests` label is applied (and
+# re-run on subsequent pushes while the label stays on), or via manual
+# workflow_dispatch. Remove the label to stop further runs on the PR.
+on:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,6 +18,9 @@ concurrency:
 jobs:
   test:
     name: Test on python ${{ matrix.python }} ${{ matrix.os }} (${{ matrix.architecture }})
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'run-tests')
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
