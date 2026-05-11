@@ -1,8 +1,11 @@
-"""Setup script for the formula C++/Python extension.
+"""Build script for the formula C++/Python extension.
 
-The Python package lives in ``src/formula/`` and the C++ extension sources
-live in ``src/cpp/`` (src-layout). The version string is sourced from
-``src/formula/__init__.py`` so there is a single source of truth.
+Static metadata (name, description, classifiers, dependencies, etc.) lives
+in `pyproject.toml`'s `[project]` table; this file is the imperative
+shim that setuptools still needs to build the pybind11 C++ extension. It
+also supplies the dynamic version (sourced from
+`src/formula/__init__.py`) and the VERSION_INFO macro on the C++ side so
+the version string remains a single source of truth.
 """
 
 import os
@@ -11,7 +14,7 @@ import sys
 
 # Available at setup time due to pyproject.toml
 from pybind11.setup_helpers import Pybind11Extension, build_ext
-from setuptools import find_packages, setup
+from setuptools import setup
 
 CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -60,43 +63,9 @@ EXT_MODULES = [
     )
 ]
 
-TEST_DEPS = ["pytest"]
-
-with open(os.path.join(CURRENT_DIR, "README.md"), encoding="utf-8") as readme_file:
-    LONG_DESCRIPTION = readme_file.read()
-
 
 setup(
-    author_email="hozblok@gmail.com",
-    author="Ivan Ergunov",
-    classifiers=[
-        "Development Status :: 5 - Production/Stable",
-        "Operating System :: OS Independent",
-        "Programming Language :: C++",
-        "Programming Language :: Python",
-        "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
-        "Programming Language :: Python :: 3.11",
-        "Programming Language :: Python :: 3.12",
-        "Topic :: Scientific/Engineering :: Mathematics",
-        "Topic :: Scientific/Engineering :: Physics",
-    ],
-    cmdclass={"build_ext": build_ext},
-    description="Arbitrary-precision formula parser and solver.",
-    ext_modules=EXT_MODULES,
-    extras_require={
-        "test": TEST_DEPS,
-        "dev": TEST_DEPS,
-    },
-    license="Apache-2.0",
-    long_description_content_type="text/markdown",
-    long_description=LONG_DESCRIPTION,
-    name="formula",
-    package_dir={"": "src"},
-    packages=find_packages(where="src"),
-    python_requires=">=3.9, <4",
-    url="https://github.com/hozblok/formula",
     version=__version__,
-    zip_safe=False,
+    cmdclass={"build_ext": build_ext},
+    ext_modules=EXT_MODULES,
 )
