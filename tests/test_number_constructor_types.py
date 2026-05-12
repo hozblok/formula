@@ -80,3 +80,23 @@ def test_dict_rejected():
 def test_error_message_names_offending_type_concretely():
     with pytest.raises(TypeError, match="Number, str, int, or float"):
         Number(object())
+
+
+def test_coerce_expression_callable_directly_for_int():
+    # _coerce_expression is the documented (single-underscore "protected")
+    # entry point for the type-dispatch — subclasses can override it, and
+    # callers in advanced cases can reach it directly without going through
+    # __init__.
+    assert Number._coerce_expression(5) == "5"
+
+
+def test_coerce_expression_unwraps_inner_number():
+    inner = Number("x + 1")
+    assert Number._coerce_expression(inner) == "x + 1"
+
+
+def test_coerce_expression_rejects_bool_at_method_level():
+    # The same rejection applies whether the dispatch is reached via the
+    # constructor or called directly.
+    with pytest.raises(TypeError, match="bool"):
+        Number._coerce_expression(True)
