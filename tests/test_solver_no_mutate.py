@@ -1,6 +1,4 @@
 """Regression: Solver.__call__ must not mutate the caller's values dict.
-
-See ai/improvements_2026-05-09.md item #1.
 """
 
 from formula import Solver
