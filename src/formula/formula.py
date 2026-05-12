@@ -106,26 +106,34 @@ class Solver(Formula):
 
 
 class Number:
+    @staticmethod
+    def _coerce_expression(expression: Union["Number", str, int, float]) -> str:
+        """Convert an accepted input into the internal expression string.
+
+        Accepts Number/str/int/float. Rejects every other type — including
+        bool, which is an int subclass — with a clear TypeError naming the
+        offending type. See CLAUDE.md: prefer obvious failures over silent
+        acceptance.
+        """
+        if isinstance(expression, Number):
+            return expression.expression
+        if isinstance(expression, bool):
+            raise TypeError(
+                "Number expression must be Number, str, int, or float; got bool"
+            )
+        if isinstance(expression, (str, int, float)):
+            return str(expression)
+        raise TypeError(
+            f"Number expression must be Number, str, int, or float; "
+            f"got {type(expression).__name__}"
+        )
+
     def __init__(
         self,
         expression: Union["Number", str, int, float],
         precision: int = 24,
     ):
-        if isinstance(expression, Number):
-            self._expression = expression.expression
-        elif isinstance(expression, bool):
-            # bool is an int subclass; reject explicitly so Number(True) doesn't
-            # silently become Number("True").
-            raise TypeError(
-                "Number expression must be Number, str, int, or float; got bool"
-            )
-        elif isinstance(expression, (str, int, float)):
-            self._expression = str(expression)
-        else:
-            raise TypeError(
-                f"Number expression must be Number, str, int, or float; "
-                f"got {type(expression).__name__}"
-            )
+        self._expression = self._coerce_expression(expression)
         self._precision = precision
 
     @property
