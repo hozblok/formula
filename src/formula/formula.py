@@ -61,7 +61,12 @@ class Solver(Formula):
         if format_digits is None:
             format_digits = self.precision
 
-        variables_to_values: Dict[str, str] = dict() if values is None else values
+        if values is None:
+            variables_to_values: Dict[str, str] = {}
+        elif isinstance(values, Mapping):
+            variables_to_values = dict(values)
+        else:
+            variables_to_values = values
         if not isinstance(values, Mapping):
             variables = self.variables()
             if not variables:
