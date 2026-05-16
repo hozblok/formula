@@ -1,7 +1,5 @@
 """Regression: the one-variable scalar shortcut must not mutate variables().
 
-See ai/improvements_2026-05-09.md item #8.
-
 The old code popped from the set returned by self.variables(). That set is
 currently constructed fresh per call, but the mutation was a latent bug
 waiting on any binding optimization that caches or returns a reference.
