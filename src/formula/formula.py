@@ -147,7 +147,7 @@ class Number:
         return [left, right]
 
     def __make_comparison(self, left: str, right: str, operator: str) -> bool:
-        solver = Solver(f"(({left}) {operator} ({right}))")
+        solver = Solver(f"(({left}) {operator} ({right}))", **self.params)
         return solver(format_digits=1) == "1"
 
     def __eq__(self, __value: object) -> bool:
