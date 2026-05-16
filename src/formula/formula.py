@@ -151,6 +151,8 @@ class Number:
         return solver(format_digits=1) == "1"
 
     def __eq__(self, __value: object) -> bool:
+        if not isinstance(__value, (Number, str, int, float)):
+            return NotImplemented
         left, right = self.__prepare_comparison(__value)
         return left == right
 
@@ -177,24 +179,32 @@ class Number:
         return self.__make_operation(__value, "^")
 
     def __ge__(self, __value: Union["Number", str]) -> bool:
+        if not isinstance(__value, (Number, str, int, float)):
+            return NotImplemented
         left, right = self.__prepare_comparison(__value)
         if left == right:
             return True
         return self.__make_comparison(left, right, ">")
 
     def __gt__(self, __value: Union["Number", str]) -> bool:
+        if not isinstance(__value, (Number, str, int, float)):
+            return NotImplemented
         left, right = self.__prepare_comparison(__value)
         if left == right:
             return False
         return self.__make_comparison(left, right, ">")
 
     def __le__(self, __value: Union["Number", str]) -> bool:
+        if not isinstance(__value, (Number, str, int, float)):
+            return NotImplemented
         left, right = self.__prepare_comparison(__value)
         if left == right:
             return True
         return self.__make_comparison(left, right, "<")
 
     def __lt__(self, __value: Union["Number", str]) -> bool:
+        if not isinstance(__value, (Number, str, int, float)):
+            return NotImplemented
         left, right = self.__prepare_comparison(__value)
         if left == right:
             return False
