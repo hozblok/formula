@@ -1,7 +1,5 @@
 """Regression: clear error message when values are missing or the wrong type.
 
-See ai/improvements_2026-05-09.md item #7.
-
 Before, calling solver() (values=None) on a multi-variable formula raised
 ValueError with "The value of the 'values' parameter is not a dict! Its
 type is <class 'NoneType'>" — misleading, because the actual problem is
