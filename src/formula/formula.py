@@ -140,8 +140,7 @@ class Number:
 
     def __make_operation(self, __value: object, operator: str) -> "Number":
         val = __value.expression if isinstance(__value, Number) else str(__value)
-        solver = Solver(f"(({self.expression}) {operator} ({val}))", **self.params)
-        return Number(solver(), **self.params)
+        return Number(f"(({self.expression}) {operator} ({val}))", **self.params)
 
     def __prepare_comparison(self, __value: object) -> List[str]:
         left = Solver(self.expression, **self.params)(format_flags=FmtFlags.fixed)
@@ -168,9 +167,14 @@ class Number:
         return hash(canonical)
 
     def __str__(self) -> str:
-        return self.expression
+        return Solver(self.expression, **self.params)()
 
     def __abs__(self) -> "Number":
+        # __abs__ stays eager for now: symbolic abs() exposes precision
+        # artifacts in complex-magnitude identities (e.g. sin²+cos² rounding
+        # to 1 + 1 ULP at low precision) that the eager round-trip used to
+        # mask via default-format trailing-zero stripping. Arithmetic ops
+        # are still symbolic; that's where chained-precision loss matters.
         solver = Solver(f"abs({self.expression})", **self.params)
         return Number(solver(), **self.params)
 
