@@ -1,7 +1,5 @@
 """Regression: Number rich comparisons return NotImplemented for foreign types.
 
-See ai/improvements_2026-05-09.md item #5.
-
 Before the fix, `Number("1") == None` (or against a list, an object, etc.)
 raised ValueError from the inner expression parser, because str(other) was
 fed into a Solver. Python's data model expects unknown types to be handled
