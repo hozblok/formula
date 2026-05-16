@@ -28,11 +28,24 @@ def _read_version():
 __version__ = _read_version()
 
 
+# Header-tree selection.
+#
+# - "boost_headers/" is the vendored, pruned tree that ships in every sdist
+#   and is the default for release builds.
+# - "boost/" is the freshly downloaded tree produced by
+#   boost_headers/update_command.py, used while bumping Boost versions
+#   locally.
+#
+# Opt into the dev tree explicitly by setting FORMULA_USE_DEV_BOOST=1 in the
+# environment. The previous heuristic (any version string starting with
+# "dev") missed PEP 440 pre-release identifiers (e.g. "4.1.0.dev0") and
+# couldn't be exercised without editing __version__ in source.
 DEV_BOOST_HEADERS = os.path.join(CURRENT_DIR, "boost", "boost")
-if __version__.startswith("dev") and os.path.exists(DEV_BOOST_HEADERS):
-    BOOST_HEADERS = "boost/"
-else:
-    BOOST_HEADERS = "boost_headers/"
+USE_DEV_BOOST = bool(os.environ.get("FORMULA_USE_DEV_BOOST")) and os.path.exists(
+    DEV_BOOST_HEADERS
+)
+BOOST_HEADERS = "boost/" if USE_DEV_BOOST else "boost_headers/"
+print(f"setup.py: BOOST_HEADERS={BOOST_HEADERS!r}")
 
 
 EXTRA_COMPILE_ARGS = []
