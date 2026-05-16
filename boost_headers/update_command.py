@@ -1,10 +1,6 @@
 # Script to precollect boost headers in the 'boost' catalog.
 # We don't need to update boost headers very often. So we can bootstrap all
 # headers here in the 'boost' catalog and use it everywhere.
-#
-# Runs under any Python supported by the package (>= 3.9). Avoid PEP 604
-# union syntax (`X | None`) since it only became a runtime-evaluatable
-# expression in 3.10.
 import argparse
 import os
 from pathlib import Path
