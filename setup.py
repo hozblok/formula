@@ -62,8 +62,14 @@ EXT_MODULES = [
 
 TEST_DEPS = ["pytest"]
 
-with open(os.path.join(CURRENT_DIR, "README.md"), encoding="utf-8") as readme_file:
-    LONG_DESCRIPTION = readme_file.read()
+README_PATH = os.path.join(CURRENT_DIR, "README.md")
+if os.path.exists(README_PATH):
+    with open(README_PATH, encoding="utf-8") as readme_file:
+        LONG_DESCRIPTION = readme_file.read()
+else:
+    # Don't fail the build if README.md is missing (partial checkout, tampered
+    # sdist, custom build root). The long_description is metadata-only.
+    LONG_DESCRIPTION = ""
 
 
 setup(
