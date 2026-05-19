@@ -32,7 +32,15 @@ const std::map<std::string, Real (*)(Real)> cseval<Real>::functionsOneArg = {
     {std::string("sqrt"), cseval<Real>::_sqrt},
     {std::string("exp"), cseval<Real>::_exp},
     {std::string("sign"), cseval<Real>::_sign},
-    {std::string("abs"), cseval<Real>::_abs}};
+    {std::string("abs"), cseval<Real>::_abs},
+    {std::string("log2"), cseval<Real>::_log2},
+    {std::string("log10"), cseval<Real>::_log10},
+    {std::string("sinh"), cseval<Real>::_sinh},
+    {std::string("cosh"), cseval<Real>::_cosh},
+    {std::string("tanh"), cseval<Real>::_tanh},
+    {std::string("asinh"), cseval<Real>::_asinh},
+    {std::string("acosh"), cseval<Real>::_acosh},
+    {std::string("atanh"), cseval<Real>::_atanh}};
 
 template <typename Real>
 const std::map<std::string, Real (*)(Real, Real)>
@@ -58,6 +66,14 @@ const std::map<std::string, Real (*)(Real, Real)>
         {std::string("exp"), cseval<Real>::_exp_d},
         {std::string("sign"), cseval<Real>::_zero},
         {std::string("abs"), cseval<Real>::_abs_d}};
+        {std::string("log2"), cseval<Real>::_log2_d},
+        {std::string("log10"), cseval<Real>::_log10_d},
+        {std::string("sinh"), cseval<Real>::_sinh_d},
+        {std::string("cosh"), cseval<Real>::_cosh_d},
+        {std::string("tanh"), cseval<Real>::_tanh_d},
+        {std::string("asinh"), cseval<Real>::_asinh_d},
+        {std::string("acosh"), cseval<Real>::_acosh_d},
+        {std::string("atanh"), cseval<Real>::_atanh_d}};
 
 template <typename Real>
 const std::map<std::string, Real (*)(Real, Real)>

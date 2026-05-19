@@ -314,6 +314,53 @@ the sqrt derivative");
     }
     return ONE / (2 * sqrt(a));
   }
+  // "log2" - base-2 logarithm
+  static Real _log2(Real a) { return log2(a); }
+  static Real _log2_d(Real a, Real) {
+    if (a == ZERO) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of the log2 derivative");
+    }
+    return ONE / (a * _log(Real("2")));
+  }
+  // "log10" - base-10 logarithm
+  static Real _log10(Real a) { return log10(a); }
+  static Real _log10_d(Real a, Real) {
+    if (a == ZERO) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of the log10 derivative");
+    }
+    return ONE / (a * _log(Real("10")));
+  }
+  // "sinh", "cosh", "tanh"
+  static Real _sinh(Real a) { return sinh(a); }
+  static Real _sinh_d(Real a, Real) { return cosh(a); }
+  static Real _cosh(Real a) { return cosh(a); }
+  static Real _cosh_d(Real a, Real) { return sinh(a); }
+  static Real _tanh(Real a) { return tanh(a); }
+  static Real _tanh_d(Real a, Real) {
+    Real c = cosh(a);
+    return ONE / (c * c);
+  }
+  // "asinh", "acosh", "atanh"
+  static Real _asinh(Real a) { return asinh(a); }
+  static Real _asinh_d(Real a, Real) { return ONE / _sqrt(ONE + a * a); }
+  static Real _acosh(Real a) { return acosh(a); }
+  static Real _acosh_d(Real a, Real) {
+    if (a * a == ONE) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of the acosh derivative");
+    }
+    return ONE / _sqrt(a * a - ONE);
+  }
+  static Real _atanh(Real a) { return atanh(a); }
+  static Real _atanh_d(Real a, Real) {
+    if (a * a == ONE) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of the atanh derivative");
+    }
+    return ONE / (ONE - a * a);
+  }
   //- trigonometric functions, exp, log, sqrt
 
   //+ auxiliary methods for the computation of the derivative:

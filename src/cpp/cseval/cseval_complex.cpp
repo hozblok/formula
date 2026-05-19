@@ -30,7 +30,15 @@ const std::map<std::string, Complex (*)(Complex)>
         {std::string("log"), cseval_complex<Complex>::_log},
         {std::string("sqrt"), cseval_complex<Complex>::_sqrt},
         {std::string("exp"), cseval_complex<Complex>::_exp},
-        {std::string("abs"), cseval_complex<Complex>::_abs}};
+        {std::string("abs"), cseval_complex<Complex>::_abs},
+        {std::string("log2"), cseval_complex<Complex>::_log2},
+        {std::string("log10"), cseval_complex<Complex>::_log10},
+        {std::string("sinh"), cseval_complex<Complex>::_sinh},
+        {std::string("cosh"), cseval_complex<Complex>::_cosh},
+        {std::string("tanh"), cseval_complex<Complex>::_tanh},
+        {std::string("asinh"), cseval_complex<Complex>::_asinh},
+        {std::string("acosh"), cseval_complex<Complex>::_acosh},
+        {std::string("atanh"), cseval_complex<Complex>::_atanh}};
 
 template <typename Complex>
 const std::map<std::string, Complex (*)(Complex, Complex)>
@@ -52,7 +60,15 @@ const std::map<std::string, Complex (*)(Complex, Complex)>
         {std::string("log"), cseval_complex<Complex>::_log_d},
         {std::string("sqrt"), cseval_complex<Complex>::_sqrt_d},
         {std::string("exp"), cseval_complex<Complex>::_exp_d},
-        {std::string("abs"), cseval_complex<Complex>::_abs_d}};
+        {std::string("abs"), cseval_complex<Complex>::_abs_d},
+        {std::string("log2"), cseval_complex<Complex>::_log2_d},
+        {std::string("log10"), cseval_complex<Complex>::_log10_d},
+        {std::string("sinh"), cseval_complex<Complex>::_sinh_d},
+        {std::string("cosh"), cseval_complex<Complex>::_cosh_d},
+        {std::string("tanh"), cseval_complex<Complex>::_tanh_d},
+        {std::string("asinh"), cseval_complex<Complex>::_asinh_d},
+        {std::string("acosh"), cseval_complex<Complex>::_acosh_d},
+        {std::string("atanh"), cseval_complex<Complex>::_atanh_d}};
 
 template <typename Complex>
 const std::map<std::string, Complex (*)(Complex, Complex)>
