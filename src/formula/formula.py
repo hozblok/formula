@@ -61,7 +61,12 @@ class Solver(Formula):
         if format_digits is None:
             format_digits = self.precision
 
-        variables_to_values: Dict[str, str] = dict() if values is None else values
+        if values is None:
+            variables_to_values: Dict[str, str] = {}
+        elif isinstance(values, Mapping):
+            variables_to_values = dict(values)
+        else:
+            variables_to_values = values
         if not isinstance(values, Mapping):
             variables = self.variables()
             if not variables:
@@ -69,11 +74,14 @@ class Solver(Formula):
             elif values is not None and len(variables) == 1:
                 (only_var,) = variables
                 variables_to_values = {only_var: str(values)}
+            elif values is None:
+                raise ValueError(
+                    f"Missing values for variables: {variables}"
+                )
             else:
                 raise ValueError(
-                    "The value of the 'values' parameter is not a dict!"
-                    " Its type is %s A dictionary is expected with values for"
-                    " the following variables: %s" % (type(values), str(variables))
+                    f"Expected a Mapping for 'values' (got "
+                    f"{type(values).__name__}); variables to provide: {variables}"
                 )
 
         for key in variables_to_values:
@@ -143,12 +151,22 @@ class Number:
         return [left, right]
 
     def __make_comparison(self, left: str, right: str, operator: str) -> bool:
-        solver = Solver(f"(({left}) {operator} ({right}))")
+        solver = Solver(f"(({left}) {operator} ({right}))", **self.params)
         return solver(format_digits=1) == "1"
 
     def __eq__(self, __value: object) -> bool:
+        if not isinstance(__value, (Number, str, int, float)):
+            return NotImplemented
         left, right = self.__prepare_comparison(__value)
         return left == right
+
+    def __hash__(self) -> int:
+        # Canonical hash key: the value formatted in fixed-point at the
+        # configured precision. Two Numbers that compare equal via __eq__
+        # share that formatted form, so this satisfies the Python contract
+        # that a == b implies hash(a) == hash(b).
+        canonical = Solver(self.expression, **self.params)(format_flags=FmtFlags.fixed)
+        return hash(canonical)
 
     def __str__(self) -> str:
         return self.expression
@@ -173,24 +191,32 @@ class Number:
         return self.__make_operation(__value, "^")
 
     def __ge__(self, __value: Union["Number", str]) -> bool:
+        if not isinstance(__value, (Number, str, int, float)):
+            return NotImplemented
         left, right = self.__prepare_comparison(__value)
         if left == right:
             return True
         return self.__make_comparison(left, right, ">")
 
     def __gt__(self, __value: Union["Number", str]) -> bool:
+        if not isinstance(__value, (Number, str, int, float)):
+            return NotImplemented
         left, right = self.__prepare_comparison(__value)
         if left == right:
             return False
         return self.__make_comparison(left, right, ">")
 
     def __le__(self, __value: Union["Number", str]) -> bool:
+        if not isinstance(__value, (Number, str, int, float)):
+            return NotImplemented
         left, right = self.__prepare_comparison(__value)
         if left == right:
             return True
         return self.__make_comparison(left, right, "<")
 
     def __lt__(self, __value: Union["Number", str]) -> bool:
+        if not isinstance(__value, (Number, str, int, float)):
+            return NotImplemented
         left, right = self.__prepare_comparison(__value)
         if left == right:
             return False

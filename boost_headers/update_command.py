@@ -1,11 +1,11 @@
-# Use Python 3.10.
 # Script to precollect boost headers in the 'boost' catalog.
-# We don't need to update boost headers very often. So we can bootstrap all headers here
-# in the 'boost' catalog and use it everywhere.
+# We don't need to update boost headers very often. So we can bootstrap all
+# headers here in the 'boost' catalog and use it everywhere.
 import argparse
 import os
 from pathlib import Path
 import shutil
+from typing import Optional
 import urllib.request
 import zipfile
 
@@ -26,7 +26,7 @@ print("Output:", file_name_ext)
 
 print("Download...")
 
-url = f"https://boostorg.jfrog.io/artifactory/main/release/{version}/source/{file_name_ext}"
+url = f"https://archives.boost.io/release/{version}/source/{file_name_ext}"
 chunk_size = 65536
 with urllib.request.urlopen(url) as response, open(
     script_dir / file_name_ext, "wb"
@@ -37,10 +37,21 @@ with urllib.request.urlopen(url) as response, open(
 print("Unzip...")
 
 with zipfile.ZipFile(script_dir / file_name_ext, "r") as zip_ref:
+    # Zip-slip guard: refuse archives whose entries would write outside
+    # script_dir. Boost releases are trusted, but the URL is unauthenticated
+    # so a mirror compromise (or a typo in --version pointing at the wrong
+    # asset) shouldn't be able to overwrite arbitrary files on the host.
+    target_root = script_dir.resolve()
+    for member in zip_ref.namelist():
+        dest = (target_root / member).resolve()
+        try:
+            dest.relative_to(target_root)
+        except ValueError:
+            raise RuntimeError(f"Unsafe path in archive: {member!r}")
     zip_ref.extractall(script_dir)
 
 print("Delete all except the 'boost' catalog with headers...")
-boost_entry: os.DirEntry | None = None
+boost_entry: Optional[os.DirEntry] = None
 for el in os.scandir(script_dir / file_name):
     if el.name != "boost":
         if el.is_dir():
