@@ -72,7 +72,8 @@ class Solver(Formula):
             if not variables:
                 pass
             elif values is not None and len(variables) == 1:
-                variables_to_values = {variables.pop(): str(values)}
+                (only_var,) = variables
+                variables_to_values = {only_var: str(values)}
             elif values is None:
                 raise ValueError(
                     f"Missing values for variables: {variables}"
