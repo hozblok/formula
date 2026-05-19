@@ -2,12 +2,35 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <string>
+#include <utility>
+
 #define STRINGIFY(x) #x
 #define MACRO_STRINGIFY(x) STRINGIFY(x)
 
 #include <csformula/csformula.cpp>
 
 namespace py = pybind11;
+
+template <unsigned P>
+static void register_one_mp_real(py::module_ &m) {
+  const std::string class_name = "mp_real_" + std::to_string(P);
+  py::class_<mp_real<P>>(m, class_name.c_str())
+      .def(py::init<const std::string &>())
+      .def("str",
+           (std::string(mp_real<P>::*)(std::streamsize, std::ios_base::fmtflags)
+                const) &
+               mp_real<P>::str,
+           "Returns the number formatted as a string, with at least precision "
+           "digits.",
+           py::arg("digits") = 0, py::arg("f") = std::ios_base::fmtflags(0));
+}
+
+template <unsigned... Ps>
+static void register_all_mp_real(py::module_ &m,
+                                 std::integer_sequence<unsigned, Ps...>) {
+  (register_one_mp_real<Ps>(m), ...);
+}
 
 PYBIND11_MODULE(_formula, m) {
   m.doc() = R"pbdoc(
@@ -142,16 +165,12 @@ using the passed real values of the variables.",
            py::arg("digits") = 0,
            py::arg("format") = std::ios_base::fmtflags(0));
 
-  // TODO support all mp_real
-  py::class_<mp_real<24>>(m, "mp_real_24")
-      .def(py::init<const std::string &>())
-      .def("str",
-           (std::string(mp_real<24>::*)(std::streamsize digits,
-                                        std::ios_base::fmtflags) const) &
-               mp_real<24>::str,
-           "Returns the number formatted as a string, with at least precision "
-           "digits.",
-           py::arg("digits") = 0, py::arg("f") = std::ios_base::fmtflags(0));
+  // One py::class_<mp_real<P>> per AllowedPrecisions value, exposed as
+  // mp_real_16, mp_real_24, ..., mp_real_8192.
+  register_all_mp_real(
+      m, std::integer_sequence<unsigned, 16, 24, 32, 48, 64, 96, 128, 192, 256,
+                               384, 512, 768, 1024, 2048, 3072, 4096, 6144,
+                               8192>{});
 
 #ifdef VERSION_INFO
   m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
