@@ -114,6 +114,14 @@ using the passed string values of the variables.",
           py::arg("variables_to_values") = std::map<std::string, std::string>(),
           py::arg("digits") = 0, py::arg("format") = std::ios_base::fmtflags(0))
       .def(
+          "get_pair", &Formula::get_pair,
+          "Calculate the value and return it as a (real_part, imag_part) pair \
+of strings, both formatted with the given digits/format. For real-only \
+expressions the imaginary part is zero formatted with the same shape so the \
+pair can be compared byte-for-byte against another get_pair() result.",
+          py::arg("variables_to_values") = std::map<std::string, std::string>(),
+          py::arg("digits") = 0, py::arg("format") = std::ios_base::fmtflags(0))
+      .def(
           "get_derivative",
           (std::string(Formula::*)(
               const std::string, const std::map<std::string, std::string> &,

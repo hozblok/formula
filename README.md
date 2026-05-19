@@ -245,6 +245,21 @@ False
 True
 ```
 
+Equality uses `pair_fixed` — exact complex identities compare equal, but
+expressions with drift do not:
+
+```python
+>>> Number("i*i") == Number("-1")   # exact — no drift
+True
+>>> Number("i^4") == Number("1")    # drift in complex ^ → False
+False
+```
+
+`Solver.pair(values, format_digits, format_flags)` returns a
+`(real_str, imag_str)` tuple formatted consistently — real-only results
+get `(value, "0.000…")` so pairs are byte-comparable. Used internally
+by `Number.__eq__` and `Number.__hash__`.
+
 Supported operators: `+`, `-`, `*`, `/`, `**` (also written as `^` inside
 expressions), `abs()`, `==`, `<`, `<=`, `>`, `>=`.
 
@@ -261,6 +276,53 @@ covered by the per-function test suite under
 
 Constants: `pi`, `e`. Imaginary unit: `i` (configurable via the
 `imaginary_unit` argument).
+
+## Numerical accuracy and drift
+
+`precision=N` guarantees N decimal digits in the **representation** of a
+value, not that every operation lands on a mathematically exact result.
+Some expressions accumulate floating-point error at the last digits even
+though the math identity is exact.
+
+### Operations that are exact at the configured precision
+
+- `+`, `-`, `*`, `/` on real numbers.
+- `+`, `-`, `*`, `/` on complex numbers (including long `*` chains —
+  `i*i*i*i*i*i*i*i` evaluates to exactly `1`).
+- `^` with **real** base and integer exponent (uses square-and-multiply
+  internally): `2^10`, `1.1^7`, etc.
+- `abs(z)` when `re² + im²` is a perfect square (`abs(3+4*i) == 5`,
+  `abs(i) == 1`).
+- Transcendentals at points with exact algebraic results: `sin(0)`,
+  `cos(0)`, `exp(0)`, `log(1)`, etc.
+- Pythagorean identity in real space: `sin(pi/4)^2 + cos(pi/4)^2 == 1`.
+
+### Operations that drift (visible at last digit or beyond)
+
+- **`^` with a complex base, even for trivial integer exponents.**
+  Complex `pow(a, b)` is computed as `exp(b·log(a))`, a transcendental
+  chain — there is no integer-exponent specialization for complex values
+  in boost.multiprecision. Drift grows with the magnitude of the
+  exponent and the result:
+
+  | Expression          | Mathematical value | Computed at `precision=24`                                          |
+  |---------------------|--------------------|---------------------------------------------------------------------|
+  | `i^4`               | `1`                | `1 + i·1e-24`                                                       |
+  | `i^64`              | `1`                | `1 + i·1.2e-23`                                                     |
+  | `(1+i)^16`          | `256`              | `256 + i·3.78e-21`                                                  |
+  | `(1+i)^64`          | `4294967296`       | `4294967296 + i·2.5e-13` (≈ half of the available digits lost)      |
+  | `exp(2*i*pi)`       | `1`                | `1 + i·1e-24`                                                       |
+
+  **Workaround:** if the exponent is a small integer, replace `z^n`
+  with the explicit product `z*z*…*z` — multiplication is exact for
+  complex values.
+
+- **Transcendental functions** (`sin`, `cos`, `exp`, `log`, `asin`,
+  `acos`, `atan`, `tan`) when the mathematical result is irrational.
+  `log(exp(1))` gives `1.000000000000000000000002` — a 2-ULP roundtrip
+  error. The same expression with `+i*0` switches to the complex
+  evaluation path — the real part drifts: `1.000000000000000000000004`
+  instead of `1` (full output: `1.000000000000000000000004+i*(0.000…)`).
 
 ## Development
 
