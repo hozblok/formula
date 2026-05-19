@@ -1,7 +1,5 @@
 """Regression: Solver enforces the documented precision bounds.
 
-See ai/improvements_2026-05-09.md item #19.
-
 `MAX_PRECISION = 8192` is exported from the package but used to be
 purely decorative — the wrapper forwarded any precision value straight
 to the C++ extension. Now Solver.__init__ rejects values outside
