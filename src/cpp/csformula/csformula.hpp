@@ -93,6 +93,9 @@ class Formula {
    */
   std::string expression_;
 
+  /** User input as received by prepare_expression, unmodified. */
+  std::string expression_original_;
+
   /**
    * Symbol - indicator of the imaginary unit. (dy default - 'i')
    * Only one Latin character (!).
@@ -152,6 +155,9 @@ class Formula {
 
   /** Get current string formula expression. */
   std::string get_expression() const { return expression_; }
+
+  /** Get the original user input (preserves whitespace and original case). */
+  std::string get_original_expression() const { return expression_original_; }
 
   /** Initialize the Formula instance by the string expression. */
   void set_expression(const std::string &expression);
