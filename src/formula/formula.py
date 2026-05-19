@@ -25,6 +25,39 @@ class Solver(Formula):
         # pylint: disable=useless-super-delegation
         super().__init__(expression, precision, imaginary_unit, case_insensitive)
 
+    def _coerce_variables_to_values(
+        self, values: Optional[Union[Dict[str, Any], Any]]
+    ) -> Dict[str, str]:
+        if values is None:
+            variables_to_values: Dict[str, str] = {}
+        elif isinstance(values, Mapping):
+            variables_to_values = dict(values)
+        else:
+            variables_to_values = values
+        if not isinstance(values, Mapping):
+            variables = self.variables()
+            if not variables:
+                pass
+            elif values is not None and len(variables) == 1:
+                (only_var,) = variables
+                variables_to_values = {only_var: str(values)}
+            elif values is None:
+                raise ValueError(
+                    f"Missing values for variables: {variables}"
+                )
+            else:
+                raise ValueError(
+                    f"Expected a Mapping for 'values' (got "
+                    f"{type(values).__name__}); variables to provide: {variables}"
+                )
+
+        for key in variables_to_values:
+            val = variables_to_values[key]
+            if not isinstance(val, str):
+                variables_to_values[key] = str(val)
+
+        return variables_to_values
+
     def __call__(
         self,
         values: Optional[Union[Dict[str, Any], Any]] = None,
@@ -61,33 +94,7 @@ class Solver(Formula):
         if format_digits is None:
             format_digits = self.precision
 
-        if values is None:
-            variables_to_values: Dict[str, str] = {}
-        elif isinstance(values, Mapping):
-            variables_to_values = dict(values)
-        else:
-            variables_to_values = values
-        if not isinstance(values, Mapping):
-            variables = self.variables()
-            if not variables:
-                pass
-            elif values is not None and len(variables) == 1:
-                (only_var,) = variables
-                variables_to_values = {only_var: str(values)}
-            elif values is None:
-                raise ValueError(
-                    f"Missing values for variables: {variables}"
-                )
-            else:
-                raise ValueError(
-                    f"Expected a Mapping for 'values' (got "
-                    f"{type(values).__name__}); variables to provide: {variables}"
-                )
-
-        for key in variables_to_values:
-            val = variables_to_values[key]
-            if not isinstance(val, str):
-                variables_to_values[key] = str(val)
+        variables_to_values = self._coerce_variables_to_values(values)
 
         result = None
         if derivative is not None:
@@ -113,42 +120,93 @@ class Solver(Formula):
 
         return result
 
+    def pair(
+        self,
+        values: Optional[Union[Dict[str, Any], Any]] = None,
+        format_digits: Optional[int] = None,
+        format_flags=FmtFlags.default,
+    ) -> tuple:
+        """Calculate the value and return it as a (real_str, imag_str) pair.
+
+        Same `values`/`format_digits`/`format_flags` semantics as __call__.
+        Both parts are formatted with the same digits and format so a real
+        expression and a complex expression whose imaginary part is exactly
+        zero produce byte-equal pairs — that property is what makes
+        Number.__eq__ work consistently across real/complex syntactic forms.
+        """
+        if format_digits is None:
+            format_digits = self.precision
+        variables_to_values = self._coerce_variables_to_values(values)
+        return self.get_pair(variables_to_values, format_digits, format_flags)
+
 
 class Number:
     def __init__(
         self,
-        expression: str,
+        expression: Union["Number", str, int, float],
         precision: int = 24,
-        imaginary_unit: str = "i",
-        case_insensitive: bool = False,
     ):
-        self._expression = expression
+        if isinstance(expression, Number):
+            self._expression = expression.expression
+        elif isinstance(expression, bool):
+            raise TypeError(
+                "Number expression must be Number, str, int, or float; got bool"
+            )
+        elif isinstance(expression, (str, int, float)):
+            self._expression = str(expression)
+        else:
+            raise TypeError(
+                f"Number expression must be Number, str, int, or float; "
+                f"got {type(expression).__name__}"
+            )
         self._precision = precision
-        self._imaginary_unit = imaginary_unit
-        self._case_insensitive = case_insensitive
+        self._imaginary_unit = 'i'
+        self._case_insensitive = False
 
     @property
     def expression(self):
         return self._expression
 
     @property
-    def params(self):
+    def params(self) -> dict[str, Any]:
         return {
             "precision": self._precision,
             "imaginary_unit": self._imaginary_unit,
             "case_insensitive": self._case_insensitive,
         }
 
+    @property
+    def fixed(self) -> str:
+        return Solver(self._expression, **self.params)(format_flags=FmtFlags.fixed)
+
+    @property
+    def pair_fixed(self) -> tuple[str, str]:
+        return Solver(self._expression, **self.params).pair(
+            format_flags=FmtFlags.fixed
+        )
+
     def __make_operation(self, __value: object, operator: str) -> "Number":
-        val = __value.expression if isinstance(__value, Number) else str(__value)
-        solver = Solver(f"(({self.expression}) {operator} ({val}))", **self.params)
-        return Number(solver(), **self.params)
+        # Wrapping non-Number inputs in Number() is the validation boundary for
+        # arithmetic: it rejects bool/None/list/dict/etc. with a clear TypeError
+        # naming the offending type, instead of letting str(__value) silently
+        # produce a malformed Solver expression that fails deeper in parsing.
+        other = (
+            __value
+            if isinstance(__value, Number)
+            else Number(__value, precision=self._precision)
+        )
+        solver = Solver(
+            f"(({self.expression}) {operator} ({other.expression}))", **self.params
+        )
+        return Number(solver(), precision=self._precision)
 
     def __prepare_comparison(self, __value: object) -> List[str]:
-        left = Solver(self.expression, **self.params)(format_flags=FmtFlags.fixed)
-        val = __value.expression if isinstance(__value, Number) else str(__value)
-        right = Solver(val, **self.params)(format_flags=FmtFlags.fixed)
-        return [left, right]
+        other = (
+            __value
+            if isinstance(__value, Number)
+            else Number(__value, precision=self._precision)
+        )
+        return [self.fixed, other.fixed]
 
     def __make_comparison(self, left: str, right: str, operator: str) -> bool:
         solver = Solver(f"(({left}) {operator} ({right}))", **self.params)
@@ -157,40 +215,54 @@ class Number:
     def __eq__(self, __value: object) -> bool:
         if not isinstance(__value, (Number, str, int, float)):
             return NotImplemented
-        left, right = self.__prepare_comparison(__value)
-        return left == right
+        other = (
+            __value
+            if isinstance(__value, Number)
+            else Number(__value, precision=self._precision)
+        )
+        return self.pair_fixed == other.pair_fixed
 
     def __hash__(self) -> int:
-        # Canonical hash key: the value formatted in fixed-point at the
-        # configured precision. Two Numbers that compare equal via __eq__
-        # share that formatted form, so this satisfies the Python contract
-        # that a == b implies hash(a) == hash(b).
-        canonical = Solver(self.expression, **self.params)(format_flags=FmtFlags.fixed)
-        return hash(canonical)
+        return hash(self.pair_fixed)
 
     def __str__(self) -> str:
         return self.expression
 
     def __abs__(self) -> "Number":
         solver = Solver(f"abs({self.expression})", **self.params)
-        return Number(solver(), **self.params)
+        return Number(solver(), precision=self._precision)
 
-    def __add__(self, __value: Union["Number", str]) -> "Number":
+    def __add__(self, __value: Union[str, int, float, "Number"]) -> "Number":
         return self.__make_operation(__value, "+")
 
-    def __sub__(self, __value: Union["Number", str]) -> "Number":
+    def __sub__(self, __value: Union[str, int, float, "Number"]) -> "Number":
         return self.__make_operation(__value, "-")
 
-    def __mul__(self, __value: Union["Number", str]) -> "Number":
+    def __mul__(self, __value: Union[str, int, float, "Number"]) -> "Number":
         return self.__make_operation(__value, "*")
 
-    def __truediv__(self, __value: Union["Number", str]) -> "Number":
+    def __truediv__(self, __value: Union[str, int, float, "Number"]) -> "Number":
         return self.__make_operation(__value, "/")
 
-    def __pow__(self, __value: Union["Number", str]) -> "Number":
+    def __pow__(self, __value: Union[str, int, float, "Number"]) -> "Number":
         return self.__make_operation(__value, "^")
 
-    def __ge__(self, __value: Union["Number", str]) -> bool:
+    def __radd__(self, __value: Union[str, int, float]) -> "Number":
+        return Number(__value, precision=self._precision).__add__(self)
+
+    def __rsub__(self, __value: Union[str, int, float]) -> "Number":
+        return Number(__value, precision=self._precision).__sub__(self)
+
+    def __rmul__(self, __value: Union[str, int, float]) -> "Number":
+        return Number(__value, precision=self._precision).__mul__(self)
+
+    def __rtruediv__(self, __value: Union[str, int, float]) -> "Number":
+        return Number(__value, precision=self._precision).__truediv__(self)
+
+    def __rpow__(self, __value: Union[str, int, float]) -> "Number":
+        return Number(__value, precision=self._precision).__pow__(self)
+
+    def __ge__(self, __value: Union[str, int, float, "Number"]) -> bool:
         if not isinstance(__value, (Number, str, int, float)):
             return NotImplemented
         left, right = self.__prepare_comparison(__value)
@@ -198,7 +270,7 @@ class Number:
             return True
         return self.__make_comparison(left, right, ">")
 
-    def __gt__(self, __value: Union["Number", str]) -> bool:
+    def __gt__(self, __value: Union[str, int, float, "Number"]) -> bool:
         if not isinstance(__value, (Number, str, int, float)):
             return NotImplemented
         left, right = self.__prepare_comparison(__value)
@@ -206,7 +278,7 @@ class Number:
             return False
         return self.__make_comparison(left, right, ">")
 
-    def __le__(self, __value: Union["Number", str]) -> bool:
+    def __le__(self, __value: Union[str, int, float, "Number"]) -> bool:
         if not isinstance(__value, (Number, str, int, float)):
             return NotImplemented
         left, right = self.__prepare_comparison(__value)
@@ -214,7 +286,7 @@ class Number:
             return True
         return self.__make_comparison(left, right, "<")
 
-    def __lt__(self, __value: Union["Number", str]) -> bool:
+    def __lt__(self, __value: Union[str, int, float, "Number"]) -> bool:
         if not isinstance(__value, (Number, str, int, float)):
             return NotImplemented
         left, right = self.__prepare_comparison(__value)

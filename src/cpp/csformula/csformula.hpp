@@ -200,6 +200,14 @@ class Formula {
       std::streamsize digits = 0,
       std::ios_base::fmtflags format = std::ios_base::fmtflags(0)) const;
 
+  // Get the calculated value as a (real_str, imag_str) pair, formatted with
+  // the same digits/format on both sides so the pair can be compared byte-for-
+  // byte against another get_pair() result.
+  std::pair<std::string, std::string> get_pair(
+      const std::map<std::string, std::string> &variables_to_values = {},
+      std::streamsize digits = 0,
+      std::ios_base::fmtflags format = std::ios_base::fmtflags(0)) const;
+
   // Get the calculated value of partial derivative with respect to a
   // variable {variable} and the {variables_to_values} dictionary contains
   // values of the variables Real get_derivative(const std::string variable,
