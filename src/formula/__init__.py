@@ -4,6 +4,4 @@ __version__ = "4.0.3"
 
 # pylint: disable=no-name-in-module, import-error
 from ._formula import FmtFlags, Formula
-from .formula import Solver, Number
-
-MAX_PRECISION = 8192
+from .formula import MAX_PRECISION, Number, Solver

@@ -6,6 +6,8 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 # pylint: disable=no-name-in-module, import-error
 from ._formula import FmtFlags, Formula
 
+MAX_PRECISION = 8192
+
 
 class Solver(Formula):
     """Solver for calculating string formulas.
@@ -22,7 +24,10 @@ class Solver(Formula):
         imaginary_unit: str = "i",
         case_insensitive: bool = False,
     ):
-        # pylint: disable=useless-super-delegation
+        if not 0 <= precision <= MAX_PRECISION:
+            raise ValueError(
+                f"precision must be in [0, {MAX_PRECISION}] (got {precision})"
+            )
         super().__init__(expression, precision, imaginary_unit, case_insensitive)
 
     def _coerce_variables_to_values(
