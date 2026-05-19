@@ -315,7 +315,6 @@ the sqrt derivative");
       functionsTwoArgsDLeft;
   static const std::map<std::string, Complex (*)(Complex, Complex)>
       functionsTwoArgsDRight;
-  static const std::map<std::string, Complex (*)(Complex)> funcs1ArgD;
 };
 
 #endif  // EVAL_COMPLEX_MPF_H
