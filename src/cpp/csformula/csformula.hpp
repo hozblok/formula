@@ -182,9 +182,6 @@ class Formula {
    * Get the calculated value of the formula in accordance with
    * the 'map_variable_values' dictionary contains values of
    * the variables.
-   * NOTE: Variables can be only letters of the Latin alphabet
-   * ('a','b',...,'z') and 'i' (by default) reserved for complex
-   * number. TODO: why so?
    */
   template <typename RealOrComplex>
   RealOrComplex get(const std::map<std::string, RealOrComplex>
