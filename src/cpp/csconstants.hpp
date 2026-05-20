@@ -4,10 +4,12 @@
 #include <boost/math/constants/constants.hpp>
 #include <boost/multiprecision/cpp_dec_float.hpp>
 #include <boost/multiprecision/number.hpp>
+#include <array>
 #include <regex>
 #include <string>
 #include <tuple>
 #include <type_traits>
+#include <utility>
 
 // Uncomment to debug
 // #ifndef CSDEBUG
@@ -187,23 +189,32 @@ enum AllowedPrecisions : unsigned {
 };
 
 /**
- * Allowed precisions sorted in ascending order.
+ * Single source of truth for the supported precisions, ascending. The
+ * cseval variants, init_eval, and the Python mp_real_<P> bindings are all
+ * derived from this sequence — add a precision here only.
  */
+using AllowedPrecisionsSeq =
+    std::integer_sequence<unsigned, p_16, p_24, p_32, p_48, p_64, p_96, p_128,
+                          p_192, p_256, p_384, p_512, p_768, p_1024, p_2048,
+                          p_3072, p_4096, p_6144, p_8192>;
+
 static const AllowedPrecisions min_precision = p_16;
 static const AllowedPrecisions max_precision = p_8192;
-static const std::tuple<AllowedPrecisions, AllowedPrecisions, AllowedPrecisions,
-                        AllowedPrecisions, AllowedPrecisions, AllowedPrecisions,
-                        AllowedPrecisions, AllowedPrecisions, AllowedPrecisions,
-                        AllowedPrecisions, AllowedPrecisions, AllowedPrecisions,
-                        AllowedPrecisions, AllowedPrecisions, AllowedPrecisions,
-                        AllowedPrecisions, AllowedPrecisions, AllowedPrecisions>
-    precisions = std::make_tuple(p_16, p_24, p_32, p_48, p_64, p_96, p_128,
-                                 p_192, p_256, p_384, p_512, p_768, p_1024,
-                                 p_2048, p_3072, p_4096, p_6144, p_8192);
-constexpr unsigned kPrecisionsLength = 18U;
-constexpr unsigned precisions_array[kPrecisionsLength] = {
-    16U,  24U,  32U,  48U,   64U,   96U,   128U,  192U,  256U,
-    384U, 512U, 768U, 1024U, 2048U, 3072U, 4096U, 6144U, 8192U};
+
+constexpr unsigned kPrecisionsLength = AllowedPrecisionsSeq::size();
+
+template <unsigned... Ps>
+constexpr std::array<unsigned, sizeof...(Ps)> seq_to_array(
+    std::integer_sequence<unsigned, Ps...>) {
+  return {{Ps...}};
+}
+constexpr auto precisions_array = seq_to_array(AllowedPrecisionsSeq{});
+
+template <unsigned... Ps>
+auto seq_to_tuple(std::integer_sequence<unsigned, Ps...>) {
+  return std::make_tuple(static_cast<AllowedPrecisions>(Ps)...);
+}
+static const auto precisions = seq_to_tuple(AllowedPrecisionsSeq{});
 
 template <std::size_t I = 0, typename FuncT, typename... Tp>
 inline typename std::enable_if<I == sizeof...(Tp), void>::type for_each(

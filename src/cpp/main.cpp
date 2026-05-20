@@ -2,6 +2,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <functional>
 #include <string>
 #include <utility>
 
@@ -14,16 +15,37 @@ namespace py = pybind11;
 
 template <unsigned P>
 static void register_one_mp_real(py::module_ &m) {
+  using R = mp_real<P>;
   const std::string class_name = "mp_real_" + std::to_string(P);
-  py::class_<mp_real<P>>(m, class_name.c_str())
+  py::class_<R>(m, class_name.c_str())
       .def(py::init<const std::string &>())
+      .def(py::self + py::self)
+      .def(py::self - py::self)
+      .def(py::self * py::self)
+      .def(py::self / py::self)
+      .def(-py::self)
+      .def(py::self == py::self)
+      .def(py::self != py::self)
+      .def(py::self < py::self)
+      .def(py::self <= py::self)
+      .def(py::self > py::self)
+      .def(py::self >= py::self)
+      .def(
+          "__pow__", [](const R &a, const R &b) { return pow(a, b); },
+          py::is_operator())
+      .def("__abs__", [](const R &x) { return abs(x); })
+      .def("__hash__",
+           [](const R &x) { return std::hash<std::string>{}(x.str()); })
+      .def("__repr__",
+           [class_name](const R &x) {
+             return class_name + "('" + x.str() + "')";
+           })
       .def("str",
-           (std::string(mp_real<P>::*)(std::streamsize, std::ios_base::fmtflags)
-                const) &
-               mp_real<P>::str,
+           (std::string(R::*)(std::streamsize, std::ios_base::fmtflags) const) &
+               R::str,
            "Returns the number formatted as a string, with at least precision "
            "digits.",
-           py::arg("digits") = 0, py::arg("f") = std::ios_base::fmtflags(0));
+           py::arg("digits") = 0, py::arg("format") = std::ios_base::fmtflags(0));
 }
 
 template <unsigned... Ps>
@@ -165,12 +187,8 @@ using the passed real values of the variables.",
            py::arg("digits") = 0,
            py::arg("format") = std::ios_base::fmtflags(0));
 
-  // One py::class_<mp_real<P>> per AllowedPrecisions value, exposed as
-  // mp_real_16, mp_real_24, ..., mp_real_8192.
-  register_all_mp_real(
-      m, std::integer_sequence<unsigned, 16, 24, 32, 48, 64, 96, 128, 192, 256,
-                               384, 512, 768, 1024, 2048, 3072, 4096, 6144,
-                               8192>{});
+  // One py::class_<mp_real<P>> per precision, exposed as mp_real_16 … mp_real_8192.
+  register_all_mp_real(m, AllowedPrecisionsSeq{});
 
 #ifdef VERSION_INFO
   m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
