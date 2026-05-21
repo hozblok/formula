@@ -46,16 +46,34 @@ if sys.platform == "darwin":
     EXTRA_COMPILE_ARGS.append("-D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION")
 
 
+# Strip symbol tables from the shared object (~25% smaller, no functional loss).
+# .dynsym (incl. PyInit__formula) is kept; only .symtab/debug symbols go.
+EXTRA_LINK_ARGS = []
+if sys.platform == "linux":
+    EXTRA_LINK_ARGS.append("-Wl,-s")
+elif sys.platform == "darwin":
+    # ld64 dropped -s; -x strips local symbols while keeping exported ones.
+    EXTRA_LINK_ARGS.append("-Wl,-x")
+# Windows/MSVC needs nothing: debug symbols go to a separate .pdb that wheels
+# don't ship, so the .pyd carries no embedded symbol table to strip.
+
+
 EXT_MODULES = [
     Pybind11Extension(
         "formula._formula",
-        ["src/cpp/main.cpp"],
+        # Bindings split across translation units to bound per-compile memory.
+        [
+            "src/cpp/main.cpp",
+            "src/cpp/bindings_mp_real.cpp",
+            "src/cpp/bindings_mp_complex.cpp",
+        ],
         include_dirs=[
             BOOST_HEADERS,
             "src/cpp/",
         ],
         define_macros=[("VERSION_INFO", __version__)],
         extra_compile_args=EXTRA_COMPILE_ARGS,
+        extra_link_args=EXTRA_LINK_ARGS,
         language="c++",
     )
 ]
