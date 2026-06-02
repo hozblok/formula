@@ -9,32 +9,28 @@
     whose message names the offending type.
 """
 
+import operator
+
 import pytest
 
 from formula import Number
 
 
 def test_int_expression():
-    n = Number(5)
-    assert n.expression == "5"
-    assert str(n) == "5"
+    assert str(Number(5)) == "5"
 
 
 def test_negative_int_expression():
-    n = Number(-7)
-    assert n.expression == "-7"
-    assert str(n) == "-7"
+    assert str(Number(-7)) == "-7"
 
 
 def test_float_expression():
-    n = Number(3.14)
-    assert n.expression == "3.14"
-    assert str(n) == "3.14"
+    assert str(Number(3.14)) == "3.14"
 
 
 def test_str_expression_still_works():
-    n = Number("1 + 2")
-    assert n.expression == "1 + 2"
+    # A str input is parsed and evaluated; str() reflects the value.
+    assert str(Number("1 + 2")) == "3"
 
 
 def test_bool_rejected_explicitly():
@@ -64,3 +60,27 @@ def test_dict_rejected():
 def test_error_message_names_offending_type_concretely():
     with pytest.raises(TypeError, match="str, int, or float"):
         Number(object())
+
+
+def test_constructor_accepts_number_and_honors_outer_precision():
+    # Number-wrapping-Number must (a) succeed (Number is in the isinstance
+    # allowlist), (b) use the OUTER precision, not the inner one.
+    inner = Number("3+4*i", precision=24)
+    outer = Number(inner, precision=128)
+    assert outer == inner
+    assert outer._precision == 128
+    assert outer._is_complex is True
+    r_outer = Number(Number("1/3", precision=24), precision=64)
+    assert r_outer._precision == 64
+
+
+@pytest.mark.parametrize(
+    "op", [operator.add, operator.sub, operator.mul, operator.truediv, operator.pow]
+)
+def test_forward_arithmetic_rejects_bool_rhs(op):
+    # Forward binop also routes through _as_number → Number.__init__, so
+    # bool RHS must be rejected — not silently coerced to 1/0.
+    with pytest.raises(TypeError, match="bool"):
+        op(Number("3"), True)
+    with pytest.raises(TypeError, match="bool"):
+        op(Number("3"), False)

@@ -5,47 +5,18 @@
 #include "../cseval/cseval_complex.cpp"
 #include "./csvisitors.hpp"
 
-typedef boost::variant<
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_16>>>,
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_24>>>,
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_32>>>,
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_48>>>,
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_64>>>,
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_96>>>,
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_128>>>,
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_192>>>,
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_256>>>,
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_384>>>,
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_512>>>,
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_768>>>,
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_1024>>>,
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_2048>>>,
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_3072>>>,
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_4096>>>,
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_6144>>>,
-    std::shared_ptr<cseval<mp_real<AllowedPrecisions::p_8192>>>>
-    CSEvalVariant;
+// boost::variant of cseval over each precision in Seq.
+template <typename Seq>
+struct make_eval_variant;
+template <unsigned... Ps>
+struct make_eval_variant<std::integer_sequence<unsigned, Ps...>> {
+  using real = boost::variant<std::shared_ptr<cseval<mp_real<Ps>>>...>;
+  using complex =
+      boost::variant<std::shared_ptr<cseval_complex<mp_complex<Ps>>>...>;
+};
 
-typedef boost::variant<
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_16>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_24>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_32>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_48>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_64>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_96>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_128>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_192>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_256>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_384>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_512>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_768>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_1024>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_2048>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_3072>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_4096>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_6144>>>,
-    std::shared_ptr<cseval_complex<mp_complex<AllowedPrecisions::p_8192>>>>
-    CSEvalComplexVariant;
+using CSEvalVariant = make_eval_variant<AllowedPrecisionsSeq>::real;
+using CSEvalComplexVariant = make_eval_variant<AllowedPrecisionsSeq>::complex;
 
 /** To calculate the value of the derivative of a function, we use
  * the following simple transformations:
@@ -164,6 +135,15 @@ class Formula {
 
   /** Create copy of the Formula object. */
   Formula *copy() { return new Formula(*this); }
+
+  /** Apply a visitor to the evaluated-value node variant (real or complex). */
+  template <typename Visitor>
+  typename Visitor::result_type visit_value(const Visitor &visitor) const {
+    if (is_complex_) {
+      return boost::apply_visitor(visitor, eval_complex_);
+    }
+    return boost::apply_visitor(visitor, eval_);
+  }
 
   /** Parse all variables from the formula expression. */
   std::unordered_set<std::string> variables() const {

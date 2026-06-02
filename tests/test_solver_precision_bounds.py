@@ -1,6 +1,6 @@
 """Regression: Solver enforces the documented precision bounds.
 
-`MAX_PRECISION = 8192` is exported from the package but used to be
+`MAX_PRECISION = 262144` is exported from the package but used to be
 purely decorative — the wrapper forwarded any precision value straight
 to the C++ extension. Now Solver.__init__ rejects values outside
 [0, MAX_PRECISION] with a clear ValueError.
@@ -35,4 +35,4 @@ def test_solver_rejects_precision_above_max():
 
 def test_max_precision_constant_value():
     # If this ever changes, the error message and tests above need to follow.
-    assert MAX_PRECISION == 8192
+    assert MAX_PRECISION == 262144

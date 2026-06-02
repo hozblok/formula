@@ -1,12 +1,12 @@
 """Solver wrapper to simplify calculations with Formula."""
 
+import operator
 from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional, Union
 
 # pylint: disable=no-name-in-module, import-error
 from ._formula import FmtFlags, Formula
-
-MAX_PRECISION = 8192
+from .backend import COMPLEX_TYPES, MAX_PRECISION, mp_class
 
 
 class Solver(Formula):
@@ -146,155 +146,134 @@ class Solver(Formula):
 
 
 class Number:
+    """Arbitrary-precision real/complex value backed by mp_real/mp_complex.
+
+    The constructor parses and evaluates any Formula expression once (so
+    "sin(pi/8)", "3+4*i", "1/3" all work), wrapping the C++ mp value directly;
+    arithmetic, comparison and equality then run on it with no re-parsing or
+    per-step rounding. The returned mp type carries the real/complex kind.
+    """
+
     def __init__(
         self,
         expression: Union["Number", str, int, float],
         precision: int = 24,
     ):
-        if isinstance(expression, Number):
-            self._expression = expression.expression
-        elif isinstance(expression, bool):
-            raise TypeError(
-                "Number expression must be Number, str, int, or float; got bool"
-            )
-        elif isinstance(expression, (str, int, float)):
-            self._expression = str(expression)
-        else:
+        if isinstance(expression, bool) or not isinstance(
+            expression, (Number, str, int, float)
+        ):
             raise TypeError(
                 f"Number expression must be Number, str, int, or float; "
                 f"got {type(expression).__name__}"
             )
-        self._precision = precision
-        self._imaginary_unit = 'i'
-        self._case_insensitive = False
+        solver = Solver(str(expression), precision=precision)
+        self._value = solver.evaluate()
+        self._precision = solver.precision  # rounded up to a supported precision
 
-    @property
-    def expression(self):
-        return self._expression
+    @classmethod
+    def _wrap(cls, value, precision: int) -> "Number":
+        obj = cls.__new__(cls)
+        obj._value = value
+        obj._precision = precision
+        return obj
 
+    # Real/complex kind, derived from the wrapped mp value (its sole source).
     @property
-    def params(self) -> dict[str, Any]:
-        return {
-            "precision": self._precision,
-            "imaginary_unit": self._imaginary_unit,
-            "case_insensitive": self._case_insensitive,
-        }
+    def _is_complex(self) -> bool:
+        return isinstance(self._value, COMPLEX_TYPES)
 
-    @property
-    def fixed(self) -> str:
-        return Solver(self._expression, **self.params)(format_flags=FmtFlags.fixed)
-
-    @property
-    def pair_fixed(self) -> tuple[str, str]:
-        return Solver(self._expression, **self.params).pair(
-            format_flags=FmtFlags.fixed
+    # Coerce a foreign value to Number at this precision; the validation
+    # boundary that rejects bool/None/list/etc. with a clear TypeError.
+    def _as_number(self, value: object) -> "Number":
+        return (
+            value
+            if isinstance(value, Number)
+            else Number(value, precision=self._precision)
         )
 
-    def __make_operation(self, __value: object, operator: str) -> "Number":
-        # Wrapping non-Number inputs in Number() is the validation boundary for
-        # arithmetic: it rejects bool/None/list/dict/etc. with a clear TypeError
-        # naming the offending type, instead of letting str(__value) silently
-        # produce a malformed Solver expression that fails deeper in parsing.
-        other = (
-            __value
-            if isinstance(__value, Number)
-            else Number(__value, precision=self._precision)
-        )
-        solver = Solver(
-            f"(({self.expression}) {operator} ({other.expression}))", **self.params
-        )
-        return Number(solver(), precision=self._precision)
+    # Bring self and other to a common mp type/precision for a binary op: the
+    # higher precision and complex win; a differing value is rebuilt from strings.
+    def _align(self, other: "Number"):
+        precision = max(self._precision, other._precision)
+        is_complex = self._is_complex or other._is_complex
+        cls = mp_class(precision, is_complex)
 
-    def __prepare_comparison(self, __value: object) -> List[str]:
-        other = (
-            __value
-            if isinstance(__value, Number)
-            else Number(__value, precision=self._precision)
-        )
-        return [self.fixed, other.fixed]
+        def to_common(n: "Number"):
+            if n._precision == precision and n._is_complex == is_complex:
+                return n._value
+            if n._is_complex:
+                real, imag = n._value.real(0, FmtFlags.default), n._value.imag(0, FmtFlags.default)
+            else:
+                real, imag = n._value.str(0, FmtFlags.default), "0"
+            return cls(real, imag) if is_complex else cls(real)
 
-    def __make_comparison(self, left: str, right: str, operator: str) -> bool:
-        solver = Solver(f"(({left}) {operator} ({right}))", **self.params)
-        return solver(format_digits=1) == "1"
+        return to_common(self), to_common(other), precision, is_complex
+
+    def _pair(self) -> tuple[str, str]:
+        fmt = FmtFlags.default
+        p = self._precision
+        if self._is_complex:
+            return self._value.real(p, fmt), self._value.imag(p, fmt)
+        return self._value.str(p, fmt), "0"
+
+    def _binop(self, __value: object, op) -> "Number":
+        a, b, precision, _ = self._align(self._as_number(__value))
+        return Number._wrap(op(a, b), precision)
+
+    def _cmp(self, __value: object, op):
+        if not isinstance(__value, (Number, str, int, float)):
+            return NotImplemented
+        a, b, _, is_complex = self._align(self._as_number(__value))
+        if is_complex:
+            raise TypeError("complex numbers are not orderable")
+        return op(a, b)
 
     def __eq__(self, __value: object) -> bool:
         if not isinstance(__value, (Number, str, int, float)):
             return NotImplemented
-        other = (
-            __value
-            if isinstance(__value, Number)
-            else Number(__value, precision=self._precision)
-        )
-        return self.pair_fixed == other.pair_fixed
+        return self._pair() == self._as_number(__value)._pair()
 
     def __hash__(self) -> int:
-        return hash(self.pair_fixed)
+        return hash(self._pair())
 
     def __str__(self) -> str:
-        return self.expression
+        r, i = self._pair()
+        if i == "0":
+            return r
+        sign = "-" if i.startswith("-") else "+"
+        mag = i.lstrip("-")
+        if r == "0":
+            return f"-{mag}*i" if sign == "-" else f"{mag}*i"
+        return f"{r}{sign}{mag}*i"
+
+    def __repr__(self) -> str:
+        return f"Number({str(self)!r}, precision={self._precision})"
 
     def __abs__(self) -> "Number":
-        solver = Solver(f"abs({self.expression})", **self.params)
-        return Number(solver(), precision=self._precision)
+        return Number._wrap(abs(self._value), self._precision)
 
     def __add__(self, __value: Union[str, int, float, "Number"]) -> "Number":
-        return self.__make_operation(__value, "+")
+        return self._binop(__value, operator.add)
 
     def __sub__(self, __value: Union[str, int, float, "Number"]) -> "Number":
-        return self.__make_operation(__value, "-")
+        return self._binop(__value, operator.sub)
 
     def __mul__(self, __value: Union[str, int, float, "Number"]) -> "Number":
-        return self.__make_operation(__value, "*")
+        return self._binop(__value, operator.mul)
 
     def __truediv__(self, __value: Union[str, int, float, "Number"]) -> "Number":
-        return self.__make_operation(__value, "/")
+        return self._binop(__value, operator.truediv)
 
     def __pow__(self, __value: Union[str, int, float, "Number"]) -> "Number":
-        return self.__make_operation(__value, "^")
+        return self._binop(__value, operator.pow)
 
-    def __radd__(self, __value: Union[str, int, float]) -> "Number":
-        return Number(__value, precision=self._precision).__add__(self)
+    def __radd__(self, __value): return self._as_number(__value) + self
+    def __rsub__(self, __value): return self._as_number(__value) - self
+    def __rmul__(self, __value): return self._as_number(__value) * self
+    def __rtruediv__(self, __value): return self._as_number(__value) / self
+    def __rpow__(self, __value): return self._as_number(__value) ** self
 
-    def __rsub__(self, __value: Union[str, int, float]) -> "Number":
-        return Number(__value, precision=self._precision).__sub__(self)
-
-    def __rmul__(self, __value: Union[str, int, float]) -> "Number":
-        return Number(__value, precision=self._precision).__mul__(self)
-
-    def __rtruediv__(self, __value: Union[str, int, float]) -> "Number":
-        return Number(__value, precision=self._precision).__truediv__(self)
-
-    def __rpow__(self, __value: Union[str, int, float]) -> "Number":
-        return Number(__value, precision=self._precision).__pow__(self)
-
-    def __ge__(self, __value: Union[str, int, float, "Number"]) -> bool:
-        if not isinstance(__value, (Number, str, int, float)):
-            return NotImplemented
-        left, right = self.__prepare_comparison(__value)
-        if left == right:
-            return True
-        return self.__make_comparison(left, right, ">")
-
-    def __gt__(self, __value: Union[str, int, float, "Number"]) -> bool:
-        if not isinstance(__value, (Number, str, int, float)):
-            return NotImplemented
-        left, right = self.__prepare_comparison(__value)
-        if left == right:
-            return False
-        return self.__make_comparison(left, right, ">")
-
-    def __le__(self, __value: Union[str, int, float, "Number"]) -> bool:
-        if not isinstance(__value, (Number, str, int, float)):
-            return NotImplemented
-        left, right = self.__prepare_comparison(__value)
-        if left == right:
-            return True
-        return self.__make_comparison(left, right, "<")
-
-    def __lt__(self, __value: Union[str, int, float, "Number"]) -> bool:
-        if not isinstance(__value, (Number, str, int, float)):
-            return NotImplemented
-        left, right = self.__prepare_comparison(__value)
-        if left == right:
-            return False
-        return self.__make_comparison(left, right, "<")
+    def __ge__(self, __value): return self._cmp(__value, operator.ge)
+    def __gt__(self, __value): return self._cmp(__value, operator.gt)
+    def __le__(self, __value): return self._cmp(__value, operator.le)
+    def __lt__(self, __value): return self._cmp(__value, operator.lt)
