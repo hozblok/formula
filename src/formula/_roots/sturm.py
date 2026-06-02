@@ -10,16 +10,7 @@ Complex surfaces: real intersections are the common roots of Re g and Im g
 from typing import List
 
 from ..formula import Number
-from . import _poly
-
-
-def _sign(x: Number) -> int:
-    zero = Number(0, x.precision)
-    if x > zero:
-        return 1
-    if x < zero:
-        return -1
-    return 0
+from . import _isolate, _poly
 
 
 def _nodes(t_min: Number, t_max: Number, count: int, prec: int) -> List[Number]:
@@ -42,54 +33,6 @@ def _poly_from_samples(func, xs, complex_surface, tol, max_degree):
     return _poly.pgcd(pr, pi, tol)  # common roots of Re g and Im g
 
 
-def _sturm_chain(p, tol):
-    chain = [p, _poly.pderiv(p)]
-    while _poly.deg(chain[-1], tol) > 0:
-        _, r = _poly.pdivmod(chain[-2], chain[-1], tol)
-        chain.append([-c for c in r])
-    return chain
-
-
-def _variations(chain, t):
-    signs = [s for s in (_sign(_poly.peval(p, t)) for p in chain) if s != 0]
-    return sum(1 for a, b in zip(signs, signs[1:]) if a != b)
-
-
-def _isolate(chain, a, b, max_depth=200):
-    """Subdivide [a, b] until each kept subinterval brackets exactly one root."""
-    roots = []
-    stack = [(a, b, _variations(chain, a) - _variations(chain, b), 0)]
-    while stack:
-        lo, hi, count, depth = stack.pop()
-        if count <= 0:
-            continue
-        if count == 1 or depth >= max_depth:
-            roots.append((lo, hi))
-            continue
-        mid = (lo + hi) * Number("0.5", lo.precision)
-        vmid = _variations(chain, mid)
-        stack.append((lo, mid, _variations(chain, lo) - vmid, depth + 1))
-        stack.append((mid, hi, vmid - _variations(chain, hi), depth + 1))
-    return roots
-
-
-def _bisect(q, lo, hi, xacc):
-    half = Number("0.5", lo.precision)
-    flo = _poly.peval(q, lo)
-    for _ in range(10 * lo.precision):
-        mid = (lo + hi) * half
-        if hi - lo < xacc:
-            return mid
-        fmid = _poly.peval(q, mid)
-        if _sign(fmid) == 0:
-            return mid
-        if _sign(flo) * _sign(fmid) < 0:
-            hi = mid
-        else:
-            lo, flo = mid, fmid
-    return (lo + hi) * half
-
-
 def find_all(
     func, t_min: Number, t_max: Number, precision: int, max_degree: int = 16, **_
 ) -> List[Number]:
@@ -104,6 +47,6 @@ def find_all(
     q = _poly.square_free(p, tol)
     if _poly.deg(q, tol) == 0:
         return []
-    chain = _sturm_chain(q, tol)
-    roots = [_bisect(q, lo, hi, xacc) for lo, hi in _isolate(chain, t_min, t_max)]
+    chain = _isolate.sturm_chain(q, tol)
+    roots = [_isolate.bisect(q, lo, hi, xacc) for lo, hi in _isolate.isolate(chain, t_min, t_max)]
     return sorted(roots)

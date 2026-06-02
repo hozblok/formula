@@ -68,6 +68,27 @@ def test_sampling_matches_sturm():
     assert _match(a, [str(r) for r in b], eps="1e-15")
 
 
+def test_chebyshev_transcendental_roots():
+    rs = RaySurface("sin(x)", precision=32)
+    roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=10, t_min="0.5", method="chebyshev")
+    pi = Number("4*atan(1)", 32)
+    assert _match(roots, [pi, pi * Number(2, 32), pi * Number(3, 32)], eps="1e-28")
+
+
+def test_chebyshev_exp_root():
+    rs = RaySurface("exp(x) - 2", precision=32)
+    roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=3, method="chebyshev")
+    ln2 = Number("log(2)", 32)
+    assert _match(roots, [ln2], eps="1e-28")
+
+
+def test_auto_routes_transcendental_to_chebyshev():
+    rs = RaySurface("exp(x) - 2", precision=32)
+    a = rs.intersect((0, 0, 0), (1, 0, 0), t_max=3, method="auto")
+    b = rs.intersect((0, 0, 0), (1, 0, 0), t_max=3, method="chebyshev")
+    assert _match(a, [str(r) for r in b], eps="1e-28")
+
+
 def test_complex_surface_real_intersections():
     # Complex-valued surface; real hits are the common roots of Re g and Im g.
     rs = RaySurface("(x*x - 1) * (1 + i)", precision=48)
