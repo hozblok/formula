@@ -181,10 +181,28 @@ class Number:
         obj._precision = precision
         return obj
 
+    @classmethod
+    def wrap(cls, value, precision: int) -> "Number":
+        """Wrap a backend mp value (e.g. from Solver.evaluate) without re-parsing."""
+        return cls._wrap(value, precision)
+
     # Real/complex kind, derived from the wrapped mp value (its sole source).
     @property
     def _is_complex(self) -> bool:
         return isinstance(self._value, COMPLEX_TYPES)
+
+    @property
+    def precision(self) -> int:
+        """Rounded precision (decimal digits) the value is stored at."""
+        return self._precision
+
+    @property
+    def is_complex(self) -> bool:
+        return self._is_complex
+
+    def parts(self) -> tuple:
+        """(real, imaginary) as formatted strings at this precision."""
+        return self._pair()
 
     # Coerce a foreign value to Number at this precision; the validation
     # boundary that rejects bool/None/list/etc. with a clear TypeError.
@@ -255,6 +273,9 @@ class Number:
 
     def __abs__(self) -> "Number":
         return Number._wrap(abs(self._value), self._precision)
+
+    def __neg__(self) -> "Number":
+        return Number._wrap(-self._value, self._precision)
 
     def __add__(self, __value: Union[str, int, float, "Number"]) -> "Number":
         return self._binop(__value, operator.add)

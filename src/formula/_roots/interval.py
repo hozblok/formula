@@ -6,4 +6,5 @@ from ..formula import Number
 
 
 def find_all(func, t_min: Number, t_max: Number, precision: int, **_) -> List[Number]:
-    raise NotImplementedError("interval backend requires the C++ mp_interval type (phase 3)")
+    """Rigorously enclose all roots of g (needs the C++ mp_interval type, phase 3)."""
+    raise NotImplementedError("interval backend requires the C++ mp_interval type")

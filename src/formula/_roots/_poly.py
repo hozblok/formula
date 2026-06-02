@@ -28,10 +28,12 @@ def deg(p: Poly, tol: Number) -> int:
 
 
 def trim(p: Poly, tol: Number) -> Poly:
+    """Drop high-order coefficients below tol."""
     return p[: deg(p, tol) + 1]
 
 
 def peval(p: Poly, t: Number) -> Number:
+    """Evaluate p at t (Horner)."""
     acc = p[-1]
     for c in reversed(p[:-1]):
         acc = acc * t + c
@@ -39,14 +41,16 @@ def peval(p: Poly, t: Number) -> Number:
 
 
 def pderiv(p: Poly) -> Poly:
-    prec = p[0]._precision
+    """Derivative polynomial."""
+    prec = p[0].precision
     if len(p) == 1:
         return [_zero(prec)]
     return [p[k] * Number(k, prec) for k in range(1, len(p))]
 
 
 def pmul(a: Poly, b: Poly) -> Poly:
-    prec = a[0]._precision
+    """Polynomial product."""
+    prec = a[0].precision
     out = [_zero(prec) for _ in range(len(a) + len(b) - 1)]
     for i, ai in enumerate(a):
         for j, bj in enumerate(b):
@@ -56,7 +60,7 @@ def pmul(a: Poly, b: Poly) -> Poly:
 
 def pdivmod(u: Poly, v: Poly, tol: Number) -> Tuple[Poly, Poly]:
     """Polynomial long division: u = q*v + r, deg(r) < deg(v)."""
-    prec = u[0]._precision
+    prec = u[0].precision
     r = list(u)
     dv = deg(v, tol)
     lead = v[dv]
@@ -68,9 +72,7 @@ def pdivmod(u: Poly, v: Poly, tol: Number) -> Tuple[Poly, Poly]:
         q[shift] = factor
         for i in range(dv + 1):
             r[i + shift] = r[i + shift] - factor * v[i]
-        r = r[:dr]  # drop the now-zero leading term
-        if not r:
-            r = [_zero(prec)]
+        r = r[:dr] or [_zero(prec)]  # drop the now-zero leading term
         dr = deg(r, tol)
         if dr == 0 and _is_zero(r[0], tol):
             break
@@ -78,6 +80,7 @@ def pdivmod(u: Poly, v: Poly, tol: Number) -> Tuple[Poly, Poly]:
 
 
 def pgcd(a: Poly, b: Poly, tol: Number) -> Poly:
+    """Monic gcd of a and b (Euclidean remainder chain)."""
     a, b = trim(a, tol), trim(b, tol)
     while deg(b, tol) > 0 or not _is_zero(b[0], tol):
         _, r = pdivmod(a, b, tol)
@@ -88,6 +91,7 @@ def pgcd(a: Poly, b: Poly, tol: Number) -> Poly:
 
 
 def _monic(p: Poly, tol: Number) -> Poly:
+    """Scale so the leading coefficient is 1."""
     d = deg(p, tol)
     lead = p[d]
     return [p[i] / lead for i in range(d + 1)]
@@ -104,16 +108,15 @@ def square_free(p: Poly, tol: Number) -> Poly:
 
 def interpolate(xs: List[Number], ys: List[Number], tol: Number, max_degree: int) -> Poly:
     """Newton divided differences -> monomial coefficients; detects true degree."""
-    prec = ys[0]._precision
+    prec = ys[0].precision
     c = list(ys)
     n = len(xs)
     for j in range(1, n):
         for i in range(n - 1, j - 1, -1):
-            c[i] = (c[i] - c[i - 1]) / (xs[i] - xs[i - 1])
+            c[i] = (c[i] - c[i - 1]) / (xs[i] - xs[i - j])
     scale = _zero(prec)
     for ck in c:
-        if abs(ck) > scale:
-            scale = abs(ck)
+        scale = max(scale, abs(ck))
     cutoff = scale * tol if scale > _zero(prec) else tol
     degree = 0
     for k in range(n - 1, -1, -1):

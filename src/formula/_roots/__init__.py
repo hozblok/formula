@@ -35,6 +35,7 @@ def _load(name: str) -> Callable:
 
 
 def get_backend(method: str, surface) -> Callable:
+    """Resolve a method name to its find_all backend; 'auto' picks by surface."""
     if method == "auto":
         method = "sturm" if is_polynomial(surface) else "sampling"
     if method not in _BACKENDS:

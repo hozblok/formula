@@ -5,10 +5,10 @@ intersection is a real root of g on [0, t_max]. Pluggable root-finding
 backends (see _roots/) locate all of them.
 """
 
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Sequence, Tuple
 
-from .formula import Number, Solver
 from ._roots import get_backend
+from .formula import Number, Solver
 
 _AXES = ("x", "y", "z")
 
@@ -43,15 +43,18 @@ class RaySurfaceFunction:
         return value if isinstance(value, Number) else Number(value, self.precision)
 
     def _point(self, t: Number) -> dict:
+        """Ray coordinates at parameter t, as Solver value strings."""
         return {
             a: str(o + t * dc)
             for a, o, dc in zip(self._axes, self.origin, self.direction)
         }
 
     def g(self, t: Number) -> Number:
-        return Number._wrap(self.surface.evaluate(self._point(t)), self.precision)
+        """g(t) = F(O + t*d)."""
+        return Number.wrap(self.surface.evaluate(self._point(t)), self.precision)
 
     def gprime(self, t: Number) -> Number:
+        """g'(t) = grad F . d via the chain rule."""
         point = self._point(t)
         total = self._num(0)
         for a, dc in zip(self._axes, self.direction):
@@ -60,6 +63,7 @@ class RaySurfaceFunction:
         return total
 
     def point_at(self, t: Number) -> Tuple[Number, ...]:
+        """The (x, y, z) point on the ray at parameter t."""
         full = {a: o + t * dc for a, o, dc in zip(self._axes, self.origin, self.direction)}
         return tuple(full.get(a, self._num(0)) for a in _AXES)
 
@@ -83,6 +87,7 @@ class RaySurface:
         self.precision = self.surface.precision
 
     def function(self, origin: Sequence, direction: Sequence) -> RaySurfaceFunction:
+        """Build g(t)=F(O+t*d) for this ray."""
         return RaySurfaceFunction(self.surface, origin, direction, self.precision)
 
     def intersect(
@@ -90,14 +95,15 @@ class RaySurface:
         origin: Sequence,
         direction: Sequence,
         t_max,
-        t_min=0,
         method: str = "auto",
         **options,
     ) -> List[Number]:
         """Return all ray parameters t in [t_min, t_max] where the ray hits F=0.
 
         method: "auto" | "sampling" | "sturm" | "chebyshev" | "interval".
+        t_min (keyword, default 0) sets the lower bound.
         """
+        t_min = options.pop("t_min", 0)
         func = self.function(origin, direction)
         backend = get_backend(method, self.surface)
         t0 = Number(t_min, self.precision)
@@ -108,5 +114,6 @@ class RaySurface:
     def points(
         self, origin: Sequence, direction: Sequence, t_max, **kwargs
     ) -> List[Tuple[Number, ...]]:
+        """Intersection points (x, y, z) on the surface, sorted by t."""
         func = self.function(origin, direction)
         return [func.point_at(t) for t in self.intersect(origin, direction, t_max, **kwargs)]

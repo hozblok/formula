@@ -14,7 +14,7 @@ from . import _poly
 
 
 def _sign(x: Number) -> int:
-    zero = Number(0, x._precision)
+    zero = Number(0, x.precision)
     if x > zero:
         return 1
     if x < zero:
@@ -28,18 +28,18 @@ def _nodes(t_min: Number, t_max: Number, count: int, prec: int) -> List[Number]:
 
 
 def _poly_from_samples(func, xs, complex_surface, tol, max_degree):
+    """Interpolate g (real part, and imag part if complex) to a polynomial."""
+    prec = func.precision
     reals, imags = [], []
     for x in xs:
-        rstr, istr = func.g(x)._pair()
-        prec = func.precision
+        rstr, istr = func.g(x).parts()
         reals.append(Number(rstr, prec))
         imags.append(Number(istr, prec))
     pr = _poly.interpolate(xs, reals, tol, max_degree)
     if not complex_surface:
         return pr
     pi = _poly.interpolate(xs, imags, tol, max_degree)
-    common = _poly.pgcd(pr, pi, tol)
-    return common  # real intersections lie at common roots of Re g and Im g
+    return _poly.pgcd(pr, pi, tol)  # common roots of Re g and Im g
 
 
 def _sturm_chain(p, tol):
@@ -55,7 +55,8 @@ def _variations(chain, t):
     return sum(1 for a, b in zip(signs, signs[1:]) if a != b)
 
 
-def _isolate(chain, a, b, tol, max_depth=200):
+def _isolate(chain, a, b, max_depth=200):
+    """Subdivide [a, b] until each kept subinterval brackets exactly one root."""
     roots = []
     stack = [(a, b, _variations(chain, a) - _variations(chain, b), 0)]
     while stack:
@@ -65,7 +66,7 @@ def _isolate(chain, a, b, tol, max_depth=200):
         if count == 1 or depth >= max_depth:
             roots.append((lo, hi))
             continue
-        mid = (lo + hi) * Number("0.5", lo._precision)
+        mid = (lo + hi) * Number("0.5", lo.precision)
         vmid = _variations(chain, mid)
         stack.append((lo, mid, _variations(chain, lo) - vmid, depth + 1))
         stack.append((mid, hi, vmid - _variations(chain, hi), depth + 1))
@@ -73,9 +74,9 @@ def _isolate(chain, a, b, tol, max_depth=200):
 
 
 def _bisect(q, lo, hi, xacc):
-    half = Number("0.5", lo._precision)
+    half = Number("0.5", lo.precision)
     flo = _poly.peval(q, lo)
-    for _ in range(10 * lo._precision):
+    for _ in range(10 * lo.precision):
         mid = (lo + hi) * half
         if hi - lo < xacc:
             return mid
@@ -89,10 +90,13 @@ def _bisect(q, lo, hi, xacc):
     return (lo + hi) * half
 
 
-def find_all(func, t_min: Number, t_max: Number, precision: int, max_degree: int = 16, **_) -> List[Number]:
-    tol = Number("1e-{}".format(max(precision // 2, 4)), precision)
-    xacc = Number("1e-{}".format(max(precision - 2, 1)), precision)
-    complex_surface = func.g(t_min)._is_complex
+def find_all(
+    func, t_min: Number, t_max: Number, precision: int, max_degree: int = 16, **_
+) -> List[Number]:
+    """All real roots of g in [t_min, t_max] via Sturm isolation."""
+    tol = Number(f"1e-{max(precision // 2, 4)}", precision)
+    xacc = Number(f"1e-{max(precision - 2, 1)}", precision)
+    complex_surface = func.g(t_min).is_complex
     xs = _nodes(t_min, t_max, max_degree + 1, precision)
     p = _poly_from_samples(func, xs, complex_surface, tol, max_degree)
     if _poly.deg(p, tol) == 0:
@@ -101,5 +105,5 @@ def find_all(func, t_min: Number, t_max: Number, precision: int, max_degree: int
     if _poly.deg(q, tol) == 0:
         return []
     chain = _sturm_chain(q, tol)
-    roots = [_bisect(q, lo, hi, xacc) for lo, hi in _isolate(chain, t_min, t_max, tol)]
+    roots = [_bisect(q, lo, hi, xacc) for lo, hi in _isolate(chain, t_min, t_max)]
     return sorted(roots)
