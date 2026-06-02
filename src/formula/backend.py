@@ -24,7 +24,6 @@ COMPLEX_TYPES = tuple(
     getattr(_formula, n) for n in dir(_formula) if n.startswith(_COMPLEX_PREFIX)
 )
 
-# Largest precision the C++ backend was built with (mirrors AllowedPrecisions).
-MAX_PRECISION = max(
-    int(n[len(_REAL_PREFIX):]) for n in dir(_formula) if n.startswith(_REAL_PREFIX)
-)
+# Engine precision ceiling (csconstants::max_precision), independent of
+# which mp_real_<P> wrappers are bound.
+MAX_PRECISION = _formula.MAX_PRECISION

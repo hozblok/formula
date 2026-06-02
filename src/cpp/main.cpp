@@ -38,6 +38,9 @@ PYBIND11_MODULE(_formula, m) {
            :toctree: _generate
     )pbdoc";
 
+  // Engine precision ceiling, independent of which mp_real_<P> wrappers are bound.
+  m.attr("MAX_PRECISION") = static_cast<unsigned>(max_precision);
+
   py::class_<std::ios_base::fmtflags>(m, "FmtFlags")
       .def(py::self | py::self)
       .def(py::self & py::self)

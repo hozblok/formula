@@ -8,7 +8,7 @@ to the C++ extension. Now Solver.__init__ rejects values outside
 
 import pytest
 
-from formula import MAX_PRECISION, Solver
+from formula import MAX_PRECISION, Solver, _formula
 
 
 def test_solver_accepts_max_precision():
@@ -36,6 +36,12 @@ def test_solver_rejects_precision_above_max():
 def test_max_precision_constant_value():
     # Capped by M_PI_STR's 8198 digits: a higher rung would lie about pi.
     assert MAX_PRECISION == 8192
+
+
+def test_max_precision_comes_from_engine():
+    # Regression: derived from the engine constant, not from scanning the
+    # bound mp_real_<P> wrappers — a sparse ladder must not shrink the bound.
+    assert MAX_PRECISION == _formula.MAX_PRECISION
 
 
 def test_pi_has_full_precision_at_max():
