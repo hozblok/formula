@@ -35,17 +35,10 @@ def test_i_to_the_fourth_equals_one():
     assert Number("i^4") == Number("1")
 
 
-@pytest.mark.xfail(
-    reason=(
-        "signed-zero on the imag component of i*i*i*i (-0.000...) breaks "
-        "byte-pair equality with Number('1') (+0.000...). Both values are "
-        "mathematically zero. Fix: normalize zero in Solver.pair() boundary; "
-        "tracked separately."
-    ),
-    strict=True,
-)
 def test_i_to_the_fourth_equals_one_via_mul():
-    # Use * instead of ^ to avoid complex-pow drift.
+    # Use * instead of ^ to avoid complex-pow drift. The mp-backed value
+    # normalizes the signed zero (-0) on the imaginary component, so this
+    # now compares equal to 1.
     assert Number("i*i*i*i") == Number("1")
 
 
@@ -110,3 +103,35 @@ def test_hash_agrees_for_equivalent_complex_forms():
     b = Number("1")
     assert a == b
     assert hash(a) == hash(b)
+
+
+@pytest.mark.parametrize("op_symbol", ["<", "<=", ">", ">="])
+def test_complex_ordering_raises_typeerror(op_symbol):
+    # _cmp explicitly raises 'complex numbers are not orderable' when
+    # _align reports either side complex. Existing NotImplemented tests
+    # cover foreign-type rejection but never hit this branch.
+    a = Number("1+i")
+    b = Number("2")
+    with pytest.raises(TypeError, match="complex"):
+        eval(f"a {op_symbol} b", {"a": a, "b": b})
+    with pytest.raises(TypeError, match="complex"):
+        eval(f"b {op_symbol} a", {"a": a, "b": b})
+
+
+def test_complex_ordering_against_str_raises_typeerror():
+    # str passes the isinstance gate, gets coerced via _as_number, and
+    # _align still reports complex — so the same guard fires.
+    with pytest.raises(TypeError, match="complex"):
+        _ = Number("1+i") < "2"
+
+
+def test_arithmetic_zero_imag_collapse_invariants():
+    # Complex zero from arithmetic cancellation vs real zero from a literal.
+    # The three invariants (==, hash, str) must agree across kinds.
+    cz = Number("i") + Number("-i")  # mp_complex(0, 0)
+    rz = Number("0")  # mp_real(0)
+    assert cz._is_complex is True
+    assert rz._is_complex is False
+    assert cz == rz
+    assert hash(cz) == hash(rz)
+    assert str(cz) == str(rz) == "0"

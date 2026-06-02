@@ -51,3 +51,18 @@ def test_gt_against_list_raises_typeerror():
 def test_le_against_object_raises_typeerror():
     with pytest.raises(TypeError):
         _ = Number("1") <= object()
+
+
+def test_ge_against_none_raises_typeerror():
+    with pytest.raises(TypeError):
+        _ = Number("1") >= None
+
+
+def test_ge_against_list_raises_typeerror():
+    with pytest.raises(TypeError):
+        _ = Number("1") >= [1, 2]
+
+
+def test_ge_against_object_raises_typeerror():
+    with pytest.raises(TypeError):
+        _ = Number("1") >= object()

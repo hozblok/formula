@@ -9,6 +9,8 @@
 
 #include <cseval/cseval.hpp>
 
+#include "strip_neg_zero.hpp"
+
 namespace py = pybind11;
 
 template <unsigned P>
@@ -38,12 +40,15 @@ static void register_one_mp_real(py::module_ &m) {
            [class_name](const R &x) {
              return class_name + "('" + x.str() + "')";
            })
-      .def("str",
-           (std::string(R::*)(std::streamsize, std::ios_base::fmtflags) const) &
-               R::str,
-           "Returns the number formatted as a string, with at least precision "
-           "digits.",
-           py::arg("digits") = 0, py::arg("format") = std::ios_base::fmtflags(0));
+      .def(
+          "str",
+          [](const R &x, std::streamsize digits,
+             std::ios_base::fmtflags format) {
+            return strip_neg_zero(x.str(digits, format));
+          },
+          "Returns the number formatted as a string, with at least precision "
+          "digits.",
+          py::arg("digits") = 0, py::arg("format") = std::ios_base::fmtflags(0));
 }
 
 template <unsigned... Ps>
@@ -52,7 +57,7 @@ static void register_all_mp_real(py::module_ &m,
   (register_one_mp_real<Ps>(m), ...);
 }
 
-// mp_real_16 … mp_real_8192.
+// mp_real_16 … mp_real_262144.
 void register_mp_real(py::module_ &m) {
   register_all_mp_real(m, AllowedPrecisionsSeq{});
 }

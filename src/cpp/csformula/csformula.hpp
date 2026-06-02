@@ -136,6 +136,15 @@ class Formula {
   /** Create copy of the Formula object. */
   Formula *copy() { return new Formula(*this); }
 
+  /** Apply a visitor to the evaluated-value node variant (real or complex). */
+  template <typename Visitor>
+  typename Visitor::result_type visit_value(const Visitor &visitor) const {
+    if (is_complex_) {
+      return boost::apply_visitor(visitor, eval_complex_);
+    }
+    return boost::apply_visitor(visitor, eval_);
+  }
+
   /** Parse all variables from the formula expression. */
   std::unordered_set<std::string> variables() const {
     std::unordered_set<std::string> variables;

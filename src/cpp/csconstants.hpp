@@ -171,21 +171,19 @@ enum AllowedPrecisions : unsigned {
   p_16 = 16U,
   p_24 = 24U,
   p_32 = 32U,
-  p_48 = 48U,
   p_64 = 64U,
-  p_96 = 96U,
   p_128 = 128U,
-  p_192 = 192U,
   p_256 = 256U,
-  p_384 = 384U,
   p_512 = 512U,
-  p_768 = 768U,
   p_1024 = 1024U,
   p_2048 = 2048U,
-  p_3072 = 3072U,
   p_4096 = 4096U,
-  p_6144 = 6144U,
   p_8192 = 8192U,
+  p_16384 = 16384U,
+  p_32768 = 32768U,
+  p_65536 = 65536U,
+  p_131072 = 131072U,
+  p_262144 = 262144U,
 };
 
 /**
@@ -194,12 +192,12 @@ enum AllowedPrecisions : unsigned {
  * derived from this sequence — add a precision here only.
  */
 using AllowedPrecisionsSeq =
-    std::integer_sequence<unsigned, p_16, p_24, p_32, p_48, p_64, p_96, p_128,
-                          p_192, p_256, p_384, p_512, p_768, p_1024, p_2048,
-                          p_3072, p_4096, p_6144, p_8192>;
+    std::integer_sequence<unsigned, p_16, p_24, p_32, p_64, p_128, p_256, p_512,
+                          p_1024, p_2048, p_4096, p_8192, p_16384, p_32768,
+                          p_65536, p_131072, p_262144>;
 
 static const AllowedPrecisions min_precision = p_16;
-static const AllowedPrecisions max_precision = p_8192;
+static const AllowedPrecisions max_precision = p_262144;
 
 constexpr unsigned kPrecisionsLength = AllowedPrecisionsSeq::size();
 

@@ -17,6 +17,16 @@ namespace py = pybind11;
 void register_mp_real(py::module_ &m);
 void register_mp_complex(py::module_ &m);
 
+// Evaluate a formula node and return the value as the registered mp_real_<P> /
+// mp_complex_<P> Python object, so its type carries the real/complex kind.
+struct GetValueVisitor : public boost::static_visitor<py::object> {
+  const std::map<std::string, std::string> *variables_to_values;
+  template <typename CSEval>
+  py::object operator()(const CSEval &eval) const {
+    return py::cast(eval->calculate(*variables_to_values));
+  }
+};
+
 PYBIND11_MODULE(_formula, m) {
   m.doc() = R"pbdoc(
         Arbitrary-precision formula parser and solver.
@@ -129,6 +139,18 @@ expressions the imaginary part is zero formatted with the same shape so the \
 pair can be compared byte-for-byte against another get_pair() result.",
           py::arg("variables_to_values") = std::map<std::string, std::string>(),
           py::arg("digits") = 0, py::arg("format") = std::ios_base::fmtflags(0))
+      .def(
+          "evaluate",
+          [](const Formula &self,
+             const std::map<std::string, std::string> &variables_to_values) {
+            GetValueVisitor visitor;
+            visitor.variables_to_values = &variables_to_values;
+            return self.visit_value(visitor);
+          },
+          "Evaluate the expression and return its value as an mp_real_<P> or \
+mp_complex_<P> object; the returned type reflects whether the expression is \
+real or complex.",
+          py::arg("variables_to_values") = std::map<std::string, std::string>())
       .def(
           "get_derivative",
           (std::string(Formula::*)(

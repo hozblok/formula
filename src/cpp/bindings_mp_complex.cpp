@@ -9,6 +9,8 @@
 
 #include <cseval/cseval_complex.hpp>
 
+#include "strip_neg_zero.hpp"
+
 namespace py = pybind11;
 
 template <unsigned P>
@@ -41,7 +43,7 @@ static void register_one_mp_complex(py::module_ &m) {
           "real",
           [](const C &x, std::streamsize digits,
              std::ios_base::fmtflags format) {
-            return x.real().str(digits, format);
+            return strip_neg_zero(x.real().str(digits, format));
           },
           "Real part formatted as a string.", py::arg("digits") = 0,
           py::arg("format") = std::ios_base::fmtflags(0))
@@ -49,16 +51,19 @@ static void register_one_mp_complex(py::module_ &m) {
           "imag",
           [](const C &x, std::streamsize digits,
              std::ios_base::fmtflags format) {
-            return x.imag().str(digits, format);
+            return strip_neg_zero(x.imag().str(digits, format));
           },
           "Imaginary part formatted as a string.", py::arg("digits") = 0,
           py::arg("format") = std::ios_base::fmtflags(0))
-      .def("str",
-           (std::string(C::*)(std::streamsize, std::ios_base::fmtflags) const) &
-               C::str,
-           "Returns the number formatted as a string. Non-zero imaginary part "
-           "renders as (real,imag); a zero one renders as just real.",
-           py::arg("digits") = 0, py::arg("format") = std::ios_base::fmtflags(0));
+      .def(
+          "str",
+          [](const C &x, std::streamsize digits,
+             std::ios_base::fmtflags format) {
+            return strip_neg_zero(x.str(digits, format));
+          },
+          "Returns the number formatted as a string. Non-zero imaginary part "
+          "renders as (real,imag); a zero one renders as just real.",
+          py::arg("digits") = 0, py::arg("format") = std::ios_base::fmtflags(0));
 }
 
 template <unsigned... Ps>
@@ -67,7 +72,7 @@ static void register_all_mp_complex(py::module_ &m,
   (register_one_mp_complex<Ps>(m), ...);
 }
 
-// mp_complex_16 … mp_complex_8192.
+// mp_complex_16 … mp_complex_262144.
 void register_mp_complex(py::module_ &m) {
   register_all_mp_complex(m, AllowedPrecisionsSeq{});
 }
