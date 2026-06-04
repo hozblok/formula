@@ -137,6 +137,13 @@ def test_subdivision_tangent_and_rejects_turning_point():
     assert _match(roots, [pi, pi * Number(3, 32)], eps="1e-12")
 
 
+def test_auto_unions_chebyshev_and_subdivision():
+    # auto on a transcendental surface reconciles both general backends.
+    rs = RaySurface("x*x + y*y - (1 + 0.3*sin(4*z))^2", precision=32)
+    auto = rs.intersect((1, 0, 0), (0, 0, 1), t_max=10, t_min="0.1", method="auto")
+    assert _match(auto, _kpi_over_4(12), eps="1e-25")
+
+
 def test_subdivision_real_only():
     rs = RaySurface("(x*x - 1) * (1 + i)", precision=32)
     with pytest.raises(NotImplementedError):

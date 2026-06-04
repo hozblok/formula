@@ -105,7 +105,7 @@ class RaySurface:
         """
         t_min = options.pop("t_min", 0)
         func = self.function(origin, direction)
-        backend = get_backend(method, self.surface)
+        backend = get_backend(method)
         t0 = Number(t_min, self.precision)
         t1 = Number(t_max, self.precision)
         roots = backend(func, t0, t1, self.precision, **options)

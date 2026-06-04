@@ -3,6 +3,8 @@
 import importlib
 from typing import Callable
 
+from ..formula import Number
+
 _BACKENDS = {
     "sampling": "sampling",
     "sturm": "sturm",
@@ -35,10 +37,29 @@ def _load(name: str) -> Callable:
     return module.find_all
 
 
-def get_backend(method: str, surface) -> Callable:
-    """Resolve a method name to its find_all backend; 'auto' picks by surface."""
+def _union(lists, precision: int) -> list:
+    """Merge root lists, treating values within a tolerance as the same root."""
+    tol = Number(f"1e-{max(precision // 2, 6)}", precision)
+    out = []
+    for t in sorted(r for lst in lists for r in lst):
+        if not out or abs(t - out[-1]) > tol:
+            out.append(t)
+    return out
+
+
+def _auto(func, t_min, t_max, precision, **opts) -> list:
+    """Sturm for algebraic surfaces; else Chebyshev backed up by subdivision."""
+    if is_polynomial(func.surface):
+        return _load("sturm")(func, t_min, t_max, precision, **opts)
+    cheb = _load("chebyshev")(func, t_min, t_max, precision, **opts)
+    sub = _load("subdivision")(func, t_min, t_max, precision, **opts)
+    return _union((cheb, sub), precision)
+
+
+def get_backend(method: str) -> Callable:
+    """Resolve a method name to its find_all backend; 'auto' picks per surface."""
     if method == "auto":
-        method = "sturm" if is_polynomial(surface) else "chebyshev"
+        return _auto
     if method not in _BACKENDS:
         raise ValueError(f"unknown method {method!r}; choose from {sorted(_BACKENDS)}")
     return _load(method)
