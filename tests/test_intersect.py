@@ -94,3 +94,50 @@ def test_complex_surface_real_intersections():
     rs = RaySurface("(x*x - 1) * (1 + i)", precision=48)
     roots = rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10, method="sturm")
     assert _match(roots, ["1", "3"])
+
+
+# --- variant 7: subdivision with derivative/range bounds ---
+
+def _kpi_over_4(n, prec=32):
+    pi = Number("4*atan(1)", prec)
+    return [pi * Number(k, prec) / Number(4, prec) for k in range(1, n + 1)]
+
+
+@pytest.mark.parametrize("method", ["subdivision", "sturm"])
+def test_subdivision_matches_polynomial(method):
+    rs = RaySurface("(x*x - 1) * (x*x - 4)", precision=48)
+    roots = rs.intersect((-3, 0, 0), (1, 0, 0), t_max=6, method=method)
+    assert _match(roots, ["1", "2", "4", "5"], eps="1e-15")
+
+
+def test_subdivision_finds_corrugated_wall():
+    # Capillary wall with radius 1 + 0.3*sin(4z); a radial ray at x=1 crosses it
+    # wherever sin(4z)=0, i.e. z = k*pi/4 — twelve closely spaced roots in (0.1, 10].
+    rs = RaySurface("x*x + y*y - (1 + 0.3*sin(4*z))^2", precision=32)
+    roots = rs.intersect((1, 0, 0), (0, 0, 1), t_max=10, t_min="0.1", method="subdivision")
+    assert _match(roots, _kpi_over_4(12), eps="1e-25")
+
+
+def test_chebyshev_self_validates_on_corrugated_wall():
+    # A low starting degree is inadequate for 12 oscillations; the spectral-tail
+    # check escalates the degree until every root is captured.
+    rs = RaySurface("x*x + y*y - (1 + 0.3*sin(4*z))^2", precision=32)
+    cheb = rs.intersect((1, 0, 0), (0, 0, 1), t_max=10, t_min="0.1",
+                        method="chebyshev", cheb_degree=8)
+    sub = rs.intersect((1, 0, 0), (0, 0, 1), t_max=10, t_min="0.1", method="subdivision")
+    assert len(cheb) == 12
+    assert _match(cheb, [str(r) for r in sub], eps="1e-20")
+
+
+def test_subdivision_tangent_and_rejects_turning_point():
+    # cos(t)+1 touches zero (double root) at pi, 3pi; at 2pi g'=0 but g=2 (no root).
+    rs = RaySurface("cos(x) + 1", precision=32)
+    roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=10, t_min="0.1", method="subdivision")
+    pi = Number("4*atan(1)", 32)
+    assert _match(roots, [pi, pi * Number(3, 32)], eps="1e-12")
+
+
+def test_subdivision_real_only():
+    rs = RaySurface("(x*x - 1) * (1 + i)", precision=32)
+    with pytest.raises(NotImplementedError):
+        rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10, method="subdivision")

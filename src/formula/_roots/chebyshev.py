@@ -11,19 +11,11 @@ from typing import List
 from ..formula import Number, Solver
 from . import _isolate, _poly
 
-
-def _cheb_t(k: int, x: Number) -> Number:
-    """T_k(x) by recurrence."""
-    if k == 0:
-        return Number(1, x.precision)
-    t0, t1 = Number(1, x.precision), x
-    for _ in range(2, k + 1):
-        t0, t1 = t1, x * t1 * Number(2, x.precision) - t0
-    return t1
+_MAX_DEGREE = 256
 
 
-def _cheb_fit(func, mid, span, m, prec):
-    """Chebyshev-Gauss coefficients a_k of g on the mapped interval."""
+def _gauss_samples(func, mid, span, m, prec):
+    """Chebyshev-Gauss nodes x_j and g values f_j on the mapped interval."""
     pi = Number("4*atan(1)", prec)
     cos_solver = Solver("cos(a)", prec)
     half = Number("0.5", prec)
@@ -33,9 +25,47 @@ def _cheb_fit(func, mid, span, m, prec):
         x = Number.wrap(cos_solver.evaluate({"a": str(theta)}), prec)
         xs.append(x)
         fs.append(Number(func.g(mid + span * x).parts()[0], prec))
-    two_over_m = Number(2, prec) / Number(m, prec)
-    return [sum((f * _cheb_t(k, x) for x, f in zip(xs, fs)), Number(0, prec)) * two_over_m
-            for k in range(m)]
+    return xs, fs
+
+
+def _cheb_fit(func, mid, span, m, prec):
+    """Chebyshev-Gauss coefficients a_k of g on the mapped interval (O(m^2))."""
+    xs, fs = _gauss_samples(func, mid, span, m, prec)
+    two = Number(2, prec)
+    coeffs = [Number(0, prec) for _ in range(m)]
+    for x, f in zip(xs, fs):
+        t0, t1 = Number(1, prec), x  # T_0(x), T_1(x)
+        coeffs[0] = coeffs[0] + f
+        for k in range(1, m):
+            coeffs[k] = coeffs[k] + f * t1
+            t0, t1 = t1, two * x * t1 - t0
+    inv = two / Number(m, prec)
+    return [c * inv for c in coeffs]
+
+
+def _tail_small(coeffs, tol) -> bool:
+    """True when the high-order Chebyshev coefficients have decayed below tol."""
+    prec = coeffs[0].precision
+    scale = Number(0, prec)
+    for c in coeffs:
+        scale = max(scale, abs(c))
+    if scale == Number(0, prec):
+        return True
+    tail = Number(0, prec)
+    for c in coeffs[-max(3, len(coeffs) // 8):]:
+        tail = max(tail, abs(c))
+    return tail < scale * tol
+
+
+def _converged_fit(func, transform, prec, tol, start_degree):
+    """Self-validate: grow the degree until the spectral tail converges."""
+    mid, span = transform
+    degree = start_degree
+    coeffs = _cheb_fit(func, mid, span, degree, prec)
+    while degree < _MAX_DEGREE and not _tail_small(coeffs, tol):
+        degree = min(degree * 2, _MAX_DEGREE)
+        coeffs = _cheb_fit(func, mid, span, degree, prec)
+    return coeffs
 
 
 def _cheb_to_monomial(coeffs, prec):
@@ -109,7 +139,7 @@ def find_all(
     xacc = Number(f"1e-{max(precision - 2, 1)}", precision)
     half = Number("0.5", precision)
     mid, span = (t_min + t_max) * half, (t_max - t_min) * half
-    coeffs = _cheb_fit(func, mid, span, cheb_degree, precision)
+    coeffs = _converged_fit(func, (mid, span), precision, tol, cheb_degree)
     q = _poly.square_free(_poly.trim(_cheb_to_monomial(coeffs, precision), tol), tol)
     if _poly.deg(q, tol) == 0:
         return []

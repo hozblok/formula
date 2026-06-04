@@ -7,6 +7,7 @@ _BACKENDS = {
     "sampling": "sampling",
     "sturm": "sturm",
     "chebyshev": "chebyshev",
+    "subdivision": "subdivision",
     "interval": "interval",
 }
 

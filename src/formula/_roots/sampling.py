@@ -7,6 +7,7 @@ Serves as the baseline/oracle that the rigorous backends are checked against.
 from typing import List
 
 from ..formula import Number
+from ._isolate import rtsafe
 
 
 def _sign(value: Number) -> int:
@@ -20,26 +21,6 @@ def _sign(value: Number) -> int:
     if value < zero:
         return -1
     return 0
-
-
-def _rtsafe(func, a: Number, b: Number, xacc: Number, maxit: int = 200) -> Number:
-    """Newton step bracketed by bisection; converges on the single root in [a, b]."""
-    prec = a.precision
-    zero, half = Number(0, prec), Number("0.5", prec)
-    lo, hi = (a, b) if _sign(func.g(a)) < 0 else (b, a)
-    t, step = (a + b) * half, abs(b - a)
-    g, gp = func.g(t), func.gprime(t)
-    for _ in range(maxit):
-        secure = (gp == zero
-                  or ((t - hi) * gp - g) * ((t - lo) * gp - g) > zero
-                  or abs(g + g) > abs(step * gp))
-        step = (hi - lo) * half if secure else g / gp
-        t = lo + step if secure else t - step
-        if abs(step) < xacc:
-            return t
-        g, gp = func.g(t), func.gprime(t)
-        lo, hi = (t, hi) if _sign(g) < 0 else (lo, t)
-    return t
 
 
 def _dedupe(roots: List[Number], xacc: Number) -> List[Number]:
@@ -67,6 +48,6 @@ def find_all(
         if s_cur == 0:
             roots.append(t_cur)
         elif s_prev * s_cur < 0:
-            roots.append(_rtsafe(func, t_prev, t_cur, xacc))
+            roots.append(rtsafe(func, t_prev, t_cur, xacc))
         t_prev, s_prev = t_cur, s_cur
     return _dedupe(roots, xacc)

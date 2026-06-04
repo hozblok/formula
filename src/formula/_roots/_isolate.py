@@ -51,6 +51,26 @@ def isolate(chain, a, b, max_depth=200):
     return roots
 
 
+def rtsafe(func, a, b, xacc, maxit=200):
+    """Newton step bracketed by bisection; converges on the single root of g in [a, b]."""
+    prec = a.precision
+    zero, half = Number(0, prec), Number("0.5", prec)
+    lo, hi = (a, b) if sign(func.g(a)) < 0 else (b, a)
+    t, step = (a + b) * half, abs(b - a)
+    g, gp = func.g(t), func.gprime(t)
+    for _ in range(maxit):
+        secure = (gp == zero
+                  or ((t - hi) * gp - g) * ((t - lo) * gp - g) > zero
+                  or abs(g + g) > abs(step * gp))
+        step = (hi - lo) * half if secure else g / gp
+        t = lo + step if secure else t - step
+        if abs(step) < xacc:
+            return t
+        g, gp = func.g(t), func.gprime(t)
+        lo, hi = (t, hi) if sign(g) < 0 else (lo, t)
+    return t
+
+
 def bisect(q, lo, hi, xacc):
     """Bisect a square-free polynomial q on a single-root bracket [lo, hi]."""
     half = Number("0.5", lo.precision)
