@@ -263,6 +263,55 @@ by `Number.__eq__` and `Number.__hash__`.
 Supported operators: `+`, `-`, `*`, `/`, `**` (also written as `^` inside
 expressions), `abs()`, `==`, `<`, `<=`, `>`, `>=`.
 
+### Finding all ray–surface intersections
+
+`RaySurface` finds **every** intersection of a ray `r(t) = O + t·d` with an
+implicit surface `F(x, y, z) = 0`. Substituting the ray reduces the surface to a
+single-variable `g(t) = F(O + t·d)`, so the intersections are exactly the real
+roots of `g` on `[t_min, t_max]`. `t` is measured in units of `|d|` (the
+direction is normalized internally), so for a unit `d` it is the distance along
+the ray.
+
+```python
+>>> from formula import RaySurface
+>>> rs = RaySurface("x*x + y*y - 1", precision=24)      # unit cylinder
+>>> ts = rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10)  # two crossings: t≈1, t≈3
+>>> len(ts)
+2
+>>> pts = rs.points((-2, 0, 0), (1, 0, 0), t_max=10)    # (x, y, z) on the surface
+>>> len(pts)
+2
+```
+
+Pick the root-finder with `method=`:
+
+| `method`      | Best for                                   | Guarantee |
+|---------------|--------------------------------------------|-----------|
+| `auto`        | default — picks per surface                | Sturm for polynomials, else Chebyshev ∪ subdivision |
+| `sturm`       | algebraic surfaces (quadrics, tori, …)     | exact, complete real-root count |
+| `chebyshev`   | smooth analytic surfaces (`sin`/`exp`/…)   | self-validating degree; captures tangencies |
+| `subdivision` | general/oscillatory surfaces               | derivative-bound exclusion (practically reliable) |
+| `sampling`    | quick, well-separated roots                | none — may miss thin/tangent features |
+
+`auto` routes algebraic surfaces to `sturm` (exact) and other real surfaces to
+`chebyshev` reconciled with `subdivision` as a safety net. Even-multiplicity
+(tangent) roots that plain sampling steps over are recovered:
+
+```python
+>>> rs = RaySurface("x*x + y*y + z*z - 1", precision=24)   # sphere
+>>> len(rs.intersect((-2, 1, 0), (1, 0, 0), t_max=10, method="sturm"))  # grazing
+1
+```
+
+Keyword options: `t_min` (default `0`), plus per-method knobs such as
+`max_degree` (sturm), `cheb_degree` (chebyshev) and `m2_samples` (subdivision).
+Complex-valued surfaces are supported by `sturm` (real intersections are the
+common roots of `Re g` and `Im g`); the other backends are real-only.
+
+Caveat: `subdivision` (and the `interval` method, not yet implemented) are
+*practically* reliable rather than formally rigorous — their exclusion test is
+only as good as the estimated bound on `g''`.
+
 ## Supported functions
 
 These built-in functions are recognized inside expression strings and
