@@ -32,3 +32,14 @@ def test_wrong_type_error_names_the_actual_type():
 def test_proper_values_still_work():
     solver = Solver("x + y")
     assert solver({"x": "1", "y": "2"}) == "3"
+
+
+def test_scalar_values_for_no_variable_formula():
+    # Used to crash with "'int' object is not iterable".
+    solver = Solver("1 + 1")
+    with pytest.raises(ValueError, match="no variables"):
+        solver(5)
+
+
+def test_none_values_for_no_variable_formula_still_work():
+    assert Solver("1 + 1")() == "2"

@@ -29,7 +29,7 @@ How does it stand in 2026?
 | `python-flint` | runtime, arbitrary | FLINT / Arb, FFT, ball arithmetic | LGPL | no | no |
 | `SymPy` | runtime, arbitrary | mpmath | BSD | yes (symbolic) | yes (symbolic) |
 | `decimal` | runtime, arbitrary | pure Python | PSF | no | no |
-| **`formula`** | **ladder, up to 262144** | **Boost cpp_dec_float, Karatsuba** | **BSL** | **yes (numeric)** | **yes (numeric)** |
+| **`formula`** | **ladder, up to 8192** | **Boost cpp_dec_float, Karatsuba** | **BSL** | **yes (numeric)** | **yes (numeric)** |
 
 Every alternative offers true runtime precision. The fast ones (gmpy2, python-flint)
 use FFT multiplication and beat our Karatsuba at large N, but they pull in GMP,
@@ -104,12 +104,7 @@ We picked doubling. `r = 2`. Each rung is twice the one below:
    1024 |
    2048 |
    4096 |
-   8192 |  (current project max before 2026)
-  16384 |
-  32768 |
-  65536 |
- 131072 |
- 262144 |  ceiling
+   8192 |  ceiling
 ```
 
 The reasons, plainly:
@@ -123,35 +118,25 @@ The reasons, plainly:
    16, 24, 32, which is exactly where most real work lives (a double is about 16
    digits), so a bit of extra density there is free and handy.
 
-The range spans 16 to 262144, a factor of 16384. That is 16 rungs: 16 evaluator
-instantiations for the real types and 16 for the complex ones. What costs build
-memory is the *count* of rungs, not the *size* of the top one, so the count is
-kept modest.
+The range spans 16 to 8192, a factor of 512. That is 11 rungs: 11 evaluator
+instantiations for the real types and 11 for the complex ones.
 
-## Why 262144 is the ceiling
+## Why 8192 is the ceiling
 
-This part we did not guess. We measured.
+Three facts decide it.
 
-Two facts decide it. First, `cpp_dec_float` stores the digits inside the object,
-so one number costs about `N/2` bytes. Second, multiplication in this Boost has
-no FFT path: schoolbook below ~1024 digits, Karatsuba above, which is
-`O(N^1.585)`. That exponent is what gets you. The cost does not grow politely.
+First, `pi` is a baked-in constant with 8198 digits. Every rung must be fully
+covered by it, or `pi` silently zero-pads past the constant and the rung lies
+about its own precision. A higher ceiling means baking in a longer constant.
 
-The measured scaling: double the digits and one multiply gets about 3x slower;
-quadruple them and about 9x slower. Division costs about 4x a multiply (Newton
-iteration, which is a handful of multiplies).
+Second, rungs are not free at build time. Each one instantiates a full real and
+complex evaluator; the compiler's memory peak grows with both the count of
+rungs and the size of the top types.
 
-At 262144 digits a multiply is about a tenth of a second and a number is 128 KB
-(full table in [benchmark-dec-float-scaling.md](benchmark-dec-float-scaling.md)).
-A formula of a few dozen operations finishes in a few seconds. Slow, but real.
-You can sit and wait for it.
-
-One rung further and it stops being arithmetic and becomes a benchmark. At a
-million digits a multiply is about a second and a full evaluation runs into
-minutes. And the tempting bad idea, squaring the top rung to `2^34` digits, lands
-at about 8.6 GB per number and, by the same Karatsuba scaling, roughly fifty days
-for a single multiply. That is not a wider range. That is a dead rung.
-
-So 262144 is the honest edge: the largest precision where the answer comes back
-while you still care about it. Past that, the right move is not a bigger rung but
-a different number type, one with FFT multiply (MPFR or GMP).
+Third, the arithmetic itself. Multiplication in this Boost has no FFT path:
+schoolbook below ~1024 digits, Karatsuba above, which is `O(N^1.585)`. We
+measured up to a million digits (full table in
+[benchmark-dec-float-scaling.md](benchmark-dec-float-scaling.md)): at 8192 a
+multiply is ~0.4 ms and a formula evaluates instantly; at 262144 a single
+multiply is already a tenth of a second. Past the ceiling the right move is not
+a bigger rung but a different number type, one with FFT multiply (MPFR or GMP).

@@ -12,8 +12,7 @@ from formula import _formula
 # Hardcoded, not read from the extension, so the test catches an accidental
 # change to the bound set.
 ALLOWED_PRECISIONS = (
-    16, 24, 32, 64, 128, 256, 512, 1024,
-    2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144,
+    16, 24, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192,
 )
 
 

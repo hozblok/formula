@@ -42,7 +42,11 @@ class Solver(Formula):
         if not isinstance(values, Mapping):
             variables = self.variables()
             if not variables:
-                pass
+                if values is not None:
+                    raise ValueError(
+                        f"The formula has no variables, but 'values' was "
+                        f"given: {values!r}"
+                    )
             elif values is not None and len(variables) == 1:
                 (only_var,) = variables
                 variables_to_values = {only_var: str(values)}

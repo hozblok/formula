@@ -1,11 +1,13 @@
 #ifndef CS_CONSTANTS_MPF_H
 #define CS_CONSTANTS_MPF_H
 
+#include <boost/format.hpp>
 #include <boost/math/constants/constants.hpp>
 #include <boost/multiprecision/cpp_dec_float.hpp>
 #include <boost/multiprecision/number.hpp>
 #include <array>
 #include <regex>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <type_traits>
@@ -146,6 +148,17 @@ const size_t kNpos = static_cast<size_t>(~0);
  */
 const std::regex kIsNumberRegex(
     R"(^([+-]?(?:[[:d:]]+\.?|[[:d:]]*\.[[:d:]]+))(?:[Ee][+-]?[[:d:]]+)?$)");
+
+// Reject non-numeric variable values: Real("1/3") silently parses as 1.
+inline void validate_variable_value(const std::string &name,
+                                    const std::string &value) {
+  if (!std::regex_match(value, kIsNumberRegex)) {
+    throw std::invalid_argument(
+        (boost::format("Invalid number value '%s' for the variable '%s'") %
+         value % name)
+            .str());
+  }
+}
 const std::string kNumberSymbols("+-0123456789.eE");
 /**
  * Operations: logical or, logical and, relational =, <, >, addition,
@@ -179,25 +192,20 @@ enum AllowedPrecisions : unsigned {
   p_2048 = 2048U,
   p_4096 = 4096U,
   p_8192 = 8192U,
-  p_16384 = 16384U,
-  p_32768 = 32768U,
-  p_65536 = 65536U,
-  p_131072 = 131072U,
-  p_262144 = 262144U,
 };
 
 /**
  * Single source of truth for the supported precisions, ascending. The
  * cseval variants, init_eval, and the Python mp_real_<P> bindings are all
  * derived from this sequence — add a precision here only.
+ * The ceiling must stay within M_PI_STR's digits (8198), or "pi" lies.
  */
 using AllowedPrecisionsSeq =
     std::integer_sequence<unsigned, p_16, p_24, p_32, p_64, p_128, p_256, p_512,
-                          p_1024, p_2048, p_4096, p_8192, p_16384, p_32768,
-                          p_65536, p_131072, p_262144>;
+                          p_1024, p_2048, p_4096, p_8192>;
 
 static const AllowedPrecisions min_precision = p_16;
-static const AllowedPrecisions max_precision = p_262144;
+static const AllowedPrecisions max_precision = p_8192;
 
 constexpr unsigned kPrecisionsLength = AllowedPrecisionsSeq::size();
 

@@ -296,6 +296,7 @@ Real cseval<Real>::calculate(
   typename std::map<std::string, std::string>::const_iterator it;
   for (it = variables_to_values.cbegin(); it != variables_to_values.cend();
        ++it) {
+    validate_variable_value(it->first, it->second);
     values[it->first] = Real(it->second);
   }
   return calculate(values, mapFunctionTwoArgsValue, mapFunctionOneArgValue);
@@ -399,6 +400,7 @@ Real cseval<Real>::calculate_derivative(
   typename std::map<std::string, std::string>::const_iterator it;
   for (it = variables_to_values.cbegin(); it != variables_to_values.cend();
        ++it) {
+    validate_variable_value(it->first, it->second);
     values[it->first] = Real(it->second);
   }
   return calculate_derivative(variable, values, mapFunctionTwoArgsValue,

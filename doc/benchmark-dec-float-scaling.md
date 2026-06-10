@@ -1,16 +1,16 @@
 # Benchmark: cpp_dec_float scaling
 
 How Boost's `cpp_dec_float` scales with precision — the data behind the ladder's
-ceiling at 262144 (see
-[Why 262144 is the ceiling](precision-ladder.md#why-262144-is-the-ceiling)). No
+ceiling at 8192 (see
+[Why 8192 is the ceiling](precision-ladder.md#why-8192-is-the-ceiling)). No
 FFT path: schoolbook below ~1024 digits, Karatsuba above, `O(N^1.585)`.
 
 | precision | bytes/number | one multiply | one divide | verdict |
 | --------- | -----------: | -----------: | ---------: | ------- |
 | 1024      | 0.5 KB       | 0.015 ms     | 0.069 ms   | fast |
-| 8192      | 4 KB         | 0.42 ms      | 1.8 ms     | fast |
+| 8192      | 4 KB         | 0.42 ms      | 1.8 ms     | fast, **ceiling** |
 | 65536     | 32 KB        | 11.7 ms      | 44.9 ms    | usable |
-| 262144    | 128 KB       | 95.7 ms      | 402.6 ms   | **ceiling** |
+| 262144    | 128 KB       | 95.7 ms      | 402.6 ms   | usable |
 | 1048576   | 512 KB       | 907 ms       | 3.6 s      | slow |
 
 Single threaded, `-O2`. Double the digits and a multiply gets ~3x slower; a

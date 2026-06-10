@@ -57,7 +57,7 @@ static void register_all_mp_real(py::module_ &m,
   (register_one_mp_real<Ps>(m), ...);
 }
 
-// mp_real_16 … mp_real_262144.
+// mp_real_16 … mp_real_8192.
 void register_mp_real(py::module_ &m) {
   register_all_mp_real(m, AllowedPrecisionsSeq{});
 }
