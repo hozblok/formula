@@ -17,6 +17,10 @@ it on and `mpmath` rides `gmpy2`.
 
 (multiply; for `formula` a divide costs ~4x a multiply, same ordering.)
 
+The 16384 and 65536 rows were measured on a build with extra rungs; the shipped
+ladder now tops out at 8192 (see
+[Why 8192 is the ceiling](precision-ladder.md#why-8192-is-the-ceiling)).
+
 Up to ~1000 digits every library is sub-0.1 ms and the choice does not matter.
 Past that `gmpy2`'s FFT pulls away — about 19x at 65536 digits — while `formula`
 sits level with pure-Python `mpmath` and stdlib `decimal`, all three
@@ -51,7 +55,7 @@ def ms(fn, budget=0.4):                       # best per-call time, milliseconds
         best = min(best, (time.perf_counter() - t0) / n)
     return best * 1000
 
-for P in (256, 1024, 4096, 16384, 65536):
+for P in (256, 1024, 4096, 8192):
     a = Number("1/3", P)._value; b = Number("1/7", P)._value
     gmpy2.get_context().precision = math.ceil(P * math.log2(10))
     g1, g2 = mpfr(1) / 3, mpfr(1) / 7

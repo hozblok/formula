@@ -72,7 +72,7 @@ static void register_all_mp_complex(py::module_ &m,
   (register_one_mp_complex<Ps>(m), ...);
 }
 
-// mp_complex_16 … mp_complex_262144.
+// mp_complex_16 … mp_complex_8192.
 void register_mp_complex(py::module_ &m) {
   register_all_mp_complex(m, AllowedPrecisionsSeq{});
 }

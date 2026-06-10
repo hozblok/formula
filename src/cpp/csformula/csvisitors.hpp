@@ -18,7 +18,8 @@ struct GetCalculatedStringVisitor : public boost::static_visitor<std::string> {
       auto value = eval_any->calculate(*variables_to_values);
       std::string real_part = value.real().str(digits, format);
       std::string imag_part = value.imag().str(digits, format);
-      return real_part + std::string("+i*(") + imag_part + std::string(")");
+      return real_part + "+" + std::string(1, imaginary_unit) + "*(" +
+             imag_part + ")";
     } else {
       return eval_any->calculate(*variables_to_values).str(digits, format);
     }
@@ -27,6 +28,7 @@ struct GetCalculatedStringVisitor : public boost::static_visitor<std::string> {
   std::streamsize digits;
   std::ios_base::fmtflags format;
   bool is_complex;
+  char imaginary_unit;
 };
 
 /**
@@ -81,16 +83,27 @@ struct GetCalculatedVisitor : public boost::static_visitor<RealOrComplex> {
   const std::map<std::string, RealOrComplex> *variables_to_values;
 };
 
-/** Visitor to calculate partial derivative of the formula. */
+/** Visitor to calculate partial derivative of the formula. Same output
+ * shape as GetCalculatedStringVisitor. */
 struct GetCalculatedDerivativeStringVisitor
     : public boost::static_visitor<std::string> {
   template <typename T>
-  std::string operator()(
-      const T &eval, const std::string &variable,
-      const std::map<std::string, std::string> &variables_to_values,
-      std::streamsize &digits, std::ios_base::fmtflags &format) const {
-    return eval->calculate_derivative(variable, variables_to_values).str();
+  std::string operator()(const T &eval) const {
+    auto value = eval->calculate_derivative(*variable, *variables_to_values);
+    if (is_complex) {
+      std::string real_part = value.real().str(digits, format);
+      std::string imag_part = value.imag().str(digits, format);
+      return real_part + "+" + std::string(1, imaginary_unit) + "*(" +
+             imag_part + ")";
+    }
+    return value.str(digits, format);
   }
+  const std::string *variable;
+  const std::map<std::string, std::string> *variables_to_values;
+  std::streamsize digits;
+  std::ios_base::fmtflags format;
+  bool is_complex;
+  char imaginary_unit;
 };
 
 struct CollectVariablesVisitor : public boost::static_visitor<void> {

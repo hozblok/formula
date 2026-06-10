@@ -124,8 +124,10 @@ is empty");
           // allowed '-x', '--x', '---x*y', '-.01' etc.
           kind_ = 'f';
           id_ = *it;
-          left_eval_ = new cseval_complex<Complex>(std::string("0"));
-          right_eval_ = new cseval_complex<Complex>(expression.substr(1));
+          left_eval_ =
+              new cseval_complex<Complex>(std::string("0"), imaginary_unit_);
+          right_eval_ =
+              new cseval_complex<Complex>(expression.substr(1), imaginary_unit_);
           return;
         } else if (kOperations.find(expression.at(op_index - 1)) !=
                    std::string::npos) {
@@ -138,9 +140,9 @@ is empty");
       id_ = *it;
       // Split the string into two parts by the separator (operation).
       left_eval_ = new cseval_complex<Complex>(
-          expression.substr(0, op_to_index.at(*it)));
+          expression.substr(0, op_to_index.at(*it)), imaginary_unit_);
       right_eval_ = new cseval_complex<Complex>(
-          expression.substr(op_to_index.at(*it) + 1));
+          expression.substr(op_to_index.at(*it) + 1), imaginary_unit_);
       return;
     }
   }
@@ -210,12 +212,12 @@ location and / or number of brackets");
     id_ = name_fun;
     size_t index_comma = expression.find(',');
     if (index_comma != std::string::npos) {
-      left_eval_ =
-          new cseval_complex<Complex>(expression.substr(0, index_comma));
-      right_eval_ =
-          new cseval_complex<Complex>(expression.substr(index_comma + 1));
+      left_eval_ = new cseval_complex<Complex>(expression.substr(0, index_comma),
+                                               imaginary_unit_);
+      right_eval_ = new cseval_complex<Complex>(
+          expression.substr(index_comma + 1), imaginary_unit_);
     } else {
-      left_eval_ = new cseval_complex<Complex>(expression);
+      left_eval_ = new cseval_complex<Complex>(expression, imaginary_unit_);
     }
   }
 }
@@ -310,6 +312,7 @@ Complex cseval_complex<Complex>::calculate(
   typename std::map<std::string, std::string>::const_iterator it;
   for (it = variables_to_values.cbegin(); it != variables_to_values.cend();
        ++it) {
+    validate_variable_value(it->first, it->second);
     values[it->first] = Complex(it->second, "0.0");
   }
   return calculate(values, mapFunctionTwoArgsValue, mapFunctionOneArgValue);
@@ -422,6 +425,7 @@ Complex cseval_complex<Complex>::calculate_derivative(
   typename std::map<std::string, std::string>::const_iterator it;
   for (it = variables_to_values.cbegin(); it != variables_to_values.cend();
        ++it) {
+    validate_variable_value(it->first, it->second);
     values[it->first] = Complex(it->second, "0.0");
   }
   return calculate_derivative(variable, values, mapFunctionTwoArgsValue,

@@ -102,7 +102,7 @@ And it is enough to call the `formula` object to calculate the value of the expr
 >>> formula(point, derivative="x") # 2*3/sin(-pi/2)
 '-6'
 >>> formula(point, derivative=("y", "a")) # [1/sin(-pi/2),- (3^2 + 3e-50) * cos(-pi/2) / sin(-pi/2)]
-['-1', '0']
+['-1', '-1.5633175729821453046351823925394e-47']  # cos(-pi/2) is an epsilon, not exact 0
 ```
 
 ## Simple examples

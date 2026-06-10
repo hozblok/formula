@@ -1,6 +1,6 @@
 """Regression: Solver enforces the documented precision bounds.
 
-`MAX_PRECISION = 262144` is exported from the package but used to be
+`MAX_PRECISION = 8192` is exported from the package but used to be
 purely decorative — the wrapper forwarded any precision value straight
 to the C++ extension. Now Solver.__init__ rejects values outside
 [0, MAX_PRECISION] with a clear ValueError.
@@ -34,5 +34,13 @@ def test_solver_rejects_precision_above_max():
 
 
 def test_max_precision_constant_value():
-    # If this ever changes, the error message and tests above need to follow.
-    assert MAX_PRECISION == 262144
+    # Capped by M_PI_STR's 8198 digits: a higher rung would lie about pi.
+    assert MAX_PRECISION == 8192
+
+
+def test_pi_has_full_precision_at_max():
+    # Regression: with rungs above 8192 the baked-in pi constant ran out
+    # of digits and the tail was silently zero-padded.
+    pi = Solver("pi", precision=MAX_PRECISION)()
+    assert len(pi.replace(".", "")) >= MAX_PRECISION
+    assert pi.startswith("3.14159265358979323846")
