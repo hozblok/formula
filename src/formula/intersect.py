@@ -1,7 +1,7 @@
 """Find all intersections of a ray with an implicit surface F(x,y,z)=0.
 
 A ray r(t)=O+t*d turns F into a single-variable g(t)=F(O+t*d); every
-intersection is a real root of g on [0, t_max]. Pluggable root-finding
+intersection is a real root of g on [t_min, t_max]. Pluggable root-finding
 backends (see _roots/) locate all of them.
 """
 
@@ -11,6 +11,21 @@ from ._roots import get_backend
 from .formula import Number, Solver
 
 _AXES = ("x", "y", "z")
+
+
+def _with_endpoint_roots(func, roots, t0, t1, precision):
+    """Backend-agnostic net: add an exact root sitting on t0/t1 if a backend
+    missed it (Sturm's (a,b] convention, interior Chebyshev nodes, etc.)."""
+    gtol = Number(f"1e-{max(precision // 3, 4)}", precision)
+    tol = Number(f"1e-{max(precision // 2, 6)}", precision)
+    out = list(roots)
+    for t in (t0, t1):
+        mag = abs(func.g(t)).parts()[0]  # modulus as a real string (|re,im|)
+        if "inf" in mag or "nan" in mag:
+            continue
+        if Number(mag, precision) <= gtol and all(abs(t - r) > tol for r in out):
+            out.append(t)
+    return out
 
 
 class RaySurfaceFunction:
@@ -32,22 +47,23 @@ class RaySurfaceFunction:
         unknown = axes - set(_AXES)
         if unknown:
             raise ValueError(f"surface variables must be in {_AXES}; got {unknown}")
-        # Keep only the axes the surface actually depends on, in x,y,z order.
+        # Surface axes drive g/g' evaluation; origin and direction are kept over
+        # the full x,y,z so point_at and the arc-length normalization stay correct
+        # even when the surface ignores an axis.
         self._axes = [a for a in _AXES if a in axes]
-        self.origin = [self._num(origin[_AXES.index(a)]) for a in self._axes]
-        d = [self._num(direction[_AXES.index(a)]) for a in self._axes]
-        norm = abs(sum((c * c for c in d), self._num(0))) ** self._num("0.5")
-        self.direction = [c / norm for c in d]
+        self.origin = {a: self._num(origin[_AXES.index(a)]) for a in _AXES}
+        full = {a: self._num(direction[_AXES.index(a)]) for a in _AXES}
+        norm = abs(sum((c * c for c in full.values()), self._num(0))) ** self._num("0.5")
+        if norm == self._num(0):
+            raise ValueError("direction must be a non-zero vector")
+        self.direction = {a: c / norm for a, c in full.items()}
 
     def _num(self, value) -> Number:
         return value if isinstance(value, Number) else Number(value, self.precision)
 
     def _point(self, t: Number) -> dict:
-        """Ray coordinates at parameter t, as Solver value strings."""
-        return {
-            a: str(o + t * dc)
-            for a, o, dc in zip(self._axes, self.origin, self.direction)
-        }
+        """Ray coordinates (surface axes only) at parameter t, as value strings."""
+        return {a: str(self.origin[a] + t * self.direction[a]) for a in self._axes}
 
     def g(self, t: Number) -> Number:
         """g(t) = F(O + t*d)."""
@@ -57,15 +73,14 @@ class RaySurfaceFunction:
         """g'(t) = grad F . d via the chain rule."""
         point = self._point(t)
         total = self._num(0)
-        for a, dc in zip(self._axes, self.direction):
+        for a in self._axes:
             partial = Number(self.surface.get_derivative(a, point, 0), self.precision)
-            total = total + partial * dc
+            total = total + partial * self.direction[a]
         return total
 
     def point_at(self, t: Number) -> Tuple[Number, ...]:
         """The (x, y, z) point on the ray at parameter t."""
-        full = {a: o + t * dc for a, o, dc in zip(self._axes, self.origin, self.direction)}
-        return tuple(full.get(a, self._num(0)) for a in _AXES)
+        return tuple(self.origin[a] + t * self.direction[a] for a in _AXES)
 
 
 class RaySurface:
@@ -104,12 +119,14 @@ class RaySurface:
         t_min (keyword, default 0) sets the lower bound.
         """
         t_min = options.pop("t_min", 0)
-        func = self.function(origin, direction)
         backend = get_backend(method)
         t0 = Number(t_min, self.precision)
         t1 = Number(t_max, self.precision)
+        if t0 > t1:
+            raise ValueError(f"t_min ({t_min}) must not exceed t_max ({t_max})")
+        func = self.function(origin, direction)
         roots = backend(func, t0, t1, self.precision, **options)
-        return sorted(roots)
+        return sorted(_with_endpoint_roots(func, roots, t0, t1, self.precision))
 
     def points(
         self, origin: Sequence, direction: Sequence, t_max, **kwargs

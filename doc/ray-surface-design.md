@@ -67,30 +67,50 @@ Added minimal public API used by the backends (previously only `_`-prefixed inte
 
 ## Testing
 
-`tests/test_intersect.py` — 22 tests, including:
+`tests/test_intersect.py` (22) + `tests/test_intersect_robustness.py` (66) +
+`tests/test_intersect_surfaces.py` (44 — quadrics/conics, transcendentals,
+ray geometry, invariants, multiplicity, higher-degree algebraic) +
+`tests/test_intersect_capillary.py` (6 — the real CAPSYS X-ray surfaces) cover,
+across all backends:
 
-- cylinder / sphere (two roots), oblique ray (arc-length `t`), range clipping, point-mapping residuals;
-- **tangent double root** (`x²+y²+z²−1` grazing): Sturm/subdivision find it, sampling correctly does **not**;
-- quartic `(x²−1)(x²−4)` — four roots;
-- **corrugated capillary wall** `x²+y²−(1+0.3·sin 4z)²` — twelve roots at `t = k·π/4`; subdivision finds all, and Chebyshev *starting at an inadequate degree 8* self-validates and also returns all twelve;
-- turning-point rejection (`cos t + 1`: roots at π, 3π; the `g'=0`, `g=2` point at 2π is rejected);
+- cylinder / sphere (two roots), oblique ray (arc-length `t`), range clipping, point-mapping residuals, **point recovery on axes the surface ignores**;
+- **endpoint roots** (ray origin on the surface; root at `t_min`/`t_max`/both) — found by every backend, no phantom;
+- **tangent double root** (`x²+y²+z²−1` grazing): Sturm/subdivision find it, sampling correctly does **not**; odd multiplicity-3 (`x³`); clustered roots `(x−1)(x−1.001)`;
+- quartic `(x²−1)(x²−4)`; degree 15/16 at the cap, degree 17 rejected, fallback when Sturm raises;
+- **torus** (curved capillary, degree-4 quartic): four hits per ray, routing to exact Sturm, vertical/missing/grazing-tangent rays, on-surface residuals;
+- **corrugated capillary wall** `x²+y²−(1+0.3·sin 4z)²` — twelve roots at `t = k·π/4`; turning-point rejection (`cos t + 1`);
 - complex surface `(x²−1)(1+i)` via Sturm; complex-rejection for real-only backends;
-- cross-checks: subdivision ↔ Sturm on polynomials, Chebyshev ↔ subdivision on transcendentals.
+- input validation (zero direction, `t_min>t_max`, unknown variable, `max_degree<2`); routing (`is_polynomial`, scaled quadric, non-natural powers);
+- **documented limits**: sub-sample misses, high-multiplicity (use Sturm), oscillation (use subdivision/auto).
 
-**Full suite: 749 passed, 2 xfailed. Pylint 10/10, isort clean.**
+**Full suite: 815 passed, 2 xfailed.**
 
 ## Design decisions
 
 - **Sturm over companion-matrix eigenvalues** for the polynomial path — no arbitrary-precision eigensolver is available; Sturm stays inside `formula`'s precision world and gives a provable root count.
-- **Chebyshev without a colleague-matrix eigensolve** — roots are isolated by converting the proxy to monomial form and reusing the Sturm machinery, then polished on the true `g`.
 - **`subdivision` (pure Python) as the reliability backbone** instead of a rigorous C++ interval type — it targets the actual weak spot (completeness on transcendental/oscillatory surfaces) at zero risk to the core evaluator and no rebuild.
+- **Chebyshev isolates via a monomial proxy** (reusing the Sturm machinery) rather than a colleague-matrix eigensolve. This is the known weak link: the monomial conversion is ill-conditioned at high degree, so `chebyshev` is for low-to-moderate oscillation and `auto` leans on `subdivision` for dense oscillation. See the limits doc.
+
+## Review & hardening in this revision
+
+A multi-agent adversarial review of the backends surfaced and fixed a set of correctness bugs:
+
+- **Critical** — a root exactly at `t_min` made Sturm return a phantom root (`bisect` on an invalid bracket; Sturm's `(a,b]` convention drops the left endpoint). Fixed with endpoint-aware isolation plus a backend-agnostic endpoint net.
+- **Normalization / `point_at`** — the direction was normalized over only the surface's axes, so `t` was wrong and `point_at` reported `0` for ignored axes; a zero direction produced a silent `nan`. Now normalized over full `(x,y,z)` with a clear error on a degenerate direction.
+- **`max_degree` off-by-one** (degree-16 wrongly rejected) and an unreliable cap (now uses a guard node).
+- **Routing** — `is_polynomial` mis-handled variable-free denominators and non-natural powers (`x^-2`, `x^0.5`); `auto` now also falls back to the general backends when Sturm raises.
+- **Non-finite samples** in `sampling` (phantom root at a singularity) are skipped.
 
 ## Deferred / caveats
 
-- **`interval` backend (rigorous) is a stub.** A truly rigorous version needs a new C++ `mp_interval` type and an interval evaluation path through `cseval`. `formula`'s `cpp_dec_float` backend has **no directed-rounding modes**, so a naive `boost::numeric::interval` would silently assume exact arithmetic and not actually be rigorous — true rigor requires manual ULP inflation. Deferred because Sturm already proves the algebraic case.
-- **`subdivision` (and the future `interval`) are *practically* reliable, not a formal proof** — their exclusion test is only as good as the estimated bound on `g''` (`m2_samples` / inflation knobs).
-- Complex surfaces are handled only by `sturm` in this PR.
+See **[doc/ray-surface-intersections.md](doc/ray-surface-intersections.md)** for the full limits of applicability. In brief:
+
+- **`interval` backend (rigorous) is a stub.** Needs a C++ `mp_interval` type; `cpp_dec_float` has no directed-rounding modes, so a naive interval type would not be rigorous. Sturm already proves the algebraic case.
+- **`subdivision`** is *practically* reliable, not a formal proof — only as good as the sampled `g''` bound (`m2_samples`).
+- **`chebyshev`** self-validates the fit, not the isolation; it can silently miss roots on densely oscillatory surfaces — prefer `subdivision`/`auto`.
+- **`sturm`** is exact only up to a moderate algebraic degree.
+- Complex surfaces are handled only by `sturm`.
 
 ## Files
 
-13 files changed, +997. New: `intersect.py`, `_roots/` package (7 modules), `tests/test_intersect.py`; modified: `formula.py` (`Number` API), `__init__.py` (exports), `README.md` (new "Finding all ray–surface intersections" section).
+New: `intersect.py`, `_roots/` package (8 modules), `tests/test_intersect.py`, `tests/test_intersect_robustness.py`, `doc/ray-surface-intersections.md`; modified: `formula.py` (`Number` API), `__init__.py` (exports), `README.md`.

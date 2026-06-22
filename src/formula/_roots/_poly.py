@@ -123,7 +123,8 @@ def interpolate(xs: List[Number], ys: List[Number], tol: Number, max_degree: int
         if abs(c[k]) > cutoff:
             degree = k
             break
-    if degree >= max_degree:
+    # n = max_degree+1 nodes uniquely fix a polynomial up to degree max_degree.
+    if degree > max_degree:
         raise ValueError("polynomial degree exceeds max_degree; not a low-degree polynomial")
     poly = [c[degree]]
     for k in range(degree - 1, -1, -1):

@@ -289,7 +289,7 @@ Pick the root-finder with `method=`:
 |---------------|--------------------------------------------|-----------|
 | `auto`        | default — picks per surface                | Sturm for polynomials, else Chebyshev ∪ subdivision |
 | `sturm`       | algebraic surfaces (quadrics, tori, …)     | exact, complete real-root count |
-| `chebyshev`   | smooth analytic surfaces (`sin`/`exp`/…)   | self-validating degree; captures tangencies |
+| `chebyshev`   | smooth, low-oscillation analytic (`sin`/`exp`/…) | self-validating *fit*; captures tangencies |
 | `subdivision` | general/oscillatory surfaces               | derivative-bound exclusion (practically reliable) |
 | `sampling`    | quick, well-separated roots                | none — may miss thin/tangent features |
 
@@ -308,9 +308,17 @@ Keyword options: `t_min` (default `0`), plus per-method knobs such as
 Complex-valued surfaces are supported by `sturm` (real intersections are the
 common roots of `Re g` and `Im g`); the other backends are real-only.
 
-Caveat: `subdivision` (and the `interval` method, not yet implemented) are
-*practically* reliable rather than formally rigorous — their exclusion test is
-only as good as the estimated bound on `g''`.
+Caveats (see [doc/ray-surface-intersections.md](doc/ray-surface-intersections.md)
+for the full limits of applicability):
+
+- `subdivision` (and the `interval` method, not yet implemented) are
+  *practically* reliable rather than formally rigorous — their exclusion test is
+  only as good as the estimated bound on `g''`.
+- `chebyshev` self-validates the *fit*, not the root isolation. Its
+  Chebyshev→monomial step is ill-conditioned at high degree, so it can silently
+  miss roots on densely oscillatory surfaces; prefer `subdivision`/`auto` there.
+- `sturm` is exact only up to a moderate algebraic degree (default cap 16; raise
+  `max_degree` with care — equally-spaced interpolation degrades at high degree).
 
 ## Supported functions
 

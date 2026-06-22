@@ -71,10 +71,31 @@ def rtsafe(func, a, b, xacc, maxit=200):
     return t
 
 
+def isolate_roots(q, chain, lo, hi, xacc, tol):
+    """All roots of square-free q in the closed [lo, hi], endpoints included.
+
+    Sturm's V(lo)-V(hi) counts the half-open (lo, hi]: a root at lo is dropped
+    (peel it, then isolate the open interior) while a root at hi is already
+    counted and bisect returns it exactly.
+    """
+    roots = []
+    a = lo
+    if abs(_poly.peval(q, lo)) <= tol:
+        roots.append(lo)
+        a = lo + xacc
+    if a < hi:
+        roots.extend(bisect(q, l, r, xacc) for l, r in isolate(chain, a, hi))
+    return roots
+
+
 def bisect(q, lo, hi, xacc):
     """Bisect a square-free polynomial q on a single-root bracket [lo, hi]."""
     half = Number("0.5", lo.precision)
     flo = _poly.peval(q, lo)
+    if sign(flo) == 0:
+        return lo
+    if sign(_poly.peval(q, hi)) == 0:
+        return hi
     for _ in range(10 * lo.precision):
         mid = (lo + hi) * half
         if hi - lo < xacc:

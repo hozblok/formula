@@ -37,10 +37,14 @@ def find_all(
     func, t_min: Number, t_max: Number, precision: int, max_degree: int = 16, **_
 ) -> List[Number]:
     """All real roots of g in [t_min, t_max] via Sturm isolation."""
+    if max_degree < 2:
+        raise ValueError("max_degree must be >= 2 (need >= 3 interpolation nodes)")
     tol = Number(f"1e-{max(precision // 2, 4)}", precision)
     xacc = Number(f"1e-{max(precision - 2, 1)}", precision)
     complex_surface = func.g(t_min).is_complex
-    xs = _nodes(t_min, t_max, max_degree + 1, precision)
+    # max_degree+2 nodes: one guard node above the cap so an over-degree surface
+    # is detected and rejected rather than silently under-fit.
+    xs = _nodes(t_min, t_max, max_degree + 2, precision)
     p = _poly_from_samples(func, xs, complex_surface, tol, max_degree)
     if _poly.deg(p, tol) == 0:
         return []
@@ -48,5 +52,5 @@ def find_all(
     if _poly.deg(q, tol) == 0:
         return []
     chain = _isolate.sturm_chain(q, tol)
-    roots = [_isolate.bisect(q, lo, hi, xacc) for lo, hi in _isolate.isolate(chain, t_min, t_max)]
+    roots = _isolate.isolate_roots(q, chain, t_min, t_max, xacc, tol)
     return sorted(roots)

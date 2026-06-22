@@ -1,6 +1,7 @@
 """Root-finding backends for RaySurface. Each exposes find_all(func, t_min, t_max, precision)."""
 
 import importlib
+import re
 from typing import Callable
 
 from ..formula import Number
@@ -16,19 +17,40 @@ _BACKENDS = {
 # Transcendental tokens that rule out the exact polynomial (Sturm) path.
 _NON_POLY = ("sin", "cos", "tan", "asin", "acos", "atan", "log", "exp", "sqrt")
 
+# A '^'/'**' exponent that is negative, fractional, or a variable -> not a
+# polynomial (e.g. x^-2, x^0.5, x^x). Natural powers (x^2, x**3) stay polynomial.
+_NONNATURAL_POWER = re.compile(r"(?:\*\*|\^)\s*\(?\s*(?:-|\.\d|[a-z]|\d+\.)")
+
+
+def _denominator(expr: str, slash: int) -> str:
+    """The operand right after a '/': a parenthesized group or a bare token."""
+    j = slash + 1
+    while j < len(expr) and expr[j] == " ":
+        j += 1
+    if j < len(expr) and expr[j] == "(":
+        depth, start = 0, j
+        while j < len(expr):
+            depth += (expr[j] == "(") - (expr[j] == ")")
+            if depth == 0:
+                return expr[start : j + 1]
+            j += 1
+        return expr[start:]
+    start = j
+    while j < len(expr) and expr[j] not in "+-*/^() ":
+        j += 1
+    return expr[start:j]
+
 
 def is_polynomial(surface) -> bool:
-    """Cheap hint: no transcendental functions and no variable in a denominator."""
+    """Cheap hint: no transcendentals, no non-natural powers, no variable denominator."""
     expr = surface.expression.lower()
-    if any(fn in expr for fn in _NON_POLY):
+    if any(fn in expr for fn in _NON_POLY) or _NONNATURAL_POWER.search(expr):
         return False
     variables = {v.lower() for v in surface.variables()}
-    # Reject division by anything containing a variable, e.g. 1/(x-1).
+    # Reject division whose denominator operand contains a variable, e.g. 1/(x-1).
     for i, ch in enumerate(expr):
-        if ch == "/":
-            tail = expr[i + 1:]
-            if any(v in tail for v in variables):
-                return False
+        if ch == "/" and any(v in _denominator(expr, i) for v in variables):
+            return False
     return True
 
 
@@ -47,13 +69,32 @@ def _union(lists, precision: int) -> list:
     return out
 
 
+def _general(func, t_min, t_max, precision, **opts) -> list:
+    """Chebyshev reconciled with subdivision; either may fail numerically and
+    drop out, but NotImplementedError (e.g. complex surface) still propagates."""
+    lists, numeric_error = [], None
+    for name in ("chebyshev", "subdivision"):
+        try:
+            lists.append(_load(name)(func, t_min, t_max, precision, **opts))
+        except (ArithmeticError, ValueError) as exc:
+            numeric_error = exc
+    if not lists and numeric_error is not None:
+        raise numeric_error
+    return _union(lists, precision)
+
+
 def _auto(func, t_min, t_max, precision, **opts) -> list:
-    """Sturm for algebraic surfaces; else Chebyshev backed up by subdivision."""
+    """Sturm for algebraic surfaces; else Chebyshev backed up by subdivision.
+
+    A misclassified or over-degree surface that makes Sturm raise falls back to
+    the general backends instead of failing the whole call.
+    """
     if is_polynomial(func.surface):
-        return _load("sturm")(func, t_min, t_max, precision, **opts)
-    cheb = _load("chebyshev")(func, t_min, t_max, precision, **opts)
-    sub = _load("subdivision")(func, t_min, t_max, precision, **opts)
-    return _union((cheb, sub), precision)
+        try:
+            return _load("sturm")(func, t_min, t_max, precision, **opts)
+        except (ArithmeticError, ValueError):
+            pass
+    return _general(func, t_min, t_max, precision, **opts)
 
 
 def get_backend(method: str) -> Callable:

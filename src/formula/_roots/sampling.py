@@ -10,11 +10,15 @@ from ..formula import Number
 from ._isolate import rtsafe
 
 
-def _sign(value: Number) -> int:
+def _sign(value: Number):
+    """-1/0/+1, or None where g is non-finite (inf/nan near a singularity)."""
     if value.is_complex:
         raise NotImplementedError(
             "sampling backend handles real surfaces only; use sturm/chebyshev"
         )
+    real = value.parts()[0]
+    if "inf" in real or "nan" in real:
+        return None
     zero = Number(0, value.precision)
     if value > zero:
         return 1
@@ -47,7 +51,7 @@ def find_all(
         s_cur = _sign(func.g(t_cur))
         if s_cur == 0:
             roots.append(t_cur)
-        elif s_prev * s_cur < 0:
+        elif s_prev is not None and s_cur is not None and s_prev * s_cur < 0:
             roots.append(rtsafe(func, t_prev, t_cur, xacc))
         t_prev, s_prev = t_cur, s_cur
     return _dedupe(roots, xacc)

@@ -121,8 +121,8 @@ def _proxy_roots(func, q, transform, tol, xacc):
     chain = _isolate.sturm_chain(q, tol)
     one = Number(1, mid.precision)
     roots = []
-    for xl, xr in _isolate.isolate(chain, -one, one):
-        t_root = mid + span * _isolate.bisect(q, xl, xr, xacc)
+    for x in _isolate.isolate_roots(q, chain, -one, one, xacc, tol):
+        t_root = mid + span * x
         if abs(func.gprime(t_root)) > tol:  # simple root: polish on true g
             t_root = _newton(func, t_root, xacc)
         roots.append(t_root)
