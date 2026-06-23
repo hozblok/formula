@@ -74,8 +74,6 @@ def pdivmod(u: Poly, v: Poly, tol: Number) -> Tuple[Poly, Poly]:
             r[i + shift] = r[i + shift] - factor * v[i]
         r = r[:dr] or [_zero(prec)]  # drop the now-zero leading term
         dr = deg(r, tol)
-        if dr == 0 and _is_zero(r[0], tol):
-            break
     return q, trim(r, tol)
 
 
@@ -85,8 +83,6 @@ def pgcd(a: Poly, b: Poly, tol: Number) -> Poly:
     while deg(b, tol) > 0 or not _is_zero(b[0], tol):
         _, r = pdivmod(a, b, tol)
         a, b = b, r
-        if deg(b, tol) == 0 and _is_zero(b[0], tol):
-            break
     return _monic(a, tol)
 
 

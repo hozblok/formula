@@ -24,11 +24,13 @@ review log — see [ray-surface-design.md](ray-surface-design.md).
 
 
 ## Quick start
+```python
 rs = RaySurface("x*x + y*y - 1", precision=24)
 ts = rs.intersect(origin=(-2,0,0), direction=(1,0,0), t_max=10)
 # -> [Number('1...'), Number('3...')]  — t parameters along the ray
 pts = rs.points((-2,0,0), (1,0,0), t_max=10)
 # -> [(x,y,z), ...] — the same intersections in coordinates
+```
 
 
 ## Public API
@@ -69,6 +71,7 @@ Per-method options:
 
 ## Parameters
 | Argument | Meaning |
+|---|---|
 | origin | ray start (x,y,z) |
 | direction | direction; non-zero; length doesn't matter |
 | t_max | right end of the search interval |
@@ -227,7 +230,7 @@ torus.intersect((3, -3, 0), (0, 1, 0), t_max=10, method="sturm")  # grazing -> [
 RaySurface("(x*x - 1) * (1 + i)", 48).intersect(
     (-2, 0, 0), (1, 0, 0), t_max=10, method="sturm")     # -> [1, 3]
 
-# 6) Ray origin lies on the surface: t = 0 is a genuine root
+# 7) Ray origin lies on the surface: t = 0 is a genuine root
 RaySurface("x*x + y*y - 1", 48).intersect(
     (-1, 0, 0), (1, 0, 0), t_max=10, t_min=0)            # -> [0, 2]
 ```

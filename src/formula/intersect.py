@@ -8,7 +8,6 @@ backends (see _roots/) locate all of them.
 from typing import List, Sequence, Tuple
 
 from ._roots import get_backend
-from .constants import DEFAULT_CASE_INSENSITIVE, DEFAULT_IMAGINARY_UNIT
 from .formula import Number, Solver
 
 _AXES = ("x", "y", "z")

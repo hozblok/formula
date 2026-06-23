@@ -5,8 +5,6 @@ sweep of surface families and ray geometries. Every case has a closed-form
 expected answer.
 """
 
-import math
-
 import pytest
 
 from formula import Number, RaySurface
@@ -140,7 +138,6 @@ def test_div_transcendental_auto_is_general_not_sturm_for_exp():
 # Ray geometry (negative t_min, oblique, off-center, arc length)
 # ---------------------------------------------------------------------------
 
-import pytest
 @pytest.mark.parametrize('method', ['sturm', 'sampling', 'auto'])
 def test_div_geometry_negative_tmin_straddles_origin(method):
     # Origin at the center of sphere r=2; with t_min<0 the hits are t=-2 and t=2.
@@ -166,7 +163,6 @@ def test_div_geometry_off_center_sphere():
     roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=10, method='sturm')
     assert roots_close(roots, ['3', '7'], eps='1e-13')
 
-import pytest
 @pytest.mark.parametrize('method', ['sturm', 'sampling', 'auto'])
 def test_div_geometry_direction_away_no_hits(method):
     # Sphere centered at x=5; firing from the origin toward -x walks away from it forever.

@@ -6,16 +6,7 @@ roots by sign variations, and bisect a square-free polynomial to precision.
 
 from ..formula import Number
 from . import _poly
-
-
-def sign(x: Number) -> int:
-    """-1, 0 or +1."""
-    zero = Number(0, x.precision)
-    if x > zero:
-        return 1
-    if x < zero:
-        return -1
-    return 0
+from .utils import sign
 
 
 def sturm_chain(p, tol):
@@ -36,9 +27,10 @@ def variations(chain, t):
 def isolate(chain, a, b, max_depth=200):
     """Subdivide [a, b] until each kept subinterval brackets exactly one root."""
     roots = []
-    stack = [(a, b, variations(chain, a) - variations(chain, b), 0)]
+    stack = [(a, b, variations(chain, a), variations(chain, b), 0)]
     while stack:
-        lo, hi, count, depth = stack.pop()
+        lo, hi, vlo, vhi, depth = stack.pop()
+        count = vlo - vhi
         if count <= 0:
             continue
         if count == 1 or depth >= max_depth:
@@ -46,29 +38,9 @@ def isolate(chain, a, b, max_depth=200):
             continue
         mid = (lo + hi) * Number("0.5", lo.precision)
         vmid = variations(chain, mid)
-        stack.append((lo, mid, variations(chain, lo) - vmid, depth + 1))
-        stack.append((mid, hi, vmid - variations(chain, hi), depth + 1))
+        stack.append((lo, mid, vlo, vmid, depth + 1))
+        stack.append((mid, hi, vmid, vhi, depth + 1))
     return roots
-
-
-def rtsafe(func, a, b, xacc, maxit=200):
-    """Newton step bracketed by bisection; converges on the single root of g in [a, b]."""
-    prec = a.precision
-    zero, half = Number(0, prec), Number("0.5", prec)
-    lo, hi = (a, b) if sign(func.g(a)) < 0 else (b, a)
-    t, step = (a + b) * half, abs(b - a)
-    g, gp = func.g(t), func.gprime(t)
-    for _ in range(maxit):
-        secure = (gp == zero
-                  or ((t - hi) * gp - g) * ((t - lo) * gp - g) > zero
-                  or abs(g + g) > abs(step * gp))
-        step = (hi - lo) * half if secure else g / gp
-        t = lo + step if secure else t - step
-        if abs(step) < xacc:
-            return t
-        g, gp = func.g(t), func.gprime(t)
-        lo, hi = (t, hi) if sign(g) < 0 else (lo, t)
-    return t
 
 
 def isolate_roots(q, chain, lo, hi, xacc, tol):

@@ -2,7 +2,7 @@
 
 Companion to test_intersect.py. Three groups:
   * geometry / API correctness (normalization, point recovery, validation);
-  * regressions for the endpoint-root, routing and degree bugs fixed here;
+  * endpoint-root, routing and degree-cap behavior;
   * documented limits of applicability (what each backend can and cannot do).
 """
 
@@ -116,7 +116,7 @@ def test_both_endpoints_are_roots(method):
 
 
 def test_no_phantom_root_with_origin_on_sphere():
-    # Regression: Sturm used to return a single phantom ~t_max here instead of 0,2.
+    # Origin on the sphere: roots are t=0 and t=2.
     rs = RaySurface("x*x + y*y + z*z - 1", precision=48)
     roots = rs.intersect((-1, 0, 0), (1, 0, 0), t_max=5, t_min=0, method="sturm")
     assert _match(roots, ["0", "2"], eps="1e-15")
@@ -151,7 +151,7 @@ def test_quartic_four_roots(method):
 
 @pytest.mark.parametrize("degree", [15, 16])
 def test_polynomial_at_and_below_degree_cap(degree):
-    # Regression: degree exactly 16 used to be rejected by an off-by-one.
+    # Degree 15 and 16 are both at/under the cap and must resolve.
     expr = "*".join(f"(x - {k})" for k in range(1, degree + 1))
     rs = RaySurface(expr, precision=32)
     roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=degree + 1, method="sturm")
@@ -308,10 +308,7 @@ def test_auto_falls_back_when_sturm_raises():
 
 
 # --------------------------------------------------------------------------- #
-# Torus — a curved capillary. The implicit torus is a genuine degree-4 quartic
-# in (x, y, z); a ray crosses it in up to four points. (A bent capillary is a
-# torus; "part of the torus" is just an angular [t_min, t_max] restriction.)
-#   (x^2+y^2+z^2 + R^2 - r^2)^2 - 4 R^2 (x^2+y^2) = 0,  here R=2, r=1.
+# Torus (R=2, r=1): (x^2+y^2+z^2+3)^2 - 16*(x^2+y^2) = 0; up to four hits per ray.
 # --------------------------------------------------------------------------- #
 
 _TORUS = "(x*x+y*y+z*z+3)^2 - 16*(x*x+y*y)"

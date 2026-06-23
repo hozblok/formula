@@ -3,9 +3,9 @@
 ## Running tests
 
 This project ships a compiled Python extension (`formula._formula`). The
-extension must be built before tests can import the package. Because the
-project uses **src-layout** (the Python package lives at
-`src/formula/`, not at the repo root).
+extension must be built before tests can import the package. The project
+uses **src-layout**: the Python package lives at `src/formula/`, not at
+the repo root.
 
 ### Quick start
 

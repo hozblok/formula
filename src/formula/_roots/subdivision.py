@@ -14,7 +14,7 @@ a formal proof — the guarantee is only as good as the M2 bound.
 from typing import List, Optional
 
 from ..formula import Number
-from ._isolate import rtsafe, sign
+from .utils import merge_close_roots, rtsafe, sign
 
 
 def _estimate_m2(func, t_min: Number, t_max: Number, prec: int, samples: int) -> Number:
@@ -86,14 +86,6 @@ def _refine(func, a, b, xacc, gtol) -> Optional[Number]:
     return m if abs(func.g(m)) < gtol else None
 
 
-def _dedupe(roots, xacc):
-    out = []
-    for t in sorted(roots):
-        if not out or abs(t - out[-1]) > xacc:
-            out.append(t)
-    return out
-
-
 def find_all(
     func, t_min: Number, t_max: Number, precision: int, m2_samples: int = 200, **opts
 ) -> List[Number]:
@@ -106,4 +98,4 @@ def find_all(
     m2 = _estimate_m2(func, t_min, t_max, precision, m2_samples)
     regions = _merge(_candidates(func, t_min, t_max, m2, region_tol), region_tol)
     roots = [r for r in (_refine(func, a, b, xacc, gtol) for a, b in regions) if r is not None]
-    return _dedupe(roots, xacc)
+    return merge_close_roots(roots, xacc)

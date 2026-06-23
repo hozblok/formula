@@ -99,11 +99,11 @@ Then we want to calculate the value of this function in the following point:
 And it is enough to call the `formula` object to calculate the value of the expression or the derivative of the expression at this point:
 
 ```python
->>> formula(point) # (3^2 + 3e-50)/sin(-pi/2)
+>>> formula(point) # (3^2 + 3e-20)/sin(-pi/2)
 '-9.00000000000000000003'
 >>> formula(point, derivative="x") # 2*3/sin(-pi/2)
 '-6'
->>> formula(point, derivative=("y", "a")) # [1/sin(-pi/2),- (3^2 + 3e-50) * cos(-pi/2) / sin(-pi/2)]
+>>> formula(point, derivative=("y", "a")) # [1/sin(-pi/2),- (3^2 + 3e-20) * cos(-pi/2) / sin(-pi/2)]
 ['-1', '-1.5633175729821453046351823925394e-47']  # cos(-pi/2) is an epsilon, not exact 0
 ```
 
@@ -247,8 +247,8 @@ False
 True
 ```
 
-Equality uses `pair_fixed` — exact complex identities compare equal, but
-expressions with drift do not:
+Equality compares the `(real, imag)` strings from `pair` — exact complex
+identities compare equal, but expressions with drift do not:
 
 ```python
 >>> Number("i*i") == Number("-1")   # exact — no drift
@@ -259,7 +259,7 @@ False
 
 `Solver.pair(values, format_digits, format_flags)` returns a
 `(real_str, imag_str)` tuple formatted consistently — real-only results
-get `(value, "0.000…")` so pairs are byte-comparable. Used internally
+get `(value, "0")` so pairs are byte-comparable. Used internally
 by `Number.__eq__` and `Number.__hash__`.
 
 Supported operators: `+`, `-`, `*`, `/`, `**` (also written as `^` inside
@@ -378,10 +378,10 @@ though the math identity is exact.
 
 - **Transcendental functions** (`sin`, `cos`, `exp`, `log`, `asin`,
   `acos`, `atan`, `tan`) when the mathematical result is irrational.
-  `log(exp(1))` gives `1.000000000000000000000002` — a 2-ULP roundtrip
-  error. The same expression with `+i*0` switches to the complex
-  evaluation path — the real part drifts: `1.000000000000000000000004`
-  instead of `1` (full output: `1.000000000000000000000004+i*(0.000…)`).
+  `log(exp(1))` rounds clean to `1` at the configured precision; the full
+  memory chunk (`format_digits=0`) exposes the round-trip drift:
+  `1.0000000000000000000000018…`. The same expression with `+i*0` takes the
+  complex path and drifts the other way: `0.99999999999999999999999959…`.
 
 ## Development
 
