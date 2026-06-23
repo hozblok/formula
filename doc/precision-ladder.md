@@ -1,3 +1,5 @@
+🇬🇧 **English** · [🇷🇺 Русский](precision-ladder.ru.md)
+
 # The precision ladder
 
 ## Where it came from
@@ -51,7 +53,7 @@ Where `formula` specifically wins:
 2. **Automatic real/complex detection.** Write `Formula("x + i*y")` and the parser
    detects the imaginary unit and switches to complex arithmetic by itself. One
    expression type, two number kinds, no manual switching. The imaginary unit is
-   also configurable: `j`, `k`, any single character.
+   also configurable: `j`, `k`, any single letter.
 
 3. **Zero runtime dependencies, permissive license.** Ships as a wheel. No
    libgmp, libmpfr, or libmpc to install or link. The Boost headers are bundled;

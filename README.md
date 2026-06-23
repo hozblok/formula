@@ -1,3 +1,5 @@
+🇬🇧 **English** · [🇷🇺 Русский](README.ru.md)
+
 # formula - Arbitrary-precision formula parser and solver
 
 [![PyPI](https://img.shields.io/pypi/v/formula.svg)](https://pypi.org/project/formula/)
@@ -97,11 +99,11 @@ Then we want to calculate the value of this function in the following point:
 And it is enough to call the `formula` object to calculate the value of the expression or the derivative of the expression at this point:
 
 ```python
->>> formula(point) # (3^2 + 3e-50)/sin(-pi/2)
+>>> formula(point) # (3^2 + 3e-20)/sin(-pi/2)
 '-9.00000000000000000003'
 >>> formula(point, derivative="x") # 2*3/sin(-pi/2)
 '-6'
->>> formula(point, derivative=("y", "a")) # [1/sin(-pi/2),- (3^2 + 3e-50) * cos(-pi/2) / sin(-pi/2)]
+>>> formula(point, derivative=("y", "a")) # [1/sin(-pi/2),- (3^2 + 3e-20) * cos(-pi/2) / sin(-pi/2)]
 ['-1', '-1.5633175729821453046351823925394e-47']  # cos(-pi/2) is an epsilon, not exact 0
 ```
 
@@ -245,8 +247,8 @@ False
 True
 ```
 
-Equality uses `pair_fixed` — exact complex identities compare equal, but
-expressions with drift do not:
+Equality compares the `(real, imag)` strings from `pair` — exact complex
+identities compare equal, but expressions with drift do not:
 
 ```python
 >>> Number("i*i") == Number("-1")   # exact — no drift
@@ -257,11 +259,68 @@ False
 
 `Solver.pair(values, format_digits, format_flags)` returns a
 `(real_str, imag_str)` tuple formatted consistently — real-only results
-get `(value, "0.000…")` so pairs are byte-comparable. Used internally
+get `(value, "0")` so pairs are byte-comparable. Used internally
 by `Number.__eq__` and `Number.__hash__`.
 
 Supported operators: `+`, `-`, `*`, `/`, `**` (also written as `^` inside
 expressions), `abs()`, `==`, `<`, `<=`, `>`, `>=`.
+
+### Finding all ray–surface intersections
+
+`RaySurface` finds **every** intersection of a ray `r(t) = O + t·d` with an
+implicit surface `F(x, y, z) = 0`. Substituting the ray reduces the surface to a
+single-variable `g(t) = F(O + t·d)`, so the intersections are exactly the real
+roots of `g` on `[t_min, t_max]`. `t` is measured in units of `|d|` (the
+direction is normalized internally), so for a unit `d` it is the distance along
+the ray.
+
+```python
+>>> from formula import RaySurface
+>>> rs = RaySurface("x*x + y*y - 1", precision=24)      # unit cylinder
+>>> ts = rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10)  # two crossings: t≈1, t≈3
+>>> len(ts)
+2
+>>> pts = rs.points((-2, 0, 0), (1, 0, 0), t_max=10)    # (x, y, z) on the surface
+>>> len(pts)
+2
+```
+
+Pick the root-finder with `method=`:
+
+| `method`      | Best for                                   | Guarantee |
+|---------------|--------------------------------------------|-----------|
+| `auto`        | default — picks per surface                | Sturm for polynomials, else Chebyshev ∪ subdivision |
+| `sturm`       | algebraic surfaces (quadrics, tori, …)     | exact, complete real-root count |
+| `chebyshev`   | smooth, low-oscillation analytic (`sin`/`exp`/…) | self-validating *fit*; captures tangencies |
+| `subdivision` | general/oscillatory surfaces               | derivative-bound exclusion (practically reliable) |
+| `sampling`    | quick, well-separated roots                | none — may miss thin/tangent features |
+
+`auto` routes algebraic surfaces to `sturm` (exact) and other real surfaces to
+`chebyshev` reconciled with `subdivision` as a safety net. Even-multiplicity
+(tangent) roots that plain sampling steps over are recovered:
+
+```python
+>>> rs = RaySurface("x*x + y*y + z*z - 1", precision=24)   # sphere
+>>> len(rs.intersect((-2, 1, 0), (1, 0, 0), t_max=10, method="sturm"))  # grazing
+1
+```
+
+Keyword options: `t_min` (default `0`), plus per-method knobs such as
+`max_degree` (sturm), `cheb_degree` (chebyshev) and `m2_samples` (subdivision).
+Complex-valued surfaces are supported by `sturm` (real intersections are the
+common roots of `Re g` and `Im g`); the other backends are real-only.
+
+See [doc/ray-surface-intersections.md](doc/ray-surface-intersections.md) for the
+full guide and limits, and [doc/ray-surface-design.md](doc/ray-surface-design.md)
+for the design notes. Caveats in brief:
+
+- `subdivision` is *practically* reliable rather than formally rigorous — its
+  exclusion test is only as good as the estimated bound on `g''`.
+- `chebyshev` self-validates the *fit*, not the root isolation. Its
+  Chebyshev→monomial step is ill-conditioned at high degree, so it can silently
+  miss roots on densely oscillatory surfaces; prefer `subdivision`/`auto` there.
+- `sturm` is exact only up to a moderate algebraic degree (default cap 16; raise
+  `max_degree` with care — equally-spaced interpolation degrades at high degree).
 
 ## Supported functions
 
@@ -319,10 +378,10 @@ though the math identity is exact.
 
 - **Transcendental functions** (`sin`, `cos`, `exp`, `log`, `asin`,
   `acos`, `atan`, `tan`) when the mathematical result is irrational.
-  `log(exp(1))` gives `1.000000000000000000000002` — a 2-ULP roundtrip
-  error. The same expression with `+i*0` switches to the complex
-  evaluation path — the real part drifts: `1.000000000000000000000004`
-  instead of `1` (full output: `1.000000000000000000000004+i*(0.000…)`).
+  `log(exp(1))` rounds clean to `1` at the configured precision; the full
+  memory chunk (`format_digits=0`) exposes the round-trip drift:
+  `1.0000000000000000000000018…`. The same expression with `+i*0` takes the
+  complex path and drifts the other way: `0.99999999999999999999999959…`.
 
 ## Development
 
