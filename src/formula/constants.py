@@ -1,0 +1,4 @@
+"""Shared constants."""
+
+DEFAULT_IMAGINARY_UNIT = "i"
+DEFAULT_CASE_INSENSITIVE = False

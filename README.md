@@ -1,3 +1,5 @@
+🇬🇧 **English** · [🇷🇺 Русский](README.ru.md)
+
 # formula - Arbitrary-precision formula parser and solver
 
 [![PyPI](https://img.shields.io/pypi/v/formula.svg)](https://pypi.org/project/formula/)
@@ -308,12 +310,12 @@ Keyword options: `t_min` (default `0`), plus per-method knobs such as
 Complex-valued surfaces are supported by `sturm` (real intersections are the
 common roots of `Re g` and `Im g`); the other backends are real-only.
 
-Caveats (see [doc/ray-surface-intersections.md](doc/ray-surface-intersections.md)
-for the full limits of applicability):
+See [doc/ray-surface-intersections.md](doc/ray-surface-intersections.md) for the
+full guide and limits, and [doc/ray-surface-design.md](doc/ray-surface-design.md)
+for the design notes. Caveats in brief:
 
-- `subdivision` (and the `interval` method, not yet implemented) are
-  *practically* reliable rather than formally rigorous — their exclusion test is
-  only as good as the estimated bound on `g''`.
+- `subdivision` is *practically* reliable rather than formally rigorous — its
+  exclusion test is only as good as the estimated bound on `g''`.
 - `chebyshev` self-validates the *fit*, not the root isolation. Its
   Chebyshev→monomial step is ill-conditioned at high degree, so it can silently
   miss roots on densely oscillatory surfaces; prefer `subdivision`/`auto` there.

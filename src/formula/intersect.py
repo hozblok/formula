@@ -8,6 +8,7 @@ backends (see _roots/) locate all of them.
 from typing import List, Sequence, Tuple
 
 from ._roots import get_backend
+from .constants import DEFAULT_CASE_INSENSITIVE, DEFAULT_IMAGINARY_UNIT
 from .formula import Number, Solver
 
 _AXES = ("x", "y", "z")
@@ -95,10 +96,8 @@ class RaySurface:
         self,
         expression: str,
         precision: int = 24,
-        imaginary_unit: str = "i",
-        case_insensitive: bool = False,
     ):
-        self.surface = Solver(expression, precision, imaginary_unit, case_insensitive)
+        self.surface = Solver(expression, precision)
         self.precision = self.surface.precision
 
     def function(self, origin: Sequence, direction: Sequence) -> RaySurfaceFunction:
@@ -115,7 +114,7 @@ class RaySurface:
     ) -> List[Number]:
         """Return all ray parameters t in [t_min, t_max] where the ray hits F=0.
 
-        method: "auto" | "sampling" | "sturm" | "chebyshev" | "interval".
+        method: "auto" | "sampling" | "sturm" | "chebyshev" | "subdivision".
         t_min (keyword, default 0) sets the lower bound.
         """
         t_min = options.pop("t_min", 0)

@@ -1,11 +1,11 @@
+🇬🇧 **English** · [🇷🇺 Русский](tests.ru.md)
+
 ## Running tests
 
 This project ships a compiled Python extension (`formula._formula`). The
 extension must be built before tests can import the package. Because the
 project uses **src-layout** (the Python package lives at
-`src/formula/`, not at the repo root), a regular `pip install` works
-fine — there is no source-tree directory to accidentally shadow the
-installed package.
+`src/formula/`, not at the repo root).
 
 ### Quick start
 
@@ -117,12 +117,6 @@ formula/                  ← repo root
 ├── setup.py
 └── pyproject.toml
 ```
-
-Running pytest from the repo root resolves `import formula` from the
-installed wheel in `site-packages`, not from the source tree — this is
-what makes the layout robust against the `ModuleNotFoundError:
-No module named 'formula._formula'` shadowing trap that flat layouts
-suffer from.
 
 ### What CI does
 

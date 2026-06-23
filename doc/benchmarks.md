@@ -1,3 +1,5 @@
+🇬🇧 **English** · [🇷🇺 Русский](benchmarks.ru.md)
+
 # Benchmarks
 
 Speed measurements for `formula`, each in its own file with the code to reproduce

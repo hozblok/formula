@@ -11,7 +11,6 @@ _BACKENDS = {
     "sturm": "sturm",
     "chebyshev": "chebyshev",
     "subdivision": "subdivision",
-    "interval": "interval",
 }
 
 # Transcendental tokens that rule out the exact polynomial (Sturm) path.

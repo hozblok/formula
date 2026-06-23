@@ -6,6 +6,7 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 
 # pylint: disable=no-name-in-module, import-error
 from ._formula import FmtFlags, Formula
+from .constants import DEFAULT_CASE_INSENSITIVE, DEFAULT_IMAGINARY_UNIT
 from .backend import COMPLEX_TYPES, MAX_PRECISION, mp_class
 
 
@@ -21,8 +22,8 @@ class Solver(Formula):
         self,
         expression: str,
         precision: int = 24,
-        imaginary_unit: str = "i",
-        case_insensitive: bool = False,
+        imaginary_unit: str = DEFAULT_IMAGINARY_UNIT,
+        case_insensitive: bool = DEFAULT_CASE_INSENSITIVE,
     ):
         if not 0 <= precision <= MAX_PRECISION:
             raise ValueError(

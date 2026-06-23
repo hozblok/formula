@@ -1,15 +1,20 @@
+🇬🇧 **English** · [🇷🇺 Русский](ray-surface-intersections.ru.md)
+
 # Ray–surface intersections (`RaySurface`)
 
 `RaySurface` finds **every** intersection of a ray with an implicit surface
-`F(x, y, z) = 0`, at arbitrary precision. This document explains the mechanism,
-walks through each root-finding backend with worked examples, assesses why the
-strategy is built this way, and — most importantly — states the **limits of
-applicability**: where each method is reliable and exactly how it fails outside
-that range.
+`F(x, y, z) = 0`, at arbitrary precision.
 
-- [The reduction: a ray turns a surface into one function](#the-reduction)
+This document explains the mechanism, walks through each root-finding backend, and
+states the **limits of applicability**. For the *why* — design decisions and the
+review log — see [ray-surface-design.md](ray-surface-design.md).
+
+- [Quick start](#quick-start)
+- [Parameters](#parameters)
+- [method — what to pick](#method--what-to-pick)
+- [Reduction (how it works internally)](#reduction-how-it-works-internally)
 - [Public API](#public-api)
-- [How `g(t)` and `g'(t)` are built](#how-g-and-g-are-built)
+- [How `g(t)` and `g'(t)` are built](#how-gt-and-gt-are-built)
 - [Backends](#backends)
 - [Worked examples](#worked-examples)
 - [Strategy assessment](#strategy-assessment)
@@ -18,38 +23,18 @@ that range.
 - [Choosing a method](#choosing-a-method)
 
 
-## The reduction
-
-A ray is `r(t) = O + t·d`. Substituting it into the surface equation collapses
-the three-variable surface into a single-variable function
-
-```
-g(t) = F(O + t·d)
-```
-
-and an intersection is exactly a **real root of `g` on `[t_min, t_max]`**. So
-"find all intersections" becomes "find all real roots of `g`", and the whole
-problem is delegated to pluggable univariate root-finders in
-[`src/formula/_roots/`](../src/formula/_roots/).
-
-The direction `d` is normalized internally over the full `(x, y, z)` vector, so
-`t` is **arc length** along the ray (distance, for a unit `d`). Two scaled
-directions therefore give the same `t` values.
-
-```python
->>> from formula import RaySurface
->>> rs = RaySurface("x*x + y*y - 1", precision=24)       # unit cylinder
->>> rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10)        # crosses at x=-1, x=1
-['1.00000000000000000000002', '2.99999999999999999999999']
->>> rs.intersect((-2, 0, 0), (7, 0, 0), t_max=10)        # scaled d -> same t
-['1.00000000000000000000002', '2.99999999999999999999999']
-```
+## Quick start
+rs = RaySurface("x*x + y*y - 1", precision=24)
+ts = rs.intersect(origin=(-2,0,0), direction=(1,0,0), t_max=10)
+# -> [Number('1...'), Number('3...')]  — t parameters along the ray
+pts = rs.points((-2,0,0), (1,0,0), t_max=10)
+# -> [(x,y,z), ...] — the same intersections in coordinates
 
 
 ## Public API
 
 ```python
-RaySurface(expression, precision=24, imaginary_unit="i", case_insensitive=False)
+rs = RaySurface(expression, precision=24)
 
 rs.intersect(origin, direction, t_max, method="auto", t_min=0, **options)
     # -> sorted list[Number] of ray parameters t where the ray meets F = 0
@@ -70,13 +55,71 @@ rs.points(origin, direction, t_max, **kwargs)
  (Number('0.999...'),  Number('5'), Number('7'))]
 ```
 
-`method` selects the backend: `"auto"` (default), `"sturm"`, `"chebyshev"`,
-`"subdivision"`, `"sampling"`, `"interval"` (stub). Per-method options:
-`max_degree` (sturm), `cheb_degree` (chebyshev), `m2_samples` / `region_tol`
-(subdivision), `samples` (sampling).
+**`method`** — the root-finding backend:
+
+- `"auto"` (default)
+- `"sturm"`, `"chebyshev"`, `"subdivision"`, `"sampling"`
+
+Per-method options:
+
+- **`sturm`:** `max_degree`
+- **`chebyshev`:** `cheb_degree`
+- **`subdivision`:** `m2_samples`, `region_tol`
+- **`sampling`:** `samples`
+
+## Parameters
+| Argument | Meaning |
+| origin | ray start (x,y,z) |
+| direction | direction; non-zero; length doesn't matter |
+| t_max | right end of the search interval |
+| t_min | left end (default 0) |
+| method | see below; default "auto" |
 
 
-## How `g` and `g'` are built
+## method — what to pick
+
+| method | When | Options (rarely needed) |
+|---|---|---|
+| `auto` | unsure; default | — |
+| `sturm` | polynomial, quadric, complex-valued | `max_degree` (16) |
+| `chebyshev` | smooth analytic (`sin`, `exp`, …), few roots | `cheb_degree` (32) |
+| `subdivision` | oscillatory, corrugated, unknown | `m2_samples` (200), `region_tol` (1e-6·Δt) |
+| `sampling` | quick check; **not** rigorous | `samples` (256) |
+
+See [Backends](#backends) and [Choosing a method](#choosing-a-method) for details.
+
+## Reduction (how it works internally)
+
+A ray is `r(t) = O + t·d`. Substituting it into the surface equation collapses
+the three-variable surface into a single-variable function
+
+```
+g(t) = F(O + t·d)
+```
+
+and an intersection is exactly a **real root of `g` on `[t_min, t_max]`**. So
+"find all intersections" becomes "find all real roots of `g`", and the whole
+problem is delegated to pluggable univariate root-finders in
+[`src/formula/_roots/`](../src/formula/_roots/).
+
+Before tracing, `direction` `d` is scaled to unit length. So `t` is the actual
+distance along the ray (**arc length**) in the same units as the coordinates, and
+the length of `d` itself has no effect on the result — only its direction matters.
+Hence `(1, 0, 0)` and `(7, 0, 0)` give the same `t`.
+
+
+
+```python
+>>> from formula import RaySurface
+>>> rs = RaySurface("x*x + y*y - 1", precision=24)       # unit cylinder
+>>> rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10)        # enters at x=-1 (t=1), exits at x=1 (t=3)
+[Number('1.00000000000000000000002', precision=24), Number('2.99999999999999999999999', precision=24)]
+>>> rs.intersect((-2, 0, 0), (7, 0, 0), t_max=10)        # longer d, same direction -> same t
+[Number('1.00000000000000000000002', precision=24), Number('2.99999999999999999999999', precision=24)]
+```
+
+
+## How `g(t)` and `g'(t)` are built
 
 No symbolic substitution is performed. `RaySurfaceFunction` reuses the existing
 evaluator:
@@ -151,13 +194,6 @@ baseline the rigorous backends are cross-checked against. Non-finite samples
 - **Other real** surfaces → the deduped **union of `chebyshev` and
   `subdivision`**, so neither method's blind spot drops a root. Either may fail
   numerically and drop out; a complex surface still raises informatively.
-
-### `interval` — rigorous, deferred
-
-A stub that raises `NotImplementedError`. True interval rigor needs a C++
-`mp_interval` type with directed rounding, which the `cpp_dec_float` backend does
-not provide; Sturm already covers the algebraic case rigorously.
-
 
 ## Worked examples
 

@@ -1,3 +1,5 @@
+🇬🇧 **English** · [🇷🇺 Русский](benchmark-raw-arithmetic.ru.md)
+
 # Benchmark: raw arithmetic vs the Python field
 
 One multiply of two full-precision numbers, matched on decimal digits across
