@@ -75,19 +75,6 @@ export MACOSX_DEPLOYMENT_TARGET=10.15   # Intel; используйте 11.0+ д
 python -m pip install .[test]
 ```
 
-#### PyPy на Linux: компоновщик падает при пустом/отсутствующем `LDSHARED`
-
-Некоторые сборки PyPy на Linux поставляются без `LDSHARED` по умолчанию, что
-ломает компоновку расширений C++:
-
-```bash
-export LDSHARED="g++ -shared"
-python -m pip install .[test]
-```
-
-(Для CPython это безвредно, так как он всегда определяет `LDSHARED` из
-`sysconfig`.)
-
 #### `python setup.py build_ext --inplace` устарел
 
 Setuptools >= 58 выводит предупреждение об устаревании; будущие версии его

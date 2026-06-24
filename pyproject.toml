@@ -3,23 +3,20 @@ requires = ["setuptools>=61", "wheel", "pybind11>=2.10,<3"]
 build-backend = "setuptools.build_meta"
 
 [tool.cibuildwheel]
-build = "cp39-* cp310-* cp311-* cp312-* pp39-* pp310-* pp311-*"
+build = "cp311-* cp312-* cp313-*"
 # Skip patterns:
 # - *-musllinux_*: Alpine/musl Linux. Boost's nested cpp_bin_float<N> variant
 #   templates (18 precisions x variant visitors) blow compiler memory even
 #   with clang. Alpine users can `pip install --no-binary formula` to build
 #   from the sdist instead.
-# - pp*-win*: PyPy on Windows is not shipped upstream. The trailing `*` (no
-#   underscore) catches both `pp*-win_amd64` and `pp*-win32`.
 # CPython Windows x86 (cp*-win32) IS built.
-skip = "*-musllinux_* pp*-win*"
+skip = "*-musllinux_*"
 build-verbosity = 1
 test-requires = ["pytest"]
 test-command = "python -m pytest --verbose {project}/tests"
-test-skip = "*universal2:arm64 pp*"
 
 [tool.cibuildwheel.macos]
-archs = ["x86_64", "arm64", "universal2"]
+archs = ["x86_64", "arm64"]
 environment = { MACOSX_DEPLOYMENT_TARGET = "10.15" }
 
 [tool.cibuildwheel.linux]
@@ -27,20 +24,3 @@ archs = ["x86_64"]
 
 [tool.cibuildwheel.windows]
 archs = ["AMD64", "x86"]
-
-# PyPy's sysconfig does not populate LDSHARED / LDCXXSHARED. Setuptools
-# >= 70 reads `linker_so_cxx` from LDCXXSHARED for C++ extensions; without
-# it, the link step crashes with `'NoneType' object is not subscriptable`.
-# The test workflows handle this via $GITHUB_ENV, but cibuildwheel runs in
-# its own isolated venv — so we set the env vars per-PyPy override here.
-# `inherit.environment = "append"` keeps MACOSX_DEPLOYMENT_TARGET from the
-# parent [tool.cibuildwheel.macos] block.
-[[tool.cibuildwheel.overrides]]
-select = "pp*-macosx_*"
-inherit.environment = "append"
-environment = { LDSHARED = "clang++ -bundle -undefined dynamic_lookup", LDCXXSHARED = "clang++ -bundle -undefined dynamic_lookup" }
-
-[[tool.cibuildwheel.overrides]]
-select = "pp*-manylinux_*"
-inherit.environment = "append"
-environment = { LDSHARED = "g++ -shared", LDCXXSHARED = "g++ -shared" }

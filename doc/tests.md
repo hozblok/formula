@@ -75,19 +75,6 @@ export MACOSX_DEPLOYMENT_TARGET=10.15   # Intel; use 11.0+ for Apple Silicon
 python -m pip install .[test]
 ```
 
-#### PyPy on Linux: linker fails with empty/missing `LDSHARED`
-
-Some PyPy builds on Linux ship without a default `LDSHARED`, which breaks
-linking of C++ extensions:
-
-```bash
-export LDSHARED="g++ -shared"
-python -m pip install .[test]
-```
-
-(This is harmless for CPython, which always defines `LDSHARED` from
-`sysconfig`.)
-
 #### `python setup.py build_ext --inplace` is deprecated
 
 Setuptools >= 58 prints a deprecation warning; future versions will
