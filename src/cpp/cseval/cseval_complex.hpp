@@ -210,7 +210,6 @@ right path of the derivative");
   // exponentiation for the computation of the derivative (left path)
   static Complex _pow1(Complex a, Complex b) { return (b * _pow(a, b - ONE)); }
   // exponentiation for the computation of the derivative (right path)
-  // TODO test log()
   static Complex _pow2(Complex a, Complex b) { return (_log(a) * _pow(a, b)); }
   //- general static methods
 
@@ -283,7 +282,6 @@ the natural logarithm derivative");
   }
   // "sqrt" - square root
   static Complex _sqrt(Complex a) { return sqrt(a); }
-  // TODO test _sqrt_d()
   // "sqrt" for the derivative
   static Complex _sqrt_d(Complex a, Complex) {
     if (sqrt(a) == ZERO) {

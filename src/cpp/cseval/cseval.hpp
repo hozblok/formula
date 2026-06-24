@@ -209,7 +209,6 @@ right path of the derivative");
   // exponentiation for the computation of the derivative (left path)
   static Real _pow1(Real a, Real b) { return (b * _pow(a, b - ONE)); }
   // exponentiation for the computation of the derivative (right path)
-  // TODO test log()
   static Real _pow2(Real a, Real b) { return (_log(a) * _pow(a, b)); }
   //- general static methods
 
@@ -282,7 +281,6 @@ the natural logarithm derivative");
   }
   // "sqrt" - square root
   static Real _sqrt(Real a) { return sqrt(a); }
-  // TODO test _sqrt_d()
   // "sqrt" for the derivative
   static Real _sqrt_d(Real a, Real) {
     if (sqrt(a) == ZERO) {
