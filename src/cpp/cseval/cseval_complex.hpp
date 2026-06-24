@@ -73,24 +73,16 @@ class cseval_complex {
     if (this != &other) {
       kind_ = other.kind_;
       id_ = std::string(other.id_);
-      value_ = Complex(other.value_, "0.0");
-      imaginary_unit_ = other.imaginary_unit_;
-      if (left_eval_) {
-        delete left_eval_;
-      }
-      if (other.left_eval_) {
-        left_eval_ = new cseval_complex<Complex>(other.left_eval_);
-      } else {
-        left_eval_ = nullptr;
-      }
-      if (right_eval_) {
-        delete right_eval_;
-      }
-      if (other.right_eval_) {
-        right_eval_ = new cseval_complex<Complex>(other.right_eval_);
-      } else {
-        right_eval_ = nullptr;
-      }
+      value_ = Complex(other.value_);
+      // imaginary_unit_ is const, fixed at construction; not reassigned.
+      delete left_eval_;
+      left_eval_ = other.left_eval_
+                       ? new cseval_complex<Complex>(*other.left_eval_)
+                       : nullptr;
+      delete right_eval_;
+      right_eval_ = other.right_eval_
+                        ? new cseval_complex<Complex>(*other.right_eval_)
+                        : nullptr;
     }
     return *this;
   }
