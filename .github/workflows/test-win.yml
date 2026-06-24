@@ -28,16 +28,11 @@ jobs:
       matrix:
         os: [windows-latest]
         architecture: [x86, x64]
-        python: ["3.9", "3.12", "pypy-3.9", "pypy-3.11"]
-        exclude:
-          - python: "pypy-3.9"
-            architecture: x86
-          - python: "pypy-3.11"
-            architecture: x86
+        python: ["3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up Python ${{ matrix.python }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
           architecture: ${{ matrix.architecture }}

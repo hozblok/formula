@@ -30,7 +30,7 @@ jobs:
     outputs:
       new_version: ${{ steps.bump.outputs.new_version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Bump version in src/formula/__init__.py
         id: bump
         env:
@@ -71,7 +71,7 @@ jobs:
               fh.write(f"new_version={new_version}\n")
           PY
       - name: Upload bumped source
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bumped-source
           path: src/formula/__init__.py
@@ -84,26 +84,24 @@ jobs:
       always() &&
       (needs.bump_version.result == 'success' || needs.bump_version.result == 'skipped')
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-14, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Restore bumped __init__.py
         if: needs.bump_version.result == 'success'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: bumped-source
           path: src/formula/
       - name: Build wheels
-        # v2.23.x is the last 2.x series before cibuildwheel 3.0 (which
-        # requires Python >= 3.11 to *run* and changes PyPy enablement).
-        # 2.23 has stable PyPy 3.11 support.
-        uses: pypa/cibuildwheel@v2.23.3
+        # cibuildwheel 4.x: Linux default is manylinux_2_28 (glibc >= 2.28).
+        uses: pypa/cibuildwheel@v4.1.0
       - name: Upload wheel artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.os }}
           path: ./wheelhouse/*.whl
@@ -117,15 +115,15 @@ jobs:
       (needs.bump_version.result == 'success' || needs.bump_version.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Restore bumped __init__.py
         if: needs.bump_version.result == 'success'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: bumped-source
           path: src/formula/
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: "pip"
@@ -137,7 +135,7 @@ jobs:
       - name: Build sdist
         run: python -m build --sdist
       - name: Upload sdist artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: dist/*.tar.gz
@@ -149,15 +147,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Install twine
         run: python -m pip install --upgrade pip twine
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist-staging
       - name: Collect distributions
@@ -198,7 +196,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Use the GITHUB_TOKEN to push the bump commit and tag back. If the
           # target branch has branch protection requiring reviews, this push
@@ -206,7 +204,7 @@ jobs:
           # protection or switch to a PAT with the appropriate permissions.
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: Restore bumped __init__.py
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: bumped-source
           path: src/formula/
@@ -231,7 +229,7 @@ jobs:
           git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
           git push origin "v${NEW_VERSION}"
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist-staging
       - name: Collect distribution files

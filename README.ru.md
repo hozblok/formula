@@ -4,7 +4,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/formula.svg)](https://pypi.org/project/formula/)
 [![PyPI - Format](https://img.shields.io/pypi/format/formula)](https://pypi.org/project/formula/)
-[![python](https://img.shields.io/badge/python-3.9%7C3.10%7C3.11%7C3.12-blue)](https://pypi.org/project/formula/)
+[![python](https://img.shields.io/badge/python-3.11%7C3.12%7C3.13-blue)](https://pypi.org/project/formula/)
 [![PyPI - Downloads](https://img.shields.io/pypi/dm/formula)](https://pypistats.org/packages/formula)
 [![Test on Ubuntu](https://github.com/hozblok/formula/actions/workflows/test-ubu.yml/badge.svg)](https://github.com/hozblok/formula/actions/workflows/test-ubu.yml)
 [![Test on macOS](https://github.com/hozblok/formula/actions/workflows/test-mac.yml/badge.svg)](https://github.com/hozblok/formula/actions/workflows/test-mac.yml)
@@ -36,11 +36,10 @@
 pip install formula
 ```
 
-Готовые wheel-пакеты публикуются на PyPI для **Python 3.9 – 3.12** (а также PyPy
-3.9 / 3.10) под:
+Готовые wheel-пакеты публикуются на PyPI для **Python 3.11 – 3.13** под:
 
--   **Linux** — `manylinux` x86_64
--   **macOS** — x86_64, arm64 (Apple Silicon) и `universal2`
+-   **Linux** — `manylinux_2_28` x86_64 (glibc ≥ 2.28)
+-   **macOS** — x86_64 и arm64 (Apple Silicon)
 -   **Windows** — AMD64 и x86
 
 Если wheel для вашей платформы недоступен, `pip` перейдёт к

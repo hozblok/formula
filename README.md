@@ -4,7 +4,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/formula.svg)](https://pypi.org/project/formula/)
 [![PyPI - Format](https://img.shields.io/pypi/format/formula)](https://pypi.org/project/formula/)
-[![python](https://img.shields.io/badge/python-3.9%7C3.10%7C3.11%7C3.12-blue)](https://pypi.org/project/formula/)
+[![python](https://img.shields.io/badge/python-3.11%7C3.12%7C3.13-blue)](https://pypi.org/project/formula/)
 [![PyPI - Downloads](https://img.shields.io/pypi/dm/formula)](https://pypistats.org/packages/formula)
 [![Test on Ubuntu](https://github.com/hozblok/formula/actions/workflows/test-ubu.yml/badge.svg)](https://github.com/hozblok/formula/actions/workflows/test-ubu.yml)
 [![Test on macOS](https://github.com/hozblok/formula/actions/workflows/test-mac.yml/badge.svg)](https://github.com/hozblok/formula/actions/workflows/test-mac.yml)
@@ -36,11 +36,10 @@ This project is built with [pybind11](https://github.com/pybind/pybind11) and [b
 pip install formula
 ```
 
-Prebuilt wheels are published to PyPI for **Python 3.9 – 3.12** (and PyPy
-3.9 / 3.10) on:
+Prebuilt wheels are published to PyPI for **Python 3.11 – 3.13** on:
 
--   **Linux** — `manylinux` x86_64
--   **macOS** — x86_64, arm64 (Apple Silicon), and `universal2`
+-   **Linux** — `manylinux_2_28` x86_64 (glibc ≥ 2.28)
+-   **macOS** — x86_64 and arm64 (Apple Silicon)
 -   **Windows** — AMD64 and x86
 
 If a wheel is unavailable for your platform, `pip` will fall back to
