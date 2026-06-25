@@ -458,7 +458,7 @@ cseval_complex<Complex>::operations_outside_parentheses(
     if (countBraces == 0 && symbols.find(op) != std::string::npos &&
         op_to_ind.at(op) == kNpos) {
       bool is_number = false;
-      if (crit != str.crend() && (op == '+' || op == '-')) {
+      if ((crit + 1) != str.crend() && (op == '+' || op == '-')) {
         char prev = *(crit + 1);
         if (prev == 'e' || prev == 'E') {
           // Check that '-' or '+' is not the path of number.
@@ -480,13 +480,16 @@ cseval_complex<Complex>::operations_outside_parentheses(
         } else {
           auto _crit = crit;
           auto _prev = *(crit + 1);
-          while (_crit != str.crend() && (_prev == '+' || _prev == '-') &&
+          while ((_crit + 1) != str.crend() && (_prev == '+' || _prev == '-') &&
                  op_to_ind.at(_prev) == kNpos) {
             _crit++;
             // 'op' mustn't be changed.
             if (*_crit == op) {
               // update position of 'op'. e.g Formula("0-+-+1")
               crit = _crit;
+            }
+            if ((_crit + 1) == str.crend()) {
+              break;
             }
             _prev = *(_crit + 1);
           }

@@ -68,22 +68,12 @@ class cseval {
       kind_ = other.kind_;
       id_ = std::string(other.id_);
       value_ = Real(other.value_);
-      if (left_eval_) {
-        delete left_eval_;
-      }
-      if (other.left_eval_) {
-        left_eval_ = new cseval<Real>(other.left_eval_);
-      } else {
-        left_eval_ = nullptr;
-      }
-      if (right_eval_) {
-        delete right_eval_;
-      }
-      if (other.right_eval_) {
-        right_eval_ = new cseval<Real>(other.right_eval_);
-      } else {
-        right_eval_ = nullptr;
-      }
+      delete left_eval_;
+      left_eval_ = other.left_eval_ ? new cseval<Real>(*other.left_eval_)
+                                    : nullptr;
+      delete right_eval_;
+      right_eval_ = other.right_eval_ ? new cseval<Real>(*other.right_eval_)
+                                      : nullptr;
     }
     return *this;
   }
