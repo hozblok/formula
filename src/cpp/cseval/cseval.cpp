@@ -37,6 +37,11 @@ const std::map<std::string, Real (*)(Real)> cseval<Real>::functionsOneArg = {
 template <typename Real>
 const std::map<std::string, Real (*)(Real, Real)>
     cseval<Real>::functionsTwoArgsDLeft = {
+        {std::string("|"), cseval<Real>::_zero},
+        {std::string("&"), cseval<Real>::_zero},
+        {std::string("="), cseval<Real>::_zero},
+        {std::string(">"), cseval<Real>::_zero},
+        {std::string("<"), cseval<Real>::_zero},
         {std::string("+"), cseval<Real>::_one},
         {std::string("-"), cseval<Real>::_one},
         {std::string("*"), cseval<Real>::_mul1},
@@ -51,12 +56,17 @@ const std::map<std::string, Real (*)(Real, Real)>
         {std::string("log"), cseval<Real>::_log_d},
         {std::string("sqrt"), cseval<Real>::_sqrt_d},
         {std::string("exp"), cseval<Real>::_exp_d},
-        {std::string("sign"), cseval<Real>::_one},
+        {std::string("sign"), cseval<Real>::_zero},
         {std::string("abs"), cseval<Real>::_abs_d}};
 
 template <typename Real>
 const std::map<std::string, Real (*)(Real, Real)>
     cseval<Real>::functionsTwoArgsDRight = {
+        {std::string("|"), cseval<Real>::_zero},
+        {std::string("&"), cseval<Real>::_zero},
+        {std::string("="), cseval<Real>::_zero},
+        {std::string(">"), cseval<Real>::_zero},
+        {std::string("<"), cseval<Real>::_zero},
         {std::string("+"), cseval<Real>::_one},
         {std::string("-"), cseval<Real>::_m_one},
         {std::string("*"), cseval<Real>::_mul2},
@@ -342,14 +352,8 @@ Real cseval<Real>::calculate_derivative(
       // (u^v)*ln(u)*v'=b*a^(b-1)*d + a^b*ln(a)*c a===u, b===v, d===u', c===v'
       Real a = left_eval_->calculate(
           variables_to_values, mapFunctionTwoArgsValue, mapFunctionOneArgValue);
-      Real d = left_eval_->calculate_derivative(
-          variable, variables_to_values, mapFunctionTwoArgsValue,
-          mapFunctionOneArgValue, mapFunctionDerivLeft, mapFunctionDerivRight);
       Real b = right_eval_->calculate(
           variables_to_values, mapFunctionTwoArgsValue, mapFunctionOneArgValue);
-      Real c = right_eval_->calculate_derivative(
-          variable, variables_to_values, mapFunctionTwoArgsValue,
-          mapFunctionOneArgValue, mapFunctionDerivLeft, mapFunctionDerivRight);
       typename std::map<std::string, Real (*)(Real, Real)>::const_iterator
           itFunction_1;
       itFunction_1 = mapFunctionDerivLeft.find(id_);
@@ -358,19 +362,37 @@ Real cseval<Real>::calculate_derivative(
       itFunction_2 = mapFunctionDerivRight.find(id_);
       if (itFunction_1 != mapFunctionDerivLeft.cend() &&
           itFunction_2 != mapFunctionDerivRight.cend()) {
-        return itFunction_1->second(a, b) * d + itFunction_2->second(a, b) * c;
+        // Only operands that contain the variable contribute; compute their
+        // derivatives lazily so a structurally-constant operand neither
+        // recurses nor multiplies a singular partial (e.g. log(0) in the
+        // power rule) by an identically-zero derivative.
+        Real result = ZERO;
+        if (left_eval_->depends_on(variable)) {
+          Real d = left_eval_->calculate_derivative(
+              variable, variables_to_values, mapFunctionTwoArgsValue,
+              mapFunctionOneArgValue, mapFunctionDerivLeft, mapFunctionDerivRight);
+          result = result + itFunction_1->second(a, b) * d;
+        }
+        if (right_eval_->depends_on(variable)) {
+          Real c = right_eval_->calculate_derivative(
+              variable, variables_to_values, mapFunctionTwoArgsValue,
+              mapFunctionOneArgValue, mapFunctionDerivLeft, mapFunctionDerivRight);
+          result = result + itFunction_2->second(a, b) * c;
+        }
+        return result;
       }
     } else if (left_eval_) {
       // the same, but b === 0 and c === 0
       Real a = left_eval_->calculate(
           variables_to_values, mapFunctionTwoArgsValue, mapFunctionOneArgValue);
-      Real d = left_eval_->calculate_derivative(
-          variable, variables_to_values, mapFunctionTwoArgsValue,
-          mapFunctionOneArgValue, mapFunctionDerivLeft, mapFunctionDerivRight);
       typename std::map<std::string, Real (*)(Real, Real)>::const_iterator
           itFunction;
       itFunction = mapFunctionDerivLeft.find(id_);
       if (itFunction != mapFunctionDerivLeft.cend()) {
+        if (!left_eval_->depends_on(variable)) return ZERO;
+        Real d = left_eval_->calculate_derivative(
+            variable, variables_to_values, mapFunctionTwoArgsValue,
+            mapFunctionOneArgValue, mapFunctionDerivLeft, mapFunctionDerivRight);
         return itFunction->second(a, ZERO) * d;
       }
     }
