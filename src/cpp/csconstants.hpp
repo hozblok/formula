@@ -236,20 +236,27 @@ template <std::size_t I = 0, typename FuncT, typename... Tp>
   }
 }
 
-// TODO add log2 log10 sinh cosh tanh asinh acosh atanh
-using boost::multiprecision::acos;
-using boost::multiprecision::asin;
-using boost::multiprecision::atan;
-using boost::multiprecision::cos;
-using boost::multiprecision::exp;
 using boost::multiprecision::abs;
+using boost::multiprecision::acos;
+using boost::multiprecision::acosh;
+using boost::multiprecision::asin;
+using boost::multiprecision::asinh;
+using boost::multiprecision::atan;
+using boost::multiprecision::atanh;
+using boost::multiprecision::cos;
+using boost::multiprecision::cosh;
+using boost::multiprecision::exp;
 using boost::multiprecision::fabs;
-using boost::multiprecision::sign;
 using boost::multiprecision::log;
+using boost::multiprecision::log10;
+using boost::multiprecision::log2;
 using boost::multiprecision::pow;
+using boost::multiprecision::sign;
 using boost::multiprecision::sin;
+using boost::multiprecision::sinh;
 using boost::multiprecision::sqrt;
 using boost::multiprecision::swap;
 using boost::multiprecision::tan;
+using boost::multiprecision::tanh;
 
 #endif  // CS_CONSTANTS_MPF_H

@@ -301,6 +301,65 @@ the sqrt derivative");
     }
     return ONE / (2 * sqrt(a));
   }
+  // "log2" - base-2 logarithm (boost complex has no native log2/log10;
+  // express via natural log: log_b(z) = ln(z) / ln(b))
+  static Complex _log2(Complex a) { return _log(a) / _log(Complex("2", "0.0")); }
+  static Complex _log2_d(Complex a, Complex) {
+    if (a == ZERO) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of the log2 derivative");
+    }
+    static const Complex LN2 = _log(Complex("2", "0.0"));
+    return ONE / (a * LN2);
+  }
+  // "log10" - base-10 logarithm
+  static Complex _log10(Complex a) {
+    return _log(a) / _log(Complex("10", "0.0"));
+  }
+  static Complex _log10_d(Complex a, Complex) {
+    if (a == ZERO) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of the log10 derivative");
+    }
+    static const Complex LN10 = _log(Complex("10", "0.0"));
+    return ONE / (a * LN10);
+  }
+  // "sinh", "cosh", "tanh"
+  static Complex _sinh(Complex a) { return sinh(a); }
+  static Complex _sinh_d(Complex a, Complex) { return cosh(a); }
+  static Complex _cosh(Complex a) { return cosh(a); }
+  static Complex _cosh_d(Complex a, Complex) { return sinh(a); }
+  static Complex _tanh(Complex a) { return tanh(a); }
+  static Complex _tanh_d(Complex a, Complex) {
+    Complex c = cosh(a);
+    return ONE / (c * c);
+  }
+  // "asinh", "acosh", "atanh"
+  static Complex _asinh(Complex a) { return asinh(a); }
+  static Complex _asinh_d(Complex a, Complex) {
+    // Branch points at z = +-i (where 1 + z^2 = 0); real side never hits this.
+    if (ONE + a * a == ZERO) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of the asinh derivative");
+    }
+    return ONE / _sqrt(ONE + a * a);
+  }
+  static Complex _acosh(Complex a) { return acosh(a); }
+  static Complex _acosh_d(Complex a, Complex) {
+    if (a * a == ONE) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of the acosh derivative");
+    }
+    return ONE / _sqrt(a * a - ONE);
+  }
+  static Complex _atanh(Complex a) { return atanh(a); }
+  static Complex _atanh_d(Complex a, Complex) {
+    if (a * a == ONE) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of the atanh derivative");
+    }
+    return ONE / (ONE - a * a);
+  }
   //- trigonometric functions, exp, log, sqrt
 
   //+ auxiliary methods for the computation of the derivative:
