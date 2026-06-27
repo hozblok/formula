@@ -65,7 +65,7 @@ const std::map<std::string, Real (*)(Real, Real)>
         {std::string("sqrt"), cseval<Real>::_sqrt_d},
         {std::string("exp"), cseval<Real>::_exp_d},
         {std::string("sign"), cseval<Real>::_zero},
-        {std::string("abs"), cseval<Real>::_abs_d}};
+        {std::string("abs"), cseval<Real>::_abs_d},
         {std::string("log2"), cseval<Real>::_log2_d},
         {std::string("log10"), cseval<Real>::_log10_d},
         {std::string("sinh"), cseval<Real>::_sinh_d},

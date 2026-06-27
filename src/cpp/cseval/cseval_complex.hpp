@@ -309,7 +309,8 @@ the sqrt derivative");
       throw std::invalid_argument(
           "Division by zero during the computation of the log2 derivative");
     }
-    return ONE / (a * _log(Complex("2", "0.0")));
+    static const Complex LN2 = _log(Complex("2", "0.0"));
+    return ONE / (a * LN2);
   }
   // "log10" - base-10 logarithm
   static Complex _log10(Complex a) {
@@ -320,7 +321,8 @@ the sqrt derivative");
       throw std::invalid_argument(
           "Division by zero during the computation of the log10 derivative");
     }
-    return ONE / (a * _log(Complex("10", "0.0")));
+    static const Complex LN10 = _log(Complex("10", "0.0"));
+    return ONE / (a * LN10);
   }
   // "sinh", "cosh", "tanh"
   static Complex _sinh(Complex a) { return sinh(a); }
@@ -335,6 +337,11 @@ the sqrt derivative");
   // "asinh", "acosh", "atanh"
   static Complex _asinh(Complex a) { return asinh(a); }
   static Complex _asinh_d(Complex a, Complex) {
+    // Branch points at z = +-i (where 1 + z^2 = 0); real side never hits this.
+    if (ONE + a * a == ZERO) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of the asinh derivative");
+    }
     return ONE / _sqrt(ONE + a * a);
   }
   static Complex _acosh(Complex a) { return acosh(a); }

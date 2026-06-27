@@ -321,7 +321,8 @@ the sqrt derivative");
       throw std::invalid_argument(
           "Division by zero during the computation of the log2 derivative");
     }
-    return ONE / (a * _log(Real("2")));
+    static const Real LN2 = _log(Real("2"));
+    return ONE / (a * LN2);
   }
   // "log10" - base-10 logarithm
   static Real _log10(Real a) { return log10(a); }
@@ -330,7 +331,8 @@ the sqrt derivative");
       throw std::invalid_argument(
           "Division by zero during the computation of the log10 derivative");
     }
-    return ONE / (a * _log(Real("10")));
+    static const Real LN10 = _log(Real("10"));
+    return ONE / (a * LN10);
   }
   // "sinh", "cosh", "tanh"
   static Real _sinh(Real a) { return sinh(a); }
