@@ -1,6 +1,6 @@
 """Arbitrary-precision formula parser and solver."""
 
-__version__ = "5.0.0"
+__version__ = "5.1.0"
 
 # pylint: disable=no-name-in-module, import-error
 from .constants import DEFAULT_CASE_INSENSITIVE, DEFAULT_IMAGINARY_UNIT
