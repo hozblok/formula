@@ -249,7 +249,6 @@ def test_deriv_pow_base_zero_does_not_silently_produce_nan():
 # happens to vanish at a point. So base^const is differentiable at base=0
 # (the constant exponent is dropped, never multiplying log(base)), while a
 # genuine cusp reached with nonzero speed is still computed honestly.
-# See doc/derivative-structural-zero-shortcircuit.md.
 
 def test_deriv_pow_constant_exponent_at_zero_base():
     assert deriv("x^2", "x", {"x": "0"}) == "0"
@@ -288,52 +287,58 @@ def test_deriv_nested_even_power_at_root_is_zero():
     assert deriv("((x-1)^2)^2", "x", {"x": "1"}) == "0"
 
 
-# G3. Known residual — _pow1 has no zero guard ---------------------------
-# When the base contains the variable and reaches 0 with a fractional
-# exponent, the structural gate correctly keeps the left term (the base
-# depends on x), but _pow1(0, v<1) = v*0^(v-1) = +inf, times the point-zero
-# inner derivative = NaN. Geometrically these are a cusp (derivative does
-# not exist) or a vertical tangent (derivative +-inf), so the engine should
-# raise — as sqrt/log do, and as _pow2 does after plan.md item 2. But _pow1
-# has no zero guard yet, so it leaks NaN (point-zero inner) or +inf (non-zero
-# inner). A clean guard would be real-side only: _pow1's singular region is
-# u=0, v<1, and "v<1" is not expressible
-# for Complex (no order). These xfail until _pow1 is guarded.
-# See doc/derivative-structural-zero-shortcircuit.md (residual section).
+# G3. Base-0 fractional/negative power -- guarded ------------------------
+# _pow1(0, b) = b*0^(b-1) is singular when b < 1 (then 0^(neg) = +-inf): a
+# vertical tangent (0<b<1), cusp, or pole (b<=0). A pointwise evaluator cannot
+# tell these apart, nor recover a genuinely-finite derivative hidden behind
+# inf*0 (e.g. (x^2)^(3/4) = |x|^1.5, true f'(0)=0). _pow1 now refuses loudly --
+# consistent with sqrt/log -- instead of leaking inf/nan. Integer and >=1
+# exponents keep b>=1 and stay finite. Real side only (no order on Complex).
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="_pow1 has no zero guard: (x^2)^(1/2) at 0 leaks NaN instead of raising",
-)
-def test_deriv_pow_half_of_square_at_zero_should_raise():
-    # (x^2)^(1/2) = |x| at 0 — a cusp; the derivative does not exist.
+def test_deriv_pow_half_of_square_at_zero_raises():
+    # (x^2)^(1/2) = |x| at 0 -- cusp; the derivative does not exist.
     with pytest.raises((ValueError, RuntimeError)):
         deriv("(x^2)^(1/2)", "x", {"x": "0"})
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="_pow1 has no zero guard: (x^2)^(1/3) at 0 leaks NaN instead of raising",
-)
-def test_deriv_pow_third_of_square_at_zero_should_raise():
-    # (x^2)^(1/3) = |x|^(2/3) at 0 — a vertical tangent; the true derivative
-    # is +-inf. A fabricated finite value (the old numeric gate returned 0)
-    # would be plainly wrong; the engine should raise.
+def test_deriv_pow_third_of_square_at_zero_raises():
+    # (x^2)^(1/3) = |x|^(2/3) at 0 -- vertical tangent (+-inf).
     with pytest.raises((ValueError, RuntimeError)):
         deriv("(x^2)^(1/3)", "x", {"x": "0"})
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="_pow1 has no zero guard: x^(1/2) at 0 leaks +inf instead of raising",
-)
-def test_deriv_pow_half_at_zero_should_raise():
-    # x^(1/2) = sqrt(x) at 0: vertical tangent, true derivative +inf. The inner
-    # derivative is 1 (not a point zero), so _pow1(0, 0.5)=+inf leaks as "inf"
-    # rather than NaN. The dedicated sqrt(x) raises here; ^ should match once
-    # _pow1 is guarded.
+def test_deriv_pow_half_at_zero_raises():
+    # x^(1/2) = sqrt(x) at 0 -- vertical tangent (+inf); now matches sqrt(x).
     with pytest.raises((ValueError, RuntimeError)):
         deriv("x^(1/2)", "x", {"x": "0"})
+
+
+def test_deriv_pow_negative_exponent_at_zero_raises():
+    # x^-2 at 0 -- pole (b=-2 < 1); raises rather than leaking inf.
+    with pytest.raises((ValueError, RuntimeError)):
+        deriv("x^(0-2)", "x", {"x": "0"})
+
+
+def test_deriv_pow_three_halves_at_zero_is_zero():
+    # b=1.5 >= 1: 0^(0.5)=0, finite. The guard must NOT over-fire here.
+    assert deriv("x^(3/2)", "x", {"x": "0"}) == "0"
+
+
+def test_deriv_pow_zero_exponent_at_zero_base_is_zero():
+    # x^0 = 1 (constant) -> derivative 0, even at the base-0 point. The b==0
+    # dispatch returns 0 before the b<1 guard could fire.
+    assert deriv("x^0", "x", {"x": "0"}) == "0"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="pointwise AD cannot recover the meaningful 0; the _pow1 guard refuses",
+)
+def test_deriv_meaningful_zero_sacrificed_to_guard():
+    # (x^2)^(3/4) = |x|^1.5 is smooth at 0 with f'(0)=0, but pointwise the term
+    # is inf*0 and the guard refuses. Documents the accepted limitation: the
+    # finite answer is unreachable without limits or symbolic simplification.
+    assert deriv("(x^2)^(3/4)", "x", {"x": "0"}) == "0"
 
 
 # H. Derivative wrt non-existent variable --------------------------------

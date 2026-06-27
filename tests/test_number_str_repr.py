@@ -8,8 +8,6 @@
   * __repr__ is debug form: Number('expr', precision=P), eval-able.
 """
 
-import pytest
-
 from formula import Number
 
 

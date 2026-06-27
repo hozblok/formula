@@ -6,8 +6,6 @@ failed with "The required value is not found". The unit also leaked as
 a hardcoded 'i' into get() output.
 """
 
-import pytest
-
 from formula import Solver
 
 

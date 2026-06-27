@@ -217,7 +217,23 @@ right path of the derivative");
   // "^" - exponentiation
   static Real _pow(Real a, Real b) { return pow(a, b); }
   // exponentiation for the computation of the derivative (left path)
-  static Real _pow1(Real a, Real b) { return (b * _pow(a, b - ONE)); }
+  static Real _pow1(Real a, Real b) {
+    // Dispatch on the exponent. u^0 is the constant 1 -> derivative 0 (this
+    // must precede the guard, since 0 < 1). An integer exponent n>=1 keeps
+    // b>=1 and falls through to the finite polynomial rule n*u^(n-1).
+    if (b == ZERO) return ZERO;
+    // Base 0 with exponent < 1: u^(b-1)=0^(neg)=inf -- a vertical tangent
+    // (0<b<1), cusp, or pole (b<=0). A pointwise evaluator cannot tell these
+    // apart, nor recover a finite derivative hidden behind inf*0 (e.g.
+    // (x^2)^(3/4)=|x|^1.5 has f'(0)=0). Refuse loudly, as sqrt/log do, rather
+    // than leak inf/nan.
+    if (a == ZERO && b < ONE) {
+      throw std::invalid_argument(
+          "Infinite slope (base 0, exponent < 1) during the computation of \
+the power derivative");
+    }
+    return b * _pow(a, b - ONE);
+  }
   // exponentiation for the computation of the derivative (right path)
   static Real _pow2(Real a, Real b) {
     if (a == ZERO) {
