@@ -186,9 +186,14 @@ def test_tangent_double_root_sturm_finds_sampling_misses():
     assert missed == []  # even multiplicity, no sign change
 
 
-@pytest.mark.parametrize("method", ["sturm", "sampling"])
+@pytest.mark.parametrize(
+    "method", ["sturm", "sampling", "subdivision", "chebyshev", "auto"]
+)
 def test_odd_multiplicity_three_root(method):
     # g(t)=t^3 has a single (triple) root at 0; the sign change keeps it visible.
+    # The derivative-using backends ("subdivision", "chebyshev") cross x=0, where x^3' used to NaN (the
+    # constant-exponent log term); the structural-zero fix keeps it finite (=0),
+    # so every backend now resolves the triple root.
     rs = RaySurface("x^3", precision=48)
     roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=2, t_min=-2, method=method)
     assert _match(roots, ["0"], eps="1e-12")
@@ -373,16 +378,19 @@ def test_limit_sampling_misses_subsample_features():
     assert len(coarse) < 2  # the rigorous sturm path gets both; sampling does not
 
 
-def test_limit_high_multiplicity_use_sturm_not_newton():
-    # (x-1)^5: Sturm removes the multiplicity via square-free and nails the root.
+@pytest.mark.parametrize(
+    "method", ["sturm", "sampling", "subdivision", "chebyshev", "auto"]
+)
+def test_limit_high_multiplicity_resolved_by_all_backends(method):
+    # (x-1)^5 at the 5-fold root x=1. Sturm removes the multiplicity via
+    # square-free; the sampling and derivative-using backends used to hit a
+    # derivative singularity there -- d/dx (x-1)^5 NaN'd at the root via the
+    # constant-exponent log term and raised ValueError. The structural-zero fix
+    # drops that term, so the derivative is finite (=0) and every backend now
+    # resolves the root.
     rs = RaySurface("(x - 1)^5", precision=48)
-    assert _match(
-        rs.intersect((0, 0, 0), (1, 0, 0), t_max=3, method="sturm"), ["1"], eps="1e-20"
-    )
-    # A Newton-based backend instead hits the surface's derivative singularity:
-    # d/dx of u^5 is formed as u^5 * 5 * u'/u, which is nan at the root u=0.
-    with pytest.raises(ValueError):
-        rs.intersect((0, 0, 0), (1, 0, 0), t_max=3, method="sampling")
+    roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=3, method=method)
+    assert _match(roots, ["1"], eps="1e-20")
 
 
 @pytest.mark.parametrize("method", ["subdivision", "auto"])

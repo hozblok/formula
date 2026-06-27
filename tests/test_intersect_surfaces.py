@@ -7,7 +7,7 @@ expected answer.
 
 import pytest
 
-from formula import Number, RaySurface
+from formula import Number, RaySurface, Solver
 from formula._roots import is_polynomial
 
 
@@ -104,8 +104,7 @@ def test_div_transcendental_atan_minus_one_tan1():
     assert roots_close(auto, [str(r) for r in sub], eps="1e-26")
 
 def test_div_transcendental_gaussian_two_roots():
-    # exp(-(x-2)^2)-0.5 = 0 at x = 2 +/- sqrt(ln 2) (two roots). Written as a product
-    # (x-2)*(x-2), not ^2, so the chain-rule derivative stays finite at the peak x=2.
+    # exp(-(x-2)^2)-0.5 = 0 at x = 2 +/- sqrt(ln 2) (two roots).
     rs = RaySurface("exp(-(x-2)*(x-2)) - 0.5", precision=32)
     s = Number("sqrt(log(2))", 32)
     two = Number(2, 32)
@@ -113,6 +112,29 @@ def test_div_transcendental_gaussian_two_roots():
     for method in ("chebyshev", "subdivision", "auto"):
         roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=4, method=method)
         assert roots_close(roots, expected, eps="1e-22")
+
+def test_div_transcendental_gaussian_two_roots_pow_form():
+    # Same Gaussian, written with ^2. Before the structural-zero fix this NaN'd:
+    # the constant exponent's spurious log(base) term poisoned the derivative
+    # both at the peak (base 0) and all along x<2 (base negative). With the fix
+    # that term is dropped, so the ^2 form matches the product form.
+    rs = RaySurface("exp(-(x-2)^2) - 0.5", precision=32)
+    s = Number("sqrt(log(2))", 32)
+    two = Number(2, 32)
+    expected = [two - s, two + s]
+    for method in ("chebyshev", "subdivision", "auto"):
+        roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=4, method=method)
+        assert roots_close(roots, expected, eps="1e-22")
+    # Detailed x<2 coverage: where the base (x-2) is negative the ^2 surface
+    # derivative must be finite and equal to the product form (it was NaN
+    # pre-fix). This is the negative-base branch the original test sidesteps.
+    pow_form = Solver("exp(-(x-2)^2)", precision=32)
+    product = Solver("exp(-(x-2)*(x-2))", precision=32)
+    for x in ("1.9", "1.5", "1.0", "0.4", "0"):
+        d_pow = pow_form({"x": x}, derivative="x", format_digits=30)
+        d_prd = product({"x": x}, derivative="x", format_digits=30)
+        assert "nan" not in d_pow.lower()
+        assert near(Number(d_pow, 32), d_prd, eps="1e-28")
 
 def test_div_transcendental_points_lie_on_exp_surface():
     # The recovered intersection point of exp(x)-2 must satisfy F(x,y,z)=0:

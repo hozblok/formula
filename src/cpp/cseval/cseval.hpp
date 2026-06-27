@@ -94,6 +94,16 @@ class cseval {
     }
   }
 
+  // Whether the differentiation variable occurs anywhere in this subtree.
+  // A subtree without it is constant w.r.t. the variable: its derivative is
+  // identically zero, regardless of the value its partials take at a point.
+  bool depends_on(const std::string &variable) const {
+    if (kind_ == 'v') return id_ == variable;
+    if (left_eval_ && left_eval_->depends_on(variable)) return true;
+    if (right_eval_ && right_eval_->depends_on(variable)) return true;
+    return false;
+  }
+
   // Evaluation of subformula.
   Real calculate(
       const std::map<std::string, Real> &variables_to_values,
@@ -197,10 +207,32 @@ right path of the derivative");
   // "^" - exponentiation
   static Real _pow(Real a, Real b) { return pow(a, b); }
   // exponentiation for the computation of the derivative (left path)
-  static Real _pow1(Real a, Real b) { return (b * _pow(a, b - ONE)); }
+  static Real _pow1(Real a, Real b) {
+    // Dispatch on the exponent. u^0 is the constant 1 -> derivative 0 (this
+    // must precede the guard, since 0 < 1). An integer exponent n>=1 keeps
+    // b>=1 and falls through to the finite polynomial rule n*u^(n-1).
+    if (b == ZERO) return ZERO;
+    // Base 0 with exponent < 1: u^(b-1)=0^(neg)=inf -- a vertical tangent
+    // (0<b<1), cusp, or pole (b<=0). A pointwise evaluator cannot tell these
+    // apart, nor recover a finite derivative hidden behind inf*0 (e.g.
+    // (x^2)^(3/4)=|x|^1.5 has f'(0)=0). Refuse loudly, as sqrt/log do, rather
+    // than leak inf/nan.
+    if (a == ZERO && b < ONE) {
+      throw std::invalid_argument(
+          "Infinite slope (base 0, exponent < 1) during the computation of \
+the power derivative");
+    }
+    return b * _pow(a, b - ONE);
+  }
   // exponentiation for the computation of the derivative (right path)
-  // TODO test log()
-  static Real _pow2(Real a, Real b) { return (_log(a) * _pow(a, b)); }
+  static Real _pow2(Real a, Real b) {
+    if (a == ZERO) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of \
+the power derivative (log(0) of the base)");
+    }
+    return _log(a) * _pow(a, b);
+  }
   //- general static methods
 
   //+ trigonometric functions, exp, log, sqrt and methods for the computation of

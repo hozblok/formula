@@ -103,6 +103,16 @@ class cseval_complex {
     }
   }
 
+  // Whether the differentiation variable occurs anywhere in this subtree.
+  // A subtree without it is constant w.r.t. the variable: its derivative is
+  // identically zero, regardless of the value its partials take at a point.
+  bool depends_on(const std::string &variable) const {
+    if (kind_ == 'v') return id_ == variable;
+    if (left_eval_ && left_eval_->depends_on(variable)) return true;
+    if (right_eval_ && right_eval_->depends_on(variable)) return true;
+    return false;
+  }
+
   // Evaluation of subformula.
   Complex calculate(const std::map<std::string, Complex> &variables_to_values,
                     const std::map<std::string, Complex (*)(Complex, Complex)>
@@ -202,8 +212,14 @@ right path of the derivative");
   // exponentiation for the computation of the derivative (left path)
   static Complex _pow1(Complex a, Complex b) { return (b * _pow(a, b - ONE)); }
   // exponentiation for the computation of the derivative (right path)
-  // TODO test log()
-  static Complex _pow2(Complex a, Complex b) { return (_log(a) * _pow(a, b)); }
+  static Complex _pow2(Complex a, Complex b) {
+    if (a == ZERO) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of \
+the power derivative (log(0) of the base)");
+    }
+    return _log(a) * _pow(a, b);
+  }
   //- general static methods
 
   //+ trigonometric functions, exp, log, sqrt and methods for the computation of
