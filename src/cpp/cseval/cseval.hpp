@@ -378,13 +378,12 @@ the sqrt derivative");
   static const std::map<std::string, Real (*)(Real, Real)> functionsTwoArgs;
   static const std::map<std::string, Real (*)(Real)> functionsOneArg;
 
-  // dictionaries contain references to derivatives of basic functions and their
-  // names: TODO: delete me?
+  // dictionaries contain references to derivatives of basic functions and
+  // their names:
   static const std::map<std::string, Real (*)(Real, Real)>
       functionsTwoArgsDLeft;
   static const std::map<std::string, Real (*)(Real, Real)>
       functionsTwoArgsDRight;
-  static const std::map<std::string, Real (*)(Real)> funcs1ArgD;
 };
 
 #endif  // EVAL_MPF_H
