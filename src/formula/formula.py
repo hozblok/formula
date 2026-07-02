@@ -6,9 +6,8 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 
 # pylint: disable=no-name-in-module, import-error
 from ._formula import FmtFlags, Formula
-from .constants import DEFAULT_CASE_INSENSITIVE, DEFAULT_IMAGINARY_UNIT
-from .backend import COMPLEX_TYPES, MAX_PRECISION, mp_class
-
+from .constants import DEFAULT_CASE_INSENSITIVE, DEFAULT_IMAGINARY_UNIT, DEFAULT_PRECISION
+from .backend import COMPLEX_TYPES, MAX_PRECISION, MP_TYPES, mp_class, mp_precision, round_up_precision
 
 class Solver(Formula):
     """Solver for calculating string formulas.
@@ -21,7 +20,7 @@ class Solver(Formula):
     def __init__(
         self,
         expression: str,
-        precision: int = 24,
+        precision: int = DEFAULT_PRECISION,
         imaginary_unit: str = DEFAULT_IMAGINARY_UNIT,
         case_insensitive: bool = DEFAULT_CASE_INSENSITIVE,
     ):
@@ -34,12 +33,6 @@ class Solver(Formula):
     def _coerce_variables_to_values(
         self, values: Optional[Union[Dict[str, Any], Any]]
     ) -> Dict[str, str]:
-        if values is None:
-            variables_to_values: Dict[str, str] = {}
-        elif isinstance(values, Mapping):
-            variables_to_values = dict(values)
-        else:
-            variables_to_values = values
         if not isinstance(values, Mapping):
             variables = self.variables()
             if not variables:
@@ -48,25 +41,18 @@ class Solver(Formula):
                         f"The formula has no variables, but 'values' was "
                         f"given: {values!r}"
                     )
-            elif values is not None and len(variables) == 1:
-                (only_var,) = variables
-                variables_to_values = {only_var: str(values)}
+                values = {}
             elif values is None:
-                raise ValueError(
-                    f"Missing values for variables: {variables}"
-                )
+                raise ValueError(f"Missing values for variables: {variables}")
+            elif len(variables) == 1:
+                (only_var,) = variables
+                values = {only_var: values}
             else:
                 raise ValueError(
                     f"Expected a Mapping for 'values' (got "
                     f"{type(values).__name__}); variables to provide: {variables}"
                 )
-
-        for key in variables_to_values:
-            val = variables_to_values[key]
-            if not isinstance(val, str):
-                variables_to_values[key] = str(val)
-
-        return variables_to_values
+        return {k: v if isinstance(v, str) else str(v) for k, v in values.items()}
 
     def __call__(
         self,
@@ -106,36 +92,30 @@ class Solver(Formula):
 
         variables_to_values = self._coerce_variables_to_values(values)
 
-        result = None
-        if derivative is not None:
-            if isinstance(derivative, str):
-                result = self.get_derivative(
-                    derivative, variables_to_values, format_digits, format_flags
-                )
-            else:
-                try:
-                    result = [
-                        self.get_derivative(
-                            der, variables_to_values, format_digits, format_flags
-                        )
-                        for der in derivative
-                    ]
-                except TypeError as ex:
-                    raise ValueError(
-                        "The value of the 'derivative' is not"
-                        " a string or iterable! Its type is %s." % type(derivative)
-                    ) from ex
-        else:
-            result = self.get(variables_to_values, format_digits, format_flags)
-
-        return result
+        if derivative is None:
+            return self.get(variables_to_values, format_digits, format_flags)
+        if isinstance(derivative, str):
+            return self.get_derivative(
+                derivative, variables_to_values, format_digits, format_flags
+            )
+        try:
+            names = list(derivative)
+        except TypeError as ex:
+            raise ValueError(
+                "The value of the 'derivative' is not"
+                f" a string or iterable! Its type is {type(derivative)}."
+            ) from ex
+        return [
+            self.get_derivative(name, variables_to_values, format_digits, format_flags)
+            for name in names
+        ]
 
     def pair(
         self,
         values: Optional[Union[Dict[str, Any], Any]] = None,
         format_digits: Optional[int] = None,
         format_flags=FmtFlags.default,
-    ) -> tuple:
+    ) -> tuple[str, str]:
         """Calculate the value and return it as a (real_str, imag_str) pair.
 
         Same `values`/`format_digits`/`format_flags` semantics as __call__.
@@ -149,6 +129,15 @@ class Solver(Formula):
         variables_to_values = self._coerce_variables_to_values(values)
         return self.get_pair(variables_to_values, format_digits, format_flags)
 
+    def number(
+        self, values: Optional[Union[Dict[str, Any], Any]] = None
+    ) -> "Number":
+        """Evaluate to a Number at this solver's precision (no string round-trip).
+
+        Same `values` semantics as __call__.
+        """
+        return Number(self.evaluate(self._coerce_variables_to_values(values)))
+
 
 class Number:
     """Arbitrary-precision real/complex value backed by mp_real/mp_complex.
@@ -159,108 +148,108 @@ class Number:
     per-step rounding. The returned mp type carries the real/complex kind.
     """
 
+    DEFAULT_PRECISION = DEFAULT_PRECISION
+
     def __init__(
         self,
-        expression: Union["Number", str, int, float],
-        precision: int = 24,
+        expression: Union["Number", str, int, float, *MP_TYPES],
+        precision: Optional[int] = None,
     ):
-        if isinstance(expression, bool) or not isinstance(
-            expression, (Number, str, int, float)
-        ):
+        if precision is not None and not 0 < precision <= MAX_PRECISION:
+            raise ValueError(f"precision must be in [1, {MAX_PRECISION}] (got {precision})")
+
+        rounded_precision = round_up_precision(precision or self.DEFAULT_PRECISION)
+
+        if isinstance(expression, bool):
+            raise TypeError("bool is not a valid Number expression")
+        if isinstance(expression, (Number, *MP_TYPES)):
+            self._value = expression._value if isinstance(expression, Number) else expression
+            if precision and self.precision != rounded_precision:
+                raise ValueError(
+                    f"precision mismatch: {self.precision} != {rounded_precision}"
+                )
+        elif isinstance(expression, (str, int, float)):
+            self._value = Solver(str(expression), precision=rounded_precision).evaluate()
+        else:
             raise TypeError(
-                f"Number expression must be Number, str, int, or float; "
+                f"Number expression must be Number, str, int, float, or mp_*; "
                 f"got {type(expression).__name__}"
             )
-        solver = Solver(str(expression), precision=precision)
-        self._value = solver.evaluate()
-        self._precision = solver.precision  # rounded up to a supported precision
 
-    @classmethod
-    def _wrap(cls, value, precision: int) -> "Number":
-        obj = cls.__new__(cls)
-        obj._value = value
-        obj._precision = precision
-        return obj
-
-    @classmethod
-    def wrap(cls, value, precision: int) -> "Number":
-        """Wrap a backend mp value (e.g. from Solver.evaluate) without re-parsing."""
-        return cls._wrap(value, precision)
-
-    # Real/complex kind, derived from the wrapped mp value (its sole source).
     @property
-    def _is_complex(self) -> bool:
+    def is_complex(self) -> bool:
         return isinstance(self._value, COMPLEX_TYPES)
 
     @property
     def precision(self) -> int:
-        """Rounded precision (decimal digits) the value is stored at."""
-        return self._precision
+        return mp_precision(self._value)
+
+    def parts(self) -> tuple[str, str]:
+        """(real, imaginary) as formatted strings at this precision."""
+        fmt = FmtFlags.default
+        p = self.precision
+        if self.is_complex:
+            return self._value.real(p, fmt), self._value.imag(p, fmt)
+        return self._value.str(p, fmt), mp_class(p)("0").str(p, fmt)
 
     @property
-    def is_complex(self) -> bool:
-        return self._is_complex
+    def real(self) -> "Number":
+        """Real part as a real Number at this precision."""
+        if self.is_complex:
+            return Number(self._value.real(0, FmtFlags.default), self.precision)
+        return Number(self._value)
 
-    def parts(self) -> tuple:
-        """(real, imaginary) as formatted strings at this precision."""
-        return self._pair()
+    @property
+    def imag(self) -> "Number":
+        """Imaginary part as a real Number at this precision."""
+        if self.is_complex:
+            return Number(self._value.imag(0, FmtFlags.default), self.precision)
+        return Number(0, self.precision)
 
-    # Coerce a foreign value to Number at this precision; the validation
-    # boundary that rejects bool/None/list/etc. with a clear TypeError.
-    def _as_number(self, value: object) -> "Number":
-        return (
-            value
-            if isinstance(value, Number)
-            else Number(value, precision=self._precision)
-        )
+    def _coerce(self, value) -> "Number":
+        """Rhs at self.precision; raises ValueError on storage-precision mismatch."""
+        if isinstance(value, Number) and value.precision == self.precision:
+            return value
+        return Number(value, self.precision)
 
-    # Bring self and other to a common mp type/precision for a binary op: the
-    # higher precision and complex win; a differing value is rebuilt from strings.
-    def _align(self, other: "Number"):
-        precision = max(self._precision, other._precision)
-        is_complex = self._is_complex or other._is_complex
-        cls = mp_class(precision, is_complex)
-
-        def to_common(n: "Number"):
-            if n._precision == precision and n._is_complex == is_complex:
-                return n._value
-            if n._is_complex:
-                real, imag = n._value.real(0, FmtFlags.default), n._value.imag(0, FmtFlags.default)
-            else:
-                real, imag = n._value.str(0, FmtFlags.default), "0"
-            return cls(real, imag) if is_complex else cls(real)
-
-        return to_common(self), to_common(other), precision, is_complex
-
-    def _pair(self) -> tuple[str, str]:
-        fmt = FmtFlags.default
-        p = self._precision
-        if self._is_complex:
-            return self._value.real(p, fmt), self._value.imag(p, fmt)
-        return self._value.str(p, fmt), "0"
-
-    def _binop(self, __value: object, op) -> "Number":
-        a, b, precision, _ = self._align(self._as_number(__value))
-        return Number._wrap(op(a, b), precision)
+    def _binop(self, __value, op) -> "Number":
+        b = self._coerce(__value)
+        a, bb = self._value, b._value
+        if self.is_complex != b.is_complex:
+            cls = mp_class(self.precision, is_complex=True)
+            fmt = FmtFlags.default
+            if not self.is_complex:
+                a = cls(a.str(0, fmt))
+            if not b.is_complex:
+                bb = cls(bb.str(0, fmt))
+        return Number(op(a, bb))
 
     def _cmp(self, __value: object, op):
-        if not isinstance(__value, (Number, str, int, float)):
-            return NotImplemented
-        a, b, _, is_complex = self._align(self._as_number(__value))
-        if is_complex:
+        b = self._coerce(__value)
+        if self.is_complex or b.is_complex:
             raise TypeError("complex numbers are not orderable")
-        return op(a, b)
+        # Compare at display precision so ordering agrees with ==: guard digits
+        # past parts() must not make equal-when-formatted values differ.
+        cls = mp_class(self.precision)
+        return op(cls(self.parts()[0]), cls(b.parts()[0]))
 
     def __eq__(self, __value: object) -> bool:
-        if not isinstance(__value, (Number, str, int, float)):
+        if isinstance(__value, (Number, *MP_TYPES)):
+            # Like Number-vs-Number, a raw mp value keeps its own precision.
+            other = __value if isinstance(__value, Number) else Number(__value)
+            return self.parts() == other.parts()
+        if not isinstance(__value, (str, int, float)):
             return NotImplemented
-        return self._pair() == self._as_number(__value)._pair()
+        return self.parts() == self._coerce(__value).parts()
 
     def __hash__(self) -> int:
-        return hash(self._pair())
+        return hash(self.parts())
+
+    def __bool__(self) -> bool:
+        return self.parts() != ("0", "0")
 
     def __str__(self) -> str:
-        r, i = self._pair()
+        r, i = self.parts()
         if i == "0":
             return r
         sign = "-" if i.startswith("-") else "+"
@@ -270,34 +259,44 @@ class Number:
         return f"{r}{sign}{mag}*i"
 
     def __repr__(self) -> str:
-        return f"Number({str(self)!r}, precision={self._precision})"
+        return f"Number({str(self)!r}, precision={self.precision})"
+
+    def __float__(self) -> float:
+        r, i = self.parts()
+        if i != "0":
+            raise TypeError("cannot convert complex Number to float")
+        return float(r)
+
+    def __complex__(self) -> complex:
+        r, i = self.parts()
+        return complex(float(r), float(i))
 
     def __abs__(self) -> "Number":
-        return Number._wrap(abs(self._value), self._precision)
+        return Number(abs(self._value))
 
     def __neg__(self) -> "Number":
-        return Number._wrap(-self._value, self._precision)
+        return Number(-self._value)
 
-    def __add__(self, __value: Union[str, int, float, "Number"]) -> "Number":
+    def __add__(self, __value) -> "Number":
         return self._binop(__value, operator.add)
 
-    def __sub__(self, __value: Union[str, int, float, "Number"]) -> "Number":
+    def __sub__(self, __value) -> "Number":
         return self._binop(__value, operator.sub)
 
-    def __mul__(self, __value: Union[str, int, float, "Number"]) -> "Number":
+    def __mul__(self, __value) -> "Number":
         return self._binop(__value, operator.mul)
 
-    def __truediv__(self, __value: Union[str, int, float, "Number"]) -> "Number":
+    def __truediv__(self, __value) -> "Number":
         return self._binop(__value, operator.truediv)
 
-    def __pow__(self, __value: Union[str, int, float, "Number"]) -> "Number":
+    def __pow__(self, __value) -> "Number":
         return self._binop(__value, operator.pow)
 
-    def __radd__(self, __value): return self._as_number(__value) + self
-    def __rsub__(self, __value): return self._as_number(__value) - self
-    def __rmul__(self, __value): return self._as_number(__value) * self
-    def __rtruediv__(self, __value): return self._as_number(__value) / self
-    def __rpow__(self, __value): return self._as_number(__value) ** self
+    def __radd__(self, __value): return self._coerce(__value) + self
+    def __rsub__(self, __value): return self._coerce(__value) - self
+    def __rmul__(self, __value): return self._coerce(__value) * self
+    def __rtruediv__(self, __value): return self._coerce(__value) / self
+    def __rpow__(self, __value): return self._coerce(__value) ** self
 
     def __ge__(self, __value): return self._cmp(__value, operator.ge)
     def __gt__(self, __value): return self._cmp(__value, operator.gt)

@@ -41,6 +41,10 @@ PYBIND11_MODULE(_formula, m) {
   // Engine precision ceiling, independent of which mp_real_<P> wrappers are bound.
   m.attr("MAX_PRECISION") = static_cast<unsigned>(max_precision);
 
+  // Storage precision for a request: smallest supported >= it, 0 if over the max.
+  m.def("round_up_precision", &round_up_precision, py::arg("precision"),
+        "Smallest supported precision >= the request; what a value is stored at.");
+
   py::class_<std::ios_base::fmtflags>(m, "FmtFlags")
       .def(py::self | py::self)
       .def(py::self & py::self)

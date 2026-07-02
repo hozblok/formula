@@ -6,7 +6,7 @@ from formula import Number, RaySurface
 
 
 def _close(a, b, eps="1e-20"):
-    prec = a._precision
+    prec = a.precision
     return abs(a - Number(b, prec)) < Number(eps, prec)
 
 

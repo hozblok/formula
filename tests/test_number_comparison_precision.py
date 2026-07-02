@@ -28,8 +28,7 @@ def test_number_ge_le_at_high_precision():
 
 
 def test_ordering_against_str_int_float_value_compare():
-    # _cmp whitelists (Number, str, int, float) and routes through
-    # _as_number. Existing tests only compare Number vs Number; if a
+    # Existing tests only compare Number vs Number; if a
     # future edit narrowed the whitelist, str/int/float ordering would
     # silently start raising TypeError.
     assert (Number("1") < "2") is True

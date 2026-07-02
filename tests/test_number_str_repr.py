@@ -197,7 +197,7 @@ def test_roundtrip_pure_imag_from_arithmetic():
     # i*i*i produces mp_complex(-0, -1) at the raw mp level; the C++ strip
     # turns the real "-0" into "0", and __str__ then takes the r=="0" branch.
     n = Number("i") * Number("i") * Number("i")
-    assert n._pair() == ("0", "-1")
+    assert n.parts() == ("0", "-1")
     assert str(n) == "-1*i"
     assert Number(str(n)) == n
 
@@ -226,7 +226,7 @@ def test_str_preserves_pure_imag_drift():
     # Mirror of test_str_preserves_drift_imag: drifted real, finite imag.
     # __str__ must NOT round the drift to "0" and emit a pure-imag form.
     n = Number("sin(pi) + i")
-    r, i = n._pair()
+    r, i = n.parts()
     assert r != "0", f"setup: expected drifted real, got {r!r}"
     assert i == "1"
     s = str(n)
@@ -240,11 +240,11 @@ def test_repr_precision_is_rounded_up_value():
     # __init__ rounds precision up to a supported value; __repr__ must emit
     # _precision (the rounded-up one), not the user's raw input.
     n = Number("1", precision=100)
-    assert n._precision == 128  # sanity: rounding happened
+    assert n.precision == 128  # sanity: rounding happened
     assert "precision=128" in repr(n)
     assert "precision=100" not in repr(n)
     rt = eval(repr(n), {"Number": Number})
-    assert rt == n and rt._precision == 128
+    assert rt == n and rt.precision == 128
 
 
 def test_repr_preserves_precision_on_exact_value():
@@ -252,9 +252,9 @@ def test_repr_preserves_precision_on_exact_value():
     # regardless of precision, so value-equality alone wouldn't catch a
     # repr that dropped/hard-coded the precision arg. Lock it directly.
     n = Number("3+4*i", precision=64)
-    assert n._precision == 64  # 64 is in AllowedPrecisions, no rounding
+    assert n.precision == 64  # 64 is in AllowedPrecisions, no rounding
     rt = eval(repr(n), {"Number": Number})
-    assert rt._precision == 64
+    assert rt.precision == 64
 
 
 def test_repr_eval_roundtrip_pure_imaginary():

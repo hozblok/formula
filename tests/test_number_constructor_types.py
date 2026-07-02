@@ -58,27 +58,15 @@ def test_dict_rejected():
 
 
 def test_error_message_names_offending_type_concretely():
-    with pytest.raises(TypeError, match="str, int, or float"):
+    with pytest.raises(TypeError, match="str, int, float, or mp_"):
         Number(object())
-
-
-def test_constructor_accepts_number_and_honors_outer_precision():
-    # Number-wrapping-Number must (a) succeed (Number is in the isinstance
-    # allowlist), (b) use the OUTER precision, not the inner one.
-    inner = Number("3+4*i", precision=24)
-    outer = Number(inner, precision=128)
-    assert outer == inner
-    assert outer._precision == 128
-    assert outer._is_complex is True
-    r_outer = Number(Number("1/3", precision=24), precision=64)
-    assert r_outer._precision == 64
 
 
 @pytest.mark.parametrize(
     "op", [operator.add, operator.sub, operator.mul, operator.truediv, operator.pow]
 )
 def test_forward_arithmetic_rejects_bool_rhs(op):
-    # Forward binop also routes through _as_number → Number.__init__, so
+    # Forward binop also routes through Number.__init__, so
     # bool RHS must be rejected — not silently coerced to 1/0.
     with pytest.raises(TypeError, match="bool"):
         op(Number("3"), True)

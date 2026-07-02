@@ -119,7 +119,7 @@ def test_complex_ordering_raises_typeerror(op_symbol):
 
 
 def test_complex_ordering_against_str_raises_typeerror():
-    # str passes the isinstance gate, gets coerced via _as_number, and
+    # str passes the isinstance gate, gets coerced via Number(), and
     # _align still reports complex — so the same guard fires.
     with pytest.raises(TypeError, match="complex"):
         _ = Number("1+i") < "2"
@@ -130,8 +130,8 @@ def test_arithmetic_zero_imag_collapse_invariants():
     # The three invariants (==, hash, str) must agree across kinds.
     cz = Number("i") + Number("-i")  # mp_complex(0, 0)
     rz = Number("0")  # mp_real(0)
-    assert cz._is_complex is True
-    assert rz._is_complex is False
+    assert cz.is_complex is True
+    assert rz.is_complex is False
     assert cz == rz
     assert hash(cz) == hash(rz)
     assert str(cz) == str(rz) == "0"
