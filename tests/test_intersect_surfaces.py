@@ -13,7 +13,7 @@ from formula._roots import is_polynomial
 
 def near(value, expected, eps="1e-18"):
     """True if value is within eps of expected (a Number, number, or expression string)."""
-    prec = value._precision
+    prec = value.precision
     return abs(value - Number(expected, prec)) < Number(eps, prec)
 
 

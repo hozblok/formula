@@ -216,6 +216,16 @@ constexpr std::array<unsigned, sizeof...(Ps)> seq_to_array(
 }
 constexpr auto precisions_array = seq_to_array(AllowedPrecisionsSeq{});
 
+// Smallest supported precision >= the request; 0 if it exceeds max_precision.
+inline unsigned round_up_precision(unsigned precision) {
+  for (unsigned prec : precisions_array) {
+    if (precision <= prec) {
+      return prec;
+    }
+  }
+  return 0;
+}
+
 template <unsigned... Ps>
 auto seq_to_tuple(std::integer_sequence<unsigned, Ps...>) {
   return std::make_tuple(static_cast<AllowedPrecisions>(Ps)...);

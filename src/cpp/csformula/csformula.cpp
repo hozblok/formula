@@ -156,25 +156,16 @@ std::string Formula::get_derivative(
 }
 
 void Formula::prepare_precision(const unsigned &precision) {
-  AllowedPrecisions result = min_precision;
-  for_each(precisions,
-           [&precision, &result](const AllowedPrecisions &prec) -> bool {
-             if (precision <= prec) {
-               result = prec;
-               return false;
-             }
-             return true;
-           });
   origin_precision_ = precision;
-  precision_ = result;
-  if (precision_ == min_precision &&
-      origin_precision_ > static_cast<unsigned>(min_precision)) {
+  unsigned result = round_up_precision(precision);
+  if (result == 0) {
     throw std::invalid_argument(
         (boost::format("The selected precision value %s exceeds the \
 allowed maximum %s") %
          origin_precision_ % static_cast<unsigned>(max_precision))
             .str());
   }
+  precision_ = static_cast<AllowedPrecisions>(result);
 }
 
 void Formula::prepare_expression(const std::string &expression) {

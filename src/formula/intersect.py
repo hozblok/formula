@@ -5,17 +5,45 @@ intersection is a real root of g on [t_min, t_max]. Pluggable root-finding
 backends (see _roots/) locate all of them.
 """
 
-from typing import List, Sequence, Tuple
+from collections import namedtuple
+from typing import List, Optional, Sequence, Tuple
 
 from ._roots import get_backend
 from .formula import Number, Solver
 
 _AXES = ("x", "y", "z")
 
+# Geometry-only record of one ray's life: source point + launch direction, every
+# reflection, the screen hit + direction there, and the total geometric path length.
+RayPath = namedtuple(
+    "RayPath",
+    ["source", "source_direction", "reflections",
+     "screen_point", "screen_direction", "opl", "exited"],
+)
+
+# One wall bounce: the hit point, the unit direction the ray leaves with, and the
+# grazing angle (radians from the tangent plane).
+Reflection = namedtuple("Reflection", ["point", "direction", "grazing"])
+
+
+def _normalize(components: Sequence[Number], zero_msg="direction must be a non-zero vector"):
+    """Unit-normalize Number components; raises on an empty or zero vector."""
+    if not components:
+        raise ValueError(zero_msg)
+    zero = Number(0, components[0].precision)
+    norm = abs(sum((c * c for c in components), zero)) ** 0.5
+    if norm == zero:
+        raise ValueError(zero_msg)
+    return tuple(c / norm for c in components)
+
 
 def _with_endpoint_roots(func, roots, t0, t1, precision):
     """Backend-agnostic net: add an exact root sitting on t0/t1 if a backend
-    missed it (Sturm's (a,b] convention, interior Chebyshev nodes, etc.)."""
+    missed it (Sturm's (a,b] convention, interior Chebyshev nodes, etc.).
+
+    |g| small alone is not enough: at grazing incidence g' is tiny, so g stays
+    small near a root without t0/t1 being one. Require the Newton step |g|/|g'|
+    within tol too (a vanishing g' means a tangential root at the endpoint)."""
     gtol = Number(f"1e-{max(precision // 3, 4)}", precision)
     tol = Number(f"1e-{max(precision // 2, 6)}", precision)
     out = list(roots)
@@ -23,7 +51,15 @@ def _with_endpoint_roots(func, roots, t0, t1, precision):
         mag = abs(func.g(t)).parts()[0]  # modulus as a real string (|re,im|)
         if "inf" in mag or "nan" in mag:
             continue
-        if Number(mag, precision) <= gtol and all(abs(t - r) > tol for r in out):
+        g = Number(mag, precision)
+        if g > gtol or any(abs(t - r) <= tol for r in out):
+            continue
+        gpmag = abs(func.gprime(t)).parts()[0]
+        if "inf" in gpmag or "nan" in gpmag:
+            out.append(t)
+            continue
+        gp = Number(gpmag, precision)
+        if gp <= gtol or g <= tol * gp:
             out.append(t)
     return out
 
@@ -51,15 +87,18 @@ class RaySurfaceFunction:
         # the full x,y,z so point_at and the arc-length normalization stay correct
         # even when the surface ignores an axis.
         self._axes = [a for a in _AXES if a in axes]
-        self.origin = {a: self._num(origin[_AXES.index(a)]) for a in _AXES}
-        full = {a: self._num(direction[_AXES.index(a)]) for a in _AXES}
-        norm = abs(sum((c * c for c in full.values()), self._num(0))) ** self._num("0.5")
-        if norm == self._num(0):
-            raise ValueError("direction must be a non-zero vector")
-        self.direction = {a: c / norm for a, c in full.items()}
-
-    def _num(self, value) -> Number:
-        return value if isinstance(value, Number) else Number(value, self.precision)
+        self.origin = {
+            a: Number(origin[_AXES.index(a)], self.precision) for a in _AXES
+        }
+        self.direction = {
+            a: c
+            for a, c in zip(
+                _AXES,
+                _normalize(
+                    [Number(direction[_AXES.index(a)], self.precision) for a in _AXES]
+                ),
+            )
+        }
 
     def _point(self, t: Number) -> dict:
         """Ray coordinates (surface axes only) at parameter t, as value strings."""
@@ -67,12 +106,13 @@ class RaySurfaceFunction:
 
     def g(self, t: Number) -> Number:
         """g(t) = F(O + t*d)."""
-        return Number.wrap(self.surface.evaluate(self._point(t)), self.precision)
+        return Number(self.surface.evaluate(self._point(t)), self.precision)
 
     def gprime(self, t: Number) -> Number:
         """g'(t) = grad F . d via the chain rule."""
         point = self._point(t)
-        total = self._num(0)
+        zero = Number(0, self.precision)
+        total = zero
         for a in self._axes:
             partial = Number(self.surface.get_derivative(a, point, 0), self.precision)
             total = total + partial * self.direction[a]
@@ -81,6 +121,42 @@ class RaySurfaceFunction:
     def point_at(self, t: Number) -> Tuple[Number, ...]:
         """The (x, y, z) point on the ray at parameter t."""
         return tuple(self.origin[a] + t * self.direction[a] for a in _AXES)
+
+    def normal_at(self, t: Number) -> Tuple[Number, Number, Number]:
+        """Unit surface normal grad F / |grad F| at the ray point r(t).
+
+        Axes the surface does not mention contribute a zero gradient component.
+        """
+        point = self._point(t)
+        grad = [
+            Number(self.surface.get_derivative(a, point, 0), self.precision)
+            if a in self._axes
+            else Number(0, self.precision)
+            for a in _AXES
+        ]
+        return _normalize(
+            grad,
+            zero_msg="surface gradient vanishes; normal is undefined",
+        )
+
+    def reflect_at(self, t: Number):
+        """Specular reflection of the ray at r(t).
+
+        Returns (point, reflected_unit_direction, grazing_angle); the grazing
+        angle (radians) is measured from the surface tangent plane and the
+        reflected direction is d - 2(d.n)n.
+        """
+        normal = self.normal_at(t)
+        incident = tuple(self.direction[a] for a in _AXES)
+        zero = Number(0, self.precision)
+        dot = sum((incident[k] * normal[k] for k in range(3)), zero)
+        reflected = tuple(
+            incident[k] - Number(2, self.precision) * dot * normal[k] for k in range(3)
+        )
+        # |d.n| can round above 1 at near-normal incidence; clamp before asin.
+        sine = min(abs(dot), Number(1, self.precision))
+        grazing = Number(f"asin({sine})", self.precision)
+        return self.point_at(t), reflected, grazing
 
 
 class RaySurface:
@@ -94,7 +170,7 @@ class RaySurface:
     def __init__(
         self,
         expression: str,
-        precision: int = 24,
+        precision: int = 32,
     ):
         self.surface = Solver(expression, precision)
         self.precision = self.surface.precision
@@ -132,3 +208,72 @@ class RaySurface:
         """Intersection points (x, y, z) on the surface, sorted by t."""
         func = self.function(origin, direction)
         return [func.point_at(t) for t in self.intersect(origin, direction, t_max, **kwargs)]
+
+    def trace_path(self, origin: Sequence, direction: Sequence,
+                   t_max, exit_surface: Optional[str]=None,
+                   screen_surface: Optional[str]=None,
+                   max_bounces=1000, t_min=None,
+                   method="auto", **options) -> RayPath:
+        """Exact geometric multi-reflection path of a ray off this surface F=0.
+
+        The ray reflects specularly off F=0; the reflection sequence ends when it
+        would cross `exit_surface` before the next reflection (the optic's exit
+        aperture), when no further forward hit exists (a finite reflector), or after
+        `max_bounces`. After it leaves, the ray is propagated to `screen_surface` when
+        given. The direction is kept unit, so every step parameter is arc length and
+        `opl` is the geometric path source -> ... -> screen.
+
+        Returns RayPath(source, source_direction, reflections, screen_point,
+        screen_direction, opl, exited): `source`/`source_direction` = launch point and
+        unit direction; `reflections` = [Reflection(point, direction, grazing), ...]
+        with the unit direction the ray leaves each bounce with and the grazing angle
+        in radians from the surface (empty when the ray misses the wall);
+        `screen_point`/`screen_direction` = the hit on `screen_surface` and the unit
+        direction there, both None when the ray never reaches it; `opl` = total
+        geometric path length; `exited` = whether the ray left through a forward
+        boundary. GEOMETRY ONLY -- no Fresnel/amplitude/energy.
+
+        `exit_surface`/`screen_surface`: an F(x,y,z)=0 expression string or None.
+        `t_min` (default `t_max * 1e-9`) is the minimum forward step that
+        skips the launch point lying on the surface. As elsewhere in the engine,
+        root-finding is best conditioned when coordinates are O(1) (scale a metre-sized
+        geometry to e.g. micrometres before tracing); use `method="subdivision"`/
+        `"sturm"` for grazing (near-double-root) hits.
+        """
+        p = self.precision
+        source = tuple(Number(c, p) for c in origin)
+        direction = tuple(Number(c, p) for c in direction)
+
+        eps = (Number(t_min, p) if t_min is not None
+               else Number(t_max, p) * Number("1e-9", p))
+        bound = RaySurface(exit_surface, p) if exit_surface is not None else None
+        screen = RaySurface(screen_surface, p) if screen_surface is not None else None
+
+        d0 = _normalize(direction)
+        O, d = source, d0
+        reflections, opl, exited = [], Number(0, p), False
+
+        for _ in range(max_bounces):
+            wall = self.intersect(O, d, t_max, method=method, t_min=eps, **options)
+            t_wall = wall[0] if wall else None
+            t_bound = None
+            if bound is not None:
+                hits = bound.intersect(O, d, t_max, method=method, t_min=eps, **options)
+                t_bound = hits[0] if hits else None
+            if t_wall is None or (t_bound is not None and t_bound <= t_wall):
+                exited = t_bound is not None or bound is None
+                break
+            point, d, grazing = self.function(O, d).reflect_at(t_wall)
+            reflections.append(Reflection(point, d, grazing))
+            opl = opl + t_wall
+            O = point
+
+        screen_point = screen_direction = None
+        if exited and screen is not None:
+            hits = screen.intersect(O, d, t_max, method=method, t_min=eps, **options)
+            if hits:
+                t_scr = hits[0]
+                opl = opl + t_scr
+                screen_point = tuple(O[k] + t_scr * d[k] for k in range(3))
+                screen_direction = d
+        return RayPath(source, d0, reflections, screen_point, screen_direction, opl, exited)

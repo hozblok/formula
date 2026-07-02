@@ -27,3 +27,26 @@ COMPLEX_TYPES = tuple(
 # Engine precision ceiling (csconstants::max_precision), independent of
 # which mp_real_<P> wrappers are bound.
 MAX_PRECISION = _formula.MAX_PRECISION
+
+# The engine's rounding rule (single source of truth): smallest supported
+# precision >= the request, i.e. what a value is stored at (0 if over the max).
+round_up_precision = _formula.round_up_precision
+
+MP_TYPES = REAL_TYPES + COMPLEX_TYPES
+
+def mp_precision(value) -> int:
+    if not isinstance(value, MP_TYPES):
+        raise TypeError(
+            f"expected mp_real_* or mp_complex_*, got {type(value).__name__}"
+        )
+    name = type(value).__name__
+    if name.startswith(_REAL_PREFIX):
+        suffix = name[len(_REAL_PREFIX):]
+    elif name.startswith(_COMPLEX_PREFIX):
+        suffix = name[len(_COMPLEX_PREFIX):]
+    else:
+        raise TypeError(f"unexpected mp class name: {name!r}")
+    try:
+        return int(suffix)
+    except ValueError as exc:
+        raise TypeError(f"invalid precision in mp class name: {name!r}") from exc
