@@ -80,7 +80,7 @@ class Formula {
   CSEvalVariant eval_;
   CSEvalComplexVariant eval_complex_;
 
-  /** Initialize СSEval object. */
+  /** Initialize CSEval object. */
   template <std::size_t I = 0>
   inline typename std::enable_if<I == kPrecisionsLength>::type init_eval() {}
 

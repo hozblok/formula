@@ -22,9 +22,9 @@ def _gauss_samples(func, mid, span, m, prec):
     xs, fs = [], []
     for j in range(m):
         theta = pi * (Number(j, prec) + half) / Number(m, prec)
-        x = Number(cos_solver.evaluate({"a": str(theta)}), prec)
+        x = cos_solver.number({"a": str(theta)})
         xs.append(x)
-        fs.append(Number(func.g(mid + span * x).parts()[0], prec))
+        fs.append(func.g(mid + span * x).real)
     return xs, fs
 
 

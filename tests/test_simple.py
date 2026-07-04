@@ -76,7 +76,7 @@ def test_evaluation_invalid_expressions(expr):
 
 def test_getting_variables():
     """Check that formula return correct variables."""
-    formula = Formula("a*b+c+D/qwe+s_s_s.*16+3^йцу4^f^t+a+xx+x+x+x")
+    formula = Formula("a*b+c+D/qwe+s_s_s.*16+3^θφ4^f^t+a+xx+x+x+x")
     assert formula.variables() == {
         "a",
         "b",
@@ -84,7 +84,7 @@ def test_getting_variables():
         "D",
         "qwe",
         "s_s_s.",
-        "йцу4",
+        "θφ4",
         "f",
         "t",
         "xx",

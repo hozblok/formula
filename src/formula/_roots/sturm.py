@@ -20,12 +20,11 @@ def _nodes(t_min: Number, t_max: Number, count: int, prec: int) -> List[Number]:
 
 def _poly_from_samples(func, xs, complex_surface, tol, max_degree):
     """Interpolate g (real part, and imag part if complex) to a polynomial."""
-    prec = func.precision
     reals, imags = [], []
     for x in xs:
-        rstr, istr = func.g(x).parts()
-        reals.append(Number(rstr, prec))
-        imags.append(Number(istr, prec))
+        g = func.g(x)
+        reals.append(g.real)
+        imags.append(g.imag)
     pr = _poly.interpolate(xs, reals, tol, max_degree)
     if not complex_surface:
         return pr

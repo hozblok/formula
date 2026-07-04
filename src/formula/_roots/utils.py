@@ -4,6 +4,16 @@ from typing import Iterable, List, Protocol
 
 from ..formula import Number
 
+_CONSTS: dict = {}
+
+
+def const(text: str, precision: int) -> Number:
+    """Cached small constant ("0", "0.5", ...) — hot loops must not re-parse."""
+    key = (text, precision)
+    if key not in _CONSTS:
+        _CONSTS[key] = Number(text, precision)
+    return _CONSTS[key]
+
 
 class _RootFunc(Protocol):
     """A surface restricted to one ray; what every backend consumes."""
@@ -17,7 +27,7 @@ class _RootFunc(Protocol):
 
 def sign(x: Number) -> int:
     """-1, 0 or +1."""
-    zero = Number(0, x.precision)
+    zero = const("0", x.precision)
     if x > zero:
         return 1
     if x < zero:
@@ -29,7 +39,7 @@ def finite_sign(value: Number):
     """sign(value), or None where value is non-finite (inf/nan)."""
     if value.is_complex:
         raise NotImplementedError("real surfaces only; use sturm/chebyshev for complex")
-    real = value.parts()[0]
+    real = value.parts[0]
     if "inf" in real or "nan" in real:
         return None
     return sign(value)
@@ -60,7 +70,7 @@ def rtsafe(
     maxit — iteration cap if xacc is not reached.
     """
     prec = a.precision
-    zero, half = Number(0, prec), Number("0.5", prec)
+    zero, half = const("0", prec), const("0.5", prec)
     lo, hi = (a, b) if sign(func.g(a)) < 0 else (b, a)
     t, step = (a + b) * half, abs(b - a)
     g, gp = func.g(t), func.gprime(t)
