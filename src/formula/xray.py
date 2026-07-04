@@ -41,10 +41,11 @@ class GlassMaterial:
 
     def __init__(
         self,
+        name: str = "glass",
+        *,
         electron_density: str,
         beta_ref: str,
-        energy_ref_kev: str = "10.0",
-        name: str = "glass",
+        energy_ref_kev: str,
     ):
         self.electron_density = electron_density  # electrons per m^3
         self.beta_ref = beta_ref
@@ -69,7 +70,12 @@ class GlassMaterial:
 
 
 # Fused silica (SiO2, ~2.20 g/cm^3): electron density ~6.6e29 /m^3, beta~6.5e-8 at 10 keV.
-FUSED_SILICA = GlassMaterial("6.6e29", "6.5e-8", "10.0", "fused silica")
+FUSED_SILICA = GlassMaterial(
+    name="fused silica",
+    electron_density="6.6e29",
+    beta_ref="3.89e-8",
+    energy_ref_kev="10.0",
+)
 
 
 ReflectionEvent = namedtuple(

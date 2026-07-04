@@ -2,14 +2,22 @@
 
 One event protocol for every optic (the Lloyd wall is literally a capillary-wall
 surface): ("reflect", t, point, normal) | ("pass", t) | ("absorb", t) |
-("exit", None). Hits are solved analytically in Number arithmetic at full
-precision; `engine_hit_t` reproduces them through the RaySurface root-finding
-engine for the per-run cross-check.
+("exit", None). The reference wall is ImplicitWall: an arbitrary implicit
+F(x,y,z)=0 traced by the RaySurface root-finding engine at full precision —
+exact but slow. The EXPERIMENTAL closed-form fast paths (cylinder/revolution
+quadratics, polygon plane fans, torus quartics) live in wall_cylinder.py /
+wall_revolution.py / wall_polygon.py / wall_torus.py and must stay
+bit-equivalent to the engine:
+every run cross-checks the first hit via expr_um (`engine_hit_t`).
 """
 
-from .nums import const, lift, sqrt, vadd, vscale
+import math
 
-# Forward-step floor (m): far below any physical chord, far above 1e-30 root noise.
+from ..formula import Number
+from .nums import const, lift, vadd, vscale
+
+# Forward-step floor for the ray parameter t (m): rejects the t~0 root at the
+# reflection origin (on-wall point); far below any physical chord.
 _EPS_T = 1e-12
 
 
@@ -36,67 +44,121 @@ class Mirror:
         return ("reflect", t, vadd(O, vscale(d, t)), self._normal)
 
 
+class ImplicitWall:
+    """Arbitrary implicit wall F(x,y,z)=0 in micrometre coordinates, F<0 inside.
+
+    Hits and normals come from the RaySurface root-finding engine at full
+    precision — orders of magnitude slower than the closed-form walls; meant
+    for prototypes and small ray budgets, not overnight maps.
+    """
+
+    def __init__(self, expr, center, aim_radius):
+        from ..intersect import RaySurface
+        self.kind = "implicit"
+        self.center = center
+        p = center[0].precision
+        self.rs = RaySurface(expr, p)
+        self._scale = lift(1e6, p)
+        self.expr_um = None            # the engine IS the hit path here
+        self.probe_xy = (1.0, 0.0)
+
+    def _f(self, xf, yf, zf) -> float:
+        val = self.rs.surface.evaluate(
+            {"x": repr(xf * 1e6), "y": repr(yf * 1e6), "z": repr(zf * 1e6)})
+        return float(Number(val, self.rs.precision))
+
+    def inside(self, xf, yf, zf):
+        # slack vs the bore-center depth keeps on-wall points (F rounds to ±eps)
+        depth = abs(self._f(float(self.center[0]), float(self.center[1]), zf))
+        return self._f(xf, yf, zf) < 1e-9 * depth
+
+    def hit(self, O, d, t_exit):
+        eps_um = _EPS_T * 1e6
+        Oum = tuple(x * self._scale for x in O)
+        ts = self.rs.intersect(Oum, d, t_max=float(t_exit) * 1e6 * (1.0 + 1e-9),
+                               t_min=eps_um, method="subdivision")
+        ts = [t for t in ts if float(t) > 1.5 * eps_um]
+        if not ts:
+            return None
+        t = ts[0] / self._scale
+        return t, vadd(O, vscale(d, t)), self.rs.function(Oum, d).normal_at(ts[0])
+
+
+def entrance_disk(bore: dict, z0f: float):
+    """(cx, cy, r) floats of the entrance aperture — the source-aiming target."""
+    kind = bore.get("kind", "cylinder")
+    cxf, cyf = float(bore["center"][0]), float(bore["center"][1])
+    if kind == "revolution":
+        c0, c1, c2 = (float(v) for v in bore["r2_poly"])
+        rf = math.sqrt(max(c0 + z0f * (c1 + z0f * c2), 0.0))
+    elif kind == "polygon":
+        rf = float(bore["radius"]) / math.cos(math.pi / int(bore["sides"]))
+    elif kind == "implicit":
+        rf = float(bore["aim_radius"])
+    else:
+        rf = float(bore["radius"])
+    return cxf, cyf, rf
+
+
+def _make_wall(bore: dict, z0):
+    """Bore spec -> wall object; typed EXPERIMENTAL walls import lazily."""
+    kind = bore.get("kind", "cylinder")
+    center = bore["center"]
+    if kind == "implicit":
+        return ImplicitWall(bore["surface"], center, bore["aim_radius"])
+    if kind == "cylinder":
+        from .wall_cylinder import CylinderWall
+        return CylinderWall(center, bore["radius"])
+    if kind == "revolution":
+        from .wall_revolution import RevolutionWall
+        return RevolutionWall("revolution", center, bore["r2_poly"])
+    if kind == "polygon":
+        from .wall_polygon import PolygonWall
+        return PolygonWall(center, bore["radius"], bore["sides"], bore["rotation"])
+    if kind == "torus":
+        from .wall_torus import TorusWall
+        return TorusWall(center, bore["radius"], bore["bend"]["radius"],
+                         bore["bend"]["toward"], z0)
+    raise ValueError(f"unknown bore kind: {kind!r}")
+
+
 class CapillaryBundle:
-    """Parallel hollow cylinders along z in [z0, z1]; rays reflect off bore walls."""
+    """Parallel bores along z in [z0, z1]; rays reflect off per-bore walls."""
 
     def __init__(self, bores, z0, z1):
-        # bores: [{"center": (cx, cy), "radius": a}] as Numbers
         self.bores, self.z0, self.z1 = bores, z0, z1
         self._z0f, self._z1f = float(z0), float(z1)
-        p = z0.precision
-        self._two = const("2", p)
-        self._zero = const("0", p)
-        self._eps = _EPS_T
-        self._boresf = [
-            (float(b["center"][0]), float(b["center"][1]), float(b["radius"]))
-            for b in bores
-        ]
+        self._zero = const("0", z0.precision)
+        self.walls = []
+        for bore in bores:
+            wall = _make_wall(bore, z0)
+            wall.aim = entrance_disk(bore, self._z0f)
+            self.walls.append(wall)
 
     def _locate(self, O):
-        """Bore containing the point; slack keeps on-wall points (post-reflection)."""
-        xf, yf = float(O[0]), float(O[1])
-        for bore, (cx, cy, a) in zip(self.bores, self._boresf):
-            if (xf - cx) ** 2 + (yf - cy) ** 2 < a * a * (1.0 + 1e-9):
-                return bore
-        return None
-
-    def _wall_hit(self, O, d, bore):
-        """Forward parameter to the bore wall from inside (exact quadratic)."""
-        rx, ry = O[0] - bore["center"][0], O[1] - bore["center"][1]
-        A = d[0] * d[0] + d[1] * d[1]
-        if float(A) < 1e-30:
-            return None
-        B = self._two * (rx * d[0] + ry * d[1])
-        C = rx * rx + ry * ry - bore["radius"] * bore["radius"]
-        disc = B * B - self._two * self._two * A * C
-        if float(disc) < 0.0:
-            return None
-        root = sqrt(disc)
-        for t in ((root - B) / (self._two * A), (self._zero - root - B) / (self._two * A)):
-            if float(t) > self._eps:
-                return t
+        """Wall of the bore containing the point; walls keep on-wall points inside."""
+        xf, yf, zf = (float(c) for c in O)
+        for wall in self.walls:
+            if wall.inside(xf, yf, zf):
+                return wall
         return None
 
     def next_event(self, O, d):
         if float(d[2]) <= 0.0:
             return ("absorb", self._zero)          # backward ray: lost in the assembly
         zf = float(O[2])
-        if zf < self._z0f - self._eps:
+        if zf < self._z0f - _EPS_T:
             return ("pass", (self.z0 - O[2]) / d[2])
-        if zf >= self._z1f - self._eps:
+        if zf >= self._z1f - _EPS_T:
             return ("exit", None)
-        bore = self._locate(O)
-        if bore is None:
+        wall = self._locate(O)
+        if wall is None:
             return ("absorb", self._zero)          # entrance face / web between bores
-        t_wall = self._wall_hit(O, d, bore)
         t_exit = (self.z1 - O[2]) / d[2]
-        if t_wall is None or t_exit <= t_wall:
+        hit = wall.hit(O, d, t_exit)
+        if hit is None or t_exit <= hit[0]:
             return ("pass", t_exit)
-        P = vadd(O, vscale(d, t_wall))
-        a = bore["radius"]
-        normal = ((P[0] - bore["center"][0]) / a, (P[1] - bore["center"][1]) / a,
-                  self._zero)
-        return ("reflect", t_wall, P, normal)
+        return ("reflect",) + hit
 
 
 def engine_hit_t(surface_expr_um: str, O, d, t_max_m: float):

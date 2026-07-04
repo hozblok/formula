@@ -38,7 +38,7 @@ def _with_endpoint_roots(func, roots, t0, t1, precision):
     tol = Number(f"1e-{max(precision // 2, 6)}", precision)
     out = list(roots)
     for t in (t0, t1):
-        mag = abs(func.g(t)).parts()[0]  # modulus as a real string (|re,im|)
+        mag = abs(func.g(t)).parts[0]  # modulus as a real string (|re,im|)
         if "inf" in mag or "nan" in mag:
             continue
         if Number(mag, precision) <= gtol and all(abs(t - r) > tol for r in out):

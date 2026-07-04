@@ -1,6 +1,8 @@
 """Solver wrapper to simplify calculations with Formula."""
 
 import operator
+import re
+from functools import cached_property
 from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional, Union
 
@@ -150,6 +152,16 @@ class Number:
 
     DEFAULT_PRECISION = DEFAULT_PRECISION
 
+    _FROZEN_ATTRS = frozenset({"_value", "_precision", "_is_complex"})
+
+    # Plain real literals need no Formula parse; the mp constructor takes them directly.
+    _PLAIN_REAL = re.compile(r"^-?[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?$")
+
+    def __setattr__(self, name: str, value) -> None:
+        if name in self._FROZEN_ATTRS and hasattr(self, name):
+            raise AttributeError(f"{name} is read-only after construction")
+        super().__setattr__(name, value)
+
     def __init__(
         self,
         expression: Union["Number", str, int, float, *MP_TYPES],
@@ -162,35 +174,61 @@ class Number:
 
         if isinstance(expression, bool):
             raise TypeError("bool is not a valid Number expression")
-        if isinstance(expression, (Number, *MP_TYPES)):
-            self._value = expression._value if isinstance(expression, Number) else expression
-            if precision and self.precision != rounded_precision:
+        if isinstance(expression, Number):
+            self._value = expression._value
+            self._precision = expression._precision
+            self._is_complex = expression._is_complex
+            if precision and self._precision != rounded_precision:
                 raise ValueError(
-                    f"precision mismatch: {self.precision} != {rounded_precision}"
+                    f"precision mismatch: {self._precision} != {rounded_precision}"
+                )
+            return
+        if isinstance(expression, MP_TYPES):
+            self._value = expression
+            self._precision = mp_precision(expression)
+            if precision and self._precision != rounded_precision:
+                raise ValueError(
+                    f"precision mismatch: {self._precision} != {rounded_precision}"
                 )
         elif isinstance(expression, (str, int, float)):
-            self._value = Solver(str(expression), precision=rounded_precision).evaluate()
+            text = str(expression)
+            if self._PLAIN_REAL.match(text):
+                self._value = mp_class(rounded_precision)(text)
+            else:
+                self._value = Solver(text, precision=rounded_precision).evaluate()
+            self._precision = rounded_precision
         else:
             raise TypeError(
                 f"Number expression must be Number, str, int, float, or mp_*; "
                 f"got {type(expression).__name__}"
             )
+        self._is_complex = isinstance(self._value, COMPLEX_TYPES)
+
+    @classmethod
+    def _wrap(cls, value, precision: int, is_complex: bool) -> "Number":
+        """Fast constructor for a raw mp value of known precision/kind (hot path)."""
+        n = cls.__new__(cls)
+        n._value = value
+        n._precision = precision
+        n._is_complex = is_complex
+        return n
 
     @property
     def is_complex(self) -> bool:
-        return isinstance(self._value, COMPLEX_TYPES)
+        return self._is_complex
 
     @property
     def precision(self) -> int:
-        return mp_precision(self._value)
+        return self._precision
 
+    @cached_property
     def parts(self) -> tuple[str, str]:
         """(real, imaginary) as formatted strings at this precision."""
         fmt = FmtFlags.default
-        p = self.precision
-        if self.is_complex:
+        p = self._precision
+        if self._is_complex:
             return self._value.real(p, fmt), self._value.imag(p, fmt)
-        return self._value.str(p, fmt), mp_class(p)("0").str(p, fmt)
+        return self._value.str(p, fmt), "0"
 
     @property
     def real(self) -> "Number":
@@ -215,41 +253,46 @@ class Number:
     def _binop(self, __value, op) -> "Number":
         b = self._coerce(__value)
         a, bb = self._value, b._value
-        if self.is_complex != b.is_complex:
-            cls = mp_class(self.precision, is_complex=True)
+        if self._is_complex != b._is_complex:
+            cls = mp_class(self._precision, is_complex=True)
             fmt = FmtFlags.default
-            if not self.is_complex:
+            if not self._is_complex:
                 a = cls(a.str(0, fmt))
-            if not b.is_complex:
+            if not b._is_complex:
                 bb = cls(bb.str(0, fmt))
-        return Number(op(a, bb))
+        return Number._wrap(op(a, bb), self._precision,
+                            self._is_complex or b._is_complex)
+
+    @cached_property
+    def cmp_key(self):
+        """Real mp value at display precision — the ordering key for reals."""
+        return mp_class(self._precision)(self.parts[0])
 
     def _cmp(self, __value: object, op):
         b = self._coerce(__value)
-        if self.is_complex or b.is_complex:
+        if self._is_complex or b._is_complex:
             raise TypeError("complex numbers are not orderable")
         # Compare at display precision so ordering agrees with ==: guard digits
         # past parts() must not make equal-when-formatted values differ.
-        cls = mp_class(self.precision)
-        return op(cls(self.parts()[0]), cls(b.parts()[0]))
+        return op(self.cmp_key, b.cmp_key)
 
     def __eq__(self, __value: object) -> bool:
         if isinstance(__value, (Number, *MP_TYPES)):
             # Like Number-vs-Number, a raw mp value keeps its own precision.
             other = __value if isinstance(__value, Number) else Number(__value)
-            return self.parts() == other.parts()
+            return self.parts == other.parts
         if not isinstance(__value, (str, int, float)):
             return NotImplemented
-        return self.parts() == self._coerce(__value).parts()
+        return self.parts == self._coerce(__value).parts
 
     def __hash__(self) -> int:
-        return hash(self.parts())
+        return hash(self.parts)
 
     def __bool__(self) -> bool:
-        return self.parts() != ("0", "0")
+        return self.parts != ("0", "0")
 
     def __str__(self) -> str:
-        r, i = self.parts()
+        r, i = self.parts
         if i == "0":
             return r
         sign = "-" if i.startswith("-") else "+"
@@ -262,20 +305,28 @@ class Number:
         return f"Number({str(self)!r}, precision={self.precision})"
 
     def __float__(self) -> float:
-        r, i = self.parts()
+        r, i = self.parts
         if i != "0":
             raise TypeError("cannot convert complex Number to float")
         return float(r)
 
     def __complex__(self) -> complex:
-        r, i = self.parts()
+        r, i = self.parts
         return complex(float(r), float(i))
 
+    def sqrt(self) -> "Number":
+        """Square root: native mp sqrt for reals; complex falls back to ^0.5."""
+        if self._is_complex:
+            return self ** Number("0.5", self._precision)
+        return Number._wrap(self._value.sqrt(), self._precision, False)
+
     def __abs__(self) -> "Number":
-        return Number(abs(self._value))
+        if self._is_complex:
+            return Number(abs(self._value))     # kind of |z| comes from the backend
+        return Number._wrap(abs(self._value), self._precision, False)
 
     def __neg__(self) -> "Number":
-        return Number(-self._value)
+        return Number._wrap(-self._value, self._precision, self._is_complex)
 
     def __add__(self, __value) -> "Number":
         return self._binop(__value, operator.add)

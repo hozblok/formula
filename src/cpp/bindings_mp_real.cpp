@@ -34,6 +34,8 @@ static void register_one_mp_real(py::module_ &m) {
           "__pow__", [](const R &a, const R &b) { return pow(a, b); },
           py::is_operator())
       .def("__abs__", [](const R &x) { return abs(x); })
+      .def("sqrt", [](const R &x) { return sqrt(x); },
+           "Native mp square root (much faster than pow(x, 0.5)).")
       .def("__hash__",
            [](const R &x) { return std::hash<std::string>{}(x.str()); })
       .def("__repr__",

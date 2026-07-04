@@ -48,13 +48,13 @@ def _with_endpoint_roots(func, roots, t0, t1, precision):
     tol = Number(f"1e-{max(precision // 2, 6)}", precision)
     out = list(roots)
     for t in (t0, t1):
-        mag = abs(func.g(t)).parts()[0]  # modulus as a real string (|re,im|)
+        mag = abs(func.g(t)).parts[0]  # modulus as a real string (|re,im|)
         if "inf" in mag or "nan" in mag:
             continue
         g = Number(mag, precision)
         if g > gtol or any(abs(t - r) <= tol for r in out):
             continue
-        gpmag = abs(func.gprime(t)).parts()[0]
+        gpmag = abs(func.gprime(t)).parts[0]
         if "inf" in gpmag or "nan" in gpmag:
             out.append(t)
             continue
@@ -106,15 +106,15 @@ class RaySurfaceFunction:
 
     def g(self, t: Number) -> Number:
         """g(t) = F(O + t*d)."""
-        return Number(self.surface.evaluate(self._point(t)), self.precision)
+        return self.surface.number(self._point(t))
 
     def gprime(self, t: Number) -> Number:
         """g'(t) = grad F . d via the chain rule."""
         point = self._point(t)
-        zero = Number(0, self.precision)
-        total = zero
+        total = Number(0, self.precision)
         for a in self._axes:
-            partial = Number(self.surface.get_derivative(a, point, 0), self.precision)
+            partial = Number(self.surface.get_derivative(a, point, 0),
+                                    self.precision)
             total = total + partial * self.direction[a]
         return total
 
