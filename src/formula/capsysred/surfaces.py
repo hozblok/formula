@@ -16,6 +16,10 @@ import math
 from ..formula import Number
 from .nums import lift, vadd, vscale
 from .types import _EPS_T
+from .wall_cylinder import CylinderWall
+from .wall_polygon import PolygonWall
+from .wall_revolution import RevolutionWall
+from .wall_torus import TorusWall
 
 
 class Mirror:
@@ -98,22 +102,18 @@ def entrance_disk(bore: dict, z0f: float):
 
 
 def _make_wall(bore: dict, z0):
-    """Bore spec -> wall object; typed EXPERIMENTAL walls import lazily."""
+    """Bore spec -> wall object."""
     kind = bore.get("kind", "cylinder")
     center = bore["center"]
     if kind == "implicit":
         return ImplicitWall(bore["surface"], center, bore["aim_radius"])
     if kind == "cylinder":
-        from .wall_cylinder import CylinderWall
         return CylinderWall(center, bore["radius"])
     if kind == "revolution":
-        from .wall_revolution import RevolutionWall
         return RevolutionWall("revolution", center, bore["r2_poly"])
     if kind == "polygon":
-        from .wall_polygon import PolygonWall
         return PolygonWall(center, bore["radius"], bore["sides"], bore["rotation"])
     if kind == "torus":
-        from .wall_torus import TorusWall
         return TorusWall(center, bore["radius"], bore["bend"]["radius"],
                          bore["bend"]["toward"], z0)
     raise ValueError(f"unknown bore kind: {kind!r}")
