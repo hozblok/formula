@@ -105,8 +105,7 @@ class Simulation:
     # ------------------------------------------------------------- MC driver
 
     def _mc_stage(self, stage: str, label: str, src_cfg, scr_cfg, optic,
-                  aim_factory, seed_offset: int, quick: int, refl_fh,
-                  rays_fh=None):
+                  aim_factory, seed_offset: int, quick: int, rays_fh=None):
         cfg = self.cfg
         rng = random.Random(cfg.seed * 1000003 + seed_offset)
         source = Source(src_cfg, rng)
@@ -146,16 +145,6 @@ class Simulation:
                     stats["reflected_rays"] += 1
                     stats["reflections"] += nb
                     stats["bounce_hist"][nb] = stats["bounce_hist"].get(nb, 0) + 1
-                    if refl_fh is not None and sampled:
-                        for bounce, (P, sin_g) in enumerate(tr.reflections):
-                            rc = complex(self.fresnel(sin_g))
-                            refl_fh.write(json.dumps({
-                                "stage": stage, "mode": mode, "ray": ray,
-                                "bounce": bounce,
-                                "x": str(P[0]), "y": str(P[1]), "z": str(P[2]),
-                                "grazing_rad": math.asin(min(1.0, float(sin_g))),
-                                "r_abs": abs(rc), "r_arg": math.atan2(rc.imag, rc.real),
-                            }, ensure_ascii=False) + "\n")
                 pixel = screen.pixel(tr.point) if fate == "screen" else None
                 if rays_fh is not None and sampled:
                     rays_fh.write(json.dumps({
@@ -263,9 +252,7 @@ class Simulation:
                 f"Engine precision: {cfg.precision} digits (Number/Solver, no float64 in the physics path);  seed = {cfg.seed}.",
                 "Stages: 2 — |μ| on screen without optics (MC);  3 — van Cittert–Zernike analytics;  4 — Lloyd's mirror scheme",
                 "(wall = capillary surface in the same tracer): |μ|, intensity, scheme;  5 — Lloyd analytics;",
-                "6 — |μ| and intensity behind the capillary."
-                + (" All reflection points are written to reflections.jsonl."
-                   if cfg.reflections_jsonl else ""),
+                "6 — |μ| and intensity behind the capillary.",
                 f"Free-field stage: source {_um(cfg.free_source.size)} at z = {_mm(cfg.free_source.position[2])}, screen z = {_mm(cfg.free_screen.z)}.",
                 f"Lloyd: r₀ = {_um(cfg.lloyd.height)}, mirror z ∈ [{_mm(cfg.lloyd.z0)}, {_mm(cfg.lloyd.z1)}], source {_um(cfg.lloyd.source.size)}.",
             ],
@@ -277,7 +264,7 @@ class Simulation:
     def _stage2(self, out_dir, quick, rays_fh):
         res = self._mc_stage("free", "2/6 without optics (MC)", self.cfg.free_source,
                              self.cfg.free_screen, None, self._aim_free, 2,
-                             quick, None, rays_fh)
+                             quick, rays_fh)
         screen, maps = res["screen"], res["maps"]
         xs_um = [x * _UM for x in screen.xs()]
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
@@ -347,13 +334,13 @@ class Simulation:
 
     # ------------------------------------------------------------- stage 4+5
 
-    def _stage4(self, out_dir, quick, refl_fh, rays_fh):
+    def _stage4(self, out_dir, quick, rays_fh):
         cfg = self.cfg
         lloyd = cfg.lloyd
         mirror = Mirror(lloyd.z0, lloyd.z1)
         check = self._lloyd_engine_check(mirror)
         res = self._mc_stage("lloyd", "4/6 Lloyd (MC)", lloyd.source, lloyd.screen,
-                             mirror, self._aim_lloyd, 3, quick, refl_fh, rays_fh)
+                             mirror, self._aim_lloyd, 3, quick, rays_fh)
         screen, maps = res["screen"], res["maps"]
         xs_um = [x * _UM for x in screen.xs()]
         row = screen.ny // 2
@@ -505,13 +492,13 @@ class Simulation:
 
     # ------------------------------------------------------------- stage 6
 
-    def _stage6(self, out_dir, quick, refl_fh, rays_fh):
+    def _stage6(self, out_dir, quick, rays_fh):
         cap = self.cfg.capillary
         bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
         check = self._capillary_engine_check(bundle)
         res = self._mc_stage("capillary", "6/6 capillary (MC)", cap.source,
                              cap.screen, bundle, self._aim_capillary, 4,
-                             quick, refl_fh, rays_fh)
+                             quick, rays_fh)
         screen, maps = res["screen"], res["maps"]
         st = res["stats"]
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
@@ -608,9 +595,6 @@ class Simulation:
             "",
         ]
         self.files = []
-        refl_path = os.path.join(out_dir, "reflections.jsonl")
-        refl_fh = (open(refl_path, "w", encoding="utf-8")
-                   if cfg.reflections_jsonl and wanted & {4, 6} else None)
         rays_path = os.path.join(out_dir, "rays.jsonl")
         rays_fh = (open(rays_path, "w", encoding="utf-8")
                    if cfg.rays_jsonl and wanted & {2, 4, 6} else None)
@@ -628,21 +612,19 @@ class Simulation:
             res_lloyd = None
             if 4 in wanted:
                 _log("Stage 4/6: Lloyd's mirror scheme — wall instead of the capillary (MC)")
-                res_lloyd = self._stage4(out_dir, quick, refl_fh, rays_fh)
+                res_lloyd = self._stage4(out_dir, quick, rays_fh)
             if 5 in wanted:
                 _log("Stage 5/6: Lloyd analytics vs MC")
                 self._stage5(out_dir, res_lloyd)
             if 6 in wanted:
                 _log("Stage 6/6: capillary (MC)")
-                self._stage6(out_dir, quick, refl_fh, rays_fh)
+                self._stage6(out_dir, quick, rays_fh)
         finally:
-            for fh in (refl_fh, rays_fh):
-                if fh is not None:
-                    fh.close()
-        for fh, name in ((refl_fh, "reflections.jsonl"), (rays_fh, "rays.jsonl")):
-            if fh is not None:
-                self.files.append(name)
-                _log(f"  → {name}")
+            if rays_fh is not None:
+                rays_fh.close()
+        if rays_fh is not None:
+            self.files.append("rays.jsonl")
+            _log("  → rays.jsonl")
         self.report += ["", "## Files", ""]
         self.report += [f"- {name}" for name in self.files + ["report.md"]]
         report_path = os.path.join(out_dir, "report.md")

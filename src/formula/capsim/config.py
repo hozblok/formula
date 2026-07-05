@@ -54,11 +54,11 @@ DEFAULTS = {
         "screen": {"z": 0.051, "edge_x": 1.6e-5, "edge_y": 1.6e-5, "nx": 41, "ny": 41},
     },
     # rays_jsonl: full-precision per-ray records (replay input); sample_every:
-    # write every k-th ray to both dumps. Records/multi-line runs trace with the
-    # amplitude_min kill off (E0-truncation would bias other energies) and apply
-    # the threshold after the per-line amplitudes are known.
+    # write every k-th ray. Records/multi-line runs trace with the amplitude_min
+    # kill off (E0-truncation would bias other energies) and apply the threshold
+    # after the per-line amplitudes are known.
     "trace": {"max_bounces": 200, "amplitude_min": 1.0e-6,
-              "reflections_jsonl": True, "rays_jsonl": True, "sample_every": 1},
+              "rays_jsonl": True, "sample_every": 1},
 }
 
 
@@ -188,7 +188,6 @@ class Config:
         self.capillary = CapillaryCfg(cfg["capillary"], cfg["source"], cfg["screen"], p)
         self.max_bounces = int(cfg["trace"]["max_bounces"])
         self.amplitude_min = float(cfg["trace"]["amplitude_min"])
-        self.reflections_jsonl = bool(cfg["trace"]["reflections_jsonl"])
         self.rays_jsonl = bool(cfg["trace"]["rays_jsonl"])
         self.sample_every = max(1, int(cfg["trace"]["sample_every"]))
         self.per_line_fresnel = bool(cfg["spectrum"]["per_line_fresnel"])

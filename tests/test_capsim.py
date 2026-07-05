@@ -40,17 +40,6 @@ def test_full_pipeline_files_and_point_source_coherence(tmp_path):
     lit = [m for m, i in zip(maps["mu"][0], maps["intensity"][0]) if i > 0.3 * imax]
     assert lit and min(lit) > 0.9
     assert max(max(row) for row in maps["mu"]) <= 1.0 + 1e-9
-    with open(tmp_path / "reflections.jsonl", encoding="utf-8") as fh:
-        rec = json.loads(next(fh))
-    assert {"stage", "mode", "ray", "bounce", "x", "y", "z",
-            "grazing_rad", "r_abs"} <= set(rec)
-
-
-def test_reflections_jsonl_flag_off(tmp_path):
-    sim = Simulation.from_dict(dict(TINY, trace={"reflections_jsonl": False}))
-    result = sim.run(str(tmp_path), stages=[4])
-    assert "reflections.jsonl" not in result["files"]
-    assert not (tmp_path / "reflections.jsonl").exists()
 
 
 def test_fresnel_matches_engine_reflect_amplitude():
