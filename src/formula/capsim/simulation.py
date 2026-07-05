@@ -115,10 +115,6 @@ class Simulation:
         acc = CoherenceAccumulator(self.lines, screen.ref_pixel(scr_cfg.reference),
                                    cfg.precision)
         aim = aim_factory(source, screen, rng)
-        # Records/multi-line runs must not truncate the geometry at E0: trace with
-        # the kill off, apply amplitude_min once the per-line amplitudes are known.
-        deferred_kill = self.per_line or rays_fh is not None
-        kill = 0.0 if deferred_kill else cfg.amplitude_min
         stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
                  "off_window": 0, "reflected_rays": 0, "reflections": 0,
                  "bounce_hist": {}}
@@ -129,16 +125,17 @@ class Simulation:
             fields = acc.new_mode()
             for ray in range(n_rays):
                 direction = aim(origin)
-                tr = trace_ray(origin, direction, optic, screen.z, self.fresnel,
-                               cfg.max_bounces, kill)
+                tr = trace_ray(origin, direction, optic, screen.z,
+                               cfg.max_bounces)
                 stats["emitted"] += 1
                 nb = len(tr.reflections)
-                sins = [sin_g for _, sin_g, _ in tr.reflections]
-                fate, amps = tr.fate, tr.amplitude
+                sins = [sin_g for _, sin_g in tr.reflections]
+                fate, amps = tr.fate, None
                 if fate == "screen":
-                    if self.per_line:
-                        amps = self.line_amps(sins)
-                    if deferred_kill and cfg.amplitude_min > 0.0:
+                    # geometry is energy-free; Fresnel enters here, per line or at E0
+                    amps = (self.line_amps(sins) if self.per_line
+                            else self.fresnel.product(sins))
+                    if cfg.amplitude_min > 0.0:
                         peak = (max(float(abs(a)) for a in amps) if self.per_line
                                 else float(abs(amps)))
                         if peak < cfg.amplitude_min:
@@ -149,8 +146,8 @@ class Simulation:
                     stats["reflections"] += nb
                     stats["bounce_hist"][nb] = stats["bounce_hist"].get(nb, 0) + 1
                     if refl_fh is not None and sampled:
-                        for bounce, (P, sin_g, r) in enumerate(tr.reflections):
-                            rc = complex(r)
+                        for bounce, (P, sin_g) in enumerate(tr.reflections):
+                            rc = complex(self.fresnel(sin_g))
                             refl_fh.write(json.dumps({
                                 "stage": stage, "mode": mode, "ray": ray,
                                 "bounce": bounce,

@@ -85,9 +85,9 @@ def test_lloyd_mirror_reflection_physics():
     origin = lloyd.source.position
     slope = -float(lloyd.height) / (0.03 - float(origin[2]))
     d = vunit((lift(slope, p), lift(0.0, p), lift(1.0, p)))
-    tr = trace_ray(origin, d, mirror, sim.cfg.lloyd.screen.z, sim.fresnel, 10, 1e-9)
+    tr = trace_ray(origin, d, mirror, sim.cfg.lloyd.screen.z, 10)
     assert tr.fate == "screen" and len(tr.reflections) == 1
-    r = complex(tr.reflections[0][2])
+    r = complex(sim.fresnel(tr.reflections[0][1]))
     assert abs(r) > 0.99                        # far below the critical angle
     assert abs(abs(math.atan2(r.imag, r.real)) - math.pi) < 0.1   # arg r ~ pi
     # unit direction preserved -> opl is a true path length (>= straight line)
@@ -108,7 +108,7 @@ def test_capillary_multibounce_survives():
     slope = 3.5 * 2 * a / length          # ~3-4 wall crossings over the bore
     d = vunit((lift(slope, p), lift(0.0, p), lift(1.0, p)))
     origin = (cap.bores[0]["center"][0], cap.bores[0]["center"][1], cap.z0)
-    tr = trace_ray(origin, d, bundle, cap.screen.z, sim.fresnel, 50, 1e-9)
+    tr = trace_ray(origin, d, bundle, cap.screen.z, 50)
     assert tr.fate == "screen" and len(tr.reflections) >= 3
 
 
@@ -162,12 +162,12 @@ def test_cylinder_grazing_invariant_gives_r_pow_nb():
     length = float(cap.z1) - float(cap.z0)
     d = vunit((lift(3.5 * 2 * a / length, p), lift(0.0, p), lift(1.0, p)))
     origin = (cap.bores[0]["center"][0], cap.bores[0]["center"][1], cap.z0)
-    tr = trace_ray(origin, d, bundle, cap.screen.z, sim.fresnel, 50, 0.0)
-    sins = [s for _, s, _ in tr.reflections]
+    tr = trace_ray(origin, d, bundle, cap.screen.z, 50)
+    sins = [s for _, s in tr.reflections]
     assert len(sins) >= 3
     assert max(abs(float(s) - float(sins[0])) for s in sins) < 1e-15
     r1 = sim.fresnel(sins[0])
-    assert float(abs(tr.amplitude - r1 ** len(sins))) < 1e-25
+    assert float(abs(sim.fresnel.product(sins) - r1 ** len(sins))) < 1e-25
 
 
 def test_spectral_lines_carry_energy_and_k(tmp_path):
@@ -274,14 +274,14 @@ def test_cone_adiabatic_invariant_and_engine():
     assert kind == "reflect"
     t_engine = engine_hit_t(bundle.walls[0].expr_um, origin, d, 0.12)
     assert abs(float(t_fast - t_engine)) / float(t_fast) < 1e-18
-    tr = trace_ray(origin, d, bundle, cap.screen.z, sim.fresnel, 400, 0.0)
+    tr = trace_ray(origin, d, bundle, cap.screen.z, 400)
     assert tr.fate == "screen" and len(tr.reflections) >= 3
-    sins = [float(s) for _, s, _ in tr.reflections]
+    sins = [float(s) for _, s in tr.reflections]
     steps = [b - a for a, b in zip(sins, sins[1:])]
     assert all(5.0e-5 < s < 9.0e-5 for s in steps)      # ~2k = 7e-5 per bounce
     wall = bundle.walls[0]
-    inv = [math.sqrt(wall.r2f(float(P[2]))) * s
-           for (P, s, _) in ((P, float(s), r) for P, s, r in tr.reflections)]
+    inv = [math.sqrt(wall.r2f(float(P[2]))) * float(s)
+           for P, s in tr.reflections]
     assert max(inv) / min(inv) < 1.05                   # a·θ adiabatic invariant
 
 
@@ -299,12 +299,12 @@ def test_torus_whispering_and_engine():
     t_engine = engine_hit_t(bundle.walls[0].expr_um, origin, d, 0.12)
     assert abs(float(t_fast - t_engine)) / float(t_fast) < 1e-16
     # whispering gallery: many shallow bounces on the outer wall, z monotone
-    tr = trace_ray(origin, d, bundle, cap.screen.z, sim.fresnel, 400, 0.0)
+    tr = trace_ray(origin, d, bundle, cap.screen.z, 400)
     assert tr.fate == "screen" and len(tr.reflections) >= 5
-    zs = [float(P[2]) for P, _, _ in tr.reflections]
+    zs = [float(P[2]) for P, _ in tr.reflections]
     assert zs == sorted(zs)
     R, a = 1.5, 3.0e-6
-    for P, sin_g, _ in tr.reflections:
+    for P, sin_g in tr.reflections:
         xf, zf = float(P[0]), float(P[2])
         rho = math.hypot(xf - R, zf)
         assert abs((rho - R) ** 2 + float(P[1]) ** 2 - a * a) < 1e-9 * a * a
@@ -321,7 +321,7 @@ def test_torus_gentle_bend_keeps_on_wall_points():
     p = sim.cfg.precision
     origin = (lift(1.6e-5, p), lift(0.0, p), lift(-0.01, p))
     d = vunit((lift(1.9e-4, p), lift(0.0, p), lift(1.0, p)))
-    tr = trace_ray(origin, d, bundle, cap.screen.z, sim.fresnel, 50, 0.0)
+    tr = trace_ray(origin, d, bundle, cap.screen.z, 50)
     # the absorb-bug killed the ray right after its first reflection
     assert tr.fate == "screen" and len(tr.reflections) >= 1
 
@@ -338,9 +338,9 @@ def test_polygon_hex_flat_face_physics():
     t_engine = engine_hit_t(bundle.walls[0].expr_um, origin, d, 0.08)
     assert abs(float(t_fast - t_engine)) / float(t_fast) < 1e-20
     # opposite faces are parallel: grazing angle is exactly preserved
-    tr = trace_ray(origin, d, bundle, cap.screen.z, sim.fresnel, 50, 0.0)
+    tr = trace_ray(origin, d, bundle, cap.screen.z, 50)
     assert tr.fate == "screen" and len(tr.reflections) >= 3
-    sins = [float(s) for _, s, _ in tr.reflections]
+    sins = [float(s) for _, s in tr.reflections]
     assert max(sins) - min(sins) < 1e-15
     # a point beyond the flat (but inside the circumradius) is in the web
     x = lift(3.2e-6, p)
@@ -405,7 +405,7 @@ def test_ellipsoid_focus_opl_degeneracy():
     target = (lift(r_star, p), lift(0.0, p), lift(0.018, p))
     d = vunit((target[0] - src[0], target[1] - src[1], target[2] - src[2]))
     screen_z = lift(zc, p) + f
-    tr = trace_ray(src, d, bundle, screen_z, sim.fresnel, 10, 0.0)
+    tr = trace_ray(src, d, bundle, screen_z, 10)
     assert tr.fate == "screen" and len(tr.reflections) == 1
     assert float(tr.reflections[0][1]) < 3.0e-3         # grazing < theta_c
     assert abs(float(tr.opl) - 2.0 * A) < 1e-20
