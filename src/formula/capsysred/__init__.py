@@ -5,7 +5,7 @@ of coherence with no optics (MC + van Cittert-Zernike analytics), the Lloyd
 single-wall experiment (MC + two-path analytics, wall = capillary surface in
 the same tracer), and the capillary run — images, rays.jsonl, report.md:
 
-    python3 -m formula.CAPSYS2 config.yaml -o out/
+    python3 -m formula.capsysred config.yaml -o out/
 """
 
 from .config import Config, load

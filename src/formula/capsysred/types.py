@@ -1,4 +1,4 @@
-"""Shared type aliases for CAPSYS2 geometry."""
+"""Shared type aliases for CAPSYSred geometry."""
 
 from ..formula import Number
 
