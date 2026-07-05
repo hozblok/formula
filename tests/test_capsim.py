@@ -13,7 +13,8 @@ from formula.capsim.spectrum import spectral_lines, wavevector
 from formula.capsim.surfaces import CapillaryBundle, Mirror, engine_hit_t
 from formula.capsim.symbolic import (LineAmplitudes, ampl_template,
                                      ray_expression, ray_field_template)
-from formula.capsim.trace import FresnelAmplitude, trace_ray
+from formula.capsim.fresnel import FresnelAmplitude
+from formula.capsim.trace import trace_ray
 from formula import xray
 from formula.formula import Number, Solver
 

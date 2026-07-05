@@ -8,8 +8,7 @@ and the normal is radial with zero z-component."""
 from ..formula import Number
 from .nums import const, lift, sqrt, vadd, vscale, vunit
 from .surfaces import _EPS_T
-
-Vec3 = tuple[Number, Number, Number]
+from .types import Vec3
 
 
 class CylinderWall:

@@ -8,7 +8,9 @@ later — Fresnel amplitudes are computed from the recorded sines.
 
 from collections import namedtuple
 
+from ..formula import Number
 from .nums import const, vadd, vdot, vscale, vsub
+from .types import Vec3
 
 # fate: "screen" | "absorbed" | "lost". reflections: [(point, sin_grazing), ...]
 TraceResult = namedtuple(
@@ -16,33 +18,8 @@ TraceResult = namedtuple(
 )
 
 
-class FresnelAmplitude:
-    """Complex r(sin theta), s-pol, with 2*delta and 2*beta fixed at the energy.
-
-    Same formula as xray.reflect_amplitude (cross-checked per run); constants are
-    precomputed once so the per-bounce cost is pure Number arithmetic.
-    """
-
-    def __init__(self, material, energy_kev):
-        p = energy_kev.precision
-        two = const("2", p)
-        self.d2 = material.delta(energy_kev, p) * two
-        self.b2i = material.beta(energy_kev, p) * two * const("i", p)
-        self._half = const("0.5", p)
-        self._one = const("1", p)
-
-    def __call__(self, sin_theta):
-        root = (sin_theta * sin_theta - self.d2 - self.b2i) ** self._half
-        return (sin_theta - root) / (sin_theta + root)
-
-    def product(self, sins):
-        amp = self._one
-        for s in sins:
-            amp = amp * self(s)
-        return amp
-
-
-def trace_ray(origin, direction, optic, screen_z, max_bounces):
+def trace_ray(origin: Vec3, direction: Vec3, optic, screen_z: Number,
+              max_bounces: int) -> TraceResult:
     """Trace one ray from the source point to the screen plane z=screen_z.
 
     `direction` must be unit (Number-normalized) so parameters are path lengths.

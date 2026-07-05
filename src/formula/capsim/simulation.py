@@ -26,7 +26,8 @@ from .source import Source, aim_disk_direction, slope_direction
 from .spectrum import SpectralLine, spectral_lines, wavelength_m
 from .surfaces import CapillaryBundle, Mirror, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
-from .trace import FresnelAmplitude, trace_ray
+from .fresnel import FresnelAmplitude
+from .trace import trace_ray
 
 ALL_STAGES = (1, 2, 3, 4, 5, 6)
 _UM = 1e6
