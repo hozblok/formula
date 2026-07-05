@@ -9,7 +9,7 @@ later — Fresnel amplitudes are computed from the recorded sines.
 from collections import namedtuple
 
 from ..formula import Number
-from .nums import const, vadd, vdot, vscale, vsub
+from .nums import vadd, vdot, vscale, vsub
 from .types import Vec3
 
 # fate: "screen" | "absorbed" | "lost". reflections: [(point, sin_grazing), ...]
@@ -25,8 +25,8 @@ def trace_ray(origin: Vec3, direction: Vec3, optic, screen_z: Number,
     `direction` must be unit (Number-normalized) so parameters are path lengths.
     """
     p = origin[0].precision
-    two = const("2", p)
-    opl = const("0", p)
+    two = Number("2", p)
+    opl = Number("0", p)
     reflections = []
     O, d = origin, direction
 

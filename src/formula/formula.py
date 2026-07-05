@@ -157,6 +157,21 @@ class Number:
     # Plain real literals need no Formula parse; the mp constructor takes them directly.
     _PLAIN_REAL = re.compile(r"^-?[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?$")
 
+    # Interned constants: Number(name, p) returns a shared instance per (name, precision).
+    _CONST_NAMES = frozenset([str(n) for n in range(101)] + ["0.5", "pi", "i"])
+    _CONST_CACHE: dict = {}
+
+    def __new__(cls, expression=None, precision=None):
+        if precision is not None and not 0 < precision <= MAX_PRECISION:
+            raise ValueError(f"precision must be in [1, {MAX_PRECISION}] (got {precision})")
+        name = str(expression) if isinstance(expression, (str, int, float)) else None
+        if name in cls._CONST_NAMES:
+            key = (name, round_up_precision(precision or cls.DEFAULT_PRECISION))
+            hit = cls._CONST_CACHE.get(key)
+            if hit is not None:
+                return hit
+        return object.__new__(cls)
+
     def __setattr__(self, name: str, value) -> None:
         if name in self._FROZEN_ATTRS and hasattr(self, name):
             raise AttributeError(f"{name} is read-only after construction")
@@ -167,8 +182,8 @@ class Number:
         expression: Union["Number", str, int, float, *MP_TYPES],
         precision: Optional[int] = None,
     ):
-        if precision is not None and not 0 < precision <= MAX_PRECISION:
-            raise ValueError(f"precision must be in [1, {MAX_PRECISION}] (got {precision})")
+        if "_value" in self.__dict__:            # interned constant: already built
+            return
 
         rounded_precision = round_up_precision(precision or self.DEFAULT_PRECISION)
 
@@ -197,6 +212,8 @@ class Number:
             else:
                 self._value = Solver(text, precision=rounded_precision).evaluate()
             self._precision = rounded_precision
+            if text in self._CONST_NAMES:
+                self._CONST_CACHE.setdefault((text, self._precision), self)
         else:
             raise TypeError(
                 f"Number expression must be Number, str, int, float, or mp_*; "
@@ -207,7 +224,7 @@ class Number:
     @classmethod
     def _wrap(cls, value, precision: int, is_complex: bool) -> "Number":
         """Fast constructor for a raw mp value of known precision/kind (hot path)."""
-        n = cls.__new__(cls)
+        n = object.__new__(cls)
         n._value = value
         n._precision = precision
         n._is_complex = is_complex

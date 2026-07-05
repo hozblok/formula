@@ -14,26 +14,26 @@ a formal proof — the guarantee is only as good as the M2 bound.
 from typing import List, Optional
 
 from ..formula import Number
-from .utils import const, merge_close_roots, rtsafe, sign
+from .utils import merge_close_roots, rtsafe, sign
 
 
 def _estimate_m2(func, t_min: Number, t_max: Number, prec: int, samples: int) -> Number:
     """Inflated estimate of max|g''| via the Lipschitz constant of g' on a grid."""
     step = (t_max - t_min) / Number(samples, prec)
     gp_prev = func.gprime(t_min)
-    m2 = const("0", prec)
+    m2 = Number("0", prec)
     t = t_min
     for _ in range(samples):
         t = t + step
         gp = func.gprime(t)
         m2 = max(m2, abs(gp - gp_prev) / step)
         gp_prev = gp
-    return m2 * const("2", prec)
+    return m2 * Number("2", prec)
 
 
 def _candidates(func, t_min, t_max, m2, region_tol):
     """Sub-intervals (width < region_tol) the exclusion test cannot rule out."""
-    half = const("0.5", t_min.precision)
+    half = Number("0.5", t_min.precision)
     stack = [(t_min, t_max)]
     out = []
     while stack:
@@ -62,7 +62,7 @@ def _merge(regions, region_tol):
 
 def _bisect_gprime(func, a, b, xacc):
     """Locate g'=0 in [a, b] (a turning point) by bisection."""
-    half = const("0.5", a.precision)
+    half = Number("0.5", a.precision)
     sa = sign(func.gprime(a))
     for _ in range(10 * a.precision):
         m = (a + b) * half
@@ -84,7 +84,7 @@ def _refine(func, a, b, xacc, gtol) -> Optional[Number]:
     if sign(func.gprime(a)) * sign(func.gprime(b)) < 0:  # tangency: g'=0
         t = _bisect_gprime(func, a, b, xacc)
         return t if abs(func.g(t)) < gtol else None
-    m = (a + b) * const("0.5", a.precision)
+    m = (a + b) * Number("0.5", a.precision)
     return m if abs(func.g(m)) < gtol else None
 
 

@@ -1,7 +1,6 @@
 """Fresnel reflection amplitude with energy-fixed optical constants."""
 
 from ..formula import Number
-from .nums import const
 
 
 class FresnelAmplitude:
@@ -13,11 +12,11 @@ class FresnelAmplitude:
 
     def __init__(self, material, energy_kev: Number):
         p = energy_kev.precision
-        two = const("2", p)
+        two = Number("2", p)
         self.d2 = material.delta(energy_kev, p) * two
-        self.b2i = material.beta(energy_kev, p) * two * const("i", p)
-        self._half = const("0.5", p)
-        self._one = const("1", p)
+        self.b2i = material.beta(energy_kev, p) * two * Number("i", p)
+        self._half = Number("0.5", p)
+        self._one = Number("1", p)
 
     def __call__(self, sin_theta: Number) -> Number:
         root = (sin_theta * sin_theta - self.d2 - self.b2i) ** self._half

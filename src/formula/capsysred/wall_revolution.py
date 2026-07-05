@@ -7,7 +7,7 @@ ellipsoid, paraboloid in one form; the ray intersection is an exact quadratic.
 The straight cylinder is served by its own wall_cylinder.CylinderWall."""
 
 from ..formula import Number
-from .nums import const, lift, sqrt, vadd, vscale, vunit
+from .nums import lift, sqrt, vadd, vscale, vunit
 from .surfaces import _EPS_T
 from .types import Vec3
 
@@ -19,8 +19,8 @@ class RevolutionWall:
         self.kind, self.center, self.eps = kind, center, eps
         self.c0, self.c1, self.c2 = r2
         p = center[0].precision
-        self._two, self._four = const("2", p), const("4", p)
-        self._zero, self._half = const("0", p), const("0.5", p)
+        self._two, self._four = Number("2", p), Number("4", p)
+        self._zero, self._half = Number("0", p), Number("0.5", p)
         self._cxf, self._cyf = float(center[0]), float(center[1])
         self._c0f, self._c1f, self._c2f = (float(v) for v in r2)
         um = lift(1e6, p)

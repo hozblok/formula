@@ -6,7 +6,8 @@
 """Regular-polygon bore: flat faces; `radius` is the apothem, face k normal
 sits at rotation + 2πk/n. Hits are plane intersections (exact linear)."""
 
-from .nums import const, lift, solver, vadd, vscale
+from ..formula import Number
+from .nums import lift, solver, vadd, vscale
 from .surfaces import _EPS_T
 
 
@@ -14,10 +15,10 @@ class PolygonWall:
     def __init__(self, center, apothem, sides, rotation):
         self.kind, self.center, self.apothem = "polygon", center, apothem
         p = center[0].precision
-        self._zero = const("0", p)
+        self._zero = Number("0", p)
         n = int(sides)
         cos_s, sin_s = solver("cos(x)", p), solver("sin(x)", p)
-        two_pi = const("pi", p) * const("2", p)
+        two_pi = Number("pi", p) * Number("2", p)
         self.faces = []
         for k in range(n):
             phi = str(rotation + two_pi * lift(k, p) / lift(n, p))

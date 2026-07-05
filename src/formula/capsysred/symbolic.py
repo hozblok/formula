@@ -7,7 +7,8 @@ Templates are cached Solvers keyed by bounce count (variables s1..s_nb, E, L);
 """
 
 from ..xray import HC_KEV_ANGSTROM, R_E
-from .nums import const, solver
+from ..formula import Number
+from .nums import solver
 
 
 def fresnel_expr(s: str = "s", dd: str = "dd", bb: str = "bb") -> str:
@@ -59,7 +60,7 @@ class LineAmplitudes:
         self.material = material
         self.energies = [str(line.e_kev) for line in lines]
         self.precision = precision
-        self._one = const("1", precision)
+        self._one = Number("1", precision)
 
     def __call__(self, sins):
         """sins: sin(theta_j) per bounce (Number or full-precision str)."""

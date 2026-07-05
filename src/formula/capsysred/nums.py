@@ -1,4 +1,4 @@
-"""Scalar and 3-vector kit on Number: fast float lift, cached solvers/constants.
+"""Scalar and 3-vector kit on Number: fast float lift, cached solvers.
 
 Precision travels inside Numbers (never as a parameter downstream): `lift` is the
 only entry that takes one, and callers derive it from a Number they already hold.
@@ -8,7 +8,6 @@ from ..backend import mp_class, round_up_precision
 from ..formula import Number, Solver
 
 _SOLVERS: dict = {}
-_CONSTS: dict = {}
 
 
 def lift(value, precision: int) -> Number:
@@ -23,14 +22,6 @@ def solver(expression: str, precision: int) -> Solver:
     if key not in _SOLVERS:
         _SOLVERS[key] = Solver(expression, key[1])
     return _SOLVERS[key]
-
-
-def const(name: str, precision: int) -> Number:
-    """Cached named constant: '0' '1' '2' '0.5' 'i' 'pi' ..."""
-    key = (name, round_up_precision(precision))
-    if key not in _CONSTS:
-        _CONSTS[key] = Number(name, key[1])
-    return _CONSTS[key]
 
 
 def exp_i(x: Number) -> Number:
@@ -68,4 +59,4 @@ def vunit(a):
 
 
 def conj(z: Number) -> Number:
-    return z.real - const("i", z.precision) * z.imag
+    return z.real - Number("i", z.precision) * z.imag

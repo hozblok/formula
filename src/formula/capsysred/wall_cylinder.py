@@ -6,7 +6,7 @@
 and the normal is radial with zero z-component."""
 
 from ..formula import Number
-from .nums import const, lift, sqrt, vadd, vscale, vunit
+from .nums import lift, sqrt, vadd, vscale, vunit
 from .surfaces import _EPS_T
 from .types import Vec3
 
@@ -19,8 +19,8 @@ class CylinderWall:
         self.eps = eps
         self._a2 = radius * radius
         p = center[0].precision
-        self._two, self._four = const("2", p), const("4", p)
-        self._zero = const("0", p)
+        self._two, self._four = Number("2", p), Number("4", p)
+        self._zero = Number("0", p)
         self._cxf, self._cyf = float(center[0]), float(center[1])
         self._a2f = float(self._a2)
         um = lift(1e6, p)

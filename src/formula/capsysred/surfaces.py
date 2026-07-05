@@ -14,7 +14,7 @@ every run cross-checks the first hit via expr_um (`engine_hit_t`).
 import math
 
 from ..formula import Number
-from .nums import const, lift, vadd, vscale
+from .nums import lift, vadd, vscale
 
 # Forward-step floor for the ray parameter t (m): rejects the t~0 root at the
 # reflection origin (on-wall point); far below any physical chord.
@@ -28,7 +28,7 @@ class Mirror:
         self.z0, self.z1 = z0, z1
         self._z0f, self._z1f = float(z0), float(z1)
         p = z0.precision
-        self._normal = (const("1", p), const("0", p), const("0", p))
+        self._normal = (Number("1", p), Number("0", p), Number("0", p))
 
     expr_um = "x"  # surface F=0 for the engine cross-check (scale-free)
 
@@ -128,7 +128,7 @@ class CapillaryBundle:
     def __init__(self, bores, z0, z1):
         self.bores, self.z0, self.z1 = bores, z0, z1
         self._z0f, self._z1f = float(z0), float(z1)
-        self._zero = const("0", z0.precision)
+        self._zero = Number("0", z0.precision)
         self.walls = []
         for bore in bores:
             wall = _make_wall(bore, z0)

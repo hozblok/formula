@@ -8,7 +8,8 @@ polish at full precision, exact-sign bisection as the fallback."""
 
 import math
 
-from .nums import const, lift, sqrt, vadd, vdot, vnorm, vscale, vsub, vunit
+from ..formula import Number
+from .nums import lift, sqrt, vadd, vdot, vnorm, vscale, vsub, vunit
 from .surfaces import _EPS_T
 
 
@@ -49,7 +50,7 @@ def _quartic_first(c, t_capf):
     fallback for roots Newton cannot polish (near-double, stalled seeds).
     """
     p = c[0].precision
-    dc = (c[0] * const("4", p), c[1] * const("3", p), c[2] * const("2", p), c[3])
+    dc = (c[0] * Number("4", p), c[1] * Number("3", p), c[2] * Number("2", p), c[3])
     cand = sorted(r.real for r in _dk_roots([float(v) for v in c])
                   if abs(r.imag) <= 1e-6 * max(1.0, abs(r.real))
                   and _EPS_T / 2 < r.real <= t_capf)
@@ -71,7 +72,7 @@ def _quartic_first(c, t_capf):
     # sign-change scan (geometric grid) + bisection, all on the exact quartic
     lo = lift(_EPS_T, p)
     flo = float(_horner(c, lo))
-    half = const("0.5", p)
+    half = Number("0.5", p)
     for k in range(1, 49):
         hi = lift(_EPS_T * (t_capf / _EPS_T) ** (k / 48.0), p)
         fhi = float(_horner(c, hi))
@@ -94,8 +95,8 @@ class TorusWall:
     def __init__(self, center, a, R, toward, z0):
         self.kind = "torus"
         p = center[0].precision
-        self._one, self._two = const("1", p), const("2", p)
-        self._zero, self._four = const("0", p), const("4", p)
+        self._one, self._two = Number("1", p), Number("2", p)
+        self._zero, self._four = Number("0", p), Number("4", p)
         norm = sqrt(toward[0] * toward[0] + toward[1] * toward[1])
         ux, uy = toward[0] / norm, toward[1] / norm
         self.C = (center[0] + R * ux, center[1] + R * uy, z0)
