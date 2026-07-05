@@ -4,8 +4,6 @@ Binning is an integer decision, so it runs on floats; positions and phases stay
 Number upstream. Pixel index = iy*nx + ix, row-major from the window corner.
 """
 
-import math
-
 
 class ScreenGrid:
     def __init__(self, cfg):

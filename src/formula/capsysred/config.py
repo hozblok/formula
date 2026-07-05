@@ -8,7 +8,7 @@ Counts stay int, spectral weights stay float (not phase-critical).
 import copy
 
 from ..formula import Number
-from ..xray import GlassMaterial, FUSED_SILICA
+from ..xray import FUSED_SILICA
 
 DEFAULTS = {
     "precision": 30,

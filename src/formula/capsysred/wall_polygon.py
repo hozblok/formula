@@ -8,7 +8,7 @@ sits at rotation + 2πk/n. Hits are plane intersections (exact linear)."""
 
 from ..formula import Number
 from .nums import lift, solver, vadd, vscale
-from .surfaces import _EPS_T
+from .types import _EPS_T
 
 
 class PolygonWall:

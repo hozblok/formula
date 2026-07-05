@@ -7,8 +7,7 @@ and the normal is radial with zero z-component."""
 
 from ..formula import Number
 from .nums import lift, sqrt, vadd, vscale, vunit
-from .surfaces import _EPS_T
-from .types import Vec3
+from .types import _EPS_T, Vec3
 
 
 class CylinderWall:

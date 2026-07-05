@@ -15,10 +15,7 @@ import math
 
 from ..formula import Number
 from .nums import lift, vadd, vscale
-
-# Forward-step floor for the ray parameter t (m): rejects the t~0 root at the
-# reflection origin (on-wall point); far below any physical chord.
-_EPS_T = 1e-12
+from .types import _EPS_T
 
 
 class Mirror:

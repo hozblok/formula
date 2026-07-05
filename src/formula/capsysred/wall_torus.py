@@ -10,7 +10,7 @@ import math
 
 from ..formula import Number
 from .nums import lift, sqrt, vadd, vdot, vnorm, vscale, vsub, vunit
-from .surfaces import _EPS_T
+from .types import _EPS_T
 
 
 def _horner(cs, t):
