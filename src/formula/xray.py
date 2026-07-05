@@ -11,7 +11,7 @@ building block for tracing X-rays down a glass capillary (see XRAY.md).
 from collections import namedtuple
 from typing import Union
 
-from .formula import Number, Solver
+from .formula import Number
 from .intersect import RaySurface
 
 # Classical electron radius (m) and photon energy*wavelength product (keV*angstrom).
