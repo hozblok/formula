@@ -99,7 +99,7 @@ class Simulation:
             {"s1": str(s), "E": str(self.cfg.energy_kev)})
         diff = float(abs(r_fast - r_ref))
         diff_sym = float(abs(r_sym - r_ref))
-        return (f"Fresnel r(θ=0.1 mrad): |r_capsim − r_xray| = {diff:.1e}; "
+        return (f"Fresnel r(θ=0.1 mrad): |r_CAPSYS2 − r_xray| = {diff:.1e}; "
                 f"|r_symbolic_template − r_xray| = {diff_sym:.1e}")
 
     # ------------------------------------------------------------- MC driver
@@ -579,12 +579,12 @@ class Simulation:
             wanted.add(4)
         os.makedirs(out_dir, exist_ok=True)
         t0 = time.time()
-        _log(f"capsim: stages {sorted(wanted)}, output to {out_dir}"
+        _log(f"CAPSYS2: stages {sorted(wanted)}, output to {out_dir}"
              + (f", speedup ×{quick}" if quick > 1 else ""))
         fres_check = self._fresnel_check()
         _log("  " + fres_check)
         self.report = [
-            "# capsim report",
+            "# CAPSYS2 report",
             "",
             f"- energy: {float(cfg.energy_kev):g} keV (λ = {float(self.lam) * 1e10:.4f} Å); spectrum: {self._spectrum_note()}",
             f"- material: {cfg.material.name}; δ = {self.delta_f:.3e}, β = {self.beta_f:.3e}, θ_c = {self.theta_c * 1e3:.2f} mrad",
@@ -661,7 +661,7 @@ class Simulation:
             cfg.material, [SpectralLine(cfg.energy_kev, None, 1.0)], p))
         self.files = []
         report = [
-            "# capsim report — replay",
+            "# CAPSYS2 report — replay",
             "",
             f"- records: {records_path}",
             f"- energy: {float(cfg.energy_kev):g} keV; spectrum: {self._spectrum_note()}",

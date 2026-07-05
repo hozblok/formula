@@ -1,4 +1,4 @@
-"""CLI: python3 -m formula.capsim [config.yaml] -o out/ [--stages 4,5] [--quick N]
+"""CLI: python3 -m formula.CAPSYS2 [config.yaml] -o out/ [--stages 4,5] [--quick N]
 [--replay rays.jsonl]"""
 
 import argparse
@@ -9,13 +9,13 @@ from .simulation import ALL_STAGES, Simulation
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        prog="python3 -m formula.capsim",
+        prog="python3 -m formula.CAPSYS2",
         description="Source → (Lloyd mirror wall | capillaries) → screen → |μ| and I: "
                     "images, rays.jsonl and report.md into the output directory.")
     parser.add_argument("config", nargs="?", default=None,
                         help="YAML with parameters (built-in defaults when omitted)")
-    parser.add_argument("-o", "--out", default="capsim-out",
-                        help="output directory (default ./capsim-out)")
+    parser.add_argument("-o", "--out", default="CAPSYS2-out",
+                        help="output directory (default ./CAPSYS2-out)")
     parser.add_argument("--stages", default=None,
                         help="which stages to run, e.g. 1,2,3 (default all; "
                              "3 requires 2, 5 requires 4 — added automatically)")

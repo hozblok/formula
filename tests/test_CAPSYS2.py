@@ -1,4 +1,4 @@
-"""Smoke and physics checks for the capsim package (tiny ray budgets)."""
+"""Smoke and physics checks for the CAPSYS2 package (tiny ray budgets)."""
 
 import json
 import math
@@ -6,15 +6,15 @@ import os
 
 import pytest
 
-from formula.capsim import Simulation
-from formula.capsim.analytic import lloyd_reference, vcz_mu
-from formula.capsim.nums import exp_i, lift, vunit
-from formula.capsim.spectrum import spectral_lines, wavevector
-from formula.capsim.surfaces import CapillaryBundle, Mirror, engine_hit_t
-from formula.capsim.symbolic import (LineAmplitudes, ampl_template,
+from formula.CAPSYS2 import Simulation
+from formula.CAPSYS2.analytic import lloyd_reference, vcz_mu
+from formula.CAPSYS2.nums import exp_i, lift, vunit
+from formula.CAPSYS2.spectrum import spectral_lines, wavevector
+from formula.CAPSYS2.surfaces import CapillaryBundle, Mirror, engine_hit_t
+from formula.CAPSYS2.symbolic import (LineAmplitudes, ampl_template,
                                      ray_expression, ray_field_template)
-from formula.capsim.fresnel import FresnelAmplitude
-from formula.capsim.trace import trace_ray
+from formula.CAPSYS2.fresnel import FresnelAmplitude
+from formula.CAPSYS2.trace import trace_ray
 from formula import xray
 from formula.formula import Number, Solver
 
@@ -45,7 +45,7 @@ def test_full_pipeline_files_and_point_source_coherence(tmp_path):
 def test_fresnel_matches_engine_reflect_amplitude():
     sim = Simulation.from_dict(TINY)
     p = sim.cfg.precision
-    from formula.capsim.nums import solver
+    from formula.CAPSYS2.nums import solver
     s = solver("sin(x)", p).number({"x": "2.5e-4"})
     r_fast = sim.fresnel(s)
     r_ref = xray.reflect_amplitude("2.5e-4", str(sim.cfg.energy_kev),
