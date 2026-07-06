@@ -27,7 +27,7 @@ from .spectrum import SpectralLine, spectral_lines, wavelength_m
 from .surfaces import CapillaryBundle, Mirror, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
-from .trace import trace_ray
+from .native import make_tracer
 
 ALL_STAGES = (1, 2, 3, 4, 5, 6)
 _UM = 1e6
@@ -115,6 +115,7 @@ class Simulation:
         acc = CoherenceAccumulator(self.lines, screen.ref_pixel(scr_cfg.reference),
                                    cfg.precision)
         aim = aim_factory(source, screen, rng)
+        tracer = make_tracer(optic)   # C++ twin when supported; bit-identical
         stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
                  "off_window": 0, "reflected_rays": 0, "reflections": 0,
                  "bounce_hist": {}}
@@ -125,8 +126,8 @@ class Simulation:
             fields = acc.new_mode()
             for ray in range(n_rays):
                 direction = aim(origin)
-                tr = trace_ray(origin, direction, optic, screen.z,
-                               cfg.max_bounces)
+                tr = tracer(origin, direction, optic, screen.z,
+                            cfg.max_bounces)
                 stats["emitted"] += 1
                 nb = len(tr.reflections)
                 sins = [sin_g for _, sin_g in tr.reflections]
