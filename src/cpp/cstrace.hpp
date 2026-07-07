@@ -1,169 +1,69 @@
-// C++ twin of the CAPSYSred tracer (capsysred/trace.py, surfaces.py,
-// wall_*.py): the same mp operations in the same order, so every result is
-// bit-identical to the Python reference (tests/test_native_trace.py).
-//
-// Every binary op goes through the lvalue helpers below. Python reaches
-// boost only through the pybind-bound lvalue operators (t = a; t op= b);
-// bare C++ expressions would pick boost's rvalue overloads, which compute
-// in place with swapped operands and leave different low-order limbs in
-// cpp_dec_float results. Operand order is Python's, verbatim.
-//
-// Number bridges are exact by construction: float(Number) formats at P
-// digits and parses with CPython's own float(str); lift(float) parses
-// CPython's own repr(float); comparisons re-parse display strings.
+// C++ fast path of the CAPSYSred tracer (capsysred/trace.py, surfaces.py,
+// wall_*.py): the same algorithms, branch structure and mp type as the Python
+// reference, written in plain boost arithmetic. Results agree with Python to
+// working precision, not bit-for-bit (tests/test_native_trace.py asserts
+// fates, event kinds and branch choices exactly, values within tolerances).
 #ifndef CS_TRACE_HPP
 #define CS_TRACE_HPP
-
-#include <pybind11/pybind11.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <limits>
+#include <complex>
+#include <cstddef>
 #include <optional>
-#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include <cseval/cseval.hpp>
 
-#include "strip_neg_zero.hpp"
-
 namespace cstrace {
 
 // Forward-step floor for the ray parameter t (m); capsysred.types._EPS_T.
 constexpr double kEpsT = 1e-12;
 
-// float(str): CPython's parser itself (correctly rounded, overflow -> inf).
-inline double parse_double(const std::string &s) {
-  double v = PyOS_string_to_double(s.c_str(), nullptr, nullptr);
-  if (v == -1.0 && PyErr_Occurred()) {
-    throw pybind11::error_already_set();
+// wall_torus._dk_roots: all roots of a float polynomial (Durand-Kerner);
+// only seed material — every root is re-polished in mp or bisected exactly.
+inline std::vector<std::complex<double>> dk_roots(
+    const std::vector<double> &cf) {
+  if (cf.size() < 2) {
+    return {};
   }
-  return v;
-}
-
-// repr(float): CPython's shortest round-trip formatter itself.
-inline std::string shortest_repr(double v) {
-  char *s = PyOS_double_to_string(v, 'r', 0, Py_DTSF_ADD_DOT_0, nullptr);
-  if (!s) {
-    throw std::bad_alloc();
-  }
-  std::string out(s);
-  PyMem_Free(s);
-  return out;
-}
-
-// CPython complex arithmetic (Objects/complexobject.c) for the float
-// Durand-Kerner stage of wall_torus._dk_roots.
-struct PyC {
-  double re, im;
-};
-
-inline PyC c_prod(PyC a, PyC b) {
-  return {a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re};
-}
-
-inline PyC c_sub(PyC a, PyC b) { return {a.re - b.re, a.im - b.im}; }
-
-inline bool c_truthy(PyC a) { return a.re != 0.0 || a.im != 0.0; }
-
-inline double c_abs(PyC z) {  // _Py_c_abs
-  if (!std::isfinite(z.re) || !std::isfinite(z.im)) {
-    if (std::isinf(z.re)) {
-      return std::fabs(z.re);
-    }
-    if (std::isinf(z.im)) {
-      return std::fabs(z.im);
-    }
-    return std::numeric_limits<double>::quiet_NaN();
-  }
-  return std::hypot(z.re, z.im);
-}
-
-inline PyC c_quot(PyC a, PyC b) {  // _Py_c_quot (Smith's rule)
-  PyC r;
-  const double abs_breal = b.re < 0 ? -b.re : b.re;
-  const double abs_bimag = b.im < 0 ? -b.im : b.im;
-  if (abs_breal >= abs_bimag) {
-    if (abs_breal == 0.0) {
-      r.re = r.im = 0.0;
-    } else {
-      const double ratio = b.im / b.re;
-      const double denom = b.re + b.im * ratio;
-      r.re = (a.re + a.im * ratio) / denom;
-      r.im = (a.im - a.re * ratio) / denom;
-    }
-  } else if (abs_bimag >= abs_breal) {
-    const double ratio = b.re / b.im;
-    const double denom = b.re * ratio + b.im;
-    r.re = (a.re * ratio + a.im) / denom;
-    r.im = (a.im * ratio - a.re) / denom;
-  } else {
-    r.re = r.im = std::numeric_limits<double>::quiet_NaN();
-  }
-  return r;
-}
-
-inline PyC c_powu(PyC x, long n) {  // c_powu: complex ** small positive int
-  PyC r{1.0, 0.0}, p = x;
-  long mask = 1;
-  while (mask > 0 && n >= mask) {
-    if (n & mask) {
-      r = c_prod(r, p);
-    }
-    mask <<= 1;
-    p = c_prod(p, p);
-  }
-  return r;
-}
-
-// wall_torus._dk_roots: all roots of a float polynomial, Durand-Kerner.
-inline std::vector<PyC> dk_roots(const std::vector<double> &cf) {
-  double scale = 1.0;
-  bool have = false;
-  for (size_t i = 0; i + 1 < cf.size(); ++i) {
-    double v = cf[i + 1];
-    if (v == 0.0) {  // Python truthiness filter `if v`
-      continue;
-    }
-    double item = std::pow(std::fabs(v), 1.0 / static_cast<double>(i + 1));
-    if (!have || item > scale) {
-      scale = item;
-      have = true;
+  double scale = 0.0;
+  for (size_t i = 1; i < cf.size(); ++i) {
+    if (cf[i] != 0.0) {
+      scale = std::max(scale,
+                       std::pow(std::fabs(cf[i]), 1.0 / static_cast<double>(i)));
     }
   }
-  if (scale == 0.0) {  // `or 1.0`
+  if (scale == 0.0) {
     scale = 1.0;
   }
   const size_t n = cf.size() - 1;
-  std::vector<PyC> roots(n);
-  for (size_t k = 1; k <= n; ++k) {
-    roots[k - 1] = c_prod(c_powu({0.4, 0.9}, static_cast<long>(k)),
-                          {scale, 0.0});
+  std::vector<std::complex<double>> roots(n);
+  std::complex<double> seed{1.0, 0.0};
+  for (size_t k = 0; k < n; ++k) {
+    seed *= std::complex<double>{0.4, 0.9};
+    roots[k] = seed * scale;
   }
   for (int it = 0; it < 80; ++it) {
     double moved = 0.0;
     for (size_t i = 0; i < n; ++i) {
-      PyC r = roots[i];
-      PyC num{cf[0], 0.0};
+      std::complex<double> num{cf[0], 0.0};
       for (size_t j = 1; j < cf.size(); ++j) {
-        PyC t = c_prod(num, r);
-        num = {t.re + cf[j], t.im + 0.0};
+        num = num * roots[i] + cf[j];
       }
-      PyC den{cf[0], 0.0};
+      std::complex<double> den{cf[0], 0.0};
       for (size_t j = 0; j < n; ++j) {
         if (j != i) {
-          den = c_prod(den, c_sub(r, roots[j]));
+          den *= roots[i] - roots[j];
         }
       }
-      PyC step = c_truthy(den) ? c_quot(num, den) : PyC{0.0, 0.0};
-      roots[i] = c_sub(r, step);
-      double a = c_abs(step);
-      if (a > moved) {
-        moved = a;
-      }
+      std::complex<double> step =
+          den != 0.0 ? num / den : std::complex<double>{};
+      roots[i] -= step;
+      moved = std::max(moved, std::abs(step));
     }
     if (moved < 3e-15 * scale) {
       break;
@@ -179,61 +79,41 @@ struct Tracer {
     R x, y, z;
   };
 
-  // The pybind-bound operator shapes: parameters are lvalues, so boost's
-  // const& overloads run — never the in-place rvalue ones.
-  static R add(const R &a, const R &b) { return a + b; }
-  static R sub(const R &a, const R &b) { return a - b; }
-  static R mul(const R &a, const R &b) { return a * b; }
-  static R div(const R &a, const R &b) { return a / b; }
-  static R neg(const R &a) { return -a; }
-  static R abs_(const R &a) { return abs(a); }
-  static R sqrt_(const R &a) { return sqrt(a); }
-
-  // Interned wall constants: same parse path as Number("<s>", P).
-  static const R &zero() { static const R v("0"); return v; }
-  static const R &half() { static const R v("0.5"); return v; }
-  static const R &one() { static const R v("1"); return v; }
-  static const R &two() { static const R v("2"); return v; }
-  static const R &three() { static const R v("3"); return v; }
-  static const R &four() { static const R v("4"); return v; }
-
-  // float(Number): display string at P digits -> CPython float(str).
-  static double py_float(const R &v) {
-    return parse_double(strip_neg_zero(v.str(P, std::ios_base::fmtflags(0))));
+  static double to_double(const R &v) {
+    return v.template convert_to<double>();
   }
 
-  // Number._cmp key: the value re-parsed from its display string.
-  static R cmp_key(const R &v) {
-    return R(strip_neg_zero(v.str(P, std::ios_base::fmtflags(0))));
+  // types._EPS_T as an interned mp constant.
+  static const R &eps_t() {
+    static const R v(kEpsT);
+    return v;
   }
-
-  // nums.lift(float): mp value of repr(float).
-  static R lift(double v) { return R(shortest_repr(v)); }
 
   // nums.py 3-vector kit.
   static R vdot(const V3 &a, const V3 &b) {
-    return add(add(mul(a.x, b.x), mul(a.y, b.y)), mul(a.z, b.z));
+    return a.x * b.x + a.y * b.y + a.z * b.z;
   }
   static V3 vadd(const V3 &a, const V3 &b) {
-    return {add(a.x, b.x), add(a.y, b.y), add(a.z, b.z)};
+    return {a.x + b.x, a.y + b.y, a.z + b.z};
   }
   static V3 vsub(const V3 &a, const V3 &b) {
-    return {sub(a.x, b.x), sub(a.y, b.y), sub(a.z, b.z)};
+    return {a.x - b.x, a.y - b.y, a.z - b.z};
   }
   static V3 vscale(const V3 &a, const R &s) {
-    return {mul(a.x, s), mul(a.y, s), mul(a.z, s)};
+    return {a.x * s, a.y * s, a.z * s};
   }
-  static R vnorm(const V3 &a) { return sqrt_(vdot(a, a)); }
+  static R vnorm(const V3 &a) { return sqrt(vdot(a, a)); }
   static V3 vunit(const V3 &a) {
     R n = vnorm(a);
-    return {div(a.x, n), div(a.y, n), div(a.z, n)};
+    return {a.x / n, a.y / n, a.z / n};
   }
 
   template <size_t N>
   static R horner(const std::array<R, N> &cs, const R &t) {
     R v = cs[0];
     for (size_t i = 1; i < N; ++i) {
-      v = add(mul(v, t), cs[i]);
+      v *= t;
+      v += cs[i];
     }
     return v;
   }
@@ -244,14 +124,14 @@ struct Tracer {
   };
   using OptHit = std::optional<Hit>;
 
-  // Walls carry the exact mp/float state of their Python twins (native.py
-  // passes the already-derived attributes; nothing is re-derived here).
-  // CylinderWall arrives as Revolution with c1 = c2 = 0: the extra mp terms
-  // are exact no-ops (x±0 and x*0 are limb-exact in cpp_dec_float), so the
-  // results stay bit-equal to the Python CylinderWall.
+  // Walls carry the mp/float state of their Python twins (native.py passes
+  // the already-derived attributes; nothing is re-derived here). CylinderWall
+  // arrives as Revolution with c1 = c2 = 0: `straight` skips the known-zero
+  // terms while keeping the same branch structure.
   struct Revolution {
     R cx, cy, c0, c1, c2;
     double eps, cxf, cyf, c0f, c1f, c2f;
+    bool straight() const { return c1f == 0.0 && c2f == 0.0; }
   };
   struct Polygon {
     std::vector<std::pair<R, R>> faces;
@@ -266,16 +146,14 @@ struct Tracer {
   };
   using Wall = std::variant<Revolution, Polygon, Torus>;
 
-  // min((t for t in ts if float(t) > _EPS_T), key=float): ties keep the first.
+  // min((t for t in ts if float(t) > _EPS_T), key=float): ties keep the
+  // first; exact mp order replaces the float key.
   static std::optional<R> first_forward(const std::array<R, 2> &ts,
                                         size_t count) {
     const R *best = nullptr;
-    double bestf = 0.0;
     for (size_t i = 0; i < count; ++i) {
-      double f = py_float(ts[i]);
-      if (f > kEpsT && (!best || f < bestf)) {
+      if (ts[i] > eps_t() && (!best || ts[i] < *best)) {
         best = &ts[i];
-        bestf = f;
       }
     }
     if (!best) {
@@ -284,7 +162,7 @@ struct Tracer {
     return *best;
   }
 
-  // wall_revolution.RevolutionWall
+  // wall_revolution.RevolutionWall (straight: wall_cylinder.CylinderWall)
   static bool inside(const Revolution &w, double xf, double yf, double zf) {
     double dx = xf - w.cxf, dy = yf - w.cyf;
     double r2 = w.c0f + zf * (w.c1f + zf * w.c2f);
@@ -292,28 +170,32 @@ struct Tracer {
   }
 
   static OptHit hit(const Revolution &w, const V3 &O, const V3 &d, const R &) {
-    R rx = sub(O.x, w.cx), ry = sub(O.y, w.cy);
-    R A = sub(add(mul(d.x, d.x), mul(d.y, d.y)), mul(mul(w.c2, d.z), d.z));
-    R B = sub(mul(two(), add(mul(rx, d.x), mul(ry, d.y))),
-              mul(d.z, add(w.c1, mul(mul(two(), w.c2), O.z))));
-    R C = sub(add(mul(rx, rx), mul(ry, ry)),
-              add(w.c0, mul(O.z, add(w.c1, mul(w.c2, O.z)))));
+    R rx = O.x - w.cx, ry = O.y - w.cy;
+    R A = d.x * d.x + d.y * d.y;
+    R B = 2 * (rx * d.x + ry * d.y);
+    R C = rx * rx + ry * ry - w.c0;
+    if (!w.straight()) {
+      A -= w.c2 * d.z * d.z;
+      B -= d.z * (w.c1 + 2 * w.c2 * O.z);
+      C -= O.z * (w.c1 + w.c2 * O.z);
+    }
     std::array<R, 2> ts;
     size_t count = 0;
-    if (std::fabs(py_float(A)) < w.eps) {
-      if (std::fabs(py_float(B)) < w.eps) {
+    if (std::fabs(to_double(A)) < w.eps) {
+      if (std::fabs(to_double(B)) < w.eps) {
         return std::nullopt;
       }
-      ts[0] = div(sub(zero(), C), B);
+      ts[0] = -C / B;
       count = 1;
     } else {
-      R disc = sub(mul(B, B), mul(mul(four(), A), C));
-      if (py_float(disc) < 0.0) {
+      R disc = B * B - 4 * A * C;
+      if (disc < 0) {
         return std::nullopt;
       }
-      R root = sqrt_(disc);
-      ts[0] = div(sub(sub(zero(), B), root), mul(two(), A));
-      ts[1] = div(add(sub(zero(), B), root), mul(two(), A));
+      R root = sqrt(disc);
+      R twoA = 2 * A;
+      ts[0] = (-B - root) / twoA;
+      ts[1] = (-B + root) / twoA;
       count = 2;
     }
     std::optional<R> t = first_forward(ts, count);
@@ -321,8 +203,10 @@ struct Tracer {
       return std::nullopt;
     }
     V3 point = vadd(O, vscale(d, *t));
-    V3 n = {sub(point.x, w.cx), sub(point.y, w.cy),
-            sub(zero(), add(mul(w.c1, half()), mul(w.c2, point.z)))};
+    V3 n{point.x - w.cx, point.y - w.cy, R()};
+    if (!w.straight()) {
+      n.z = -(w.c1 / 2 + w.c2 * point.z);
+    }
     return Hit{*t, point, vunit(n)};
   }
 
@@ -339,8 +223,8 @@ struct Tracer {
   }
 
   static OptHit hit(const Polygon &w, const V3 &O, const V3 &d, const R &) {
-    double rxf = py_float(O.x) - w.cxf, ryf = py_float(O.y) - w.cyf;
-    double dxf = py_float(d.x), dyf = py_float(d.y);
+    double rxf = to_double(O.x) - w.cxf, ryf = to_double(O.y) - w.cyf;
+    double dxf = to_double(d.x), dyf = to_double(d.y);
     long best = -1;
     double bestt = 0.0;
     for (size_t i = 0; i < w.facesf.size(); ++i) {
@@ -360,44 +244,41 @@ struct Tracer {
     }
     const R &mx = w.faces[static_cast<size_t>(best)].first;
     const R &my = w.faces[static_cast<size_t>(best)].second;
-    R rx = sub(O.x, w.cx), ry = sub(O.y, w.cy);
-    R t = div(sub(w.apothem, add(mul(mx, rx), mul(my, ry))),
-              add(mul(mx, d.x), mul(my, d.y)));
-    return Hit{t, vadd(O, vscale(d, t)), {mx, my, zero()}};
+    R t = (w.apothem - (mx * (O.x - w.cx) + my * (O.y - w.cy))) /
+          (mx * d.x + my * d.y);
+    return Hit{t, vadd(O, vscale(d, t)), {mx, my, R()}};
   }
 
   // wall_torus._quartic_first: smallest real root in (_EPS_T, t_capf].
   static std::optional<R> quartic_first(const std::array<R, 5> &c,
                                         double t_capf) {
-    std::array<R, 4> dc = {mul(c[0], four()), mul(c[1], three()),
-                           mul(c[2], two()), c[3]};
+    std::array<R, 4> dc = {c[0] * 4, c[1] * 3, c[2] * 2, c[3]};
     std::vector<double> cf(5);
     for (size_t i = 0; i < 5; ++i) {
-      cf[i] = py_float(c[i]);
+      cf[i] = to_double(c[i]);
     }
     std::vector<double> cand;
-    for (const PyC &r : dk_roots(cf)) {
-      double m = std::fabs(r.re) > 1.0 ? std::fabs(r.re) : 1.0;
-      if (std::fabs(r.im) <= 1e-6 * m && kEpsT / 2 < r.re && r.re <= t_capf) {
-        cand.push_back(r.re);
+    for (const std::complex<double> &r : dk_roots(cf)) {
+      if (std::fabs(r.imag()) <= 1e-6 * std::max(1.0, std::fabs(r.real())) &&
+          kEpsT / 2 < r.real() && r.real() <= t_capf) {
+        cand.push_back(r.real());
       }
     }
     std::sort(cand.begin(), cand.end());
     std::optional<R> best;
     double bestf = 0.0;
     for (double seed : cand) {
-      R t = lift(seed);
+      R t(seed);
       for (int i = 0; i < 12; ++i) {
         R gp = horner(dc, t);
-        if (py_float(abs_(gp)) == 0.0) {
+        if (gp == 0) {
           break;
         }
-        R step = div(horner(c, t), gp);
-        t = sub(t, step);
-        double at = std::fabs(py_float(t));
-        double floor_t = 1e-9 > at ? 1e-9 : at;  // max(abs(float(t)), 1e-9)
-        if (py_float(abs_(step)) <= 1e-24 * floor_t) {
-          double tf = py_float(t);
+        R step = horner(c, t) / gp;
+        t -= step;
+        double stepf = std::fabs(to_double(step));
+        if (stepf <= 1e-24 * std::max(std::fabs(to_double(t)), 1e-9)) {
+          double tf = to_double(t);
           if (tf > kEpsT && (!best || tf < bestf)) {
             best = t;
             bestf = tf;
@@ -410,26 +291,24 @@ struct Tracer {
       return best;
     }
     // sign-change scan (geometric grid) + bisection on the exact quartic
-    R lo = lift(kEpsT);
-    double flo = py_float(horner(c, lo));
+    R lo = eps_t();
+    bool lneg = horner(c, lo) < 0;
     for (int k = 1; k < 49; ++k) {
-      R hi = lift(kEpsT * std::pow(t_capf / kEpsT, k / 48.0));
-      double fhi = py_float(horner(c, hi));
-      if ((flo < 0.0) != (fhi < 0.0)) {
+      R hi(kEpsT * std::pow(t_capf / kEpsT, k / 48.0));
+      bool hneg = horner(c, hi) < 0;
+      if (lneg != hneg) {
         for (int i = 0; i < 90; ++i) {
-          R mid = mul(add(lo, hi), half());
-          double fmid = py_float(horner(c, mid));
-          if ((flo < 0.0) != (fmid < 0.0)) {
+          R mid = (lo + hi) / 2;
+          if (lneg != (horner(c, mid) < 0)) {
             hi = mid;
           } else {
             lo = mid;
-            flo = fmid;
           }
         }
-        return mul(add(lo, hi), half());
+        return (lo + hi) / 2;
       }
       lo = hi;
-      flo = fhi;
+      lneg = hneg;
     }
     return std::nullopt;
   }
@@ -439,7 +318,7 @@ struct Tracer {
     double wx = xf - w.cf[0], wy = yf - w.cf[1], wz = zf - w.cf[2];
     double s = wx * w.nf[0] + wy * w.nf[1];
     double m = wx * wx + wy * wy + wz * wz - s * s;
-    double rho = std::sqrt(0.0 > m ? 0.0 : m);  // max(m, 0.0)
+    double rho = std::sqrt(std::max(m, 0.0));
     double dr = rho - w.rf;
     return dr * dr + s * s < w.in2;
   }
@@ -449,17 +328,14 @@ struct Tracer {
     V3 wv = vsub(O, w.C);
     R ws = vdot(wv, wv), wd = vdot(wv, d);
     R s0 = vdot(wv, w.nhat), sd = vdot(d, w.nhat);
-    R u1 = mul(two(), wd), u0 = add(ws, w.K);
-    std::array<R, 5> c = {
-        one(),
-        mul(two(), u1),
-        sub(add(mul(u1, u1), mul(two(), u0)),
-            mul(w.fourR2, sub(one(), mul(sd, sd)))),
-        sub(mul(mul(two(), u1), u0),
-            mul(mul(w.fourR2, two()), sub(wd, mul(s0, sd)))),
-        sub(mul(u0, u0), mul(w.fourR2, sub(ws, mul(s0, s0))))};
+    R u1 = 2 * wd, u0 = ws + w.K;
+    std::array<R, 5> c = {R(1),
+                          2 * u1,
+                          u1 * u1 + 2 * u0 - w.fourR2 * (1 - sd * sd),
+                          2 * u1 * u0 - 2 * w.fourR2 * (wd - s0 * sd),
+                          u0 * u0 - w.fourR2 * (ws - s0 * s0)};
     std::optional<R> t =
-        quartic_first(c, py_float(t_exit) * (1.0 + 1e-9) + kEpsT);
+        quartic_first(c, to_double(t_exit) * (1.0 + 1e-9) + kEpsT);
     if (!t) {
       return std::nullopt;
     }
@@ -468,7 +344,7 @@ struct Tracer {
     R s = vdot(w2, w.nhat);
     V3 q = vsub(w2, vscale(w.nhat, s));
     R rho = vnorm(q);
-    V3 n = vadd(vscale(q, div(sub(rho, w.bigR), rho)), vscale(w.nhat, s));
+    V3 n = vadd(vscale(q, (rho - w.bigR) / rho), vscale(w.nhat, s));
     return Hit{*t, point, vunit(n)};
   }
 
@@ -481,7 +357,7 @@ struct Tracer {
     V3 point, normal;
   };
 
-  struct MirrorO {
+  struct Mirror {
     R z0, z1;
     double z0f, z1f;
   };
@@ -490,22 +366,22 @@ struct Tracer {
     double z0f, z1f;
     std::vector<Wall> walls;
   };
-  using Optic = std::variant<MirrorO, Bundle>;
+  using Optic = std::variant<Mirror, Bundle>;
 
   // surfaces.Mirror.next_event
-  static Event next_event(const MirrorO &m, const V3 &O, const V3 &d) {
-    if (py_float(O.x) <= 0.0 || py_float(d.x) >= 0.0) {
+  static Event next_event(const Mirror &m, const V3 &O, const V3 &d) {
+    if (O.x <= 0 || d.x >= 0) {
       return {kExit, R(), {}, {}};
     }
-    R t = div(neg(O.x), d.x);
-    double zf = py_float(O.z) + py_float(t) * py_float(d.z);
+    R t = -O.x / d.x;
+    double zf = to_double(O.z + t * d.z);
     if (zf > m.z1f) {
       return {kExit, R(), {}, {}};
     }
     if (zf < m.z0f) {
-      return {kAbsorb, div(sub(m.z0, O.z), d.z), {}, {}};
+      return {kAbsorb, (m.z0 - O.z) / d.z, {}, {}};
     }
-    return {kReflect, t, vadd(O, vscale(d, t)), {one(), zero(), zero()}};
+    return {kReflect, t, vadd(O, vscale(d, t)), {R(1), R(), R()}};
   }
 
   static OptHit wall_hit(const Wall &w, const V3 &O, const V3 &d,
@@ -514,13 +390,16 @@ struct Tracer {
                       w);
   }
 
+  static bool wall_inside(const Wall &w, double xf, double yf, double zf) {
+    return std::visit([&](const auto &ww) { return inside(ww, xf, yf, zf); },
+                      w);
+  }
+
   // surfaces.CapillaryBundle._locate
-  static const Wall *locate(const Bundle &b, const V3 &O) {
-    double xf = py_float(O.x), yf = py_float(O.y), zf = py_float(O.z);
+  static const Wall *locate(const Bundle &b, double xf, double yf,
+                            double zf) {
     for (const Wall &w : b.walls) {
-      bool in = std::visit(
-          [&](const auto &ww) { return inside(ww, xf, yf, zf); }, w);
-      if (in) {
+      if (wall_inside(w, xf, yf, zf)) {
         return &w;
       }
     }
@@ -529,23 +408,23 @@ struct Tracer {
 
   // surfaces.CapillaryBundle.next_event
   static Event next_event(const Bundle &b, const V3 &O, const V3 &d) {
-    if (py_float(d.z) <= 0.0) {
-      return {kAbsorb, zero(), {}, {}};
+    if (d.z <= 0) {
+      return {kAbsorb, R(), {}, {}};
     }
-    double zf = py_float(O.z);
+    double zf = to_double(O.z);
     if (zf < b.z0f - kEpsT) {
-      return {kPass, div(sub(b.z0, O.z), d.z), {}, {}};
+      return {kPass, (b.z0 - O.z) / d.z, {}, {}};
     }
     if (zf >= b.z1f - kEpsT) {
       return {kExit, R(), {}, {}};
     }
-    const Wall *wall = locate(b, O);
+    const Wall *wall = locate(b, to_double(O.x), to_double(O.y), zf);
     if (!wall) {
-      return {kAbsorb, zero(), {}, {}};
+      return {kAbsorb, R(), {}, {}};
     }
-    R t_exit = div(sub(b.z1, O.z), d.z);
+    R t_exit = (b.z1 - O.z) / d.z;
     OptHit h = wall_hit(*wall, O, d, t_exit);
-    if (!h || cmp_key(t_exit) <= cmp_key(h->t)) {
+    if (!h || t_exit <= h->t) {
       return {kPass, t_exit, {}, {}};
     }
     return {kReflect, h->t, h->point, h->normal};
@@ -570,7 +449,7 @@ struct Tracer {
 
   static Result trace(const Optic *optic, V3 O, V3 d, const R &screen_z,
                       long max_bounces) {
-    R opl = zero();
+    R opl;
     std::vector<Refl> refl;
     if (optic) {
       bool exited = false;
@@ -582,32 +461,32 @@ struct Tracer {
         }
         if (ev.kind == kPass) {
           O = vadd(O, vscale(d, ev.t));
-          opl = add(opl, ev.t);
+          opl += ev.t;
           continue;
         }
         if (ev.kind == kAbsorb) {
-          return {fAbsorbed, vadd(O, vscale(d, ev.t)), add(opl, ev.t),
+          return {fAbsorbed, vadd(O, vscale(d, ev.t)), opl + ev.t,
                   std::move(refl)};
         }
-        opl = add(opl, ev.t);
+        opl += ev.t;
         R dot = vdot(d, ev.normal);
-        d = vsub(d, vscale(ev.normal, mul(two(), dot)));
-        refl.push_back({ev.point, abs_(dot)});
+        d = vsub(d, vscale(ev.normal, 2 * dot));
+        refl.push_back({ev.point, abs(dot)});
         O = ev.point;
       }
       if (!exited) {  // bounce budget spent: for-else in trace_ray
         return {fLost, O, opl, std::move(refl)};
       }
     }
-    if (py_float(d.z) <= 0.0) {
+    if (d.z <= 0) {
       return {fLost, O, opl, std::move(refl)};
     }
-    R t = div(sub(screen_z, O.z), d.z);
-    if (py_float(t) < 0.0) {
+    R t = (screen_z - O.z) / d.z;
+    if (t < 0) {
       return {fLost, O, opl, std::move(refl)};
     }
     V3 point = vadd(O, vscale(d, t));
-    return {fScreen, point, add(opl, t), std::move(refl)};
+    return {fScreen, point, opl + t, std::move(refl)};
   }
 };
 

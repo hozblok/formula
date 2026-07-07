@@ -1,6 +1,6 @@
 """C++ fast path for the tracer: NativeOptic twins built from the Python
-optics. Results are bit-identical to trace.trace_ray — the C++ side repeats
-the same mp operations in the same order (tests/test_native_trace.py).
+optics. Results match trace.trace_ray to working precision — same algorithms
+and branches, not bit-for-bit (tests/test_native_trace.py).
 
 Wall specs are (kind, mp_values, float_values) tuples; the layouts must match
 the reader in src/cpp/bindings_trace.cpp (make_wall).
@@ -25,9 +25,8 @@ def _raw(number: Number):
 def _wall_spec(wall):
     """Native spec from a wall's already-derived attributes; None = unsupported."""
     if type(wall) is CylinderWall:
-        # Cylinder = revolution with r²(z) = a² (c1 = c2 = 0): the extra mp
-        # terms are limb-exact no-ops, so results stay bit-equal to
-        # CylinderWall (tests/test_native_trace.py).
+        # Cylinder = revolution with r²(z) = a² (c1 = c2 = 0); the native
+        # side skips the known-zero terms but keeps the same branches.
         zero = Number("0", wall.center[0].precision)
         return ("revolution",
                 (_raw(wall.center[0]), _raw(wall.center[1]),
@@ -71,6 +70,8 @@ def compile_optic(optic):
 def trace_ray_native(native, origin, direction, screen_z, max_bounces):
     """trace_ray twin on a compiled optic (native=None traces free space)."""
     p = origin[0].precision
+    if not isinstance(screen_z, Number):
+        screen_z = Number(screen_z, p)
     fate, point, opl, refl = _formula.trace_ray_native(
         native, tuple(_raw(c) for c in origin),
         tuple(_raw(c) for c in direction), _raw(screen_z), max_bounces)
@@ -85,9 +86,10 @@ def trace_ray_native(native, origin, direction, screen_z, max_bounces):
 def make_tracer(optic):
     """trace_ray-signature callable; the C++ twin when the optic supports it.
 
-    CAPSYSRED_PYTHON_TRACE=1 forces the pure-Python reference path.
+    An optic other than the compiled one falls back to the Python reference;
+    CAPSYSRED_PYTHON_TRACE=1 forces it globally.
     """
-    if os.environ.get("CAPSYSRED_PYTHON_TRACE"):
+    if os.environ.get("CAPSYSRED_PYTHON_TRACE", "0") not in ("", "0"):
         return trace_ray
     native = None
     if optic is not None:
@@ -95,7 +97,10 @@ def make_tracer(optic):
         if native is None:
             return trace_ray
 
-    def tracer(origin, direction, _optic, screen_z, max_bounces):
+    def tracer(origin, direction, traced_optic, screen_z, max_bounces):
+        if traced_optic is not optic:
+            return trace_ray(origin, direction, traced_optic, screen_z,
+                             max_bounces)
         return trace_ray_native(native, origin, direction, screen_z,
                                 max_bounces)
     return tracer

@@ -1,7 +1,6 @@
 // Native CAPSYSred tracer bindings: NativeOptic twins of the Python optics,
-// the trace/next_event/hit entry points, and debug hooks that pin the
-// Number<->float bridge exactness. Own translation unit to keep per-compile
-// memory bounded.
+// the trace/next_event/hit entry points, and debug hooks for the root-finder
+// parity tests. Own translation unit to keep per-compile memory bounded.
 #include <pybind11/complex.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -90,6 +89,9 @@ typename cstrace::Tracer<P>::Wall make_wall(py::sequence spec) {
     for (size_t i = 3; i + 1 < fl.size(); i += 2) {
       w.facesf.emplace_back(F(i), F(i + 1));
     }
+    if (w.faces.size() != w.facesf.size()) {
+      throw std::invalid_argument("polygon mp/float face counts differ");
+    }
     return w;
   }
   if (kind == "torus") {
@@ -136,7 +138,7 @@ void register_trace(py::module_ &m) {
         dispatch(out.precision, [&](auto ic) {
           constexpr unsigned P = decltype(ic)::value;
           using T = cstrace::Tracer<P>;
-          out.impl = std::make_shared<typename T::Optic>(typename T::MirrorO{
+          out.impl = std::make_shared<typename T::Optic>(typename T::Mirror{
               py::cast<mp_real<P>>(z0), py::cast<mp_real<P>>(z1), z0f, z1f});
         });
         return out;
@@ -252,46 +254,15 @@ void register_trace(py::module_ &m) {
           dispatch(nat.precision, [&](auto ic) {
             constexpr unsigned P = decltype(ic)::value;
             using T = cstrace::Tracer<P>;
-            out = std::visit(
-                [&](const auto &w) { return T::inside(w, x, y, z); },
-                bundle_of<P>(nat).walls.at(index));
+            out = T::wall_inside(bundle_of<P>(nat).walls.at(index), x, y, z);
           });
           return out;
         },
         "Wall.inside twin for bundle wall #index.");
 
-  // Exactness debug hooks: each pins one Number<->float bridge.
-  m.def("trace_dbg_pyfloat", [](py::object v) {
-    double out = 0.0;
-    dispatch(precision_of(v), [&](auto ic) {
-      constexpr unsigned P = decltype(ic)::value;
-      out = cstrace::Tracer<P>::py_float(py::cast<mp_real<P>>(v));
-    });
-    return out;
-  });
-  m.def("trace_dbg_lift", [](double v, unsigned precision) {
-    py::object out;
-    dispatch(round_up_precision(precision), [&](auto ic) {
-      constexpr unsigned P = decltype(ic)::value;
-      out = py::cast(cstrace::Tracer<P>::lift(v));
-    });
-    return out;
-  });
-  m.def("trace_dbg_cmp_key", [](py::object v) {
-    py::object out;
-    dispatch(precision_of(v), [&](auto ic) {
-      constexpr unsigned P = decltype(ic)::value;
-      out = py::cast(cstrace::Tracer<P>::cmp_key(py::cast<mp_real<P>>(v)));
-    });
-    return out;
-  });
-  m.def("trace_dbg_repr", [](double v) { return cstrace::shortest_repr(v); });
+  // Root-finder debug hooks for the parity tests.
   m.def("trace_dbg_dk_roots", [](const std::vector<double> &cf) {
-    std::vector<std::complex<double>> out;
-    for (const auto &r : cstrace::dk_roots(cf)) {
-      out.emplace_back(r.re, r.im);
-    }
-    return out;
+    return cstrace::dk_roots(cf);
   });
   m.def("trace_dbg_quartic_first", [](py::sequence c, double t_capf) {
     py::object out = py::none();

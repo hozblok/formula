@@ -14,7 +14,7 @@ class CylinderWall:
     def __init__(self, center: tuple[Number, Number], radius: Number,
                  eps: float = 1e-30):
         self.kind, self.center, self.radius = "cylinder", center, radius
-        # zero threshold for the quadratic coefficient A: |A| < eps = axis-parallel ray
+        # zero threshold for the quadratic coefficients (degenerate -> linear/no hit)
         self.eps = eps
         self._a2 = radius * radius
         p = center[0].precision
@@ -35,16 +35,19 @@ class CylinderWall:
         """First forward parameter to the wall (exact quadratic), with point+normal."""
         rx, ry = O[0] - self.center[0], O[1] - self.center[1]
         A = d[0] * d[0] + d[1] * d[1]
-        if abs(float(A)) < self.eps:   # axis-parallel ray never meets the wall
-            return None
         B = self._two * (rx * d[0] + ry * d[1])
         C = rx * rx + ry * ry - self._a2
-        disc = B * B - self._four * A * C
-        if float(disc) < 0.0:
-            return None
-        root = sqrt(disc)
-        ts = ((self._zero - B - root) / (self._two * A),
-              (self._zero - B + root) / (self._two * A))
+        if abs(float(A)) < self.eps:   # degenerate quadratic: same branch as RevolutionWall
+            if abs(float(B)) < self.eps:
+                return None
+            ts = ((self._zero - C) / B,)
+        else:
+            disc = B * B - self._four * A * C
+            if float(disc) < 0.0:
+                return None
+            root = sqrt(disc)
+            ts = ((self._zero - B - root) / (self._two * A),
+                  (self._zero - B + root) / (self._two * A))
         t = min((tt for tt in ts if float(tt) > _EPS_T), key=float, default=None)
         if t is None:
             return None

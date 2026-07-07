@@ -37,8 +37,8 @@ else:
 
 EXTRA_COMPILE_ARGS = []
 if sys.platform != "win32":
-    # The native tracer mirrors CPython double arithmetic; forbid FMA
-    # contraction so its results stay bit-identical to the Python reference.
+    # No FMA contraction: the native tracer's double guards must take the
+    # same branches as the Python reference (parity tests compare exactly).
     EXTRA_COMPILE_ARGS.append("-ffp-contract=off")
 if sys.platform == "darwin":
     # Default deployment target for wheels built outside cibuildwheel; CI

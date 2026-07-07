@@ -11,7 +11,7 @@ from ..formula import Number
 from ..xray import FUSED_SILICA
 
 DEFAULTS = {
-    "precision": 30,
+    "precision": 32,
     "seed": 12345,
     "energy_kev": 8.0,
     # monochromatic | gaussian {rel_fwhm, n_lines, n_sigma} | lines [{energy_kev, weight}]

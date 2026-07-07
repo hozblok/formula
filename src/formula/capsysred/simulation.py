@@ -115,7 +115,7 @@ class Simulation:
         acc = CoherenceAccumulator(self.lines, screen.ref_pixel(scr_cfg.reference),
                                    cfg.precision)
         aim = aim_factory(source, screen, rng)
-        tracer = make_tracer(optic)   # C++ twin when supported; bit-identical
+        tracer = make_tracer(optic)   # C++ fast path when the optic supports it
         stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
                  "off_window": 0, "reflected_rays": 0, "reflections": 0,
                  "bounce_hist": {}}
