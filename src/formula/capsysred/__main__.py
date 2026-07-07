@@ -4,7 +4,7 @@
 import argparse
 import sys
 
-from .simulation import ALL_STAGES, Simulation
+from .simulation import ALL_STAGES, KNOWN_STAGES, Simulation
 
 
 def main(argv=None) -> int:
@@ -29,9 +29,9 @@ def main(argv=None) -> int:
     stages = None
     if args.stages:
         stages = sorted({int(s) for s in args.stages.replace(" ", "").split(",")})
-        bad = [s for s in stages if s not in ALL_STAGES]
+        bad = [s for s in stages if s not in KNOWN_STAGES]
         if bad:
-            parser.error(f"no such stages: {bad}; available {list(ALL_STAGES)}")
+            parser.error(f"no such stages: {bad}; available {list(KNOWN_STAGES)}")
 
     sim = (Simulation.from_yaml(args.config) if args.config
            else Simulation.from_dict({}))

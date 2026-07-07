@@ -15,7 +15,7 @@ import math
 
 from ..formula import Number
 from .nums import lift, vadd, vscale
-from .types import _EPS_T
+from .types import _EPS_LOC, _EPS_T
 from .wall_cylinder import CylinderWall
 from .wall_polygon import PolygonWall
 from .wall_revolution import RevolutionWall
@@ -132,9 +132,12 @@ class CapillaryBundle:
             wall.aim = entrance_disk(bore, self._z0f)
             self.walls.append(wall)
 
-    def _locate(self, O):
-        """Wall of the bore containing the point; walls keep on-wall points inside."""
+    def _locate(self, O, d):
+        """Wall of the bore containing the point nudged ahead along d: a
+        reflection at a bore-bore tangency is on two walls at once."""
         xf, yf, zf = (float(c) for c in O)
+        dxf, dyf, dzf = (float(c) for c in d)
+        xf, yf, zf = xf + _EPS_LOC * dxf, yf + _EPS_LOC * dyf, zf + _EPS_LOC * dzf
         for wall in self.walls:
             if wall.inside(xf, yf, zf):
                 return wall
@@ -148,7 +151,7 @@ class CapillaryBundle:
             return ("pass", (self.z0 - O[2]) / d[2])
         if zf >= self._z1f - _EPS_T:
             return ("exit", None)
-        wall = self._locate(O)
+        wall = self._locate(O, d)
         if wall is None:
             return ("absorb", self._zero)          # entrance face / web between bores
         t_exit = (self.z1 - O[2]) / d[2]

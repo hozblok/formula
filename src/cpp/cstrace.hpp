@@ -23,6 +23,9 @@ namespace cstrace {
 // Forward-step floor for the ray parameter t (m); capsysred.types._EPS_T.
 constexpr double kEpsT = 1e-12;
 
+// Bore-membership nudge along the ray (m); capsysred.types._EPS_LOC.
+constexpr double kEpsLoc = 1e-7;
+
 // wall_torus._dk_roots: all roots of a float polynomial (Durand-Kerner);
 // only seed material — every root is re-polished in mp or bisected exactly.
 inline std::vector<std::complex<double>> dk_roots(
@@ -395,9 +398,12 @@ struct Tracer {
                       w);
   }
 
-  // surfaces.CapillaryBundle._locate
-  static const Wall *locate(const Bundle &b, double xf, double yf,
-                            double zf) {
+  // surfaces.CapillaryBundle._locate: the nudge along d disambiguates
+  // bore-bore tangency points (a reflection there is on two walls at once).
+  static const Wall *locate(const Bundle &b, const V3 &O, const V3 &d) {
+    double xf = to_double(O.x) + kEpsLoc * to_double(d.x);
+    double yf = to_double(O.y) + kEpsLoc * to_double(d.y);
+    double zf = to_double(O.z) + kEpsLoc * to_double(d.z);
     for (const Wall &w : b.walls) {
       if (wall_inside(w, xf, yf, zf)) {
         return &w;
@@ -418,7 +424,7 @@ struct Tracer {
     if (zf >= b.z1f - kEpsT) {
       return {kExit, R(), {}, {}};
     }
-    const Wall *wall = locate(b, to_double(O.x), to_double(O.y), zf);
+    const Wall *wall = locate(b, O, d);
     if (!wall) {
       return {kAbsorb, R(), {}, {}};
     }

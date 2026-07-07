@@ -17,6 +17,7 @@ import time
 from ..formula import Number
 from .. import xray
 from . import analytic, render
+from .altcoh import run_alt_stage
 from .coherence import CoherenceAccumulator
 from .config import Config, load
 from .nums import lift, solver, vunit
@@ -30,6 +31,7 @@ from .fresnel import FresnelAmplitude
 from .native import make_tracer
 
 ALL_STAGES = (1, 2, 3, 4, 5, 6)
+KNOWN_STAGES = ALL_STAGES + (7,)   # 7 (alt estimators) is opt-in, not default
 _UM = 1e6
 
 
@@ -545,6 +547,86 @@ class Simulation:
         ]
         return res
 
+    # ------------------------------------------------------------- stage 7
+
+    def _stage7(self, out_dir, quick):
+        """Alternative estimators (full W — axis C, Wigner — axis D) on the
+        same ray streams as stages 2/6 (same seed offsets)."""
+        cap = self.cfg.capillary
+        scenes = [
+            ("free", "7 alt free (MC)", self.cfg.free_source,
+             self.cfg.free_screen, None, self._aim_free, 2),
+            ("capillary", "7 alt capillary (MC)", cap.source, cap.screen,
+             CapillaryBundle(cap.bores, cap.z0, cap.z1),
+             self._aim_capillary, 4),
+        ]
+        rows = []
+        for stage, label, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
+            res = run_alt_stage(self, label, src_cfg, scr_cfg, optic,
+                                aim_factory, off, quick)
+            self.results[f"alt:{stage}"] = res
+            maps, screen, st = res["maps"], res["screen"], res["stats"]
+            xs_um = [x * _UM for x in screen.xs()]
+            ref_x = xs_um[maps["ref_pixel"]]
+            rms_full = analytic.rms_diff(maps["mu_pair"], maps["mu_full_col"])
+            rms_wig = analytic.rms_diff(maps["mu_pair"], maps["mu_wigner"])
+            imax = max(maps["intensity"]) or 1.0
+            iwmax = max(maps["i_wigner"]) or 1.0
+            rms_int = analytic.rms_diff(
+                [v / imax for v in maps["intensity"]],
+                [v / iwmax for v in maps["i_wigner"]])
+            sub = (f"{res['n_modes']} modes × {res['n_rays']} rays; "
+                   f"RMS pair↔fullW {rms_full:.1e}, pair↔Wigner {rms_wig:.3f}")
+            fig = render.line_chart(
+                [{"xs": xs_um, "ys": maps["mu_pair"], "label": "pairwise (reference)"},
+                 {"xs": xs_um, "ys": maps["mu_full_col"],
+                  "label": "full W, ref column", "dash": "6,4"},
+                 {"xs": xs_um, "ys": maps["mu_wigner"],
+                  "label": "Wigner phase space", "dash": "2,3"}],
+                f"Stage 7 [{stage}]: |μ(x, x_ref)| by three estimators",
+                "x on screen, µm", "|μ|", sub,
+                vlines=[(ref_x, "ref")], w=760)
+            self._save(out_dir, f"07-{stage}-alt-mu.svg", fig)
+            extent = (xs_um[0], xs_um[-1], xs_um[0], xs_um[-1])
+            fig = render.heatmap(
+                maps["mu_full"], extent,
+                f"Stage 7 [{stage}]: full |μ(x₁, x₂)| (no reference pixel)",
+                "x₁, µm", "x₂, µm",
+                "diagonal band width = coherence length; ray self-pairs off the diagonal",
+                "|μ|", mark=(ref_x, ref_x), vmax=1.0, w=640)
+            self._save(out_dir, f"07-{stage}-alt-fullw.svg", fig)
+            grid, u_lo, u_hi = res["alt"].wigner_grid()
+            fig = render.heatmap(
+                grid, (xs_um[0], xs_um[-1], u_lo * 1e6, u_hi * 1e6),
+                f"Stage 7 [{stage}]: phase space B(x, u) (ray histogram)",
+                "x on screen, µm", "u = dx/dz, µrad",
+                f"u bin {res['alt'].du * 1e6:.2f} µrad; intensity weights, no phases",
+                "B", w=640)
+            self._save(out_dir, f"07-{stage}-alt-wigner.svg", fig)
+            for est, mu in (("pairwise", maps["mu_pair"]),
+                            ("fullw_col", maps["mu_full_col"]),
+                            ("wigner", maps["mu_wigner"])):
+                for i, v in enumerate(mu):
+                    rows.append({"stage": stage, "estimator": est, "pixel": i,
+                                 "x_um": xs_um[i], "mu": v,
+                                 "I": (maps["i_wigner"][i] if est == "wigner"
+                                       else maps["intensity"][i])})
+            self.report += [
+                f"## Stage 7 — alternative estimators [{stage}]",
+                f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen {st['screen']:,} of {st['emitted']:,}",
+                f"- RMS(|μ|_pair − |μ|_fullW_col) = {rms_full:.2e} (must be ~0: same sums)",
+                f"- RMS(|μ|_pair − |μ|_Wigner) = {rms_wig:.4f}; RMS(I_pair − I_Wigner, normalized) = {rms_int:.2e}",
+                f"- Fresnel float64 mirror vs Number (center line): |Δr| = {res['fresnel_check']:.1e}",
+                f"- Wigner u bin: {res['alt'].du * 1e6:.3f} µrad",
+                f"- time: {res['seconds']:.1f} s",
+            ]
+        path = os.path.join(out_dir, "mu-alt.jsonl")
+        with open(path, "w", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row) + "\n")
+        self.files.append("mu-alt.jsonl")
+        _log("  → mu-alt.jsonl")
+
     def _capillary_engine_check(self, bundle) -> str:
         cap = self.cfg.capillary
         p = self.cfg.precision
@@ -620,6 +702,9 @@ class Simulation:
             if 6 in wanted:
                 _log("Stage 6/6: capillary (MC)")
                 self._stage6(out_dir, quick, rays_fh)
+            if 7 in wanted:
+                _log("Stage 7: alternative estimators — full W (axis C) + Wigner (axis D)")
+                self._stage7(out_dir, quick)
         finally:
             if rays_fh is not None:
                 rays_fh.close()

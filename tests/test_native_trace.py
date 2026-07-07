@@ -417,6 +417,25 @@ def test_bundle_next_event_parity(p):
 
 
 @pytest.mark.parametrize("p", PRECISIONS)
+def test_bundle_tangent_bores_reflect(p):
+    """Close-packed bores (pitch = 2r): a reflection at the tangency line is on
+    two walls at once; the ray must reflect off the far wall, not pass through."""
+    N = lambda s: Number(s, p)
+    bores = [{"kind": "cylinder", "center": (N("0"), N("0")), "radius": N("1e-5")},
+             {"kind": "cylinder", "center": (N("-2e-5"), N("0")), "radius": N("1e-5")}]
+    bundle = CapillaryBundle(bores, N("0"), N("0.5"))
+    origin = (lift(-2e-5, p), lift(0.0, p), lift(0.0, p))    # side-bore axis
+    direction = vunit((lift(6e-4, p), lift(0.0, p), lift(1.0, p)))
+    py_tr = trace_ray(origin, direction, bundle, N("0.5"), 400)
+    c_tr = trace_ray_native(compile_optic(bundle), origin, direction,
+                            N("0.5"), 400)
+    assert py_tr.fate == "screen" and len(py_tr.reflections) > 2
+    assert all(-3e-5 <= float(pt[0]) <= -1e-5 + 1e-9
+               for pt, _ in py_tr.reflections)
+    assert_trace_equal(py_tr, c_tr)
+
+
+@pytest.mark.parametrize("p", PRECISIONS)
 def test_mirror_branches_parity(p):
     """One deterministic ray per Mirror branch: reflect, absorb (leading
     edge), exit beyond z1, exit moving away."""
