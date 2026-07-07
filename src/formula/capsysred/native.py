@@ -72,7 +72,7 @@ def trace_ray_native(native, origin, direction, screen_z, max_bounces):
     p = origin[0].precision
     if not isinstance(screen_z, Number):
         screen_z = Number(screen_z, p)
-    fate, point, opl, refl = _formula.trace_ray_native(
+    fate, point, opl, refl, direction = _formula.trace_ray_native(
         native, tuple(_raw(c) for c in origin),
         tuple(_raw(c) for c in direction), _raw(screen_z), max_bounces)
 
@@ -80,7 +80,8 @@ def trace_ray_native(native, origin, direction, screen_z, max_bounces):
         return Number._wrap(value, p, False)
 
     return TraceResult(fate, tuple(num(c) for c in point), num(opl),
-                       [(tuple(num(c) for c in pt), num(s)) for pt, s in refl])
+                       [(tuple(num(c) for c in pt), num(s)) for pt, s in refl],
+                       tuple(num(c) for c in direction))
 
 
 def make_tracer(optic):

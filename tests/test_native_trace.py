@@ -76,6 +76,7 @@ def assert_trace_equal(py_tr, c_tr, tol=TRACE_TOL):
     for (pa, sa), (pb, sb) in zip(py_tr.reflections, c_tr.reflections):
         same_vec(pa, pb, tol)
         assert_close(sa, sb, tol)
+    same_vec(py_tr.direction, c_tr.direction, tol)
 
 
 def raw_vec(vec):

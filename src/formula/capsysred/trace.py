@@ -13,8 +13,9 @@ from .nums import vadd, vdot, vscale, vsub
 from .types import Vec3
 
 # fate: "screen" | "absorbed" | "lost". reflections: [(point, sin_grazing), ...]
+# direction: unit direction at the final point (post-bounce for absorbed/lost).
 TraceResult = namedtuple(
-    "TraceResult", ["fate", "point", "opl", "reflections"]
+    "TraceResult", ["fate", "point", "opl", "reflections", "direction"]
 )
 
 
@@ -44,7 +45,7 @@ def trace_ray(origin: Vec3, direction: Vec3, optic, screen_z: Number,
             if kind == "absorb":
                 t = event[1]
                 return TraceResult("absorbed", vadd(O, vscale(d, t)),
-                                   opl + t, reflections)
+                                   opl + t, reflections, d)
             _, t, P, normal = event
             opl = opl + t
             dot = vdot(d, normal)
@@ -52,12 +53,12 @@ def trace_ray(origin: Vec3, direction: Vec3, optic, screen_z: Number,
             reflections.append((P, abs(dot)))
             O = P
         else:
-            return TraceResult("lost", O, opl, reflections)
+            return TraceResult("lost", O, opl, reflections, d)
 
     if float(d[2]) <= 0.0:
-        return TraceResult("lost", O, opl, reflections)
+        return TraceResult("lost", O, opl, reflections, d)
     t = (screen_z - O[2]) / d[2]
     if float(t) < 0.0:
-        return TraceResult("lost", O, opl, reflections)
+        return TraceResult("lost", O, opl, reflections, d)
     P = vadd(O, vscale(d, t))
-    return TraceResult("screen", P, opl + t, reflections)
+    return TraceResult("screen", P, opl + t, reflections, d)

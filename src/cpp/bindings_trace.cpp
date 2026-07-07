@@ -192,11 +192,12 @@ void register_trace(py::module_ &m) {
                 py::make_tuple(from_v3<P>(r.point), py::cast(r.sin_g)));
           }
           out = py::make_tuple(fates[res.fate], from_v3<P>(res.point),
-                               py::cast(res.opl), refl);
+                               py::cast(res.opl), refl,
+                               from_v3<P>(res.direction));
         });
         return out;
       },
-      "trace.trace_ray twin: (fate, point, opl, [(point, sin), ...]).",
+      "trace.trace_ray twin: (fate, point, opl, [(point, sin), ...], dir).",
       py::arg("optic"), py::arg("origin"), py::arg("direction"),
       py::arg("screen_z"), py::arg("max_bounces"));
 

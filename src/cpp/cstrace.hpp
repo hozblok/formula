@@ -445,6 +445,7 @@ struct Tracer {
     V3 point;
     R opl;
     std::vector<Refl> reflections;
+    V3 direction;
   };
 
   static Result trace(const Optic *optic, V3 O, V3 d, const R &screen_z,
@@ -466,7 +467,7 @@ struct Tracer {
         }
         if (ev.kind == kAbsorb) {
           return {fAbsorbed, vadd(O, vscale(d, ev.t)), opl + ev.t,
-                  std::move(refl)};
+                  std::move(refl), d};
         }
         opl += ev.t;
         R dot = vdot(d, ev.normal);
@@ -475,18 +476,18 @@ struct Tracer {
         O = ev.point;
       }
       if (!exited) {  // bounce budget spent: for-else in trace_ray
-        return {fLost, O, opl, std::move(refl)};
+        return {fLost, O, opl, std::move(refl), d};
       }
     }
     if (d.z <= 0) {
-      return {fLost, O, opl, std::move(refl)};
+      return {fLost, O, opl, std::move(refl), d};
     }
     R t = (screen_z - O.z) / d.z;
     if (t < 0) {
-      return {fLost, O, opl, std::move(refl)};
+      return {fLost, O, opl, std::move(refl), d};
     }
     V3 point = vadd(O, vscale(d, t));
-    return {fScreen, point, opl + t, std::move(refl)};
+    return {fScreen, point, opl + t, std::move(refl), d};
   }
 };
 
