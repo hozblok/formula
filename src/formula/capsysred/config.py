@@ -59,6 +59,8 @@ DEFAULTS = {
     # after the per-line amplitudes are known.
     "trace": {"max_bounces": 200, "amplitude_min": 1.0e-6,
               "rays_jsonl": True, "sample_every": 1},
+    # stage 8: number of sketch probe vectors (r ~ n99 modes, see methods §8)
+    "sketch": {"rank": 96},
 }
 
 
@@ -191,6 +193,7 @@ class Config:
         self.rays_jsonl = bool(cfg["trace"]["rays_jsonl"])
         self.sample_every = max(1, int(cfg["trace"]["sample_every"]))
         self.per_line_fresnel = bool(cfg["spectrum"]["per_line_fresnel"])
+        self.sketch_rank = int(cfg["sketch"]["rank"])
 
 
 def load(path_or_dict) -> Config:

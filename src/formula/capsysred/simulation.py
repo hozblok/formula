@@ -19,6 +19,7 @@ from .. import xray
 from . import analytic, render
 from .altcoh import run_alt_stage
 from .coherence import CoherenceAccumulator
+from .sketch import run_sketch_stage
 from .config import Config, load
 from .nums import lift, solver, vunit
 from .progress import Progress
@@ -31,7 +32,7 @@ from .fresnel import FresnelAmplitude
 from .native import make_tracer
 
 ALL_STAGES = (1, 2, 3, 4, 5, 6)
-KNOWN_STAGES = ALL_STAGES + (7,)   # 7 (alt estimators) is opt-in, not default
+KNOWN_STAGES = ALL_STAGES + (7, 8)  # 7 (alt estimators), 8 (sketch) — opt-in
 _UM = 1e6
 
 
@@ -627,6 +628,96 @@ class Simulation:
         self.files.append("mu-alt.jsonl")
         _log("  → mu-alt.jsonl")
 
+    # ------------------------------------------------------------- stage 8
+
+    def _stage8(self, out_dir, quick):
+        """Streaming sketch of W (methods §3.10): pairwise reference column +
+        Nystrom column + coherent-mode spectrum, 2D screens supported."""
+        cap = self.cfg.capillary
+        scenes = [
+            ("free", "8 sketch free (MC)", self.cfg.free_source,
+             self.cfg.free_screen, None, self._aim_free, 2),
+            ("capillary", "8 sketch capillary (MC)", cap.source, cap.screen,
+             CapillaryBundle(cap.bores, cap.z0, cap.z1),
+             self._aim_capillary, 4),
+        ]
+        rows = []
+        for stage, label, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
+            res = run_sketch_stage(self, label, src_cfg, scr_cfg, optic,
+                                   aim_factory, off, quick)
+            self.results[f"sketch:{stage}"] = res
+            maps, screen, st = res["maps"], res["screen"], res["stats"]
+            flat = lambda grid: [v for row in grid for v in row]
+            rms_engine = None
+            num = self.results.get(stage)   # stage 2/6 Number maps, same rays
+            if num is not None:
+                mask = flat(maps["solid"])   # knife pixels: junk either way
+                pairs = [(a, b) for a, b, s in zip(flat(maps["mu_pair"]),
+                                                   flat(num["maps"]["mu"]), mask) if s]
+                rms_engine = analytic.rms_diff([a for a, _ in pairs],
+                                               [b for _, b in pairs])
+            ref_xy = screen.pixel_xy(maps["ref_pixel"])
+            sub = (f"{res['n_modes']} modes × {res['n_rays']} rays; rank r = {maps['rank']}; "
+                   f"RMS pair↔sketch {maps['rms_pair_sketch']:.3f} on {maps['solid_px']} px")
+            if screen.ny > 1:
+                extent = (screen.x0f * _UM, (screen.x0f + screen.exf) * _UM,
+                          screen.y0f * _UM, (screen.y0f + screen.eyf) * _UM)
+                mark = (ref_xy[0] * _UM, ref_xy[1] * _UM)
+                figs = [render.heatmap(maps["mu_pair"], extent,
+                                       f"Stage 8 [{stage}]: pairwise |μ(P, P_ref)|",
+                                       "x, µm", "y, µm", sub, "|μ|",
+                                       mark=mark, vmax=1.0, w=430),
+                        render.heatmap(maps["mu_sketch"], extent,
+                                       f"sketch r={maps['rank']}",
+                                       "x, µm", "y, µm", "", "|μ|",
+                                       mark=mark, vmax=1.0, w=430),
+                        render.heatmap(maps["mu_diff"], extent, "|pair − sketch|",
+                                       "x, µm", "y, µm", "", "Δ", w=430)]
+                fig = render.hstack(figs)
+            else:
+                xs_um = [x * _UM for x in screen.xs()]
+                fig = render.line_chart(
+                    [{"xs": xs_um, "ys": maps["mu_pair"][0], "label": "pairwise"},
+                     {"xs": xs_um, "ys": maps["mu_sketch"][0],
+                      "label": f"sketch r={maps['rank']}", "dash": "6,4"}],
+                    f"Stage 8 [{stage}]: |μ(x, x_ref)|", "x, µm", "|μ|", sub,
+                    vlines=[(ref_xy[0] * _UM, "ref")], w=760)
+            self._save(out_dir, f"08-{stage}-sketch-mu.svg", fig)
+            lam = maps["lam"]
+            top = min(len(lam), 60)
+            l1 = lam[0] or 1.0
+            fig = render.line_chart(
+                [{"xs": list(range(1, top + 1)),
+                  "ys": [v / l1 for v in lam[:top]], "label": "λ_n / λ_1"}],
+                f"Stage 8 [{stage}]: coherent-mode spectrum of the field",
+                "mode n", "λ_n / λ_1",
+                f"N_eff = {maps['neff']:.1f}; 99% of energy in {maps['n99']} modes; "
+                f"dark px {maps['dark_px']}", w=560)
+            self._save(out_dir, f"08-{stage}-sketch-spectrum.svg", fig)
+            ny, nx = screen.ny, screen.nx
+            for iy in range(ny):
+                for ix in range(nx):
+                    rows.append({"stage": stage, "pixel": iy * nx + ix,
+                                 "mu_pair": maps["mu_pair"][iy][ix],
+                                 "mu_sketch": maps["mu_sketch"][iy][ix],
+                                 "I": maps["intensity"][iy][ix]})
+            self.report += [
+                f"## Stage 8 — sketch estimator [{stage}]",
+                f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen {st['screen']:,} of {st['emitted']:,}",
+                f"- rank r = {maps['rank']}; RMS(|μ|_pair − |μ|_sketch) = {maps['rms_pair_sketch']:.4f} "
+                f"on {maps['solid_px']} solid px (dark: {maps['dark_px']})",
+                f"- mode spectrum: N_eff = {maps['neff']:.2f}, 99% of energy in {maps['n99']} modes",
+            ] + ([f"- RMS(|μ|_pair − |μ|_stage{'2' if stage == 'free' else '6'}_Number) = {rms_engine:.2e} (same rays, solid px)"]
+                 if rms_engine is not None else []) + [
+                f"- time: {res['seconds']:.1f} s",
+            ]
+        path = os.path.join(out_dir, "mu-sketch.jsonl")
+        with open(path, "w", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row) + "\n")
+        self.files.append("mu-sketch.jsonl")
+        _log("  → mu-sketch.jsonl")
+
     def _capillary_engine_check(self, bundle) -> str:
         cap = self.cfg.capillary
         p = self.cfg.precision
@@ -705,6 +796,9 @@ class Simulation:
             if 7 in wanted:
                 _log("Stage 7: alternative estimators — full W (axis C) + Wigner (axis D)")
                 self._stage7(out_dir, quick)
+            if 8 in wanted:
+                _log("Stage 8: streaming sketch of W — column + mode spectrum")
+                self._stage8(out_dir, quick)
         finally:
             if rays_fh is not None:
                 rays_fh.close()
