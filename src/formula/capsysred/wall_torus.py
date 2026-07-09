@@ -10,7 +10,22 @@ import math
 
 from ..formula import Number
 from .nums import lift, sqrt, vadd, vdot, vnorm, vscale, vsub, vunit
-from .types import _EPS_T
+from .types import _EPS_T, _INSIDE_TOL, _M_TO_UM, _TCAP_TOL
+
+# Newton polish stop, in digits: quit once the step falls below
+# 10^-max(24, p//2) of the root. Newton doubles digits per step, so the final
+# accepted step squares the error past 10^-p; targeting p//2 keeps the
+# threshold ~p/2 digits above the Horner roundoff floor ~10^-p, which a
+# straight 10^-p target would chase forever (never firing — every ray would
+# drop to the slow bisection fallback). The 24-digit floor keeps the p=32
+# behavior. The step is compared as Number: at p ~ 1024 it is ~1e-500 and
+# would underflow double.
+_NEWTON_MIN_DIGITS = 24
+
+# Scale floor (m) in that stop: for roots below ~1 nm a purely relative test
+# keeps tightening toward zero and may never fire; under the floor the
+# threshold goes absolute (10^-digits * 1e-9 m).
+_NEWTON_TFLOOR = 1e-9
 
 
 def _horner(cs, t):
@@ -43,49 +58,92 @@ def _dk_roots(cf):
     return roots
 
 
+def _float_seeds(c, t_capf):
+    """Plausible real roots of the quartic from float Durand-Kerner, ascending.
+
+    Filters the 4 complex DK roots down to Newton seeds:
+    - |Im| <= 1e-6*max(1, |Re|): keeps roots whose imaginary part is DK noise
+      (a grazing ray yields the near-double pair 3.0000001 +/- 2e-7j — kept)
+      and drops genuinely complex pairs (0.2 +/- 0.9j of a branch the ray
+      never crosses — dropped).
+    - _EPS_T/2 < Re <= t_capf: only roots inside the search window; the
+      half-_EPS_T lower edge admits a seed that float noise pushed slightly
+      below the floor, letting Newton polish it back above it.
+    """
+    return sorted(r.real for r in _dk_roots([float(v) for v in c])
+                  if abs(r.imag) <= 1e-6 * max(1.0, abs(r.real))
+                  and _EPS_T / 2 < r.real <= t_capf)
+
+
+def _newton_polish(c, dc, seed, rtol):
+    """Newton on the exact quartic from a float seed: Number root or None.
+
+    Digits double per step, so 12 iterations lift a ~13-digit double seed to
+    ~13*2^12 digits — enough headroom for any realistic precision; the loop
+    exits early via the rtol stop long before that. Example at p=64
+    (rtol=1e-32): |step| goes ~1e-13 -> 1e-26 -> 1e-52, the third step fires
+    the stop, and the returned root is off by ~step^2 ~ 1e-104. None means
+    the seed stalled: at a (near-)double root f' -> 0, steps stop shrinking
+    and the budget runs out — the caller falls back to exact bisection.
+    """
+    t = lift(seed, c[0].precision)
+    for _ in range(12):
+        gp = _horner(dc, t)
+        if float(abs(gp)) == 0.0:
+            break
+        step = _horner(c, t) / gp
+        t = t - step
+        if abs(step) <= rtol * max(abs(float(t)), _NEWTON_TFLOOR):
+            return t
+    return None
+
+
+def _bisect_first(c, t_capf):
+    """First sign change of the quartic on a geometric grid, then bisection.
+
+    Rescue path for roots Newton cannot polish (near-double roots, stalled
+    seeds); everything runs on the exact quartic. The grid spans
+    (_EPS_T, t_capf] in 48 geometric steps — for t_capf=0.1 the probes are
+    1e-12, ~1.7e-12, ..., 0.1 — so an exact double root with NO sign change
+    (a tangent graze, not a crossing) stays invisible, which is the intended
+    miss. Signs are Number comparisons, not float(): near the root the
+    residual underflows double (reads 0.0, i.e. "not negative") and at
+    p ~ 1024 that used to corrupt the bracket. 8 + p*log2(10) halvings
+    shrink the bracket below 10^-p of its span.
+    """
+    p = c[0].precision
+    lo = lift(_EPS_T, p)
+    slo = _horner(c, lo) < 0
+    half = Number("0.5", p)
+    halvings = 8 + int(p * math.log2(10))
+    for k in range(1, 49):
+        hi = lift(_EPS_T * (t_capf / _EPS_T) ** (k / 48.0), p)
+        shi = _horner(c, hi) < 0
+        if slo != shi:
+            for _ in range(halvings):
+                mid = (lo + hi) * half
+                if slo != (_horner(c, mid) < 0):
+                    hi = mid
+                else:
+                    lo = mid
+            return (lo + hi) * half
+        lo, slo = hi, shi
+    return None
+
+
 def _quartic_first(c, t_capf):
     """Smallest real root of the monic Number quartic in (_EPS_T, t_capf].
 
-    Float Durand-Kerner seeds -> Newton in Number; exact-sign bisection is the
-    fallback for roots Newton cannot polish (near-double, stalled seeds).
+    Two tiers: float Durand-Kerner seeds polished by Newton at full precision
+    (fast path, simple roots), exact-sign bisection when no seed polishes.
     """
     p = c[0].precision
+    rtol = lift(f"1e-{max(_NEWTON_MIN_DIGITS, p // 2)}", p)
     dc = (c[0] * Number("4", p), c[1] * Number("3", p), c[2] * Number("2", p), c[3])
-    cand = sorted(r.real for r in _dk_roots([float(v) for v in c])
-                  if abs(r.imag) <= 1e-6 * max(1.0, abs(r.real))
-                  and _EPS_T / 2 < r.real <= t_capf)
-    best = None
-    for seed in cand:
-        t = lift(seed, p)
-        for _ in range(12):
-            gp = _horner(dc, t)
-            if float(abs(gp)) == 0.0:
-                break
-            step = _horner(c, t) / gp
-            t = t - step
-            if float(abs(step)) <= 1e-24 * max(abs(float(t)), 1e-9):
-                if float(t) > _EPS_T and (best is None or float(t) < float(best)):
-                    best = t
-                break
-    if best is not None:
-        return best
-    # sign-change scan (geometric grid) + bisection, all on the exact quartic
-    lo = lift(_EPS_T, p)
-    flo = float(_horner(c, lo))
-    half = Number("0.5", p)
-    for k in range(1, 49):
-        hi = lift(_EPS_T * (t_capf / _EPS_T) ** (k / 48.0), p)
-        fhi = float(_horner(c, hi))
-        if (flo < 0.0) != (fhi < 0.0):
-            for _ in range(90):
-                mid = (lo + hi) * half
-                if (flo < 0.0) != (float(_horner(c, mid)) < 0.0):
-                    hi = mid
-                else:
-                    lo, flo = mid, float(_horner(c, mid))
-            return (lo + hi) * half
-        lo, flo = hi, fhi
-    return None
+    roots = (_newton_polish(c, dc, seed, rtol) for seed in _float_seeds(c, t_capf))
+    best = min((t for t in roots if t is not None and float(t) > _EPS_T),
+               key=float, default=None)
+    return best if best is not None else _bisect_first(c, t_capf)
 
 
 class TorusWall:
@@ -95,22 +153,22 @@ class TorusWall:
     def __init__(self, center, a, R, toward, z0):
         self.kind = "torus"
         p = center[0].precision
-        self._one, self._two = Number("1", p), Number("2", p)
-        self._zero, self._four = Number("0", p), Number("4", p)
+        self._one = Number("1", p)
+        self._zero = Number("0", p)
         norm = sqrt(toward[0] * toward[0] + toward[1] * toward[1])
         ux, uy = toward[0] / norm, toward[1] / norm
         self.C = (center[0] + R * ux, center[1] + R * uy, z0)
         self.nhat = (self._zero - uy, ux, self._zero)     # ring-plane normal
         self.R, self.a = R, a
         self.K = R * R - a * a
-        self.fourR2 = self._four * R * R
+        self.fourR2 = 4 * R * R
         self._Cf = tuple(float(c) for c in self.C)
         self._nf = (float(self.nhat[0]), float(self.nhat[1]))
         self._Rf, self._af = float(R), float(a)
         # float rho-R cancellation noise grows with R: widen the on-wall slack
-        self._in2 = (self._af * self._af * (1.0 + 1e-9)
+        self._in2 = (self._af * self._af * (1.0 + _INSIDE_TOL)
                      + 64.0 * 2.2e-16 * self._Rf * self._af)
-        um = lift(1e6, p)
+        um = lift(_M_TO_UM, p)
         cx, cy, cz = (str(c * um) for c in self.C)
         w2 = f"(x-({cx}))^2+(y-({cy}))^2+(z-({cz}))^2"
         s = f"((x-({cx}))*({self.nhat[0]})+(y-({cy}))*({self.nhat[1]}))"
@@ -130,13 +188,13 @@ class TorusWall:
         w = vsub(O, self.C)
         ws, wd = vdot(w, w), vdot(w, d)
         s0, sd = vdot(w, self.nhat), vdot(d, self.nhat)
-        u1, u0 = self._two * wd, ws + self.K
+        u1, u0 = 2 * wd, ws + self.K
         c = (self._one,
-             self._two * u1,
-             u1 * u1 + self._two * u0 - self.fourR2 * (self._one - sd * sd),
-             self._two * u1 * u0 - self.fourR2 * self._two * (wd - s0 * sd),
+             2 * u1,
+             u1 * u1 + 2 * u0 - self.fourR2 * (self._one - sd * sd),
+             2 * u1 * u0 - self.fourR2 * 2 * (wd - s0 * sd),
              u0 * u0 - self.fourR2 * (ws - s0 * s0))
-        t = _quartic_first(c, float(t_exit) * (1.0 + 1e-9) + _EPS_T)
+        t = _quartic_first(c, float(t_exit) * (1.0 + _TCAP_TOL) + _EPS_T)
         if t is None:
             return None
         P = vadd(O, vscale(d, t))

@@ -60,12 +60,11 @@ class LineAmplitudes:
         self.material = material
         self.energies = [str(line.e_kev) for line in lines]
         self.precision = precision
-        self._one = Number("1", precision)
 
     def __call__(self, sins):
         """sins: sin(theta_j) per bounce (Number or full-precision str)."""
         if not sins:
-            return [self._one] * len(self.energies)
+            return [Number("1", self.precision)] * len(self.energies)
         template = ampl_template(len(sins), self.material, self.precision)
         values = {f"s{j + 1}": str(s) for j, s in enumerate(sins)}
         out = []

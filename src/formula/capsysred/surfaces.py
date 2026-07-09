@@ -15,7 +15,7 @@ import math
 
 from ..formula import Number
 from .nums import lift, vadd, vscale
-from .types import _EPS_LOC, _EPS_T
+from .types import _EPS_LOC, _EPS_T, _INSIDE_TOL, _M_TO_UM, _TCAP_TOL
 from .wall_cylinder import CylinderWall
 from .wall_polygon import PolygonWall
 from .wall_revolution import RevolutionWall
@@ -59,24 +59,26 @@ class ImplicitWall:
         self.center = center
         p = center[0].precision
         self.rs = RaySurface(expr, p)
-        self._scale = lift(1e6, p)
+        self._scale = lift(_M_TO_UM, p)
         self.expr_um = None            # the engine IS the hit path here
         self.probe_xy = (1.0, 0.0)
 
     def _f(self, xf, yf, zf) -> float:
         val = self.rs.surface.evaluate(
-            {"x": repr(xf * 1e6), "y": repr(yf * 1e6), "z": repr(zf * 1e6)})
+            {"x": repr(xf * _M_TO_UM), "y": repr(yf * _M_TO_UM),
+             "z": repr(zf * _M_TO_UM)})
         return float(Number(val, self.rs.precision))
 
     def inside(self, xf, yf, zf):
         # slack vs the bore-center depth keeps on-wall points (F rounds to ±eps)
         depth = abs(self._f(float(self.center[0]), float(self.center[1]), zf))
-        return self._f(xf, yf, zf) < 1e-9 * depth
+        return self._f(xf, yf, zf) < _INSIDE_TOL * depth
 
     def hit(self, O, d, t_exit):
-        eps_um = _EPS_T * 1e6
+        eps_um = _EPS_T * _M_TO_UM
         Oum = tuple(x * self._scale for x in O)
-        ts = self.rs.intersect(Oum, d, t_max=float(t_exit) * 1e6 * (1.0 + 1e-9),
+        ts = self.rs.intersect(Oum, d,
+                               t_max=float(t_exit) * _M_TO_UM * (1.0 + _TCAP_TOL),
                                t_min=eps_um, method="subdivision")
         ts = [t for t in ts if float(t) > 1.5 * eps_um]
         if not ts:
@@ -168,8 +170,8 @@ def engine_hit_t(surface_expr_um: str, O, d, t_max_m: float):
     """
     from ..intersect import RaySurface
     p = O[0].precision
-    scale = lift(1e6, p)
+    scale = lift(_M_TO_UM, p)
     rs = RaySurface(surface_expr_um, p)
     ts = rs.intersect(tuple(c * scale for c in O), tuple(d),
-                      t_max=t_max_m * 1e6, method="subdivision")
+                      t_max=t_max_m * _M_TO_UM, method="subdivision")
     return ts[0] / scale if ts else None

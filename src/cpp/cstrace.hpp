@@ -26,6 +26,33 @@ constexpr double kEpsT = 1e-12;
 // Bore-membership nudge along the ray (m); capsysred.types._EPS_LOC.
 constexpr double kEpsLoc = 1e-7;
 
+// On-wall inside() slack; capsysred.types._INSIDE_TOL. The probed point is a
+// reflection point lying exactly ON the wall: after mp -> double conversion
+// dx^2+dy^2 lands within a few ulp of a^2 and a strict < would randomly
+// classify it outside (ray absorbed). 1e-9 dwarfs double roundoff yet is ~fm
+// in radius for a um-scale bore, far below the kEpsLoc nudge.
+constexpr double kInsideTol = 1e-9;
+
+// Widening of the root-search cap past t_exit; capsysred.types._TCAP_TOL.
+// The cap is only double(t_exit), so a hit within rounding of the exit plane
+// could fall just outside the window and be lost (ray passes through the
+// wall); the caller's full-precision t_exit <= t comparison then makes the
+// actual pass/reflect call, so the slack can only recover hits.
+constexpr double kTcapTol = 1e-9;
+
+// Newton polish stop, in digits: 10^-max(24, P/2) of the root;
+// wall_torus._NEWTON_MIN_DIGITS. The final accepted step squares the error
+// past 10^-P (quadratic convergence); targeting P/2 keeps the threshold ~P/2
+// digits above the Horner roundoff floor ~10^-P, which a straight 10^-P
+// target would chase forever (never firing — every ray would drop to the
+// slow bisection fallback). The floor keeps the P=32 behavior.
+constexpr unsigned kNewtonMinDigits = 24;
+
+// Scale floor (m) in that stop; wall_torus._NEWTON_TFLOOR: for roots below
+// ~1 nm a purely relative test keeps tightening toward zero and may never
+// fire; under the floor the threshold goes absolute.
+constexpr double kNewtonTFloor = 1e-9;
+
 // wall_torus._dk_roots: all roots of a float polynomial (Durand-Kerner);
 // only seed material — every root is re-polished in mp or bisected exactly.
 inline std::vector<std::complex<double>> dk_roots(
@@ -73,6 +100,25 @@ inline std::vector<std::complex<double>> dk_roots(
     }
   }
   return roots;
+}
+
+// wall_torus._float_seeds: plausible real roots from float Durand-Kerner,
+// ascending. |Im| <= 1e-6*max(1, |Re|) keeps roots whose imaginary part is
+// DK noise (a grazing ray's near-double pair) and drops genuinely complex
+// pairs; (kEpsT/2, t_capf] keeps only the search window, the half-eps lower
+// edge admitting a seed that float noise pushed slightly below the floor so
+// Newton can polish it back above it.
+inline std::vector<double> float_seeds(const std::vector<double> &cf,
+                                       double t_capf) {
+  std::vector<double> cand;
+  for (const std::complex<double> &r : dk_roots(cf)) {
+    if (std::fabs(r.imag()) <= 1e-6 * std::max(1.0, std::fabs(r.real())) &&
+        kEpsT / 2 < r.real() && r.real() <= t_capf) {
+      cand.push_back(r.real());
+    }
+  }
+  std::sort(cand.begin(), cand.end());
+  return cand;
 }
 
 template <unsigned P>
@@ -169,7 +215,7 @@ struct Tracer {
   static bool inside(const Revolution &w, double xf, double yf, double zf) {
     double dx = xf - w.cxf, dy = yf - w.cyf;
     double r2 = w.c0f + zf * (w.c1f + zf * w.c2f);
-    return dx * dx + dy * dy < r2 * (1.0 + 1e-9);
+    return dx * dx + dy * dy < r2 * (1.0 + kInsideTol);
   }
 
   static OptHit hit(const Revolution &w, const V3 &O, const V3 &d, const R &) {
@@ -216,7 +262,7 @@ struct Tracer {
   // wall_polygon.PolygonWall
   static bool inside(const Polygon &w, double xf, double yf, double) {
     double dx = xf - w.cxf, dy = yf - w.cyf;
-    double lim = w.af * (1.0 + 1e-9);
+    double lim = w.af * (1.0 + kInsideTol);
     for (const auto &f : w.facesf) {
       if (!(f.first * dx + f.second * dy < lim)) {
         return false;
@@ -252,55 +298,57 @@ struct Tracer {
     return Hit{t, vadd(O, vscale(d, t)), {mx, my, R()}};
   }
 
-  // wall_torus._quartic_first: smallest real root in (_EPS_T, t_capf].
-  static std::optional<R> quartic_first(const std::array<R, 5> &c,
-                                        double t_capf) {
-    std::array<R, 4> dc = {c[0] * 4, c[1] * 3, c[2] * 2, c[3]};
-    std::vector<double> cf(5);
-    for (size_t i = 0; i < 5; ++i) {
-      cf[i] = to_double(c[i]);
-    }
-    std::vector<double> cand;
-    for (const std::complex<double> &r : dk_roots(cf)) {
-      if (std::fabs(r.imag()) <= 1e-6 * std::max(1.0, std::fabs(r.real())) &&
-          kEpsT / 2 < r.real() && r.real() <= t_capf) {
-        cand.push_back(r.real());
+  // 10^-max(kNewtonMinDigits, P/2) as an interned mp constant; the step is
+  // compared against it in mp — at P ~ 1024 the step underflows double.
+  static const R &newton_rtol() {
+    static const R v =
+        pow(R(10), -static_cast<int>(std::max(kNewtonMinDigits, P / 2)));
+    return v;
+  }
+
+  // wall_torus._newton_polish: Newton on the exact quartic from a float
+  // seed. Digits double per step, so 12 iterations lift a ~13-digit double
+  // seed to ~13*2^12 digits — headroom for any supported P; the rtol stop
+  // fires long before (e.g. P=64: |step| ~1e-13 -> 1e-26 -> 1e-52 fires
+  // 1e-32, leaving error ~step^2 ~ 1e-104). nullopt means the seed stalled:
+  // at a (near-)double root f' -> 0, steps stop shrinking and the budget
+  // runs out — the caller falls back to exact bisection.
+  static std::optional<R> newton_polish(const std::array<R, 5> &c,
+                                        const std::array<R, 4> &dc,
+                                        double seed) {
+    R t(seed);
+    for (int i = 0; i < 12; ++i) {
+      R gp = horner(dc, t);
+      if (gp == 0) {
+        break;
+      }
+      R step = horner(c, t) / gp;
+      t -= step;
+      if (abs(step) <=
+          newton_rtol() * std::max(std::fabs(to_double(t)), kNewtonTFloor)) {
+        return t;
       }
     }
-    std::sort(cand.begin(), cand.end());
-    std::optional<R> best;
-    double bestf = 0.0;
-    for (double seed : cand) {
-      R t(seed);
-      for (int i = 0; i < 12; ++i) {
-        R gp = horner(dc, t);
-        if (gp == 0) {
-          break;
-        }
-        R step = horner(c, t) / gp;
-        t -= step;
-        double stepf = std::fabs(to_double(step));
-        if (stepf <= 1e-24 * std::max(std::fabs(to_double(t)), 1e-9)) {
-          double tf = to_double(t);
-          if (tf > kEpsT && (!best || tf < bestf)) {
-            best = t;
-            bestf = tf;
-          }
-          break;
-        }
-      }
-    }
-    if (best) {
-      return best;
-    }
-    // sign-change scan (geometric grid) + bisection on the exact quartic
+    return std::nullopt;
+  }
+
+  // wall_torus._bisect_first: first sign change of the quartic on a 48-step
+  // geometric grid over (kEpsT, t_capf], then bisection — all on the exact
+  // quartic. Rescue path for roots Newton cannot polish; an exact double
+  // root (tangent graze, no sign change) stays invisible by design. Signs
+  // are mp comparisons: near the root the residual underflows double (reads
+  // 0.0, "not negative") and would corrupt the bracket at P ~ 1024.
+  // 8 + P*log2(10) halvings shrink the bracket below 10^-P of its span.
+  static std::optional<R> bisect_first(const std::array<R, 5> &c,
+                                       double t_capf) {
     R lo = eps_t();
     bool lneg = horner(c, lo) < 0;
+    static const int halvings = 8 + static_cast<int>(P * std::log2(10.0));
     for (int k = 1; k < 49; ++k) {
       R hi(kEpsT * std::pow(t_capf / kEpsT, k / 48.0));
       bool hneg = horner(c, hi) < 0;
       if (lneg != hneg) {
-        for (int i = 0; i < 90; ++i) {
+        for (int i = 0; i < halvings; ++i) {
           R mid = (lo + hi) / 2;
           if (lneg != (horner(c, mid) < 0)) {
             hi = mid;
@@ -314,6 +362,30 @@ struct Tracer {
       lneg = hneg;
     }
     return std::nullopt;
+  }
+
+  // wall_torus._quartic_first: smallest real root in (_EPS_T, t_capf].
+  // Two tiers: float DK seeds polished by Newton at full precision (fast
+  // path, simple roots), exact-sign bisection when no seed polishes. As in
+  // first_forward, exact mp order replaces Python's float key.
+  static std::optional<R> quartic_first(const std::array<R, 5> &c,
+                                        double t_capf) {
+    std::array<R, 4> dc = {c[0] * 4, c[1] * 3, c[2] * 2, c[3]};
+    std::vector<double> cf(5);
+    for (size_t i = 0; i < 5; ++i) {
+      cf[i] = to_double(c[i]);
+    }
+    std::optional<R> best;
+    for (double seed : float_seeds(cf, t_capf)) {
+      std::optional<R> t = newton_polish(c, dc, seed);
+      if (t && *t > eps_t() && (!best || *t < *best)) {
+        best = std::move(t);
+      }
+    }
+    if (best) {
+      return best;
+    }
+    return bisect_first(c, t_capf);
   }
 
   // wall_torus.TorusWall
@@ -338,7 +410,7 @@ struct Tracer {
                           2 * u1 * u0 - 2 * w.fourR2 * (wd - s0 * sd),
                           u0 * u0 - w.fourR2 * (ws - s0 * s0)};
     std::optional<R> t =
-        quartic_first(c, to_double(t_exit) * (1.0 + 1e-9) + kEpsT);
+        quartic_first(c, to_double(t_exit) * (1.0 + kTcapTol) + kEpsT);
     if (!t) {
       return std::nullopt;
     }
