@@ -139,7 +139,8 @@ def _ranges(series, y_zero: bool):
 
 def line_chart(series, title, xlabel, ylabel, subtitle="", vlines=(),
                y_zero=True, w=560, h=400):
-    """series: [{xs, ys, label, color?, dash?, width?, lo?, hi?}]; lo/hi: shaded band."""
+    """series: [{xs, ys, label, color?, dash?, width?, lo?, hi?, dots?}];
+    lo/hi: shaded band; dots: circle markers instead of a line."""
     ax = _Axes(w, h, *_ranges(series, y_zero))
     e = ax.frame(xlabel, ylabel, title, subtitle)
     for x, label in vlines:
@@ -156,6 +157,10 @@ def line_chart(series, title, xlabel, ylabel, subtitle="", vlines=(),
                             + list(zip(reversed(s["xs"]), reversed(s["lo"]))))
             e.append(f'<polygon points="{band}" fill="{color}" '
                      f'fill-opacity="0.16" stroke="none"/>')
+        if s.get("dots"):
+            e.extend(f'<circle cx="{ax.x(x):.1f}" cy="{ax.y(y):.1f}" r="3" '
+                     f'fill="{color}"/>' for x, y in zip(s["xs"], s["ys"]))
+            continue
         pts = " ".join(f"{ax.x(x):.1f},{ax.y(y):.1f}"
                        for x, y in zip(s["xs"], s["ys"]))
         e.append(f'<polyline points="{pts}" fill="none" stroke="{color}" '

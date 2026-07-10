@@ -797,6 +797,7 @@ class Simulation:
         flat = lambda grid: [v for row in grid for v in row]
         n_lit = sum(1 for d in flat(maps["density"]) if d > 0)
         solid = [i for i, v in enumerate(flat(maps["solid"])) if v > 0]
+        n_dub = sum(1 for v in flat(maps["dubious"]) if v > 0)
         errs = [flat(maps["mu_err"])[i] for i in solid]
         med_err = sorted(errs)[len(errs) // 2] if errs else 0.0
         floor = 1.0 / math.sqrt(res["n_modes"])
@@ -813,9 +814,9 @@ class Simulation:
             extent = (screen.x0f * _UM, (screen.x0f + screen.exf) * _UM,
                       screen.y0f * _UM, (screen.y0f + screen.eyf) * _UM)
             mark = (ref_xy[0] * _UM, ref_xy[1] * _UM)
-            sig = [[min(m / e, 10.0) if e > 0.0 else 0.0
-                    for m, e in zip(mu_row, err_row)]
-                   for mu_row, err_row in zip(maps["mu"], maps["mu_err"])]
+            trust = [[1.0 if s > 0 and d == 0 else (0.5 if d > 0 else 0.0)
+                      for s, d in zip(s_row, d_row)]
+                     for s_row, d_row in zip(maps["solid"], maps["dubious"])]
             fig = render.hstack([
                 render.heatmap(maps["mu"], extent,
                                "Stage 10: |μ(P, P_ref)| (jackknife)",
@@ -823,8 +824,10 @@ class Simulation:
                                mark=mark, vmax=1.0, w=430, equal=True),
                 render.heatmap(maps["mu_err"], extent, "σ_jack(P)",
                                "x, µm", "y, µm", "", "σ", w=430, equal=True),
-                render.heatmap(sig, extent, "|μ|/σ (capped at 10)",
-                               "x, µm", "y, µm", "", "|μ|/σ", w=430, equal=True)])
+                render.heatmap(trust, extent, "trust: 1 ok · ½ don't · 0 none",
+                               "x, µm", "y, µm",
+                               "½: σ>1, pinned at |μ|=1, or no jackknife; 0: no pairs",
+                               "trust", vmax=1.0, w=430, equal=True)])
             self._save(out_dir, "10-capillary-jack-mu.svg", fig)
             fig = render.hstack([
                 render.heatmap(maps["intensity"], extent, "Stage 10: intensity",
@@ -846,22 +849,33 @@ class Simulation:
         else:
             xs_um = [x * _UM for x in screen.xs()]
             row_mu, row_err = maps["mu"][0], maps["mu_err"][0]
+            dub_i = [i for i, d in enumerate(maps["dubious"][0]) if d > 0]
             series = [{"xs": xs_um, "ys": row_mu, "label": "jackknife |μ| ± σ",
                        "lo": [max(m - e, 0.0) for m, e in zip(row_mu, row_err)],
                        "hi": [min(m + e, 1.0) for m, e in zip(row_mu, row_err)]}]
             if num is not None:
                 series.append({"xs": xs_um, "ys": num["maps"]["mu"][0],
                                "label": "stage 6 (Number)", "dash": "6,4"})
+            if dub_i:
+                series.append({"xs": [xs_um[i] for i in dub_i],
+                               "ys": [row_mu[i] for i in dub_i],
+                               "label": "don't trust: σ>1 / pinned at clamp",
+                               "color": "#d62728", "dots": True})
             fig = render.line_chart(series,
                                     "Stage 10: |μ(x, x_ref)| with jackknife errors",
                                     "x, µm", "|μ|", sub,
                                     vlines=[(ref_xy[0] * _UM, "ref")], w=760)
             self._save(out_dir, "10-capillary-jack-mu.svg", fig)
+            err_series = [{"xs": xs_um, "ys": row_err, "label": "σ_jack"},
+                          {"xs": xs_um, "ys": [floor] * nx,
+                           "label": "1/√N_modes", "dash": "2,3"}]
+            if dub_i:
+                err_series.append({"xs": [xs_um[i] for i in dub_i],
+                                   "ys": [row_err[i] for i in dub_i],
+                                   "label": "don't trust",
+                                   "color": "#d62728", "dots": True})
             fig = render.line_chart(
-                [{"xs": xs_um, "ys": row_err, "label": "σ_jack"},
-                 {"xs": xs_um, "ys": [floor] * nx,
-                  "label": "1/√N_modes", "dash": "2,3"}],
-                "Stage 10: jackknife error by pixel", "x, µm", "σ", sub)
+                err_series, "Stage 10: jackknife error by pixel", "x, µm", "σ", sub)
             self._save(out_dir, "10a-capillary-jack-err.svg", fig)
             imax = max(maps["intensity"][0]) or 1.0
             dmax = max(maps["density"][0]) or 1.0
@@ -895,7 +909,8 @@ class Simulation:
                         "mu": maps["mu"][iy][ix], "mu_err": maps["mu_err"][iy][ix],
                         "I": maps["intensity"][iy][ix],
                         "n_rays": int(maps["density"][iy][ix]),
-                        "solid": bool(maps["solid"][iy][ix])}) + "\n")
+                        "solid": bool(maps["solid"][iy][ix]),
+                        "dubious": bool(maps["dubious"][iy][ix])}) + "\n")
         self.files.append("mu-jack.jsonl")
         _log("  → mu-jack.jsonl")
         below = (100.0 * sum(1 for e in errs if e < floor) / len(errs)
@@ -905,6 +920,8 @@ class Simulation:
             f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen {st['screen']:,} of {st['emitted']:,}",
             f"- solid pixels (≥2 same-mode rays, |μ| estimable): {len(solid)} of {n_lit} lit; "
             "the rest are masked to μ = σ = 0",
+            f"- don't-trust estimates on solid px (σ > 1, pinned at |μ| = 1 with σ = 0, "
+            f"or no usable jackknife): {n_dub} of {len(solid)}",
             f"- σ_jack on solid pixels: median {med_err:.4f}, max {max(errs, default=0.0):.4f}; "
             f"{below:.0f}% below the 1/√N floor ({floor:.3f})",
         ] + ([f"- RMS(|μ|_jack − |μ|_stage6) = {rms6:.2e} (same rays, solid pixels)"]

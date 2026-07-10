@@ -11,7 +11,10 @@ delete-one-mode jackknife standard error for every pixel. 1D and 2D screens
 Pixels that never see two rays of one mode have Ic = 0 by construction — a
 float residual decides the sign, and mu degenerates to a coin flip between 0
 and the 1.0 clamp (the isolated bright pixels of the stage-6 map). Stage 10
-masks them: mu = err = 0, the "solid" map marks the estimable pixels.
+masks them: mu = err = 0, the "solid" map marks the estimable pixels. On top
+of that the "dubious" map marks solid pixels whose estimate cannot be
+trusted: sigma > 1 (nearly single-mode), every leave-one-out value pinned at
+the 1.0 clamp (sigma = 0 is a lie), no usable jackknife, or Ic <= 0.
 """
 
 import cmath
@@ -92,7 +95,7 @@ class JackknifeCoherence:
         ic_ref = sum(self.ic_refs)
         zeros = lambda: [[0.0] * nx for _ in range(ny)]
         mu, err, intensity, density = zeros(), zeros(), zeros(), zeros()
-        solid = zeros()
+        solid, dubious = zeros(), zeros()
         for pixel in self.pairs:
             iy, ix = divmod(pixel, nx)
             solid[iy][ix] = 1.0
@@ -106,10 +109,11 @@ class JackknifeCoherence:
         for pixel, ic in Ic.items():
             if pixel not in self.pairs or not ref_solid:   # Ic is a float residual
                 continue
+            iy, ix = divmod(pixel, nx)
             if ic <= 0.0 or ic_ref <= 0.0:   # shot-dominated pixel: mu stays 0
+                dubious[iy][ix] = 1.0
                 continue
             w = W.get(pixel, 0j)
-            iy, ix = divmod(pixel, nx)
             mu[iy][ix] = min(abs(w) / math.sqrt(ic * ic_ref), 1.0)
             loo = []   # leave-one-mode-out mu; pixels pinned at the clamp give err 0
             for s in range(n_modes):
@@ -122,9 +126,14 @@ class JackknifeCoherence:
                 mean = sum(loo) / len(loo)
                 err[iy][ix] = math.sqrt(
                     sum((v - mean) ** 2 for v in loo) * (len(loo) - 1) / len(loo))
+            # sigma beyond the |mu| range, all loo at the clamp, or no jackknife
+            if (err[iy][ix] > 1.0 or len(loo) < 2
+                    or (mu[iy][ix] >= 1.0 and err[iy][ix] == 0.0)):
+                dubious[iy][ix] = 1.0
         return {"mu": mu, "mu_err": err, "intensity": intensity,
-                "density": density, "solid": solid, "ref_pixel": self.ref,
-                "i_ref": max(ic_ref, 0.0), "n_modes": n_modes}
+                "density": density, "solid": solid, "dubious": dubious,
+                "ref_pixel": self.ref, "i_ref": max(ic_ref, 0.0),
+                "n_modes": n_modes}
 
 
 def run_jack_stage(sim, label, src_cfg, scr_cfg, optic, aim_factory,
