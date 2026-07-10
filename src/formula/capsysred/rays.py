@@ -44,8 +44,10 @@ def budgets(cfg, quick: int) -> dict:
     """Scene -> [n_modes, n_rays], the same clamps as the stage loops."""
     def per(src):
         return [max(2, src.n_modes // quick), max(20, src.n_rays // quick)]
-    return {"free": per(cfg.free_source), "lloyd": per(cfg.lloyd.source),
-            "capillary": per(cfg.capillary.source)}
+    out = {"free": per(cfg.free_source), "lloyd": per(cfg.lloyd.source)}
+    if cfg.capillary is not None:
+        out["capillary"] = per(cfg.capillary.source)
+    return out
 
 
 def _open(path, mode):

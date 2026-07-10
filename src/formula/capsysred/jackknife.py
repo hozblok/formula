@@ -180,4 +180,4 @@ def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     maps = jack.finalize(screen.nx, screen.ny)
     return {"maps": maps, "screen": screen, "stats": stats,
             "rays_from": rays_from, "n_modes": n_modes, "n_rays": n_rays,
-            "seconds": time.time() - t0}
+            "seconds": time.time() - t0, "src_cfg": src_cfg}

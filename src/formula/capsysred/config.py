@@ -199,7 +199,9 @@ class Config:
         self.free_source = SourceCfg(_merge(cfg["source"], free.get("source", {})), p)
         self.free_screen = ScreenCfg(_merge(cfg["screen"], free.get("screen", {})), p)
         self.lloyd = LloydCfg(cfg["lloyd"], cfg["source"], cfg["screen"], p)
-        self.capillary = CapillaryCfg(cfg["capillary"], cfg["source"], cfg["screen"], p)
+        # capillary exists only when the config mentions it; empty config = full demo
+        self.capillary = (CapillaryCfg(cfg["capillary"], cfg["source"], cfg["screen"], p)
+                          if not raw or "capillary" in raw else None)
         self.max_bounces = int(cfg["trace"]["max_bounces"])
         self.amplitude_min = float(cfg["trace"]["amplitude_min"])
         self.rays_jsonl = bool(cfg["trace"]["rays_jsonl"])
