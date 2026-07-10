@@ -16,7 +16,7 @@ import time
 
 from ..formula import Number
 from .. import xray
-from . import analytic, render
+from . import analytic, render, schematic
 from .altcoh import run_alt_stage
 from .coherence import CoherenceAccumulator
 from .jackknife import run_jack_stage
@@ -264,6 +264,9 @@ class Simulation:
             ],
         }
         self._save(out_dir, "01-scheme.svg", render.scheme_setup(info))
+        # to-scale twin: real geometry, 10 traced rays, dimensioned axes
+        G = schematic.build_geometry(cfg, "capillary")
+        self._save(out_dir, "01a-scheme-traced.svg", schematic.compose(G))
 
     # ------------------------------------------------------------- stage 2+3
 
