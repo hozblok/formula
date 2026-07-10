@@ -712,3 +712,20 @@ def test_rays_gzip_roundtrip(tmp_path):
     assert sim.results["jack:capillary"]["rays_from"] == "file"
     d6 = sim.results["capillary"]["maps"]["density"]
     assert d6 == sim.results["jack:capillary"]["maps"]["density"]
+
+
+def test_stage6_from_file_equals_traced(tmp_path):
+    # stage 10 run first records the capillary scene; a later stage-6 run
+    # consumes it — the Number path from full-precision strings must land on
+    # the traced maps exactly
+    traced = Simulation.from_dict(TINY)
+    traced.run(str(tmp_path / "a"), stages=[6])
+    assert traced.results["capillary"]["rays_from"] == "trace"
+    Simulation.from_dict(TINY).run(str(tmp_path / "b"), stages=[10])
+    reused = Simulation.from_dict(TINY)
+    reused.run(str(tmp_path / "b"), stages=[6])
+    assert reused.results["capillary"]["rays_from"] == "file"
+    assert traced.results["capillary"]["stats"] == reused.results["capillary"]["stats"]
+    for key in ("mu", "intensity", "density"):
+        assert (traced.results["capillary"]["maps"][key]
+                == reused.results["capillary"]["maps"][key]), key

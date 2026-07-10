@@ -10,7 +10,6 @@ against xray.reflect_amplitude.
 import json
 import math
 import os
-import random
 import sys
 import time
 
@@ -27,14 +26,13 @@ from .config import Config, load
 from .nums import lift, solver, vunit
 from .progress import Progress
 from .screen import ScreenGrid
-from .source import Source, aim_disk_direction, slope_direction
+from .source import aim_disk_direction, slope_direction
 from .spectrum import SpectralLine, spectral_lines, wavelength_m
 from .surfaces import CapillaryBundle, Mirror, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
-from .native import make_tracer
 from .rays import RaysFile, scene_stream
-from .types import RayRecord, ray_record
+from .types import RayRecord
 
 ALL_STAGES = (1, 2, 3, 4, 5, 6)
 KNOWN_STAGES = ALL_STAGES + (7, 8, 9, 10, 11)  # 7 (alt), 8 (sketch), 9 (hit methods), 10 (jackknife), 11 (beamlets) — opt-in
@@ -116,65 +114,61 @@ class Simulation:
     def _mc_stage(self, stage: str, label: str, src_cfg, scr_cfg, optic,
                   aim_factory, seed_offset: int, quick: int):
         cfg = self.cfg
-        rng = random.Random(cfg.seed * 1000003 + seed_offset)
-        source = Source(src_cfg, rng)
+        p = cfg.precision
         screen = ScreenGrid(scr_cfg)
         n_modes = max(2, src_cfg.n_modes // quick)
         n_rays = max(20, src_cfg.n_rays // quick)
         acc = CoherenceAccumulator(self.lines, screen.ref_pixel(scr_cfg.reference),
                                    cfg.precision)
-        aim = aim_factory(source, screen, rng)
-        tracer = make_tracer(optic)   # C++ fast path when the optic supports it
+        records, rays_from = scene_stream(self, stage, src_cfg, scr_cfg, optic,
+                                          aim_factory, seed_offset, quick)
         stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
                  "off_window": 0, "reflected_rays": 0, "reflections": 0,
                  "bounce_hist": {}}
         progress = Progress(label, n_modes * n_rays)
         t0 = time.time()
-        for mode in range(n_modes):
-            origin = source.mode_origin()
-            acc.new_mode()
-            for ray in range(n_rays):
-                direction = aim(origin)
-                tr = tracer(origin, direction, optic, screen.z,
-                            cfg.max_bounces)
-                stats["emitted"] += 1
-                nb = len(tr.reflections)
-                sins = [sin_g for _, sin_g in tr.reflections]
-                fate, amps = tr.fate, None
-                if fate == "screen":
-                    # geometry is energy-free; Fresnel enters here, per line or at E0
-                    amps = (self.line_amps(sins) if self.per_line
-                            else self.fresnel.product(sins))
-                    if cfg.amplitude_min > 0.0:
-                        peak = (max(float(abs(a)) for a in amps) if self.per_line
-                                else float(abs(amps)))
-                        if peak < cfg.amplitude_min:
-                            fate = "absorbed"    # below threshold on every line
-                # the record keeps the pre-threshold fate: geometry only,
-                # every consumer (and --replay) applies its own amplitude_min
-                rec = ray_record(tr, screen, mode, ray, tr.fate)
-                if nb:
-                    stats["reflected_rays"] += 1
-                    stats["reflections"] += nb
-                    stats["bounce_hist"][nb] = stats["bounce_hist"].get(nb, 0) + 1
-                if self.rays is not None:
-                    self.rays.write(stage, rec)
-                if fate == "screen":
-                    if rec.pixel is None:
-                        stats["off_window"] += 1
-                    else:
-                        acc.add_ray(rec, amps)
-                        stats["screen"] += 1
+        mode_cur = None
+        for rec in records:
+            if rec.mode != mode_cur:
+                if mode_cur is not None:
+                    acc.fold_mode()
+                acc.new_mode()
+                mode_cur = rec.mode
+            if not isinstance(rec.opl, Number):
+                # file records carry strings; full-precision round-trip is exact
+                rec = rec._replace(opl=Number(rec.opl, p),
+                                   sins=tuple(Number(s, p) for s in rec.sins))
+            stats["emitted"] += 1
+            nb = len(rec.sins)
+            fate, amps = rec.fate, None
+            if fate == "screen":
+                # geometry is energy-free; Fresnel enters here, per line or at E0
+                amps = (self.line_amps(rec.sins) if self.per_line
+                        else self.fresnel.product(rec.sins))
+                if cfg.amplitude_min > 0.0:
+                    peak = (max(float(abs(a)) for a in amps) if self.per_line
+                            else float(abs(amps)))
+                    if peak < cfg.amplitude_min:
+                        fate = "absorbed"    # below threshold on every line
+            if nb:
+                stats["reflected_rays"] += 1
+                stats["reflections"] += nb
+                stats["bounce_hist"][nb] = stats["bounce_hist"].get(nb, 0) + 1
+            if fate == "screen":
+                if rec.pixel is None:
+                    stats["off_window"] += 1
                 else:
-                    stats[fate] += 1
-                progress.step()
+                    acc.add_ray(rec, amps)
+                    stats["screen"] += 1
+            else:
+                stats[fate] += 1
+            progress.step()
+        if mode_cur is not None:
             acc.fold_mode()
-        if self.rays is not None:
-            self.rays.finish_scene(stage)
         maps = acc.finalize(screen.nx, screen.ny)
         progress.finish(f"on screen {stats['screen']:,}")
         result = {"maps": maps, "stats": stats, "screen": screen,
-                  "n_modes": n_modes, "n_rays": n_rays,
+                  "rays_from": rays_from, "n_modes": n_modes, "n_rays": n_rays,
                   "seconds": time.time() - t0, "src_cfg": src_cfg}
         self.results[stage] = result
         return result
@@ -307,6 +301,7 @@ class Simulation:
         self.report += [
             "## Stage 2 — |μ| without optics (MC)",
             f"- modes: {res['n_modes']}, rays/mode: {res['n_rays']}, on screen: {st['screen']:,} of {st['emitted']:,}",
+            f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
             f"- time: {res['seconds']:.1f} s",
         ]
         return res
@@ -418,6 +413,7 @@ class Simulation:
         self.report += [
             "## Stage 4 — Lloyd's mirror scheme (MC)",
             f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen {st['screen']:,}; absorbed {st['absorbed']:,}",
+            f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
             f"- reflections per ray: {bh or 'none'}",
             f"- Δx (formula) = {dx_fringe * _UM:.3f} µm; overlap zone up to {x_ov * _UM:.2f} µm",
             f"- {check}",
@@ -551,6 +547,7 @@ class Simulation:
             "## Stage 6 — capillary (MC)",
             f"- {res['n_modes']} modes × {res['n_rays']} rays; transmitted to the screen {st['screen']:,} "
             f"({100.0 * st['screen'] / st['emitted']:.1f}%); absorbed {st['absorbed']:,}",
+            f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
             f"- reflections: total {st['reflections']:,}; per ray: {bh or 'none'}; mean {mean_b:.2f} per reflected ray",
             f"- {check}",
             f"- time: {res['seconds']:.1f} s",
