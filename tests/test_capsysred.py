@@ -729,3 +729,79 @@ def test_stage6_from_file_equals_traced(tmp_path):
     for key in ("mu", "intensity", "density"):
         assert (traced.results["capillary"]["maps"][key]
                 == reused.results["capillary"]["maps"][key]), key
+
+
+def test_gamma_free_drift_reduces_to_scalar_q():
+    # no bounces: Q = (q0+L)*I, no coupling, amplitude = q0/q (w0/w, Gouy)
+    import cmath
+    from formula.capsysred.gamma import det2, propagate
+    k = 2.0 * math.pi / 1.55e-10
+    zr = 0.5 * (5e-7) ** 2 * k
+    L = 0.14
+    q, amp = propagate(zr, [L], [])
+    q_scalar = complex(L, zr)
+    assert q[1] == 0 and q[0] == q[2] == q_scalar
+    assert cmath.isclose(amp, complex(0, zr) / q_scalar, rel_tol=1e-12)
+
+
+def test_gamma_meridional_reduces_to_two_scalar_q():
+    # phi in {0, pi} bounces keep Gamma diagonal: each axis is its own
+    # scalar-q chain (doc/capsysred-results.ru.md §5в reduction)
+    import cmath
+    from formula.capsysred.gamma import propagate
+    k = 2.0 * math.pi / 1.55e-10
+    zr = 0.5 * (5e-7) ** 2 * k
+    segs = [0.01, 0.006, 0.002]
+    inv_fs = 1.0 / 1.5e-3
+    q, _ = propagate(zr, segs, [(0.0, 0.0, inv_fs), (math.pi, 0.0, inv_fs)])
+    assert abs(q[1]) < 1e-12 * abs(q[0])       # sin(pi) float noise only
+
+    def scalar(inv_f):
+        qs = complex(0.0, zr)
+        for seg, invf in zip(segs, [inv_f, inv_f, 0.0]):
+            qs += seg
+            if invf:
+                qs = 1.0 / (1.0 / qs - invf)
+        return qs
+    assert cmath.isclose(q[0], scalar(0.0), rel_tol=1e-12)      # tangential
+    assert cmath.isclose(q[2], scalar(inv_fs), rel_tol=1e-12)   # sagittal
+
+
+def test_gamma_skew_bounces_couple_planes():
+    # a precessing azimuth mixes the axes: off-diagonal Gamma appears
+    from formula.capsysred.gamma import propagate
+    k = 2.0 * math.pi / 1.55e-10
+    zr = 0.5 * (5e-7) ** 2 * k
+    inv_fs = 1.0 / 1.5e-3
+    q, _ = propagate(zr, [0.01, 0.006, 0.002],
+                     [(0.0, 0.0, inv_fs), (math.pi / 3, 0.0, inv_fs)])
+    assert abs(q[1]) > 0.0
+
+
+def test_gamma_normal_incidence_isotropic():
+    # theta = 90 deg: f_t = f_s = R/2, the bounce must not depend on phi
+    from formula.capsysred.gamma import propagate
+    k = 2.0 * math.pi / 1.55e-10
+    zr = 0.5 * (5e-7) ** 2 * k
+    inv_f = 2.0 / 0.01
+    import cmath
+    outs = [propagate(zr, [0.01, 0.02], [(phi, inv_f, inv_f)])[0]
+            for phi in (0.0, 0.7, 2.0)]
+    for q in outs[1:]:
+        assert cmath.isclose(q[0], outs[0][0], rel_tol=1e-12)
+        assert cmath.isclose(q[2], outs[0][2], rel_tol=1e-12)
+        assert abs(q[1]) < 1e-12 * abs(q[0])
+
+
+def test_bounce_lenses_cylinder_wall():
+    # straight cylinder: f_t flat, 1/f_s = 2 sin/a, phi from the hit azimuth
+    from formula.capsysred.gamma import bounce_lenses
+    sim = Simulation.from_dict(TINY)
+    cap = sim.cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    a = float(cap.bores[0]["radius"])
+    s = 2.0e-3
+    [(phi, inv_ft, inv_fs)] = bounce_lenses(bundle, [(0.0, a, 0.02)], [s])
+    assert phi == pytest.approx(math.pi / 2)
+    assert inv_ft == 0.0
+    assert inv_fs == pytest.approx(2.0 * s / a)

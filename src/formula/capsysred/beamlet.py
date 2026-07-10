@@ -1,11 +1,14 @@
 """Stage 11: beamlet (Gaussian-beam summation) estimator, float64.
 
 Each ray becomes a Gaussian beamlet (doc/beamlets.ru.md): the central ray is
-the engine trace; the scalar complex beam parameter only drifts, q = i*pi*
-w0^2/lambda + L — straight walls reflect the meridional plane like a flat
-mirror (curved-wall focusing is the stage-11b Gamma tensor). On the screen
-the beamlet deposits a soft phase spot over the pixels within window_sigmas*w
-of the arrival point instead of one bin.
+the engine trace; the complex 2x2 beam tensor Q = Gamma^-1 rides the
+segments and bounces by tensor ABCD (gamma.py, Arnaud-Kogelnik general
+astigmatism — grazing bounces focus sagittally f_s = R/(2 sin) and, on
+curved walls, meridionally f_t = R sin/2; skew rays rotate the azimuth and
+couple the planes). On the screen the beamlet deposits an elliptic phase
+spot over the pixels within window_sigmas of the widest axis instead of one
+bin. Implicit bores carry no closed-form curvature: their bounces are flat
+(the scalar-q model of stage 11a).
 
 The estimator is honest — no ray self-pair subtraction: the mode field is a
 true coherent sum of beamlet fields, mu = |W| / sqrt(I*I_ref) with
@@ -18,6 +21,7 @@ import math
 import time
 
 from .altcoh import FloatLineAmplitudes
+from .gamma import bounce_lenses, inv2, propagate
 from .progress import Progress
 from .rays import scene_stream
 from .screen import ScreenGrid
@@ -27,15 +31,18 @@ class BeamletField:
     """Per-mode complex beamlet fields per spectral line; honest mu totals."""
 
     def __init__(self, lines, screen: ScreenGrid, ref_pixel: int,
-                 w0: float, n_sigmas: float):
+                 w0: float, n_sigmas: float, optic=None):
         self.kms = [float(l.k) for l in lines]
         self.wfs = [l.weight for l in lines]
         self.nl = len(self.kms)
-        self.q0s = [complex(0.0, 0.5 * w0 * w0 * k)
-                    for k in self.kms]   # i*z_R, z_R = pi*w0^2/lambda = w0^2*k/2
+        self.zrs = [0.5 * w0 * w0 * k for k in self.kms]   # z_R = w0^2*k/2
         self.w0, self.ns = w0, n_sigmas
+        self.optic = optic
+        self.flat_walls = any(w.kind == "implicit"
+                              for w in getattr(optic, "walls", ()))
         self.ref = ref_pixel
         self.nx, self.ny = screen.nx, screen.ny
+        self.zf = float(screen.z)
         self.xs = screen.xs()
         self.ys = screen.ys()
         self.dx = screen.exf / screen.nx
@@ -44,7 +51,8 @@ class BeamletField:
         self.W = {}         # pixel -> complex sum_s w_m g g*_ref
         self.I = {}         # pixel -> float sum_s w_m |g|^2
         self.density = {}   # pixel -> ray count (arrival-point bin)
-        self.w_sum, self.w_n = 0.0, 0   # mean beam width at screen (line 0)
+        self.w_sum, self.w_n = 0.0, 0   # mean spot width at screen (line 0)
+        self.gamma_bad = 0  # deposits skipped: Im(G) lost negative-definiteness
         self._g = None
 
     def new_mode(self):
@@ -52,30 +60,44 @@ class BeamletField:
 
     def add_ray(self, rec, amps):
         """Deposit one beamlet; rec.pixel None = tail only (the center lies
-        outside the window), still deposited. The spot phase is
-        tilt + curvature: k*(d_x*δx + d_y*δy) + k*ρ²*Re(1/q)/2 — without the
-        tilt term the beamlets of one point source disagree at a pixel and
-        the spherical front never reconstructs."""
+        outside the window), still deposited. The spot is elliptic from
+        G = Q^-1 at the screen: phase = tilt + (k/2)·δᵀRe(G)δ, envelope
+        exp((k/2)·δᵀIm(G)δ) — without the tilt term k*(d_x*δx + d_y*δy) the
+        beamlets of one point source disagree at a pixel and the spherical
+        front never reconstructs."""
         opl = float(rec.opl)
         x, y = float(rec.point[0]), float(rec.point[1])
         dxf, dyf = float(rec.direction[0]), float(rec.direction[1])
         if rec.pixel is not None:
             self.density[rec.pixel] = self.density.get(rec.pixel, 0) + 1
+        pts = [tuple(float(c) for c in p) for p in rec.refl]
+        if pts:
+            segs = [math.dist(a, b) for a, b in zip(pts, pts[1:])]
+            segs.append(math.dist(pts[-1], (x, y, self.zf)))
+            segs.insert(0, max(opl - sum(segs), 0.0))
+            lenses = bounce_lenses(self.optic, pts,
+                                   [float(s) for s in rec.sins])
+        else:
+            segs, lenses = [opl], []
         for m in range(self.nl):
-            q = self.q0s[m] + opl
-            invq = 1.0 / q
-            lam = 2.0 * math.pi / self.kms[m]
-            w = math.sqrt(-lam / (math.pi * invq.imag))
-            if m == 0:
-                self.w_sum += w
-                self.w_n += 1
-            gouy = math.atan2(q.real, q.imag)
             km = self.kms[m]
-            pref = amps[m] * (self.w0 / w) * cmath.exp(1j * (km * opl - gouy))
-            curv = 0.5 * km * invq.real
+            q, a_geo = propagate(self.zrs[m], segs, lenses)
+            gm = inv2(q)
+            gi = (gm[0].imag, gm[1].imag, gm[2].imag)
+            mean = 0.5 * (gi[0] + gi[2])
+            dev = math.hypot(0.5 * (gi[0] - gi[2]), gi[1])
+            if mean + dev >= 0.0:      # beam blew up: no Gaussian to deposit
+                self.gamma_bad += 1
+                continue
+            w_hi = math.sqrt(-2.0 / (km * (mean + dev)))   # widest spot axis
+            if m == 0:
+                w_lo = math.sqrt(-2.0 / (km * (mean - dev)))
+                self.w_sum += math.sqrt(w_hi * w_lo)
+                self.w_n += 1
+            pref = amps[m] * a_geo.conjugate() * cmath.exp(1j * km * opl)
             tx, ty = km * dxf, km * dyf
-            inv_w2 = 1.0 / (w * w)
-            r = self.ns * w
+            hxx, hxy, hyy = (0.5 * km * v for v in gm)   # (k/2)·G, complex
+            r = self.ns * w_hi
             ix_lo = max(0, int(math.floor((x - r - self.x0f) / self.dx)))
             ix_hi = min(self.nx - 1, int(math.floor((x + r - self.x0f) / self.dx)))
             iy_lo = max(0, int(math.floor((y - r - self.y0f) / self.dy)))
@@ -85,14 +107,15 @@ class BeamletField:
             g = self._g[m]
             for iy in range(iy_lo, iy_hi + 1):
                 dy_off = self.ys[iy] - y
-                dy2 = dy_off * dy_off
+                cy = hyy * (dy_off * dy_off)
                 phase_y = ty * dy_off
                 row = iy * self.nx
                 for ix in range(ix_lo, ix_hi + 1):
                     dx_off = self.xs[ix] - x
-                    rho2 = dx_off * dx_off + dy2
+                    quad = (hxx * (dx_off * dx_off)
+                            + 2.0 * hxy * (dx_off * dy_off) + cy)
                     val = pref * cmath.exp(complex(
-                        -rho2 * inv_w2, curv * rho2 + tx * dx_off + phase_y))
+                        quad.imag, quad.real + tx * dx_off + phase_y))
                     pix = row + ix
                     prev = g.get(pix)
                     g[pix] = val if prev is None else prev + val
@@ -129,7 +152,8 @@ class BeamletField:
                 mu[iy][ix] = min(abs(w) / math.sqrt(i_pix * i_ref), 1.0)
         w_mean = self.w_sum / self.w_n if self.w_n else 0.0
         return {"mu": mu, "intensity": intensity, "density": density,
-                "ref_pixel": self.ref, "i_ref": i_ref, "w_mean": w_mean}
+                "ref_pixel": self.ref, "i_ref": i_ref, "w_mean": w_mean,
+                "gamma_bad": self.gamma_bad, "flat_walls": self.flat_walls}
 
 
 def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
@@ -142,7 +166,7 @@ def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     n_rays = max(20, src_cfg.n_rays // quick)
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
     field = BeamletField(sim.lines, screen, screen.ref_pixel(scr_cfg.reference),
-                         cfg.beamlet_w0, cfg.beamlet_ns)
+                         cfg.beamlet_w0, cfg.beamlet_ns, optic)
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
                                       aim_factory, seed_offset, quick)
     stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,

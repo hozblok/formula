@@ -940,9 +940,10 @@ class Simulation:
     # ------------------------------------------------------------- stage 11
 
     def _stage11(self, out_dir, quick):
-        """Beamlet estimator (doc/2026-07-10-stage11-beamlets.ru.md): soft
-        Gaussian phase spots instead of point bins, scalar q, honest mu with
-        no self-pair subtraction. Free scene validates against vCZ; the
+        """Beamlet estimator (doc/2026-07-10-stage11-beamlets.ru.md):
+        elliptic Gaussian phase spots instead of point bins, the 2x2 Gamma
+        tensor through the bounces (general astigmatism), honest mu with no
+        self-pair subtraction. Free scene validates against vCZ; the
         capillary scene compares to stage 6 on the same rays."""
         cap = self.cfg.capillary
         scenes = [
@@ -968,8 +969,15 @@ class Simulation:
                       f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen "
                       f"{st['screen']:,} of {st['emitted']:,} (tails off window: {st['off_window']:,})",
                       f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
-                      f"- w₀ = {self.cfg.beamlet_w0 * _UM:.2f} µm; mean beam width on screen "
-                      f"= {maps['w_mean'] * _UM:.2f} µm; honest |μ| (no self-pair subtraction)"]
+                      f"- w₀ = {self.cfg.beamlet_w0 * _UM:.2f} µm; mean spot width on screen "
+                      f"= {maps['w_mean'] * _UM:.2f} µm; Γ-tensor deposit; honest |μ| "
+                      "(no self-pair subtraction)"]
+            if maps["flat_walls"]:
+                report.append("- implicit bore(s): no closed-form curvature — "
+                              "flat-wall (scalar q) bounces")
+            if maps["gamma_bad"]:
+                report.append(f"- deposits skipped (beam blew up, Im G ⊁ 0): "
+                              f"{maps['gamma_bad']:,}")
             row = ny // 2
             xs_um = [x * _UM for x in screen.xs()]
             if stage == "free":
@@ -1152,7 +1160,7 @@ class Simulation:
                 _log("Stage 10: stage-6 estimator + delete-one-mode jackknife errors")
                 self._stage10(out_dir, quick)
             if 11 in wanted:
-                _log("Stage 11: beamlet estimator — soft Gaussian phase spots (scalar q)")
+                _log("Stage 11: beamlet estimator — elliptic phase spots (Γ tensor, general astigmatism)")
                 self._stage11(out_dir, quick)
         finally:
             if self.rays is not None:
