@@ -1,7 +1,7 @@
 """To-scale schematic (SVG) of a configured scene with real traced rays.
 
-Side view in the meridional plane (x–z): source, optic, screen and 10 rays
-traced through the actual geometry. Transverse features (µm) and axial
+Side view in the meridional plane (x–z): source, optic, screen and a handful
+of rays (config `schematic: n_rays`) traced through the actual geometry. Transverse features (µm) and axial
 distances (cm) differ by ~10^3-10^4, so x and z carry independent linear
 scales — both get a scale bar and every length is dimensioned. Multi-bore /
 faceted / bent optics also get a transverse (x–y) inset; a single in-plane
@@ -146,7 +146,7 @@ def build_geometry(cfg, mode: str, bores=None):
                 "nx": scr.nx, "ny": scr.ny,
                 "ref": scr.reference[0] if scr.reference else None}
     G["cfg_src"], G["cfg_scr"] = src, scr
-    G["rays"] = trace_rays(G, p)
+    G["rays"] = trace_rays(G, p, n=cfg.schematic_rays)
     return G
 
 
@@ -263,7 +263,7 @@ def side_view(G):
     e += draw_screen(G, v, box)
     e.append('<g clip-path="url(#rayclip)">')
     for i, (fate, pts) in enumerate(G["rays"]):
-        e.append(POLY([v.pt(z, x) for z, x in pts], hsv(i, N_RAYS), 1.1,
+        e.append(POLY([v.pt(z, x) for z, x in pts], hsv(i, len(G["rays"])), 1.1,
                       opacity=0.85))
     e.append('</g>')
     e += dimensions(G, v, box)
@@ -565,7 +565,7 @@ def unrolled(G):
                     xk = xA + (xB - xA) * (zk - zA) / (zB - zA)
                     loc.append(v.pt(zk, xk - torus_axis(b, z0, zk)))
         if loc:
-            e.append(POLY(loc, hsv(i, N_RAYS), 1.1, opacity=0.85))
+            e.append(POLY(loc, hsv(i, len(G["rays"])), 1.1, opacity=0.85))
     e.append('</g>')
     e += arrow_v(box[2] + 40, v.py(-a), v.py(a), "⌀" + eng(2 * a))
     return {"w": W, "h": H, "body": "".join(e)}

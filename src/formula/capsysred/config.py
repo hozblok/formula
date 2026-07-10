@@ -64,6 +64,8 @@ DEFAULTS = {
     "trace": {"max_bounces": 200, "amplitude_min": 1.0e-6,
               "rays_jsonl": True, "sample_every": 1,
               "engine_method": "subdivision"},
+    # stage 1: rays traced onto the to-scale schematic (01a-scheme-traced.svg)
+    "schematic": {"n_rays": 10},
     # stage 8: number of sketch probe vectors (r ~ n99 modes, see methods §8)
     "sketch": {"rank": 96},
     # stage 9: rays for the hit-method cross-validation
@@ -203,6 +205,7 @@ class Config:
         self.engine_method = str(cfg["trace"]["engine_method"])
         get_backend(self.engine_method)  # fail fast on an unknown method name
         self.per_line_fresnel = bool(cfg["spectrum"]["per_line_fresnel"])
+        self.schematic_rays = int(cfg["schematic"]["n_rays"])
         self.sketch_rank = int(cfg["sketch"]["rank"])
         self.validate_rays = int(cfg["validate"]["n_rays"])
 
