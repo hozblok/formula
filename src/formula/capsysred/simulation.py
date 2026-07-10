@@ -307,7 +307,7 @@ class Simulation:
         if dub_i:
             series.append({"xs": [xs_um[i] for i in dub_i],
                            "ys": [mu_row[i] for i in dub_i],
-                           "label": "don't trust: σ>1 / pinned at clamp",
+                           "label": "don't trust: σ_jack>1 / pinned at clamp",
                            "color": "#d62728", "dots": True})
         fig = render.line_chart(
             series, "Degree of coherence: analytics vs MC (without optics)",
@@ -828,10 +828,10 @@ class Simulation:
                                "x, µm", "y, µm", sub, "|μ|",
                                mark=mark, vmax=1.0, w=430, equal=True),
                 render.heatmap(maps["mu_err"], extent, "σ_jack(P)",
-                               "x, µm", "y, µm", "", "σ", w=430, equal=True),
+                               "x, µm", "y, µm", "", "σ_jack", w=430, equal=True),
                 render.heatmap(trust, extent, "trust: 1 ok · ½ don't · 0 none",
                                "x, µm", "y, µm",
-                               "½: σ>1, pinned at |μ|=1, or no jackknife; 0: no pairs",
+                               "½: σ_jack>1, pinned at |μ|=1, or no jackknife; 0: no pairs",
                                "trust", vmax=1.0, w=430, equal=True)])
             self._save(out_dir, f"{tag}-{scene}-jack-mu.svg", fig)
             # y ≈ 0 slice of the three maps: |μ| ± σ_jack, σ_jack, trust
@@ -840,7 +840,7 @@ class Simulation:
             xs_um = [x * _UM for x in screen.xs()]
             row_mu, row_err = maps["mu"][iy0], maps["mu_err"][iy0]
             dub_i = [i for i, d in enumerate(maps["dubious"][iy0]) if d > 0]
-            mu_series = [{"xs": xs_um, "ys": row_mu, "label": "jackknife |μ| ± σ",
+            mu_series = [{"xs": xs_um, "ys": row_mu, "label": "jackknife |μ| ± σ_jack",
                           "lo": [max(m - e, 0.0) for m, e in zip(row_mu, row_err)],
                           "hi": [min(m + e, 1.0) for m, e in zip(row_mu, row_err)]}]
             err_series = [{"xs": xs_um, "ys": row_err, "label": "σ_jack"},
@@ -849,7 +849,7 @@ class Simulation:
             if dub_i:
                 xd = [xs_um[i] for i in dub_i]
                 mu_series.append({"xs": xd, "ys": [row_mu[i] for i in dub_i],
-                                  "label": "don't trust: σ>1 / pinned at clamp",
+                                  "label": "don't trust: σ_jack>1 / pinned at clamp",
                                   "color": "#d62728", "dots": True})
                 err_series.append({"xs": xd, "ys": [row_err[i] for i in dub_i],
                                    "label": "don't trust",
@@ -859,7 +859,7 @@ class Simulation:
                 render.line_chart(mu_series, "|μ(P, P_ref)| ± σ_jack", "x, µm",
                                   "|μ|", f"slice y = {y0_um:.2f} µm",
                                   vlines=vl, w=430),
-                render.line_chart(err_series, "σ_jack(x)", "x, µm", "σ",
+                render.line_chart(err_series, "σ_jack(x)", "x, µm", "σ_jack",
                                   f"slice y = {y0_um:.2f} µm", w=430),
                 render.line_chart([{"xs": xs_um, "ys": trust[iy0]}],
                                   "trust: 1 ok · ½ don't · 0 none", "x, µm",
@@ -886,7 +886,7 @@ class Simulation:
             xs_um = [x * _UM for x in screen.xs()]
             row_mu, row_err = maps["mu"][0], maps["mu_err"][0]
             dub_i = [i for i, d in enumerate(maps["dubious"][0]) if d > 0]
-            series = [{"xs": xs_um, "ys": row_mu, "label": "jackknife |μ| ± σ",
+            series = [{"xs": xs_um, "ys": row_mu, "label": "jackknife |μ| ± σ_jack",
                        "lo": [max(m - e, 0.0) for m, e in zip(row_mu, row_err)],
                        "hi": [min(m + e, 1.0) for m, e in zip(row_mu, row_err)]}]
             if vs is not None:
@@ -895,7 +895,7 @@ class Simulation:
             if dub_i:
                 series.append({"xs": [xs_um[i] for i in dub_i],
                                "ys": [row_mu[i] for i in dub_i],
-                               "label": "don't trust: σ>1 / pinned at clamp",
+                               "label": "don't trust: σ_jack>1 / pinned at clamp",
                                "color": "#d62728", "dots": True})
             fig = render.line_chart(series,
                                     "|μ(x, x_ref)| with jackknife errors",
@@ -911,7 +911,7 @@ class Simulation:
                                    "label": "don't trust",
                                    "color": "#d62728", "dots": True})
             fig = render.line_chart(
-                err_series, "jackknife error by pixel", "x, µm", "σ", sub)
+                err_series, "jackknife error by pixel", "x, µm", "σ_jack", sub)
             self._save(out_dir, f"{tag}a-{scene}-jack-err.svg", fig)
             imax = max(maps["intensity"][0]) or 1.0
             dmax = max(maps["density"][0]) or 1.0
@@ -959,8 +959,8 @@ class Simulation:
             f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen {st['screen']:,} of {st['emitted']:,}",
             f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
             f"- solid pixels (≥2 same-mode rays, |μ| estimable): {len(solid)} of {n_lit} lit; "
-            "the rest are masked to μ = σ = 0",
-            f"- don't-trust estimates on solid px (σ > 1, pinned at |μ| = 1 with σ = 0, "
+            "the rest are masked to μ = σ_jack = 0",
+            f"- don't-trust estimates on solid px (σ_jack > 1, pinned at |μ| = 1 with σ_jack = 0, "
             f"or no usable jackknife): {n_dub} of {len(solid)}",
             f"- σ_jack on solid pixels: median {med_err:.4f}, max {max(errs, default=0.0):.4f}; "
             f"{below:.0f}% below the 1/√N floor ({floor:.3f})",
@@ -1108,7 +1108,7 @@ class Simulation:
 
     def _stage12(self, out_dir, quick):
         """The pre-jackknife stage 2: pairwise Number estimator on the free
-        scene (same rays as stage 2, no σ), kept for cross-checks."""
+        scene (same rays as stage 2, no σ_jack), kept for cross-checks."""
         res = self._mc_stage("free", "12 pairwise free (MC)", self.cfg.free_source,
                              self.cfg.free_screen, None, self._aim_free, 2,
                              quick)
