@@ -35,12 +35,27 @@ class Source:
                 self.position[2])
 
 
+_MAX_AIM_SLOPE = 0.03   # uniform-slope/area aim misweights dOmega by (3/2)m^2 ≈ 1.4e-3 here
+
+
+def check_paraxial(max_slope: float, where: str):
+    """Guard for the small-angle assumption of the aim windows."""
+    if max_slope > _MAX_AIM_SLOPE:
+        raise ValueError(
+            f"{where}: aim slopes reach {max_slope:.3g} rad — uniform-slope/area "
+            f"sampling misweights the solid angle by ~{1.5 * max_slope ** 2:.1e}; "
+            "add the (1+m^2)^(-3/2) weight before going wide-angle")
+
+
 def slope_direction(rng: random.Random, mx_range, my_range, precision: int):
     """Unit direction from slopes (mx, my, 1) uniform in a rectangular window.
 
     For micro-radian windows the solid-angle jacobian is constant to O(theta^2):
     the constant statistical weight cancels in mu and only scales intensity.
     """
+    check_paraxial(math.hypot(max(abs(mx_range[0]), abs(mx_range[1])),
+                              max(abs(my_range[0]), abs(my_range[1]))),
+                   "slope window")
     mx = rng.uniform(*mx_range)
     my = rng.uniform(*my_range)
     return vunit((lift(mx, precision), lift(my, precision), lift(1.0, precision)))
@@ -50,6 +65,9 @@ def aim_disk_direction(rng: random.Random, origin, cx: float, cy: float,
                        radius: float, z_target: float):
     """Unit direction from `origin` to a uniform point of a disk at z_target."""
     p = origin[0].precision
+    check_paraxial((math.hypot(cx - float(origin[0]), cy - float(origin[1]))
+                    + radius) / abs(z_target - float(origin[2])),
+                   "entrance disk")
     r = radius * math.sqrt(rng.random())
     phi = 2.0 * math.pi * rng.random()
     target = (lift(cx + r * math.cos(phi), p), lift(cy + r * math.sin(phi), p),
