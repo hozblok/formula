@@ -19,6 +19,7 @@ from .. import xray
 from . import analytic, render
 from .altcoh import run_alt_stage
 from .coherence import CoherenceAccumulator
+from .jackknife import run_jack_stage
 from .sketch import run_sketch_stage
 from .validate import METHOD_LABELS, run_validate_stage
 from .config import Config, load
@@ -33,7 +34,7 @@ from .fresnel import FresnelAmplitude
 from .native import make_tracer
 
 ALL_STAGES = (1, 2, 3, 4, 5, 6)
-KNOWN_STAGES = ALL_STAGES + (7, 8, 9)  # 7 (alt), 8 (sketch), 9 (hit methods) — opt-in
+KNOWN_STAGES = ALL_STAGES + (7, 8, 9, 10)  # 7 (alt), 8 (sketch), 9 (hit methods), 10 (jackknife) — opt-in
 _UM = 1e6
 
 
@@ -781,6 +782,137 @@ class Simulation:
         self.report.append(f"- time: {res['seconds']:.1f} s")
         return res
 
+    # ------------------------------------------------------------- stage 10
+
+    def _stage10(self, out_dir, quick):
+        """Stage-6 alternative (doc/mu28_legacy_fixed3_renamed.py, running-sum
+        form): same capillary rays, |mu| plus a delete-one-mode jackknife map."""
+        cap = self.cfg.capillary
+        bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1, self.cfg.engine_method)
+        res = run_jack_stage(self, "10 jackknife capillary (MC)", cap.source,
+                             cap.screen, bundle, self._aim_capillary, 4, quick)
+        self.results["jack:capillary"] = res
+        maps, screen, st = res["maps"], res["screen"], res["stats"]
+        nx, ny = screen.nx, screen.ny
+        flat = lambda grid: [v for row in grid for v in row]
+        n_lit = sum(1 for d in flat(maps["density"]) if d > 0)
+        solid = [i for i, v in enumerate(flat(maps["solid"])) if v > 0]
+        errs = [flat(maps["mu_err"])[i] for i in solid]
+        med_err = sorted(errs)[len(errs) // 2] if errs else 0.0
+        floor = 1.0 / math.sqrt(res["n_modes"])
+        num = self.results.get("capillary")   # stage 6 maps, same rays
+        rms6 = None
+        if num is not None:
+            a, b = flat(maps["mu"]), flat(num["maps"]["mu"])
+            rms6 = analytic.rms_diff([a[i] for i in solid], [b[i] for i in solid])
+        ref_xy = screen.pixel_xy(maps["ref_pixel"])
+        sub = (f"{res['n_modes']} modes × {res['n_rays']} rays; "
+               f"σ_jack median {med_err:.3f}; noise floor |μ| ≈ {floor:.2f}; "
+               f"solid px {len(solid)} of {n_lit} lit")
+        if ny > 1:
+            extent = (screen.x0f * _UM, (screen.x0f + screen.exf) * _UM,
+                      screen.y0f * _UM, (screen.y0f + screen.eyf) * _UM)
+            mark = (ref_xy[0] * _UM, ref_xy[1] * _UM)
+            sig = [[min(m / e, 10.0) if e > 0.0 else 0.0
+                    for m, e in zip(mu_row, err_row)]
+                   for mu_row, err_row in zip(maps["mu"], maps["mu_err"])]
+            fig = render.hstack([
+                render.heatmap(maps["mu"], extent,
+                               "Stage 10: |μ(P, P_ref)| (jackknife)",
+                               "x, µm", "y, µm", sub, "|μ|",
+                               mark=mark, vmax=1.0, w=430, equal=True),
+                render.heatmap(maps["mu_err"], extent, "σ_jack(P)",
+                               "x, µm", "y, µm", "", "σ", w=430, equal=True),
+                render.heatmap(sig, extent, "|μ|/σ (capped at 10)",
+                               "x, µm", "y, µm", "", "|μ|/σ", w=430, equal=True)])
+            self._save(out_dir, "10-capillary-jack-mu.svg", fig)
+            fig = render.hstack([
+                render.heatmap(maps["intensity"], extent, "Stage 10: intensity",
+                               "x, µm", "y, µm", sub, "I, arb. units",
+                               w=430, equal=True),
+                render.heatmap(maps["density"], extent, "rays per pixel",
+                               "x, µm", "y, µm", "", "rays", w=430, equal=True)])
+            self._save(out_dir, "10b-capillary-jack-intensity.svg", fig)
+            if num is not None:
+                diff = [[abs(a - b) for a, b in zip(ra, rb)]
+                        for ra, rb in zip(maps["mu"], num["maps"]["mu"])]
+                fig = render.heatmap(diff, extent,
+                                     "|μ_jack − μ_stage6| (same rays)",
+                                     "x, µm", "y, µm",
+                                     f"RMS on solid px {rms6:.2e}; bright isolated px = "
+                                     "stage-6 pairless residuals masked by stage 10",
+                                     "Δ", w=640)
+                self._save(out_dir, "10c-capillary-jack-vs6.svg", fig)
+        else:
+            xs_um = [x * _UM for x in screen.xs()]
+            row_mu, row_err = maps["mu"][0], maps["mu_err"][0]
+            series = [{"xs": xs_um, "ys": row_mu, "label": "jackknife |μ| ± σ",
+                       "lo": [max(m - e, 0.0) for m, e in zip(row_mu, row_err)],
+                       "hi": [min(m + e, 1.0) for m, e in zip(row_mu, row_err)]}]
+            if num is not None:
+                series.append({"xs": xs_um, "ys": num["maps"]["mu"][0],
+                               "label": "stage 6 (Number)", "dash": "6,4"})
+            fig = render.line_chart(series,
+                                    "Stage 10: |μ(x, x_ref)| with jackknife errors",
+                                    "x, µm", "|μ|", sub,
+                                    vlines=[(ref_xy[0] * _UM, "ref")], w=760)
+            self._save(out_dir, "10-capillary-jack-mu.svg", fig)
+            fig = render.line_chart(
+                [{"xs": xs_um, "ys": row_err, "label": "σ_jack"},
+                 {"xs": xs_um, "ys": [floor] * nx,
+                  "label": "1/√N_modes", "dash": "2,3"}],
+                "Stage 10: jackknife error by pixel", "x, µm", "σ", sub)
+            self._save(out_dir, "10a-capillary-jack-err.svg", fig)
+            imax = max(maps["intensity"][0]) or 1.0
+            dmax = max(maps["density"][0]) or 1.0
+            fig = render.line_chart(
+                [{"xs": xs_um, "ys": [v / imax for v in maps["intensity"][0]],
+                  "label": "intensity / max"},
+                 {"xs": xs_um, "ys": [v / dmax for v in maps["density"][0]],
+                  "label": "rays / max", "dash": "6,4"}],
+                "Stage 10: intensity and ray density", "x, µm", "normalized", sub)
+            self._save(out_dir, "10b-capillary-jack-intensity.svg", fig)
+            if num is not None:
+                fig = render.line_chart(
+                    [{"xs": xs_um,
+                      "ys": [a - b for a, b in zip(row_mu, num["maps"]["mu"][0])],
+                      "label": "μ_jack − μ_stage6",
+                      "lo": [-e for e in row_err], "hi": list(row_err)}],
+                    "Stage 10 vs 6: Δμ with the ±σ_jack band", "x, µm", "Δμ",
+                    f"RMS on solid px {rms6:.2e}; spikes = stage-6 pairless "
+                    "residuals masked by stage 10",
+                    vlines=[(ref_xy[0] * _UM, "ref")], w=760, y_zero=False)
+                self._save(out_dir, "10c-capillary-jack-vs6.svg", fig)
+        xs_um_all = [x * _UM for x in screen.xs()]
+        ys_um_all = [y * _UM for y in screen.ys()]
+        path = os.path.join(out_dir, "mu-jack.jsonl")
+        with open(path, "w", encoding="utf-8") as fh:
+            for iy in range(ny):
+                for ix in range(nx):
+                    fh.write(json.dumps({
+                        "stage": "capillary", "pixel": iy * nx + ix,
+                        "x_um": xs_um_all[ix], "y_um": ys_um_all[iy],
+                        "mu": maps["mu"][iy][ix], "mu_err": maps["mu_err"][iy][ix],
+                        "I": maps["intensity"][iy][ix],
+                        "n_rays": int(maps["density"][iy][ix]),
+                        "solid": bool(maps["solid"][iy][ix])}) + "\n")
+        self.files.append("mu-jack.jsonl")
+        _log("  → mu-jack.jsonl")
+        below = (100.0 * sum(1 for e in errs if e < floor) / len(errs)
+                 if errs else 0.0)
+        self.report += [
+            "## Stage 10 — jackknife estimator [capillary]",
+            f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen {st['screen']:,} of {st['emitted']:,}",
+            f"- solid pixels (≥2 same-mode rays, |μ| estimable): {len(solid)} of {n_lit} lit; "
+            "the rest are masked to μ = σ = 0",
+            f"- σ_jack on solid pixels: median {med_err:.4f}, max {max(errs, default=0.0):.4f}; "
+            f"{below:.0f}% below the 1/√N floor ({floor:.3f})",
+        ] + ([f"- RMS(|μ|_jack − |μ|_stage6) = {rms6:.2e} (same rays, solid pixels)"]
+             if rms6 is not None else []) + [
+            f"- time: {res['seconds']:.1f} s",
+        ]
+        return res
+
     def _capillary_engine_check(self, bundle) -> str:
         cap = self.cfg.capillary
         p = self.cfg.precision
@@ -866,6 +998,9 @@ class Simulation:
             if 9 in wanted:
                 _log("Stage 9: hit-method cross-validation — python / C++ / subdivision")
                 self._stage9(out_dir, quick)
+            if 10 in wanted:
+                _log("Stage 10: stage-6 estimator + delete-one-mode jackknife errors")
+                self._stage10(out_dir, quick)
         finally:
             if rays_fh is not None:
                 rays_fh.close()

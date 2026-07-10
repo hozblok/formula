@@ -128,6 +128,7 @@ class _Axes:
 def _ranges(series, y_zero: bool):
     xs = [v for s in series for v in s["xs"]]
     ys = [v for s in series for v in s["ys"]]
+    ys += [v for s in series for key in ("lo", "hi") for v in (s.get(key) or ())]
     xa, xb = min(xs), max(xs)
     ya, yb = min(ys), max(ys)
     if y_zero:
@@ -138,7 +139,7 @@ def _ranges(series, y_zero: bool):
 
 def line_chart(series, title, xlabel, ylabel, subtitle="", vlines=(),
                y_zero=True, w=560, h=400):
-    """series: [{xs, ys, label, color?, dash?, width?}]"""
+    """series: [{xs, ys, label, color?, dash?, width?, lo?, hi?}]; lo/hi: shaded band."""
     ax = _Axes(w, h, *_ranges(series, y_zero))
     e = ax.frame(xlabel, ylabel, title, subtitle)
     for x, label in vlines:
@@ -149,6 +150,12 @@ def line_chart(series, title, xlabel, ylabel, subtitle="", vlines=(),
     for i, s in enumerate(series):
         color = s.get("color") or PALETTE[i % len(PALETTE)]
         dash = f' stroke-dasharray="{s["dash"]}"' if s.get("dash") else ""
+        if s.get("lo") and s.get("hi"):
+            band = " ".join(f"{ax.x(x):.1f},{ax.y(y):.1f}" for x, y in
+                            list(zip(s["xs"], s["hi"]))
+                            + list(zip(reversed(s["xs"]), reversed(s["lo"]))))
+            e.append(f'<polygon points="{band}" fill="{color}" '
+                     f'fill-opacity="0.16" stroke="none"/>')
         pts = " ".join(f"{ax.x(x):.1f},{ax.y(y):.1f}"
                        for x, y in zip(s["xs"], s["ys"]))
         e.append(f'<polyline points="{pts}" fill="none" stroke="{color}" '
