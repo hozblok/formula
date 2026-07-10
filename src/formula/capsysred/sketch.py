@@ -25,6 +25,7 @@ from .native import make_tracer
 from .progress import Progress
 from .screen import ScreenGrid
 from .source import Source
+from .types import ray_record
 
 
 class SketchCoherence:
@@ -53,7 +54,8 @@ class SketchCoherence:
         self._g = [{} for _ in range(self.nl)]
         self._sq = [{} for _ in range(self.nl)]
 
-    def add_ray(self, pixel: int, amps, opl: float):
+    def add_ray(self, rec, amps):
+        pixel, opl = rec.pixel, float(rec.opl)
         phases = self.np.exp(1j * self.kms * opl)
         for m in range(self.nl):
             amp = amps[m]
@@ -147,10 +149,10 @@ def run_sketch_stage(sim, label, src_cfg, scr_cfg, optic, aim_factory,
              "off_window": 0}
     progress = Progress(label, n_modes * n_rays)
     t0 = time.time()
-    for _ in range(n_modes):
+    for mode in range(n_modes):
         origin = source.mode_origin()
         acc.new_mode()
-        for _ in range(n_rays):
+        for ray in range(n_rays):
             direction = aim(origin)
             tr = tracer(origin, direction, optic, screen.z, cfg.max_bounces)
             stats["emitted"] += 1
@@ -160,12 +162,12 @@ def run_sketch_stage(sim, label, src_cfg, scr_cfg, optic, aim_factory,
                 if (cfg.amplitude_min > 0.0
                         and max(abs(a) for a in amps) < cfg.amplitude_min):
                     fate = "absorbed"
+            rec = ray_record(tr, screen, mode, ray, fate)
             if fate == "screen":
-                pixel = screen.pixel(tr.point)
-                if pixel is None:
+                if rec.pixel is None:
                     stats["off_window"] += 1
                 else:
-                    acc.add_ray(pixel, amps, float(tr.opl))
+                    acc.add_ray(rec, amps)
                     stats["screen"] += 1
             else:
                 stats[fate] += 1

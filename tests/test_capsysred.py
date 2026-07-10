@@ -584,3 +584,77 @@ def test_stage11_beamlet_same_rays_as_stage6(tmp_path):
     d6 = sim.results["capillary"]["maps"]["density"]
     d11 = sim.results["beamlet:capillary"]["maps"]["density"]
     assert d6 == d11
+
+
+def test_estimator_protocol_direct_drive_identical_modes():
+    # the protocol lets tests feed estimators synthetic rays: no MC, no tracing
+    from formula.capsysred.coherence import CoherenceAccumulator
+    from formula.capsysred.jackknife import JackknifeCoherence
+    from formula.capsysred.types import RayRecord
+
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    rec = lambda mode, ray, pixel, opl: RayRecord(
+        mode, ray, "screen", pixel, None, None, opl, (), ())
+    jack = JackknifeCoherence(lines, 0)
+    for mode in range(3):
+        jack.new_mode()
+        for pixel in (0, 1):
+            for ray in (0, 1):
+                jack.add_ray(rec(mode, ray, pixel, 0.05), [1.0 + 0j])
+        jack.fold_mode()
+    maps = jack.finalize(2, 1)
+    assert maps["mu"][0][0] == 1.0 and maps["mu"][0][1] == 1.0
+    assert maps["mu_err"][0][1] == 0.0
+
+    acc = CoherenceAccumulator(lines, 0, 32)
+    one, opl = Number("1", 32), Number("0.05", 32)
+    for mode in range(2):
+        acc.new_mode()
+        for pixel in (0, 1):
+            for ray in (0, 1):
+                acc.add_ray(rec(mode, ray, pixel, opl), one)
+        acc.fold_mode()
+    maps = acc.finalize(2, 1)
+    assert maps["mu"][0][1] == 1.0 and maps["density"][0][0] == 4.0
+
+
+def test_jackknife_direct_drive_pi_flip_decoheres():
+    # ref phase fixed, pixel-1 phase flips by pi every other mode -> W sums to 0
+    from formula.capsysred.jackknife import JackknifeCoherence
+    from formula.capsysred.types import RayRecord
+
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    k = float(lines[0].k)
+    rec = lambda mode, ray, pixel, opl: RayRecord(
+        mode, ray, "screen", pixel, None, None, opl, (), ())
+    jack = JackknifeCoherence(lines, 0)
+    for mode in range(4):
+        jack.new_mode()
+        for ray in (0, 1):
+            jack.add_ray(rec(mode, ray, 0, 0.05), [1.0 + 0j])
+            jack.add_ray(rec(mode, ray, 1, 0.05 + (mode % 2) * math.pi / k),
+                         [1.0 + 0j])
+        jack.fold_mode()
+    maps = jack.finalize(2, 1)
+    assert maps["mu"][0][0] == 1.0
+    assert maps["mu"][0][1] < 1e-6
+
+
+def test_beamlet_direct_drive_single_mode_fully_coherent():
+    # one mode -> one coherent field: mu = 1 on every deposited pixel
+    from types import SimpleNamespace
+    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.screen import ScreenGrid
+    from formula.capsysred.types import RayRecord
+
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=0.06, nx=7, ny=1, center=[0.0, 0.0],
+                                     edge_x=1.0e-5, edge_y=2.0e-6))
+    bf = BeamletField(lines, scr, 3, 5.0e-7, 3.0)
+    bf.new_mode()
+    bf.add_ray(RayRecord(0, 0, "screen", 3, (1.0e-6, 0.0, 0.06),
+                         (1.0e-5, 0.0, 1.0), 0.06, (), ()), [1.0 + 0j])
+    bf.fold_mode()
+    maps = bf.finalize(7, 1)
+    lit = [m for m, i in zip(maps["mu"][0], maps["intensity"][0]) if i > 0.0]
+    assert lit and min(lit) > 1.0 - 1e-12

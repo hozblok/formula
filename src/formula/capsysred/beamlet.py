@@ -23,6 +23,7 @@ from .native import make_tracer
 from .progress import Progress
 from .screen import ScreenGrid
 from .source import Source
+from .types import ray_record
 
 
 class BeamletField:
@@ -52,16 +53,17 @@ class BeamletField:
     def new_mode(self):
         self._g = [{} for _ in range(self.nl)]
 
-    def add_ray(self, point, direction, amps, opl: float, pixel):
-        """Deposit one beamlet; `pixel` is the arrival-point bin (None = tail
-        only, the center lies outside the window). The spot phase is
+    def add_ray(self, rec, amps):
+        """Deposit one beamlet; rec.pixel None = tail only (the center lies
+        outside the window), still deposited. The spot phase is
         tilt + curvature: k*(d_x*δx + d_y*δy) + k*ρ²*Re(1/q)/2 — without the
         tilt term the beamlets of one point source disagree at a pixel and
         the spherical front never reconstructs."""
-        x, y = float(point[0]), float(point[1])
-        dxf, dyf = float(direction[0]), float(direction[1])
-        if pixel is not None:
-            self.density[pixel] = self.density.get(pixel, 0) + 1
+        opl = float(rec.opl)
+        x, y = float(rec.point[0]), float(rec.point[1])
+        dxf, dyf = float(rec.direction[0]), float(rec.direction[1])
+        if rec.pixel is not None:
+            self.density[rec.pixel] = self.density.get(rec.pixel, 0) + 1
         for m in range(self.nl):
             q = self.q0s[m] + opl
             invq = 1.0 / q
@@ -152,10 +154,10 @@ def run_beamlet_stage(sim, label, src_cfg, scr_cfg, optic, aim_factory,
              "off_window": 0}
     progress = Progress(label, n_modes * n_rays)
     t0 = time.time()
-    for _ in range(n_modes):
+    for mode in range(n_modes):
         origin = source.mode_origin()
         field.new_mode()
-        for _ in range(n_rays):
+        for ray in range(n_rays):
             direction = aim(origin)
             tr = tracer(origin, direction, optic, screen.z, cfg.max_bounces)
             stats["emitted"] += 1
@@ -165,11 +167,11 @@ def run_beamlet_stage(sim, label, src_cfg, scr_cfg, optic, aim_factory,
                 if (cfg.amplitude_min > 0.0
                         and max(abs(a) for a in amps) < cfg.amplitude_min):
                     fate = "absorbed"
+            rec = ray_record(tr, screen, mode, ray, fate)
             if fate == "screen":
                 # tail beamlets (center outside the window) still deposit
-                pixel = screen.pixel(tr.point)
-                field.add_ray(tr.point, tr.direction, amps, float(tr.opl), pixel)
-                stats["screen" if pixel is not None else "off_window"] += 1
+                field.add_ray(rec, amps)
+                stats["screen" if rec.pixel is not None else "off_window"] += 1
             else:
                 stats[fate] += 1
             progress.step()

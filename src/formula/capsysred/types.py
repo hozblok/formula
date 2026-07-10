@@ -1,8 +1,30 @@
 """Shared geometry primitives for CAPSYSred."""
 
+from collections import namedtuple
+
 from ..formula import Number
 
 Vec3 = tuple[Number, Number, Number]
+
+# One traced ray as every estimator consumes it (protocol: new_mode ->
+# add_ray(rec, amps) -> fold_mode -> finalize). Pure geometry — amplitudes
+# are physics and stay a separate add_ray argument. opl/sins/point/direction
+# are Number; float estimators convert at the point of use.
+RayRecord = namedtuple("RayRecord", [
+    "mode", "ray", "fate", "pixel",   # fate is post-amplitude_min
+    "point", "direction",             # arrival on the screen plane
+    "opl", "sins",                    # optical path, grazing sines per bounce
+    "refl",                           # reflection points (Gamma tensor input)
+])
+
+
+def ray_record(tr, screen, mode: int, ray: int, fate: str) -> RayRecord:
+    """TraceResult -> RayRecord; fate comes in separately because the
+    amplitude_min threshold may demote "screen" to "absorbed"."""
+    pixel = screen.pixel(tr.point) if fate == "screen" else None
+    return RayRecord(mode, ray, fate, pixel, tr.point, tr.direction, tr.opl,
+                     tuple(s for _, s in tr.reflections),
+                     tuple(p for p, _ in tr.reflections))
 
 # Forward-step floor for the ray parameter t (m): rejects the t~0 root at the
 # reflection origin (on-wall point); far below any physical chord.

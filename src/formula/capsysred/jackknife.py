@@ -27,6 +27,7 @@ from .native import make_tracer
 from .progress import Progress
 from .screen import ScreenGrid
 from .source import Source
+from .types import ray_record
 
 
 class JackknifeCoherence:
@@ -50,7 +51,8 @@ class JackknifeCoherence:
         self._sq = [{} for _ in range(self.nl)]
         self._n = {}
 
-    def add_ray(self, pixel: int, amps, opl: float):
+    def add_ray(self, rec, amps):
+        pixel, opl = rec.pixel, float(rec.opl)
         for m, (km, amp) in enumerate(zip(self.kms, amps)):
             term = amp * cmath.exp(1j * km * opl)
             g = self._g[m]
@@ -154,10 +156,10 @@ def run_jack_stage(sim, label, src_cfg, scr_cfg, optic, aim_factory,
              "off_window": 0}
     progress = Progress(label, n_modes * n_rays)
     t0 = time.time()
-    for _ in range(n_modes):
+    for mode in range(n_modes):
         origin = source.mode_origin()
         jack.new_mode()
-        for _ in range(n_rays):
+        for ray in range(n_rays):
             direction = aim(origin)
             tr = tracer(origin, direction, optic, screen.z, cfg.max_bounces)
             stats["emitted"] += 1
@@ -167,12 +169,12 @@ def run_jack_stage(sim, label, src_cfg, scr_cfg, optic, aim_factory,
                 if (cfg.amplitude_min > 0.0
                         and max(abs(a) for a in amps) < cfg.amplitude_min):
                     fate = "absorbed"
+            rec = ray_record(tr, screen, mode, ray, fate)
             if fate == "screen":
-                pixel = screen.pixel(tr.point)
-                if pixel is None:
+                if rec.pixel is None:
                     stats["off_window"] += 1
                 else:
-                    jack.add_ray(pixel, amps, float(tr.opl))
+                    jack.add_ray(rec, amps)
                     stats["screen"] += 1
             else:
                 stats[fate] += 1

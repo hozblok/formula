@@ -33,6 +33,7 @@ from .surfaces import CapillaryBundle, Mirror, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
 from .native import make_tracer
+from .types import RayRecord, ray_record
 
 ALL_STAGES = (1, 2, 3, 4, 5, 6)
 KNOWN_STAGES = ALL_STAGES + (7, 8, 9, 10, 11)  # 7 (alt), 8 (sketch), 9 (hit methods), 10 (jackknife), 11 (beamlets) — opt-in
@@ -129,7 +130,7 @@ class Simulation:
         t0 = time.time()
         for mode in range(n_modes):
             origin = source.mode_origin()
-            fields = acc.new_mode()
+            acc.new_mode()
             for ray in range(n_rays):
                 direction = aim(origin)
                 tr = tracer(origin, direction, optic, screen.z,
@@ -147,28 +148,28 @@ class Simulation:
                                 else float(abs(amps)))
                         if peak < cfg.amplitude_min:
                             fate = "absorbed"    # below threshold on every line
+                rec = ray_record(tr, screen, mode, ray, fate)
                 sampled = ray % cfg.sample_every == 0
                 if nb:
                     stats["reflected_rays"] += 1
                     stats["reflections"] += nb
                     stats["bounce_hist"][nb] = stats["bounce_hist"].get(nb, 0) + 1
-                pixel = screen.pixel(tr.point) if fate == "screen" else None
                 if rays_fh is not None and sampled:
                     rays_fh.write(json.dumps({
                         "stage": stage, "mode": mode, "ray": ray, "fate": fate,
-                        "pixel": pixel, "opl": str(tr.opl),
-                        "sins": [str(s) for s in sins],
+                        "pixel": rec.pixel, "opl": str(rec.opl),
+                        "sins": [str(s) for s in rec.sins],
                     }, ensure_ascii=False) + "\n")
                 if fate == "screen":
-                    if pixel is None:
+                    if rec.pixel is None:
                         stats["off_window"] += 1
                     else:
-                        acc.add_ray(fields, pixel, amps, tr.opl)
+                        acc.add_ray(rec, amps)
                         stats["screen"] += 1
                 else:
                     stats[fate] += 1
                 progress.step()
-            acc.fold_mode(fields)
+            acc.fold_mode()
         maps = acc.finalize(screen.nx, screen.ny)
         progress.finish(f"on screen {stats['screen']:,}")
         result = {"maps": maps, "stats": stats, "screen": screen,
@@ -1209,13 +1210,14 @@ class Simulation:
                                        screen.ref_pixel(scr_cfg.reference), p)
             stats = {"rays": 0, "screen": 0, "absorbed": 0, "lost": 0,
                      "off_window": 0, "below_min": 0}
-            mode_cur, fields = None, None
+            mode_cur = None
             t0 = time.time()
             for row in rows:
                 if row["mode"] != mode_cur:
-                    if fields is not None:
-                        acc.fold_mode(fields)
-                    fields, mode_cur = acc.new_mode(), row["mode"]
+                    if mode_cur is not None:
+                        acc.fold_mode()
+                    acc.new_mode()
+                    mode_cur = row["mode"]
                 stats["rays"] += 1
                 if row["fate"] != "screen":
                     stats[row["fate"]] = stats.get(row["fate"], 0) + 1
@@ -1228,12 +1230,14 @@ class Simulation:
                         and max(float(abs(a)) for a in amps) < cfg.amplitude_min):
                     stats["below_min"] += 1      # below threshold on every line
                     continue
-                acc.add_ray(fields, int(row["pixel"]),
-                            amps if self.per_line else amps[0],
-                            Number(row["opl"], p))
+                # v1 records carry no arrival point/direction/refl
+                rec = RayRecord(row["mode"], row["ray"], "screen",
+                                int(row["pixel"]), None, None,
+                                Number(row["opl"], p), tuple(row["sins"]), None)
+                acc.add_ray(rec, amps if self.per_line else amps[0])
                 stats["screen"] += 1
-            if fields is not None:
-                acc.fold_mode(fields)
+            if mode_cur is not None:
+                acc.fold_mode()
             maps = acc.finalize(screen.nx, screen.ny)
             self.results[f"replay:{stage}"] = {"maps": maps, "screen": screen,
                                                "stats": stats}

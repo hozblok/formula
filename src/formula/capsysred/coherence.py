@@ -32,19 +32,22 @@ class CoherenceAccumulator:
         self.I = {}        # pixel -> float  (full intensity, weighted |g|^2)
         self.Ic = {}       # pixel -> float  (self-pair-free intensity for mu)
         self.density = {}  # pixel -> int    (ray counts)
+        self._g = self._sq = None
 
     def new_mode(self):
         """Per-line sparse complex fields + per-line sum|term|^2 of one mode."""
-        return {"g": [{} for _ in self.kms], "sq": [{} for _ in self.kms]}
+        self._g = [{} for _ in self.kms]
+        self._sq = [{} for _ in self.kms]
 
-    def add_ray(self, fields, pixel: int, amplitudes, opl):
+    def add_ray(self, rec, amplitudes):
         """amplitudes: one Number for every line, or [Number] per line."""
+        pixel, opl = rec.pixel, rec.opl
         amps = (list(amplitudes) if isinstance(amplitudes, (list, tuple))
                 else [amplitudes] * len(self.kms))
         if len(amps) != len(self.kms):
             raise ValueError(
                 f"expected {len(self.kms)} per-line amplitudes, got {len(amps)}")
-        for km, amp, g, sq in zip(self.kms, amps, fields["g"], fields["sq"]):
+        for km, amp, g, sq in zip(self.kms, amps, self._g, self._sq):
             term = amp * exp_i(km * opl)
             prev = g.get(pixel)
             g[pixel] = term if prev is None else prev + term
@@ -54,9 +57,9 @@ class CoherenceAccumulator:
             sq[pixel] = a2 if prev is None else prev + a2
         self.density[pixel] = self.density.get(pixel, 0) + 1
 
-    def fold_mode(self, fields):
+    def fold_mode(self):
         """Incoherent mode sum: W += w*g*conj(g_ref), I += w*|g|^2."""
-        for m, (g, sq) in enumerate(zip(fields["g"], fields["sq"])):
+        for m, (g, sq) in enumerate(zip(self._g, self._sq)):
             wf = self.wfs[m]
             for pixel, value in g.items():
                 a2 = float(abs(value)) ** 2
@@ -75,6 +78,7 @@ class CoherenceAccumulator:
                     cross = cross * self.wns[m]
                 prev = self.W.get(pixel)
                 self.W[pixel] = cross if prev is None else prev + cross
+        self._g = self._sq = None
 
     def finalize(self, nx: int, ny: int):
         """Maps as row-major [iy][ix] float lists: mu in [0,1], intensity, density."""

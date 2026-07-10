@@ -28,6 +28,7 @@ from .native import make_tracer
 from .progress import Progress
 from .screen import ScreenGrid
 from .source import Source
+from .types import ray_record
 
 
 class FloatLineAmplitudes:
@@ -78,8 +79,9 @@ class AltCoherence:
         self._g = [{} for _ in range(self.nl)]
         self._sq = [{} for _ in range(self.nl)]
 
-    def add_ray(self, pixel: int, amps, opl: float, direction):
-        u = float(direction[0]) / float(direction[2])
+    def add_ray(self, rec, amps):
+        pixel, opl = rec.pixel, float(rec.opl)
+        u = float(rec.direction[0]) / float(rec.direction[2])
         iu = math.floor(u / self.du + 0.5)
         cell = self.B.get((pixel, iu))
         if cell is None:
@@ -205,10 +207,10 @@ def run_alt_stage(sim, label, src_cfg, scr_cfg, optic, aim_factory,
              "off_window": 0}
     progress = Progress(label, n_modes * n_rays)
     t0 = time.time()
-    for _ in range(n_modes):
+    for mode in range(n_modes):
         origin = source.mode_origin()
         alt.new_mode()
-        for _ in range(n_rays):
+        for ray in range(n_rays):
             direction = aim(origin)
             tr = tracer(origin, direction, optic, screen.z, cfg.max_bounces)
             stats["emitted"] += 1
@@ -218,12 +220,12 @@ def run_alt_stage(sim, label, src_cfg, scr_cfg, optic, aim_factory,
                 if (cfg.amplitude_min > 0.0
                         and max(abs(a) for a in amps) < cfg.amplitude_min):
                     fate = "absorbed"
+            rec = ray_record(tr, screen, mode, ray, fate)
             if fate == "screen":
-                pixel = screen.pixel(tr.point)
-                if pixel is None:
+                if rec.pixel is None:
                     stats["off_window"] += 1
                 else:
-                    alt.add_ray(pixel, amps, float(tr.opl), tr.direction)
+                    alt.add_ray(rec, amps)
                     stats["screen"] += 1
             else:
                 stats[fate] += 1
