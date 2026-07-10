@@ -53,12 +53,13 @@ class ImplicitWall:
     for prototypes and small ray budgets, not overnight maps.
     """
 
-    def __init__(self, expr, center, aim_radius):
+    def __init__(self, expr, center, aim_radius, method="subdivision"):
         from ..intersect import RaySurface
         self.kind = "implicit"
         self.center = center
         p = center[0].precision
         self.rs = RaySurface(expr, p)
+        self.method = method
         self._scale = lift(_M_TO_UM, p)
         self.expr_um = None            # the engine IS the hit path here
         self.probe_xy = (1.0, 0.0)
@@ -79,7 +80,7 @@ class ImplicitWall:
         Oum = tuple(x * self._scale for x in O)
         ts = self.rs.intersect(Oum, d,
                                t_max=float(t_exit) * _M_TO_UM * (1.0 + _TCAP_TOL),
-                               t_min=eps_um, method="subdivision")
+                               t_min=eps_um, method=self.method)
         ts = [t for t in ts if float(t) > 1.5 * eps_um]
         if not ts:
             return None
@@ -103,12 +104,13 @@ def entrance_disk(bore: dict, z0f: float):
     return cxf, cyf, rf
 
 
-def _make_wall(bore: dict, z0):
+def _make_wall(bore: dict, z0, engine_method="subdivision"):
     """Bore spec -> wall object."""
     kind = bore.get("kind", "cylinder")
     center = bore["center"]
     if kind == "implicit":
-        return ImplicitWall(bore["surface"], center, bore["aim_radius"])
+        return ImplicitWall(bore["surface"], center, bore["aim_radius"],
+                            method=engine_method)
     if kind == "cylinder":
         return CylinderWall(center, bore["radius"])
     if kind == "revolution":
@@ -124,13 +126,13 @@ def _make_wall(bore: dict, z0):
 class CapillaryBundle:
     """Parallel bores along z in [z0, z1]; rays reflect off per-bore walls."""
 
-    def __init__(self, bores, z0, z1):
+    def __init__(self, bores, z0, z1, engine_method="subdivision"):
         self.bores, self.z0, self.z1 = bores, z0, z1
         self._z0f, self._z1f = float(z0), float(z1)
         self._zero = Number("0", z0.precision)
         self.walls = []
         for bore in bores:
-            wall = _make_wall(bore, z0)
+            wall = _make_wall(bore, z0, engine_method)
             wall.aim = entrance_disk(bore, self._z0f)
             self.walls.append(wall)
 
@@ -163,7 +165,8 @@ class CapillaryBundle:
         return ("reflect",) + hit
 
 
-def engine_hit_t(surface_expr_um: str, O, d, t_max_m: float):
+def engine_hit_t(surface_expr_um: str, O, d, t_max_m: float,
+                 method="subdivision"):
     """First hit via the RaySurface root-finding engine; returns t in metres.
 
     Coordinates are scaled to micrometres for backend conditioning; t scales back.
@@ -173,5 +176,5 @@ def engine_hit_t(surface_expr_um: str, O, d, t_max_m: float):
     scale = lift(_M_TO_UM, p)
     rs = RaySurface(surface_expr_um, p)
     ts = rs.intersect(tuple(c * scale for c in O), tuple(d),
-                      t_max=t_max_m * _M_TO_UM, method="subdivision")
+                      t_max=t_max_m * _M_TO_UM, method=method)
     return ts[0] / scale if ts else None

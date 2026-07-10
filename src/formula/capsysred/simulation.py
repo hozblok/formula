@@ -427,7 +427,8 @@ class Simulation:
         event = mirror.next_event(origin, d)
         t_fast = event[1]
         t_engine = engine_hit_t(mirror.expr_um, origin, d,
-                                1.2 * (float(lloyd.z1) - float(origin[2])))
+                                1.2 * (float(lloyd.z1) - float(origin[2])),
+                                method=self.cfg.engine_method)
         if t_engine is None:
             return "RaySurface engine check (mirror): no root found"
         rel = abs(float(t_fast - t_engine)) / float(t_fast)
@@ -498,7 +499,7 @@ class Simulation:
 
     def _stage6(self, out_dir, quick, rays_fh):
         cap = self.cfg.capillary
-        bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+        bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1, self.cfg.engine_method)
         check = self._capillary_engine_check(bundle)
         res = self._mc_stage("capillary", "6/6 capillary (MC)", cap.source,
                              cap.screen, bundle, self._aim_capillary, 4,
@@ -558,7 +559,7 @@ class Simulation:
             ("free", "7 alt free (MC)", self.cfg.free_source,
              self.cfg.free_screen, None, self._aim_free, 2),
             ("capillary", "7 alt capillary (MC)", cap.source, cap.screen,
-             CapillaryBundle(cap.bores, cap.z0, cap.z1),
+             CapillaryBundle(cap.bores, cap.z0, cap.z1, self.cfg.engine_method),
              self._aim_capillary, 4),
         ]
         rows = []
@@ -638,7 +639,7 @@ class Simulation:
             ("free", "8 sketch free (MC)", self.cfg.free_source,
              self.cfg.free_screen, None, self._aim_free, 2),
             ("capillary", "8 sketch capillary (MC)", cap.source, cap.screen,
-             CapillaryBundle(cap.bores, cap.z0, cap.z1),
+             CapillaryBundle(cap.bores, cap.z0, cap.z1, self.cfg.engine_method),
              self._aim_capillary, 4),
         ]
         rows = []
@@ -666,13 +667,13 @@ class Simulation:
                 figs = [render.heatmap(maps["mu_pair"], extent,
                                        f"Stage 8 [{stage}]: pairwise |μ(P, P_ref)|",
                                        "x, µm", "y, µm", sub, "|μ|",
-                                       mark=mark, vmax=1.0, w=430),
+                                       mark=mark, vmax=1.0, w=430, equal=True),
                         render.heatmap(maps["mu_sketch"], extent,
                                        f"sketch r={maps['rank']}",
                                        "x, µm", "y, µm", "", "|μ|",
-                                       mark=mark, vmax=1.0, w=430),
+                                       mark=mark, vmax=1.0, w=430, equal=True),
                         render.heatmap(maps["mu_diff"], extent, "|pair − sketch|",
-                                       "x, µm", "y, µm", "", "Δ", w=430)]
+                                       "x, µm", "y, µm", "", "Δ", w=430, equal=True)]
                 fig = render.hstack(figs)
             else:
                 xs_um = [x * _UM for x in screen.xs()]
@@ -735,7 +736,8 @@ class Simulation:
             return "RaySurface engine check (capillary): probe ray did not reach the wall"
         t_fast = event[1]
         t_engine = engine_hit_t(wall.expr_um, origin, d,
-                                1.2 * (float(cap.z1) - float(cap.z0)))
+                                1.2 * (float(cap.z1) - float(cap.z0)),
+                                method=self.cfg.engine_method)
         if t_engine is None:
             return "RaySurface engine check (capillary): no root found"
         rel = abs(float(t_fast - t_engine)) / float(t_fast)

@@ -167,8 +167,9 @@ def line_chart(series, title, xlabel, ylabel, subtitle="", vlines=(),
 
 
 def heatmap(grid, extent, title, xlabel, ylabel, subtitle="", cbar_label="",
-            w=560, h=460, vmax=None, mark=None):
-    """grid: row-major [iy][ix], iy=0 at the bottom edge; extent=(x0,x1,y0,y1)."""
+            w=560, h=460, vmax=None, mark=None, equal=False):
+    """grid: row-major [iy][ix], iy=0 at the bottom edge; extent=(x0,x1,y0,y1).
+    equal=True: pick h so one data unit spans equal px on both axes."""
     ny, nx = len(grid), len(grid[0])
     vmax = vmax or max((v for row in grid for v in row), default=1.0) or 1.0
     scale = max(1, int(360 / max(nx, ny)))
@@ -179,6 +180,11 @@ def heatmap(grid, extent, title, xlabel, ylabel, subtitle="", cbar_label="",
             row.extend([viridis(grid[iy][ix] / vmax)] * scale)
         rows.extend([row] * scale)
     ax = _Axes(w, h, (extent[0], extent[1]), (extent[2], extent[3]), right=74)
+    if equal:
+        # size h so one data unit spans equal px on both axes
+        span = (ax.px1 - ax.px0) * (extent[3] - extent[2]) / (extent[1] - extent[0])
+        h = round(h - (ax.py0 - ax.py1) + span)
+        ax = _Axes(w, h, (extent[0], extent[1]), (extent[2], extent[3]), right=74)
     e = ax.frame(xlabel, ylabel, title, subtitle)
     e.append(f'<image x="{ax.px0:.1f}" y="{ax.py1:.1f}" '
              f'width="{ax.px1 - ax.px0:.1f}" height="{ax.py0 - ax.py1:.1f}" '

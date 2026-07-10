@@ -11,6 +11,11 @@ from formula.capsysred.analytic import lloyd_reference, vcz_mu
 from formula.capsysred.nums import exp_i, lift, vunit
 from formula.capsysred.spectrum import spectral_lines, wavevector
 from formula.capsysred.surfaces import CapillaryBundle, Mirror, engine_hit_t
+from formula.capsysred.wall_cylinder import CylinderWall
+from formula.capsysred.wall_polygon import PolygonWall
+from formula.capsysred.wall_revolution import RevolutionWall
+from formula.capsysred.wall_torus import (_bisect_first, _float_seeds,
+                                          _quartic_first)
 from formula.capsysred.symbolic import (LineAmplitudes, ampl_template,
                                      ray_expression, ray_field_template)
 from formula.capsysred.fresnel import FresnelAmplitude
@@ -425,3 +430,92 @@ def test_analytic_references_sane():
     assert max(ref["mu"]) <= 1.0 + 1e-9
     v = ref["intensity"]
     assert max(v) / (min(v) + 1e-12) > 5.0      # fringes present
+
+
+# --------------------------------------------- quartic solver & tolerance kit
+
+
+def _monic_quartic(roots, p):
+    """Monic Number quartic with the given integer roots (exact coefficients)."""
+    cs = [1]
+    for r in roots:
+        cs = [a - r * b for a, b in zip(cs + [0], [0] + cs)]
+    return tuple(Number(str(v), p) for v in cs)
+
+
+def test_quartic_newton_accuracy_scales_with_precision():
+    # stop threshold is 10^-max(24, p//2): a fixed 24-digit cap would leave
+    # ~1e-48 error at every precision and fail the p >= 64 bounds
+    for p, bound in ((32, "1e-45"), (64, "1e-60"), (256, "1e-200")):
+        t = _quartic_first(_monic_quartic((1, 2, 3, 4), p), 10.0)
+        assert t is not None
+        assert abs(t - Number("1", p)) < Number(bound, p)
+
+
+def test_quartic_bisection_scales_with_precision():
+    # rescue path: 8 + p*log2(10) halvings shrink the bracket to ~10^-p;
+    # the old fixed 90 gave only ~1e-27 of the bracket at any precision
+    for p, bound in ((32, "1e-30"), (256, "1e-240")):
+        t = _bisect_first(_monic_quartic((1, 2, 3, 4), p), 10.0)
+        assert t is not None
+        assert abs(t - Number("1", p)) < Number(bound, p)
+
+
+def test_float_seeds_window_and_complex_filter():
+    # (t^2+1)(t-3)(t-4): the genuinely complex pair is dropped, real kept
+    seeds = _float_seeds([1.0, -7.0, 13.0, -7.0, 12.0], 10.0)
+    assert [round(s) for s in seeds] == [3, 4]
+    # window cap: only roots inside (eps/2, t_capf] survive
+    seeds = _float_seeds([1.0, -10.0, 35.0, -50.0, 24.0], 2.5)
+    assert [round(s) for s in seeds] == [1, 2]
+
+
+def test_quartic_first_empty_window_returns_none():
+    # all roots beyond t_capf, no sign change inside -> honest None
+    assert _quartic_first(_monic_quartic((5, 6, 7, 8), 32), 2.0) is None
+
+
+def test_on_wall_point_counts_inside():
+    # _INSIDE_TOL: a reflection point sits exactly ON the wall; float rounding
+    # of dx^2+dy^2 vs a^2 must not flip it outside (coin-flip absorption)
+    p = 32
+    zero = Number("0", p)
+    a = float(Number("6e-6", p))
+    cyl = CylinderWall((zero, zero), Number("6e-6", p))
+    rev = RevolutionWall("revolution", (zero, zero),
+                         (Number("6e-6", p) * Number("6e-6", p), zero, zero))
+    poly = PolygonWall((zero, zero), Number("6e-6", p), 6, zero)
+    for wall in (cyl, rev, poly):
+        assert wall.inside(a, 0.0, 0.0)
+        assert not wall.inside(a * (1 + 1e-6), 0.0, 0.0)
+
+
+def test_engine_method_config_wiring():
+    # trace.engine_method: validated at the config boundary, reaches the
+    # ImplicitWall of a `surface:` bore through CapillaryBundle
+    from formula.capsysred.config import load
+    assert load({}).engine_method == "subdivision"
+    with pytest.raises(ValueError):
+        load({"trace": {"engine_method": "newton"}})
+    cfg = load({"trace": {"engine_method": "sturm"},
+                "capillary": {"bores": [{"surface": "x^2+y^2-36",
+                                         "aim_radius": 6.0e-6}]}})
+    bundle = CapillaryBundle(cfg.capillary.bores, cfg.capillary.z0,
+                             cfg.capillary.z1, cfg.engine_method)
+    assert bundle.walls[0].method == "sturm"
+
+
+def test_sturm_engine_matches_closed_form_hit():
+    # the polynomial wall expr_um is exactly Sturm's domain: the cross-check
+    # must agree with the closed-form hit as tightly as subdivision does
+    sim = Simulation.from_dict(TINY)
+    cap = sim.cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    p = sim.cfg.precision
+    d = vunit((lift(1.0e-3, p), lift(2.0e-4, p), lift(1.0, p)))
+    origin = (cap.bores[0]["center"][0], cap.bores[0]["center"][1], cap.z0)
+    kind, t_fast, _, _ = bundle.next_event(origin, d)
+    assert kind == "reflect"
+    t_engine = engine_hit_t(bundle.walls[0].expr_um, origin, d, 0.08,
+                            method="sturm")
+    assert abs(float(t_fast - t_engine)) / float(t_fast) < 1e-25
