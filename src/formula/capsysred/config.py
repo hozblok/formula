@@ -71,6 +71,8 @@ DEFAULTS = {
     # stage 9: rays for the hit-method cross-validation
     # (python / C++ / implicit subdivision)
     "validate": {"n_rays": 5000},
+    # stage 11: beamlet launch waist [m] and deposit window radius in beam widths
+    "beamlet": {"w0": 5.0e-7, "window_sigmas": 3.0},
 }
 
 
@@ -208,6 +210,8 @@ class Config:
         self.schematic_rays = int(cfg["schematic"]["n_rays"])
         self.sketch_rank = int(cfg["sketch"]["rank"])
         self.validate_rays = int(cfg["validate"]["n_rays"])
+        self.beamlet_w0 = float(cfg["beamlet"]["w0"])
+        self.beamlet_ns = float(cfg["beamlet"]["window_sigmas"])
 
 
 def load(path_or_dict) -> Config:

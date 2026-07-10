@@ -535,3 +535,52 @@ def test_stage9_hit_methods_agree_on_cylinder(tmp_path):
         assert s["n"] == res["stats"]["hits"], name
         assert s["missing"] == 0 and s["extra"] == 0, name
         assert s["max_rel"] < 1e-20, name
+
+
+def test_stage11_beamlet_point_source_fully_coherent(tmp_path):
+    # point source -> one coherent field, honest estimator must give mu = 1
+    # on every pixel the beamlets light up; mu never exceeds 1
+    sim = Simulation.from_dict(TINY)
+    result = sim.run(str(tmp_path), stages=[11])
+    for name in result["files"]:
+        assert (tmp_path / name).stat().st_size > 0
+    assert "mu-beamlet.jsonl" in result["files"]
+    maps = sim.results["beamlet:free"]["maps"]
+    imax = max(maps["intensity"][0])
+    lit = [m for m, i in zip(maps["mu"][0], maps["intensity"][0])
+           if i > 0.3 * imax]
+    assert lit and min(lit) > 0.999
+    for key in ("beamlet:free", "beamlet:capillary"):
+        mu = sim.results[key]["maps"]["mu"]
+        assert max(max(r) for r in mu) <= 1.0 + 1e-9
+        for row in sim.results[key]["maps"]["intensity"]:
+            assert all(math.isfinite(v) and v >= 0.0 for v in row)
+
+
+def test_stage11_beamlet_gaussian_matches_vcz(tmp_path):
+    # extended gaussian source: the beamlet |mu| row must track the vCZ curve
+    from formula.capsysred.analytic import rms_diff
+    sim = Simulation.from_dict({
+        "source": {"n_modes": 36, "n_rays": 200},
+        "screen": {"nx": 41},
+        "capillary": {"source": {"n_modes": 2, "n_rays": 20},
+                      "screen": {"nx": 5, "ny": 5}},
+    })
+    sim.run(str(tmp_path), stages=[11])
+    res = sim.results["beamlet:free"]
+    maps, screen = res["maps"], res["screen"]
+    src = sim.cfg.free_source
+    dist = float(screen.z) - float(src.position[2])
+    ref_x = screen.pixel_xy(maps["ref_pixel"])[0]
+    mu_th = [vcz_mu(x - ref_x, src.shape, float(src.size), float(sim.lam), dist)
+             for x in screen.xs()]
+    assert rms_diff(maps["mu"][0], mu_th) < 0.2
+
+
+def test_stage11_beamlet_same_rays_as_stage6(tmp_path):
+    # the rng stream matches _mc_stage: arrival-pixel densities are identical
+    sim = Simulation.from_dict(TINY)
+    sim.run(str(tmp_path), stages=[6, 11])
+    d6 = sim.results["capillary"]["maps"]["density"]
+    d11 = sim.results["beamlet:capillary"]["maps"]["density"]
+    assert d6 == d11

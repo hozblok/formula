@@ -18,6 +18,7 @@ from ..formula import Number
 from .. import xray
 from . import analytic, render, schematic
 from .altcoh import run_alt_stage
+from .beamlet import run_beamlet_stage
 from .coherence import CoherenceAccumulator
 from .jackknife import run_jack_stage
 from .sketch import run_sketch_stage
@@ -34,7 +35,7 @@ from .fresnel import FresnelAmplitude
 from .native import make_tracer
 
 ALL_STAGES = (1, 2, 3, 4, 5, 6)
-KNOWN_STAGES = ALL_STAGES + (7, 8, 9, 10)  # 7 (alt), 8 (sketch), 9 (hit methods), 10 (jackknife) — opt-in
+KNOWN_STAGES = ALL_STAGES + (7, 8, 9, 10, 11)  # 7 (alt), 8 (sketch), 9 (hit methods), 10 (jackknife), 11 (beamlets) — opt-in
 _UM = 1e6
 
 
@@ -933,6 +934,130 @@ class Simulation:
         ]
         return res
 
+    # ------------------------------------------------------------- stage 11
+
+    def _stage11(self, out_dir, quick):
+        """Beamlet estimator (doc/2026-07-10-stage11-beamlets.ru.md): soft
+        Gaussian phase spots instead of point bins, scalar q, honest mu with
+        no self-pair subtraction. Free scene validates against vCZ; the
+        capillary scene compares to stage 6 on the same rays."""
+        cap = self.cfg.capillary
+        scenes = [
+            ("free", "11 beamlet free (MC)", self.cfg.free_source,
+             self.cfg.free_screen, None, self._aim_free, 2),
+            ("capillary", "11 beamlet capillary (MC)", cap.source, cap.screen,
+             CapillaryBundle(cap.bores, cap.z0, cap.z1, self.cfg.engine_method),
+             self._aim_capillary, 4),
+        ]
+        rows = []
+        for stage, label, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
+            res = run_beamlet_stage(self, label, src_cfg, scr_cfg, optic,
+                                    aim_factory, off, quick)
+            self.results[f"beamlet:{stage}"] = res
+            maps, screen, st = res["maps"], res["screen"], res["stats"]
+            nx, ny = screen.nx, screen.ny
+            flat = lambda grid: [v for row in grid for v in row]
+            ref_xy = screen.pixel_xy(maps["ref_pixel"])
+            sub = (f"{res['n_modes']} modes × {res['n_rays']} rays; "
+                   f"w₀ = {self.cfg.beamlet_w0 * _UM:.2f} µm, "
+                   f"mean w on screen = {maps['w_mean'] * _UM:.2f} µm")
+            report = [f"## Stage 11 — beamlet estimator [{stage}]",
+                      f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen "
+                      f"{st['screen']:,} of {st['emitted']:,} (tails off window: {st['off_window']:,})",
+                      f"- w₀ = {self.cfg.beamlet_w0 * _UM:.2f} µm; mean beam width on screen "
+                      f"= {maps['w_mean'] * _UM:.2f} µm; honest |μ| (no self-pair subtraction)"]
+            row = ny // 2
+            xs_um = [x * _UM for x in screen.xs()]
+            if stage == "free":
+                src = src_cfg
+                dist = float(screen.z) - float(src.position[2])
+                mu_th = [analytic.vcz_mu(x - ref_xy[0], src.shape,
+                                         float(src.size), float(self.lam), dist)
+                         for x in screen.xs()]
+                rms = analytic.rms_diff(maps["mu"][row], mu_th)
+                fig = render.line_chart(
+                    [{"xs": xs_um, "ys": maps["mu"][row], "label": "beamlets |μ|"},
+                     {"xs": xs_um, "ys": mu_th,
+                      "label": "van Cittert–Zernike analytics", "dash": "6,4"}],
+                    "Stage 11 [free]: beamlet |μ| vs vCZ analytics",
+                    "x, µm", "|μ|", f"RMS(beamlets − vCZ) = {rms:.3f};  {sub}",
+                    vlines=[(ref_xy[0] * _UM, "ref")], w=760)
+                self._save(out_dir, "11-free-beamlet-mu.svg", fig)
+                report.append(f"- RMS(|μ|_beamlet − |μ|_vCZ) = {rms:.4f}")
+            else:
+                num = self.results.get("capillary")   # stage 6 maps, same rays
+                extent = (screen.x0f * _UM, (screen.x0f + screen.exf) * _UM,
+                          screen.y0f * _UM, (screen.y0f + screen.eyf) * _UM)
+                if ny > 1:
+                    mark = (ref_xy[0] * _UM, ref_xy[1] * _UM)
+                    fig = render.hstack([
+                        render.heatmap(maps["mu"], extent,
+                                       "Stage 11: beamlet |μ(P, P_ref)|",
+                                       "x, µm", "y, µm", sub, "|μ|",
+                                       mark=mark, vmax=1.0, w=430, equal=True),
+                        render.heatmap(maps["intensity"], extent,
+                                       "beamlet intensity", "x, µm", "y, µm",
+                                       "coherent beamlet sum |Σ g|²",
+                                       "I, arb. units", w=430, equal=True)])
+                    self._save(out_dir, "11-capillary-beamlet-mu.svg", fig)
+                else:
+                    fig = render.line_chart(
+                        [{"xs": xs_um, "ys": maps["mu"][0], "label": "beamlets |μ|"}],
+                        "Stage 11: beamlet |μ(x, x_ref)|", "x, µm", "|μ|", sub,
+                        vlines=[(ref_xy[0] * _UM, "ref")], w=760)
+                    self._save(out_dir, "11-capillary-beamlet-mu.svg", fig)
+                    imax = max(maps["intensity"][0]) or 1.0
+                    fig = render.line_chart(
+                        [{"xs": xs_um,
+                          "ys": [v / imax for v in maps["intensity"][0]],
+                          "label": "beamlet intensity"}],
+                        "Stage 11: beamlet intensity", "x, µm", "I, arb. units", sub)
+                    self._save(out_dir, "11a-capillary-beamlet-intensity.svg", fig)
+                if num is not None:
+                    lit = [i for i, d in enumerate(flat(num["maps"]["density"]))
+                           if d > 0]
+                    a, b = flat(maps["mu"]), flat(num["maps"]["mu"])
+                    rms6 = analytic.rms_diff([a[i] for i in lit],
+                                             [b[i] for i in lit])
+                    sub6 = (f"RMS on lit px {rms6:.3f}; same rays, different "
+                            "estimators: stage 6 subtracts ray self-pairs, "
+                            "beamlets smear the field")
+                    if ny > 1:
+                        diff = [[abs(x - y) for x, y in zip(ra, rb)]
+                                for ra, rb in zip(maps["mu"], num["maps"]["mu"])]
+                        fig = render.heatmap(diff, extent,
+                                             "|μ_beamlet − μ_stage6| (same rays)",
+                                             "x, µm", "y, µm", sub6, "Δ", w=640)
+                    else:
+                        fig = render.line_chart(
+                            [{"xs": xs_um,
+                              "ys": [x - y for x, y in
+                                     zip(maps["mu"][0], num["maps"]["mu"][0])],
+                              "label": "μ_beamlet − μ_stage6"}],
+                            "Stage 11 vs 6: Δμ (same rays)", "x, µm", "Δμ",
+                            sub6, w=760, y_zero=False)
+                    self._save(out_dir, "11b-capillary-beamlet-vs6.svg", fig)
+                    report.append(
+                        f"- RMS(|μ|_beamlet − |μ|_stage6) = {rms6:.4f} on "
+                        f"{len(lit)} lit px (same rays; estimators differ — "
+                        "stage 6 subtracts self-pairs, beamlets do not)")
+            ys_um = [y * _UM for y in screen.ys()]
+            for iy in range(ny):
+                for ix in range(nx):
+                    rows.append({"stage": stage, "pixel": iy * nx + ix,
+                                 "x_um": xs_um[ix], "y_um": ys_um[iy],
+                                 "mu": maps["mu"][iy][ix],
+                                 "I": maps["intensity"][iy][ix],
+                                 "n_rays": int(maps["density"][iy][ix])})
+            report.append(f"- time: {res['seconds']:.1f} s")
+            self.report += report
+        path = os.path.join(out_dir, "mu-beamlet.jsonl")
+        with open(path, "w", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row) + "\n")
+        self.files.append("mu-beamlet.jsonl")
+        _log("  → mu-beamlet.jsonl")
+
     def _capillary_engine_check(self, bundle) -> str:
         cap = self.cfg.capillary
         p = self.cfg.precision
@@ -1021,6 +1146,9 @@ class Simulation:
             if 10 in wanted:
                 _log("Stage 10: stage-6 estimator + delete-one-mode jackknife errors")
                 self._stage10(out_dir, quick)
+            if 11 in wanted:
+                _log("Stage 11: beamlet estimator — soft Gaussian phase spots (scalar q)")
+                self._stage11(out_dir, quick)
         finally:
             if rays_fh is not None:
                 rays_fh.close()
