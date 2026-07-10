@@ -569,6 +569,13 @@ class Simulation:
         ]
         rows = []
         for stage, label, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
+            if scr_cfg.ny != 1:
+                _log(f"  7 [{stage}]: skipped — 2D screen (ny = {scr_cfg.ny}), estimators are 1D-only")
+                self.report += [
+                    f"## Stage 7 — alternative estimators [{stage}]",
+                    f"- skipped: screen ny = {scr_cfg.ny}, estimators support ny = 1 only",
+                ]
+                continue
             res = run_alt_stage(self, label, stage, src_cfg, scr_cfg,
                                 optic, aim_factory, off, quick)
             self.results[f"alt:{stage}"] = res
@@ -825,7 +832,7 @@ class Simulation:
                      for s_row, d_row in zip(maps["solid"], maps["dubious"])]
             fig = render.hstack([
                 render.heatmap(maps["mu"], extent,
-                               "Stage 10: |μ(P, P_ref)| (jackknife)",
+                               "|μ(P, P_ref)| (jackknife)",
                                "x, µm", "y, µm", sub, "|μ|",
                                mark=mark, vmax=1.0, w=430, equal=True),
                 render.heatmap(maps["mu_err"], extent, "σ_jack(P)",
@@ -835,6 +842,37 @@ class Simulation:
                                "½: σ>1, pinned at |μ|=1, or no jackknife; 0: no pairs",
                                "trust", vmax=1.0, w=430, equal=True)])
             self._save(out_dir, "10-capillary-jack-mu.svg", fig)
+            # y ≈ 0 slice of the three maps: |μ| ± σ_jack, σ_jack, trust
+            iy0 = min(range(ny), key=lambda j: abs(screen.ys()[j]))
+            y0_um = screen.ys()[iy0] * _UM
+            xs_um = [x * _UM for x in screen.xs()]
+            row_mu, row_err = maps["mu"][iy0], maps["mu_err"][iy0]
+            dub_i = [i for i, d in enumerate(maps["dubious"][iy0]) if d > 0]
+            mu_series = [{"xs": xs_um, "ys": row_mu, "label": "jackknife |μ| ± σ",
+                          "lo": [max(m - e, 0.0) for m, e in zip(row_mu, row_err)],
+                          "hi": [min(m + e, 1.0) for m, e in zip(row_mu, row_err)]}]
+            err_series = [{"xs": xs_um, "ys": row_err, "label": "σ_jack"},
+                          {"xs": xs_um, "ys": [floor] * nx,
+                           "label": "1/√N_modes", "dash": "2,3"}]
+            if dub_i:
+                xd = [xs_um[i] for i in dub_i]
+                mu_series.append({"xs": xd, "ys": [row_mu[i] for i in dub_i],
+                                  "label": "don't trust: σ>1 / pinned at clamp",
+                                  "color": "#d62728", "dots": True})
+                err_series.append({"xs": xd, "ys": [row_err[i] for i in dub_i],
+                                   "label": "don't trust",
+                                   "color": "#d62728", "dots": True})
+            vl = [(ref_xy[0] * _UM, "ref")] if maps["ref_pixel"] // nx == iy0 else []
+            fig = render.hstack([
+                render.line_chart(mu_series, "|μ(P, P_ref)| ± σ_jack", "x, µm",
+                                  "|μ|", f"slice y = {y0_um:.2f} µm",
+                                  vlines=vl, w=430),
+                render.line_chart(err_series, "σ_jack(x)", "x, µm", "σ",
+                                  f"slice y = {y0_um:.2f} µm", w=430),
+                render.line_chart([{"xs": xs_um, "ys": trust[iy0]}],
+                                  "trust: 1 ok · ½ don't · 0 none", "x, µm",
+                                  "trust", f"slice y = {y0_um:.2f} µm", w=430)])
+            self._save(out_dir, "10a-capillary-jack-slice.svg", fig)
             fig = render.hstack([
                 render.heatmap(maps["intensity"], extent, "Stage 10: intensity",
                                "x, µm", "y, µm", sub, "I, arb. units",
