@@ -197,10 +197,15 @@ def test_rays_jsonl_records(tmp_path):
     sim = Simulation.from_dict(TINY)
     result = sim.run(str(tmp_path), stages=[4])
     assert "rays.jsonl" in result["files"]
-    rows = [json.loads(line)
-            for line in (tmp_path / "rays.jsonl").read_text().splitlines()]
+    lines = [json.loads(line)
+             for line in (tmp_path / "rays.jsonl").read_text().splitlines()]
+    assert lines[0]["format"] == 2                       # v2 meta line
+    assert lines[-1] == {"scene_end": "lloyd", "rows": len(lines) - 2}
+    rows = [row for row in lines if "stage" in row]
     assert len(rows) == sim.results["lloyd"]["stats"]["emitted"]
     assert {"stage", "mode", "ray", "fate", "pixel", "opl", "sins"} <= set(rows[0])
+    hit = next(row for row in rows if row["fate"] == "screen")
+    assert {"x", "y", "dx", "dy"} <= set(hit)            # v2 float geometry
     assert any(not row["sins"] for row in rows)          # direct rays recorded too
     digits = rows[0]["opl"].replace(".", "").replace("-", "").lstrip("0")
     assert len(digits) >= 25                             # full-precision strings
@@ -211,7 +216,8 @@ def test_rays_jsonl_records(tmp_path):
 def test_sample_every_thins_records(tmp_path):
     sim = Simulation.from_dict(dict(TINY, trace={"sample_every": 3}))
     sim.run(str(tmp_path), stages=[4])
-    rows = (tmp_path / "rays.jsonl").read_text().splitlines()
+    rows = [row for row in (tmp_path / "rays.jsonl").read_text().splitlines()
+            if "scene_end" not in row and "format" not in row]
     st = sim.results["lloyd"]["stats"]
     n_modes = sim.results["lloyd"]["n_modes"]
     per_mode = st["emitted"] // n_modes
@@ -658,3 +664,51 @@ def test_beamlet_direct_drive_single_mode_fully_coherent():
     maps = bf.finalize(7, 1)
     lit = [m for m, i in zip(maps["mu"][0], maps["intensity"][0]) if i > 0.0]
     assert lit and min(lit) > 1.0 - 1e-12
+
+
+def test_stage10_from_file_equals_traced(tmp_path):
+    # stage 6 records the capillary rays; stage 10 in the same run consumes
+    # the file and must land on the traced maps exactly
+    traced = Simulation.from_dict(TINY)
+    traced.run(str(tmp_path / "a"), stages=[10])
+    assert traced.results["jack:capillary"]["rays_from"] == "trace"
+    reused = Simulation.from_dict(TINY)
+    reused.run(str(tmp_path / "b"), stages=[6, 10])
+    assert reused.results["jack:capillary"]["rays_from"] == "file"
+    for key in ("mu", "mu_err", "intensity", "density"):
+        assert (traced.results["jack:capillary"]["maps"][key]
+                == reused.results["jack:capillary"]["maps"][key]), key
+
+
+def test_rays_file_reused_across_runs(tmp_path):
+    # run 1 records the capillary scene; run 2 (same out dir, same config)
+    # consumes it for stage 11 and appends the free scene it traces itself
+    Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+    sim = Simulation.from_dict(TINY)
+    sim.run(str(tmp_path), stages=[11])
+    assert sim.results["beamlet:capillary"]["rays_from"] == "file"
+    assert sim.results["beamlet:free"]["rays_from"] == "trace"
+    from formula.capsysred.rays import scan
+    meta, done, clean = scan(str(tmp_path / "rays.jsonl"))
+    assert clean and set(done) == {"capillary", "free"}
+
+
+def test_rays_file_rejected_on_geometry_change(tmp_path):
+    # a bore-length change flips the geometry fingerprint: the stale file is
+    # rejected and rewritten, the stage traces
+    Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+    changed = dict(TINY, capillary=dict(TINY["capillary"], z1=0.06))
+    sim = Simulation.from_dict(changed)
+    sim.run(str(tmp_path), stages=[11])
+    assert sim.results["beamlet:capillary"]["rays_from"] == "trace"
+
+
+def test_rays_gzip_roundtrip(tmp_path):
+    # rays_gzip writes .jsonl.gz; the same run reuses it for stage 10
+    cfg = dict(TINY, trace={"rays_gzip": True})
+    sim = Simulation.from_dict(cfg)
+    result = sim.run(str(tmp_path), stages=[6, 10])
+    assert "rays.jsonl.gz" in result["files"]
+    assert sim.results["jack:capillary"]["rays_from"] == "file"
+    d6 = sim.results["capillary"]["maps"]["density"]
+    assert d6 == sim.results["jack:capillary"]["maps"]["density"]

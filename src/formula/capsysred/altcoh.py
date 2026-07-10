@@ -19,16 +19,13 @@ estimator lands on the same maps). 1D screens only (ny = 1).
 
 import cmath
 import math
-import random
 import time
 
 from ..formula import Number
 from .fresnel import FresnelAmplitude
-from .native import make_tracer
 from .progress import Progress
+from .rays import scene_stream
 from .screen import ScreenGrid
-from .source import Source
-from .types import ray_record
 
 
 class FloatLineAmplitudes:
@@ -187,13 +184,11 @@ class AltCoherence:
         return grid, lo * self.du, (hi + 1) * self.du
 
 
-def run_alt_stage(sim, label, src_cfg, scr_cfg, optic, aim_factory,
+def run_alt_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
                   seed_offset: int, quick: int):
-    """The stage-2/6 MC loop with the alternative estimators; the rng stream
-    matches _mc_stage exactly, so quick=1 reproduces the recorded rays."""
+    """The alternative estimators over the scene's ray records — from the
+    shared rays file when it matches, else traced (the stage-2/6 rng stream)."""
     cfg = sim.cfg
-    rng = random.Random(cfg.seed * 1000003 + seed_offset)
-    source = Source(src_cfg, rng)
     screen = ScreenGrid(scr_cfg)
     if screen.ny != 1:
         raise ValueError("stage 7 supports 1D screens (ny = 1) only")
@@ -201,35 +196,36 @@ def run_alt_stage(sim, label, src_cfg, scr_cfg, optic, aim_factory,
     n_rays = max(20, src_cfg.n_rays // quick)
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
     alt = AltCoherence(sim.lines, screen, screen.ref_pixel(scr_cfg.reference))
-    aim = aim_factory(source, screen, rng)
-    tracer = make_tracer(optic)
+    records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
+                                      aim_factory, seed_offset, quick)
     stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
              "off_window": 0}
     progress = Progress(label, n_modes * n_rays)
     t0 = time.time()
-    for mode in range(n_modes):
-        origin = source.mode_origin()
-        alt.new_mode()
-        for ray in range(n_rays):
-            direction = aim(origin)
-            tr = tracer(origin, direction, optic, screen.z, cfg.max_bounces)
-            stats["emitted"] += 1
-            fate, amps = tr.fate, None
-            if fate == "screen":
-                amps = amps_of([float(s) for _, s in tr.reflections])
-                if (cfg.amplitude_min > 0.0
-                        and max(abs(a) for a in amps) < cfg.amplitude_min):
-                    fate = "absorbed"
-            rec = ray_record(tr, screen, mode, ray, fate)
-            if fate == "screen":
-                if rec.pixel is None:
-                    stats["off_window"] += 1
-                else:
-                    alt.add_ray(rec, amps)
-                    stats["screen"] += 1
+    mode_cur = None
+    for rec in records:
+        if rec.mode != mode_cur:
+            if mode_cur is not None:
+                alt.fold_mode()
+            alt.new_mode()
+            mode_cur = rec.mode
+        stats["emitted"] += 1
+        fate, amps = rec.fate, None
+        if fate == "screen":
+            amps = amps_of([float(s) for s in rec.sins])
+            if (cfg.amplitude_min > 0.0
+                    and max(abs(a) for a in amps) < cfg.amplitude_min):
+                fate = "absorbed"
+        if fate == "screen":
+            if rec.pixel is None:
+                stats["off_window"] += 1
             else:
-                stats[fate] += 1
-            progress.step()
+                alt.add_ray(rec, amps)
+                stats["screen"] += 1
+        else:
+            stats[fate] += 1
+        progress.step()
+    if mode_cur is not None:
         alt.fold_mode()
     progress.finish(f"on screen {stats['screen']:,}")
     mid = len(sim.lines) // 2
@@ -238,5 +234,6 @@ def run_alt_stage(sim, label, src_cfg, scr_cfg, optic, aim_factory,
     check = abs(amps_of([s_probe])[mid]
                 - complex(r_num(Number(repr(s_probe), cfg.precision))))
     return {"maps": alt.finalize(), "alt": alt, "screen": screen,
-            "stats": stats, "n_modes": n_modes, "n_rays": n_rays,
-            "seconds": time.time() - t0, "fresnel_check": check}
+            "stats": stats, "rays_from": rays_from, "n_modes": n_modes,
+            "n_rays": n_rays, "seconds": time.time() - t0,
+            "fresnel_check": check}

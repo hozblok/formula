@@ -33,6 +33,7 @@ from .surfaces import CapillaryBundle, Mirror, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
 from .native import make_tracer
+from .rays import RaysFile, scene_stream
 from .types import RayRecord, ray_record
 
 ALL_STAGES = (1, 2, 3, 4, 5, 6)
@@ -68,6 +69,7 @@ class Simulation:
         self.report = []
         self.files = []
         self.results = {}   # stage name -> MC result dict (maps, stats, ...)
+        self.rays = None    # the run's RaysFile (trace once, stages consume)
 
     @classmethod
     def from_yaml(cls, path) -> "Simulation":
@@ -112,7 +114,7 @@ class Simulation:
     # ------------------------------------------------------------- MC driver
 
     def _mc_stage(self, stage: str, label: str, src_cfg, scr_cfg, optic,
-                  aim_factory, seed_offset: int, quick: int, rays_fh=None):
+                  aim_factory, seed_offset: int, quick: int):
         cfg = self.cfg
         rng = random.Random(cfg.seed * 1000003 + seed_offset)
         source = Source(src_cfg, rng)
@@ -148,18 +150,15 @@ class Simulation:
                                 else float(abs(amps)))
                         if peak < cfg.amplitude_min:
                             fate = "absorbed"    # below threshold on every line
-                rec = ray_record(tr, screen, mode, ray, fate)
-                sampled = ray % cfg.sample_every == 0
+                # the record keeps the pre-threshold fate: geometry only,
+                # every consumer (and --replay) applies its own amplitude_min
+                rec = ray_record(tr, screen, mode, ray, tr.fate)
                 if nb:
                     stats["reflected_rays"] += 1
                     stats["reflections"] += nb
                     stats["bounce_hist"][nb] = stats["bounce_hist"].get(nb, 0) + 1
-                if rays_fh is not None and sampled:
-                    rays_fh.write(json.dumps({
-                        "stage": stage, "mode": mode, "ray": ray, "fate": fate,
-                        "pixel": rec.pixel, "opl": str(rec.opl),
-                        "sins": [str(s) for s in rec.sins],
-                    }, ensure_ascii=False) + "\n")
+                if self.rays is not None:
+                    self.rays.write(stage, rec)
                 if fate == "screen":
                     if rec.pixel is None:
                         stats["off_window"] += 1
@@ -170,6 +169,8 @@ class Simulation:
                     stats[fate] += 1
                 progress.step()
             acc.fold_mode()
+        if self.rays is not None:
+            self.rays.finish_scene(stage)
         maps = acc.finalize(screen.nx, screen.ny)
         progress.finish(f"on screen {stats['screen']:,}")
         result = {"maps": maps, "stats": stats, "screen": screen,
@@ -272,10 +273,10 @@ class Simulation:
 
     # ------------------------------------------------------------- stage 2+3
 
-    def _stage2(self, out_dir, quick, rays_fh):
+    def _stage2(self, out_dir, quick):
         res = self._mc_stage("free", "2/6 without optics (MC)", self.cfg.free_source,
                              self.cfg.free_screen, None, self._aim_free, 2,
-                             quick, rays_fh)
+                             quick)
         screen, maps = res["screen"], res["maps"]
         xs_um = [x * _UM for x in screen.xs()]
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
@@ -345,13 +346,13 @@ class Simulation:
 
     # ------------------------------------------------------------- stage 4+5
 
-    def _stage4(self, out_dir, quick, rays_fh):
+    def _stage4(self, out_dir, quick):
         cfg = self.cfg
         lloyd = cfg.lloyd
         mirror = Mirror(lloyd.z0, lloyd.z1)
         check = self._lloyd_engine_check(mirror)
         res = self._mc_stage("lloyd", "4/6 Lloyd (MC)", lloyd.source, lloyd.screen,
-                             mirror, self._aim_lloyd, 3, quick, rays_fh)
+                             mirror, self._aim_lloyd, 3, quick)
         screen, maps = res["screen"], res["maps"]
         xs_um = [x * _UM for x in screen.xs()]
         row = screen.ny // 2
@@ -504,13 +505,13 @@ class Simulation:
 
     # ------------------------------------------------------------- stage 6
 
-    def _stage6(self, out_dir, quick, rays_fh):
+    def _stage6(self, out_dir, quick):
         cap = self.cfg.capillary
         bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1, self.cfg.engine_method)
         check = self._capillary_engine_check(bundle)
         res = self._mc_stage("capillary", "6/6 capillary (MC)", cap.source,
                              cap.screen, bundle, self._aim_capillary, 4,
-                             quick, rays_fh)
+                             quick)
         screen, maps = res["screen"], res["maps"]
         st = res["stats"]
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
@@ -571,8 +572,8 @@ class Simulation:
         ]
         rows = []
         for stage, label, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
-            res = run_alt_stage(self, label, src_cfg, scr_cfg, optic,
-                                aim_factory, off, quick)
+            res = run_alt_stage(self, label, stage, src_cfg, scr_cfg,
+                                optic, aim_factory, off, quick)
             self.results[f"alt:{stage}"] = res
             maps, screen, st = res["maps"], res["screen"], res["stats"]
             xs_um = [x * _UM for x in screen.xs()]
@@ -623,6 +624,7 @@ class Simulation:
             self.report += [
                 f"## Stage 7 — alternative estimators [{stage}]",
                 f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen {st['screen']:,} of {st['emitted']:,}",
+                f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
                 f"- RMS(|μ|_pair − |μ|_fullW_col) = {rms_full:.2e} (must be ~0: same sums)",
                 f"- RMS(|μ|_pair − |μ|_Wigner) = {rms_wig:.4f}; RMS(I_pair − I_Wigner, normalized) = {rms_int:.2e}",
                 f"- Fresnel float64 mirror vs Number (center line): |Δr| = {res['fresnel_check']:.1e}",
@@ -651,8 +653,8 @@ class Simulation:
         ]
         rows = []
         for stage, label, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
-            res = run_sketch_stage(self, label, src_cfg, scr_cfg, optic,
-                                   aim_factory, off, quick)
+            res = run_sketch_stage(self, label, stage, src_cfg, scr_cfg,
+                                   optic, aim_factory, off, quick)
             self.results[f"sketch:{stage}"] = res
             maps, screen, st = res["maps"], res["screen"], res["stats"]
             flat = lambda grid: [v for row in grid for v in row]
@@ -712,6 +714,7 @@ class Simulation:
             self.report += [
                 f"## Stage 8 — sketch estimator [{stage}]",
                 f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen {st['screen']:,} of {st['emitted']:,}",
+                f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
                 f"- rank r = {maps['rank']}; RMS(|μ|_pair − |μ|_sketch) = {maps['rms_pair_sketch']:.4f} "
                 f"on {maps['solid_px']} solid px (dark: {maps['dark_px']})",
                 f"- mode spectrum: N_eff = {maps['neff']:.2f}, 99% of energy in {maps['n99']} modes",
@@ -794,8 +797,9 @@ class Simulation:
         form): same capillary rays, |mu| plus a delete-one-mode jackknife map."""
         cap = self.cfg.capillary
         bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1, self.cfg.engine_method)
-        res = run_jack_stage(self, "10 jackknife capillary (MC)", cap.source,
-                             cap.screen, bundle, self._aim_capillary, 4, quick)
+        res = run_jack_stage(self, "10 jackknife capillary (MC)", "capillary",
+                             cap.source, cap.screen, bundle,
+                             self._aim_capillary, 4, quick)
         self.results["jack:capillary"] = res
         maps, screen, st = res["maps"], res["screen"], res["stats"]
         nx, ny = screen.nx, screen.ny
@@ -808,7 +812,7 @@ class Simulation:
         floor = 1.0 / math.sqrt(res["n_modes"])
         num = self.results.get("capillary")   # stage 6 maps, same rays
         rms6 = None
-        if num is not None:
+        if num is not None and solid:
             a, b = flat(maps["mu"]), flat(num["maps"]["mu"])
             rms6 = analytic.rms_diff([a[i] for i in solid], [b[i] for i in solid])
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
@@ -841,7 +845,7 @@ class Simulation:
                 render.heatmap(maps["density"], extent, "rays per pixel",
                                "x, µm", "y, µm", "", "rays", w=430, equal=True)])
             self._save(out_dir, "10b-capillary-jack-intensity.svg", fig)
-            if num is not None:
+            if rms6 is not None:
                 diff = [[abs(a - b) for a, b in zip(ra, rb)]
                         for ra, rb in zip(maps["mu"], num["maps"]["mu"])]
                 fig = render.heatmap(diff, extent,
@@ -891,7 +895,7 @@ class Simulation:
                   "label": "rays / max", "dash": "6,4"}],
                 "Stage 10: intensity and ray density", "x, µm", "normalized", sub)
             self._save(out_dir, "10b-capillary-jack-intensity.svg", fig)
-            if num is not None:
+            if rms6 is not None:
                 fig = render.line_chart(
                     [{"xs": xs_um,
                       "ys": [a - b for a, b in zip(row_mu, num["maps"]["mu"][0])],
@@ -923,6 +927,7 @@ class Simulation:
         self.report += [
             "## Stage 10 — jackknife estimator [capillary]",
             f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen {st['screen']:,} of {st['emitted']:,}",
+            f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
             f"- solid pixels (≥2 same-mode rays, |μ| estimable): {len(solid)} of {n_lit} lit; "
             "the rest are masked to μ = σ = 0",
             f"- don't-trust estimates on solid px (σ > 1, pinned at |μ| = 1 with σ = 0, "
@@ -952,8 +957,8 @@ class Simulation:
         ]
         rows = []
         for stage, label, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
-            res = run_beamlet_stage(self, label, src_cfg, scr_cfg, optic,
-                                    aim_factory, off, quick)
+            res = run_beamlet_stage(self, label, stage, src_cfg, scr_cfg,
+                                    optic, aim_factory, off, quick)
             self.results[f"beamlet:{stage}"] = res
             maps, screen, st = res["maps"], res["screen"], res["stats"]
             nx, ny = screen.nx, screen.ny
@@ -965,6 +970,7 @@ class Simulation:
             report = [f"## Stage 11 — beamlet estimator [{stage}]",
                       f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen "
                       f"{st['screen']:,} of {st['emitted']:,} (tails off window: {st['off_window']:,})",
+                      f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
                       f"- w₀ = {self.cfg.beamlet_w0 * _UM:.2f} µm; mean beam width on screen "
                       f"= {maps['w_mean'] * _UM:.2f} µm; honest |μ| (no self-pair subtraction)"]
             row = ny // 2
@@ -1014,9 +1020,9 @@ class Simulation:
                           "label": "beamlet intensity"}],
                         "Stage 11: beamlet intensity", "x, µm", "I, arb. units", sub)
                     self._save(out_dir, "11a-capillary-beamlet-intensity.svg", fig)
-                if num is not None:
-                    lit = [i for i, d in enumerate(flat(num["maps"]["density"]))
-                           if d > 0]
+                lit = ([i for i, d in enumerate(flat(num["maps"]["density"]))
+                        if d > 0] if num is not None else [])
+                if lit:
                     a, b = flat(maps["mu"]), flat(num["maps"]["mu"])
                     rms6 = analytic.rms_diff([a[i] for i in lit],
                                              [b[i] for i in lit])
@@ -1111,9 +1117,10 @@ class Simulation:
             "",
         ]
         self.files = []
-        rays_path = os.path.join(out_dir, "rays.jsonl")
-        rays_fh = (open(rays_path, "w", encoding="utf-8")
-                   if cfg.rays_jsonl and wanted & {2, 4, 6} else None)
+        rays_name = "rays.jsonl.gz" if cfg.rays_gzip else "rays.jsonl"
+        self.rays = (RaysFile(os.path.join(out_dir, rays_name), cfg, quick)
+                     if cfg.rays_jsonl and wanted & {2, 4, 6, 7, 8, 10, 11}
+                     else None)
         try:
             if 1 in wanted:
                 _log("Stage 1/6: simulation layout")
@@ -1121,20 +1128,20 @@ class Simulation:
             res_free = None
             if 2 in wanted:
                 _log("Stage 2/6: |μ| without optics (MC, same tracer)")
-                res_free = self._stage2(out_dir, quick, rays_fh)
+                res_free = self._stage2(out_dir, quick)
             if 3 in wanted:
                 _log("Stage 3/6: van Cittert–Zernike analytics")
                 self._stage3(out_dir, res_free)
             res_lloyd = None
             if 4 in wanted:
                 _log("Stage 4/6: Lloyd's mirror scheme — wall instead of the capillary (MC)")
-                res_lloyd = self._stage4(out_dir, quick, rays_fh)
+                res_lloyd = self._stage4(out_dir, quick)
             if 5 in wanted:
                 _log("Stage 5/6: Lloyd analytics vs MC")
                 self._stage5(out_dir, res_lloyd)
             if 6 in wanted:
                 _log("Stage 6/6: capillary (MC)")
-                self._stage6(out_dir, quick, rays_fh)
+                self._stage6(out_dir, quick)
             if 7 in wanted:
                 _log("Stage 7: alternative estimators — full W (axis C) + Wigner (axis D)")
                 self._stage7(out_dir, quick)
@@ -1151,11 +1158,11 @@ class Simulation:
                 _log("Stage 11: beamlet estimator — soft Gaussian phase spots (scalar q)")
                 self._stage11(out_dir, quick)
         finally:
-            if rays_fh is not None:
-                rays_fh.close()
-        if rays_fh is not None:
-            self.files.append("rays.jsonl")
-            _log("  → rays.jsonl")
+            if self.rays is not None:
+                self.rays.close()
+        if self.rays is not None:
+            self.files.append(rays_name)
+            _log(f"  → {rays_name}")
         self.report += ["", "## Files", ""]
         self.report += [f"- {name}" for name in self.files + ["report.md"]]
         report_path = os.path.join(out_dir, "report.md")
@@ -1183,7 +1190,8 @@ class Simulation:
         with open(records_path, encoding="utf-8") as fh:
             for line in fh:
                 row = json.loads(line)
-                by_stage.setdefault(row["stage"], []).append(row)
+                if "stage" in row:   # skip the v2 meta line and scene trailers
+                    by_stage.setdefault(row["stage"], []).append(row)
         if not by_stage:
             raise ValueError(f"no ray records in {records_path!r}")
         p = cfg.precision

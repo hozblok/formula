@@ -62,7 +62,7 @@ DEFAULTS = {
     # cross-checks — subdivision (default: grazing-safe, any F) | sturm (exact,
     # polynomial F only) | chebyshev | sampling | auto.
     "trace": {"max_bounces": 200, "amplitude_min": 1.0e-6,
-              "rays_jsonl": True, "sample_every": 1,
+              "rays_jsonl": True, "rays_gzip": False, "sample_every": 1,
               "engine_method": "subdivision"},
     # stage 1: rays traced onto the to-scale schematic (01a-scheme-traced.svg)
     "schematic": {"n_rays": 10},
@@ -203,6 +203,7 @@ class Config:
         self.max_bounces = int(cfg["trace"]["max_bounces"])
         self.amplitude_min = float(cfg["trace"]["amplitude_min"])
         self.rays_jsonl = bool(cfg["trace"]["rays_jsonl"])
+        self.rays_gzip = bool(cfg["trace"]["rays_gzip"])
         self.sample_every = max(1, int(cfg["trace"]["sample_every"]))
         self.engine_method = str(cfg["trace"]["engine_method"])
         get_backend(self.engine_method)  # fail fast on an unknown method name
