@@ -367,6 +367,25 @@ def test_torus_points_lie_on_surface():
         assert abs(residual) < Number("1e-40", 48)
 
 
+def test_sturm_wide_coefficient_spread_keeps_true_degree():
+    # Bent-capillary torus in um (bend R=10 m, bore a=6 um): raw-t quartic
+    # coefficients span ~16 orders (c0 ~ R^4, c4 = 1), and the interpolation
+    # degree cutoff at precision 32 used to drop the t^4 term, fitting a cubic
+    # with a phantom root t=19344.66 instead of the true single hit 15181.24.
+    R, a = "1e7", "6"
+    expr = (f"((x-({R}))^2+y^2+z^2+({R})^2-({a})^2)^2"
+            f"-4*({R})^2*((x-({R}))^2+y^2+z^2-y^2)")
+    rs = RaySurface(expr, precision=32)
+    O = ("2.015620317397538", "-0.46694636593776503", "0")
+    d = ("0.00023565870833823452181476081499352",
+         "-2.9313862063685736540037751836116e-05",
+         "0.99999997180283494009300192878338")
+    sturm = rs.intersect(O, d, t_max=5.0e4, t_min=1.0, method="sturm")
+    subdiv = rs.intersect(O, d, t_max=5.0e4, t_min=1.0, method="subdivision")
+    assert len(sturm) == 1 and len(subdiv) == 1
+    assert abs((sturm[0] - subdiv[0]) / subdiv[0]) < Number("1e-25", 32)
+
+
 # --------------------------------------------------------------------------- #
 # Documented limits of applicability
 # --------------------------------------------------------------------------- #
