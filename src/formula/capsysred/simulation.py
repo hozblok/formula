@@ -2,7 +2,8 @@
 
 One shared Monte-Carlo driver runs stages 4 (Lloyd wall) and 6 (capillaries);
 stage 2 (free space) pushes the same ray stream through the stage-10 jackknife
-estimator (optic = None). Stages 3 and 5 are the deterministic references. Every optical stage cross-checks its analytic
+estimator (optic = None), stage 12 keeps its pairwise Number ancestor.
+Stages 3 and 5 are the deterministic references. Every optical stage cross-checks its analytic
 Number hit against the RaySurface root-finding engine and the Fresnel factor
 against xray.reflect_amplitude.
 """
@@ -35,7 +36,7 @@ from .rays import RaysFile, scene_stream
 from .types import RayRecord
 
 ALL_STAGES = (1, 2, 3, 4, 5, 6)
-KNOWN_STAGES = ALL_STAGES + (7, 8, 9, 10, 11)  # 7 (alt), 8 (sketch), 9 (hit methods), 10 (jackknife), 11 (beamlets) — opt-in
+KNOWN_STAGES = ALL_STAGES + (7, 8, 9, 10, 11, 12)  # 7 (alt), 8 (sketch), 9 (hit methods), 10 (jackknife), 11 (beamlets), 12 (pairwise free, ex-stage 2) — opt-in
 _UM = 1e6
 
 
@@ -170,7 +171,6 @@ class Simulation:
         result = {"maps": maps, "stats": stats, "screen": screen,
                   "rays_from": rays_from, "n_modes": n_modes, "n_rays": n_rays,
                   "seconds": time.time() - t0, "src_cfg": src_cfg}
-        self.results[stage] = result
         return result
 
     # ------------------------------------------------------------- aiming
@@ -289,7 +289,8 @@ class Simulation:
         lam_f = float(self.lam)
         mu_th = [analytic.vcz_mu(x - ref_xy[0], src.shape, float(src.size),
                                  lam_f, dist) for x in xs]
-        rms = analytic.rms_diff(maps["mu"][row], mu_th)
+        mu_row, err_row = maps["mu"][row], maps["mu_err"][row]
+        rms = analytic.rms_diff(mu_row, mu_th)
         if src.shape == "gaussian":
             xi = lam_f * dist / (2.0 * math.pi * float(src.size))
             note = f"ξ = λD/(2πσ) = {xi * _UM:.3f} µm;  "
@@ -297,11 +298,19 @@ class Simulation:
             note = ""
         sub = (f"{note}RMS(MC − analytics) = {rms:.3f};  source: {src.shape}, "
                f"{_um(src.size)}, D = {_mm(dist)}")
+        series = [{"xs": xs_um, "ys": mu_row, "label": "MC (stage 2) |μ| ± σ_jack",
+                   "lo": [max(m - e, 0.0) for m, e in zip(mu_row, err_row)],
+                   "hi": [min(m + e, 1.0) for m, e in zip(mu_row, err_row)]},
+                  {"xs": xs_um, "ys": mu_th, "label": "van Cittert–Zernike analytics",
+                   "dash": "6,4"}]
+        dub_i = [i for i, d in enumerate(maps["dubious"][row]) if d > 0]
+        if dub_i:
+            series.append({"xs": [xs_um[i] for i in dub_i],
+                           "ys": [mu_row[i] for i in dub_i],
+                           "label": "don't trust: σ>1 / pinned at clamp",
+                           "color": "#d62728", "dots": True})
         fig = render.line_chart(
-            [{"xs": xs_um, "ys": maps["mu"][row], "label": "MC (stage 2)"},
-             {"xs": xs_um, "ys": mu_th, "label": "van Cittert–Zernike analytics",
-              "dash": "6,4"}],
-            "Degree of coherence: analytics vs MC (without optics)",
+            series, "Degree of coherence: analytics vs MC (without optics)",
             "x on screen, µm", "|μ|", sub,
             vlines=[(ref_xy[0] * _UM, "ref")], w=760)
         self._save(out_dir, "03-free-analytic-vs-mc.svg", fig)
@@ -319,6 +328,7 @@ class Simulation:
         check = self._lloyd_engine_check(mirror)
         res = self._mc_stage("lloyd", "4/6 Lloyd (MC)", lloyd.source, lloyd.screen,
                              mirror, self._aim_lloyd, 3, quick)
+        self.results["lloyd"] = res
         screen, maps = res["screen"], res["maps"]
         xs_um = [x * _UM for x in screen.xs()]
         row = screen.ny // 2
@@ -479,6 +489,7 @@ class Simulation:
         res = self._mc_stage("capillary", "6/6 capillary (MC)", cap.source,
                              cap.screen, bundle, self._aim_capillary, 4,
                              quick)
+        self.results["capillary"] = res
         screen, maps = res["screen"], res["maps"]
         st = res["stats"]
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
@@ -1093,6 +1104,50 @@ class Simulation:
         self.files.append("mu-beamlet.jsonl")
         _log("  → mu-beamlet.jsonl")
 
+    # ------------------------------------------------------------- stage 12
+
+    def _stage12(self, out_dir, quick):
+        """The pre-jackknife stage 2: pairwise Number estimator on the free
+        scene (same rays as stage 2, no σ), kept for cross-checks."""
+        res = self._mc_stage("free", "12 pairwise free (MC)", self.cfg.free_source,
+                             self.cfg.free_screen, None, self._aim_free, 2,
+                             quick)
+        self.results["pairwise:free"] = res
+        screen, maps = res["screen"], res["maps"]
+        xs_um = [x * _UM for x in screen.xs()]
+        ref_xy = screen.pixel_xy(maps["ref_pixel"])
+        sub = (f"{res['n_modes']} modes × {res['n_rays']} rays, {self._spectrum_note()}, "
+               f"x_ref = {ref_xy[0] * _UM:.2f} µm")
+        row = screen.ny // 2
+        floor = 1.0 / math.sqrt(res["n_modes"])
+        mu_fig = render.line_chart(
+            [{"xs": xs_um, "ys": maps["mu"][row], "label": "MC |μ(x, x_ref)|"},
+             {"xs": xs_um, "ys": [floor] * len(xs_um), "color": "#999",
+              "dash": "2,4", "width": 1.0,
+              "label": f"noise floor 1/√N modes ≈ {floor:.2f}"}],
+            "Degree of coherence without optics (pairwise Number)",
+            "x on screen, µm", "|μ|", sub,
+            vlines=[(ref_xy[0] * _UM, "ref")], w=640)
+        imax = max(max(r) for r in maps["intensity"]) or 1.0
+        dmax = max(max(r) for r in maps["density"]) or 1.0
+        int_fig = render.line_chart(
+            [{"xs": xs_um, "ys": [v / imax for v in maps["intensity"][row]],
+              "label": "intensity"},
+             {"xs": xs_um, "ys": [v / dmax for v in maps["density"][row]],
+              "label": "ray density", "dash": "4,3"}],
+            "Intensity and density (sampling check)",
+            "x on screen, µm", "arb. units", sub, w=640)
+        self._save(out_dir, "12-free-mc-coherence.svg",
+                   render.hstack([mu_fig, int_fig]))
+        st = res["stats"]
+        self.report += [
+            "## Stage 12 — |μ| without optics (pairwise MC)",
+            f"- modes: {res['n_modes']}, rays/mode: {res['n_rays']}, on screen: {st['screen']:,} of {st['emitted']:,}",
+            f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
+            f"- time: {res['seconds']:.1f} s",
+        ]
+        return res
+
     def _capillary_engine_check(self, bundle) -> str:
         cap = self.cfg.capillary
         p = self.cfg.precision
@@ -1153,7 +1208,7 @@ class Simulation:
         self.jack_rows = []
         rays_name = "rays.jsonl.gz" if cfg.rays_gzip else "rays.jsonl"
         self.rays = (RaysFile(os.path.join(out_dir, rays_name), cfg, quick)
-                     if cfg.rays_jsonl and wanted & {2, 4, 6, 7, 8, 10, 11}
+                     if cfg.rays_jsonl and wanted & {2, 4, 6, 7, 8, 10, 11, 12}
                      else None)
         try:
             if 1 in wanted:
@@ -1203,6 +1258,9 @@ class Simulation:
             if 11 in wanted:
                 _log("Stage 11: beamlet estimator — elliptic phase spots (Γ tensor, general astigmatism)")
                 self._stage11(out_dir, quick)
+            if 12 in wanted:
+                _log("Stage 12: pairwise Number estimator without optics (the pre-jackknife stage 2)")
+                self._stage12(out_dir, quick)
         finally:
             if self.rays is not None:
                 self.rays.close()
