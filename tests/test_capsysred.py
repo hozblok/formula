@@ -519,3 +519,19 @@ def test_sturm_engine_matches_closed_form_hit():
     t_engine = engine_hit_t(bundle.walls[0].expr_um, origin, d, 0.08,
                             method="sturm")
     assert abs(float(t_fast - t_engine)) / float(t_fast) < 1e-25
+
+
+def test_stage9_hit_methods_agree_on_cylinder(tmp_path):
+    # every method must reproduce the python hit t and its pass/reflect calls
+    sim = Simulation.from_dict({**TINY, "validate": {"n_rays": 100}})
+    result = sim.run(str(tmp_path), stages=[9])
+    assert "hit-validation.jsonl" in result["files"]
+    with open(tmp_path / "hit-validation.jsonl") as fh:
+        rows = [json.loads(line) for line in fh]
+    assert len(rows) == 100          # one record per emitted ray
+    res = sim.results["validate"]
+    assert res["native"] and res["stats"]["hits"] > 0
+    for name, s in res["per"].items():
+        assert s["n"] == res["stats"]["hits"], name
+        assert s["missing"] == 0 and s["extra"] == 0, name
+        assert s["max_rel"] < 1e-20, name

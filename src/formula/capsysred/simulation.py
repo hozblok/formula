@@ -20,6 +20,7 @@ from . import analytic, render
 from .altcoh import run_alt_stage
 from .coherence import CoherenceAccumulator
 from .sketch import run_sketch_stage
+from .validate import METHOD_LABELS, run_validate_stage
 from .config import Config, load
 from .nums import lift, solver, vunit
 from .progress import Progress
@@ -32,7 +33,7 @@ from .fresnel import FresnelAmplitude
 from .native import make_tracer
 
 ALL_STAGES = (1, 2, 3, 4, 5, 6)
-KNOWN_STAGES = ALL_STAGES + (7, 8)  # 7 (alt estimators), 8 (sketch) — opt-in
+KNOWN_STAGES = ALL_STAGES + (7, 8, 9)  # 7 (alt), 8 (sketch), 9 (hit methods) — opt-in
 _UM = 1e6
 
 
@@ -719,6 +720,67 @@ class Simulation:
         self.files.append("mu-sketch.jsonl")
         _log("  → mu-sketch.jsonl")
 
+    # ------------------------------------------------------------- stage 9
+
+    def _stage9(self, out_dir, quick):
+        """Hit-method cross-validation on the capillary scene: the first wall
+        hit of each ray by python (reference) / C++ / implicit subdivision."""
+        p = self.cfg.precision
+        n_rays = max(100, self.cfg.validate_rays // quick)
+        res = run_validate_stage(self, n_rays)
+        self.results["validate"] = res
+        st, per = res["stats"], res["per"]
+        path = os.path.join(out_dir, "hit-validation.jsonl")
+        with open(path, "w", encoding="utf-8") as fh:
+            for row in res["rows"]:
+                fh.write(json.dumps(row) + "\n")
+        self.files.append("hit-validation.jsonl")
+        _log("  → hit-validation.jsonl")
+        # match = same hit/pass call AND agreement to p digits minus 2 guard
+        # digits of root-refinement wobble in the last places
+        tol_exp = 2 - p
+        lo, hi = -(p + 8), tol_exp + 5
+        exps = [lo + 0.5 * k for k in range(int(2 * (hi - lo)) + 1)]
+        series, agree = [], {}
+        for m, s in per.items():
+            denom = s["n"] + s["missing"] + s["extra"]
+            if not denom:
+                continue
+            agree[m] = 100.0 * sum(1 for r in s["rels"]
+                                   if r <= 10.0 ** tol_exp) / denom
+            series.append({
+                "xs": exps,
+                "ys": [100.0 * sum(1 for r in s["rels"] if r <= 10.0 ** e) / denom
+                       for e in exps],
+                "label": f"{METHOD_LABELS[m]}: {agree[m]:.2f}% @1e{tol_exp}"})
+        if series:
+            fig = render.line_chart(
+                series, "Stage 9: share of hits matching python analytics",
+                "log₁₀ of the |Δt|/t tolerance", "matched, %",
+                f"{st['hits']:,} wall hits of {st['rays']:,} rays; yaml precision "
+                f"{p} digits − 2 guard ⇒ tol = 1e{tol_exp}; "
+                "hit/pass mismatches never match",
+                vlines=[(float(tol_exp), f"p = {p}")], w=760)
+            self._save(out_dir, "09-hit-validation.svg", fig)
+        self.report += [
+            "## Stage 9 — hit-method cross-validation",
+            f"- rays: {st['rays']:,}; wall hits {st['hits']:,}, passes {st['passes']:,}, "
+            f"skipped {st['skipped']:,} (entrance web / `surface:` bores)",
+            f"- python analytics (reference): {st['py_seconds']:.1f} s",
+            f"- match tolerance from yaml precision: |Δt|/t ≤ 1e{tol_exp} "
+            f"({p} digits − 2 guard)",
+        ]
+        if not res["native"]:
+            self.report.append("- C++ twin: wall kind unsupported — engine method only")
+        for m, s in per.items():
+            self.report.append(
+                f"- {METHOD_LABELS[m]}: matched {agree.get(m, 0.0):.2f}%; "
+                f"max |Δt|/t = {s['max_rel']:.1e}, rms = {s['rms']:.1e} "
+                f"on {s['n']:,} hits; missing/extra hits {s['missing']}/{s['extra']}; "
+                f"{s['seconds']:.1f} s")
+        self.report.append(f"- time: {res['seconds']:.1f} s")
+        return res
+
     def _capillary_engine_check(self, bundle) -> str:
         cap = self.cfg.capillary
         p = self.cfg.precision
@@ -801,6 +863,9 @@ class Simulation:
             if 8 in wanted:
                 _log("Stage 8: streaming sketch of W — column + mode spectrum")
                 self._stage8(out_dir, quick)
+            if 9 in wanted:
+                _log("Stage 9: hit-method cross-validation — python / C++ / subdivision")
+                self._stage9(out_dir, quick)
         finally:
             if rays_fh is not None:
                 rays_fh.close()

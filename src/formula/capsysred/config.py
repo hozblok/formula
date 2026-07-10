@@ -66,6 +66,9 @@ DEFAULTS = {
               "engine_method": "subdivision"},
     # stage 8: number of sketch probe vectors (r ~ n99 modes, see methods §8)
     "sketch": {"rank": 96},
+    # stage 9: rays for the hit-method cross-validation
+    # (python / C++ / implicit subdivision)
+    "validate": {"n_rays": 5000},
 }
 
 
@@ -201,6 +204,7 @@ class Config:
         get_backend(self.engine_method)  # fail fast on an unknown method name
         self.per_line_fresnel = bool(cfg["spectrum"]["per_line_fresnel"])
         self.sketch_rank = int(cfg["sketch"]["rank"])
+        self.validate_rays = int(cfg["validate"]["n_rays"])
 
 
 def load(path_or_dict) -> Config:
