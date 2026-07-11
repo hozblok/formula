@@ -215,7 +215,7 @@ def heatmap(grid, extent, title, xlabel, ylabel, subtitle="", cbar_label="",
         y = ax.py0 - frac * (ax.py0 - ax.py1)
         e.append(_text(cx + 18, y + 4, _fmt(vmax * frac), 10.5, "start", "#444"))
     if cbar_label:
-        e.append(_text(cx + 7, ax.py0 + 18, cbar_label, 11.5, "middle", "#333"))
+        e.append(_text(cx + 7, ax.py0 + 36, cbar_label, 11.5, "middle", "#333"))
     return {"w": w, "h": h, "body": "".join(e)}
 
 

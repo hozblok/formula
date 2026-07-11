@@ -245,7 +245,7 @@ class Simulation:
             "bore_label": f"2a = {two_a * _UM:g} µm",
             "screen_label": ["screen", f"{cap.screen.nx}×{cap.screen.ny} px"],
             "window_label": f"window {_um(cap.screen.edge_x)}",
-            "d0_label": f"d₀ = {_mm(d0)} (capillary stage)",
+            "d0_label": f"d₀ = {_mm(d0)} (capillary scene)",
             "len_label": f"L = {_mm(float(cap.z1) - float(cap.z0))}",
             "d2_label": f"d₂ = {_mm(d2)}",
             "description": [
@@ -253,10 +253,10 @@ class Simulation:
                 f"Wall material: {cfg.material.name};  δ = {self.delta_f:.3e},  β = {self.beta_f:.3e},  θ_c = {self.theta_c * 1e3:.2f} mrad.",
                 f"Source — a set of mutually incoherent point modes (van Cittert–Zernike method from a Monte-Carlo ensemble).",
                 f"Engine precision: {cfg.precision} digits (Number/Solver, no float64 in the physics path);  seed = {cfg.seed}.",
-                "Stages: 2 — |μ| on screen without optics (MC);  3 — van Cittert–Zernike analytics;  4 — Lloyd's mirror scheme",
-                "(wall = capillary surface in the same tracer): |μ|, intensity, scheme;  5 — Lloyd analytics;",
-                "6 — |μ| and intensity behind the capillary.",
-                f"Free-field stage: source {_um(cfg.free_source.size)} at z = {_mm(cfg.free_source.position[2])}, screen z = {_mm(cfg.free_screen.z)}.",
+                "Pipeline: |μ| on screen without optics (MC) + van Cittert–Zernike analytics;  Lloyd's mirror scheme",
+                "(wall = capillary surface in the same tracer): |μ|, intensity, scheme + Lloyd analytics;",
+                "|μ| and intensity behind the capillary.",
+                f"Free-field scene: source {_um(cfg.free_source.size)} at z = {_mm(cfg.free_source.position[2])}, screen z = {_mm(cfg.free_screen.z)}.",
                 f"Lloyd: r₀ = {_um(cfg.lloyd.height)}, mirror z ∈ [{_mm(cfg.lloyd.z0)}, {_mm(cfg.lloyd.z1)}], source {_um(cfg.lloyd.source.size)}.",
             ],
         }
@@ -298,7 +298,7 @@ class Simulation:
             note = ""
         sub = (f"{note}RMS(MC − analytics) = {rms:.3f};  source: {src.shape}, "
                f"{_um(src.size)}, D = {_mm(dist)}")
-        series = [{"xs": xs_um, "ys": mu_row, "label": "MC (stage 2) |μ| ± σ_jack",
+        series = [{"xs": xs_um, "ys": mu_row, "label": "MC |μ| ± σ_jack",
                    "lo": [max(m - e, 0.0) for m, e in zip(mu_row, err_row)],
                    "hi": [min(m + e, 1.0) for m, e in zip(mu_row, err_row)]},
                   {"xs": xs_um, "ys": mu_th, "label": "van Cittert–Zernike analytics",
@@ -456,13 +456,13 @@ class Simulation:
                  + f";  I correlation: {corr:.3f};  visibility: MC {vis(sm):.2f}, "
                  f"analytics {vis(ref['intensity']):.2f}")
         int_fig = render.line_chart(
-            [{"xs": xs_um, "ys": [v / imax_mc for v in i_mc], "label": "MC (stage 4)"},
+            [{"xs": xs_um, "ys": [v / imax_mc for v in i_mc], "label": "MC"},
              {"xs": xs_um, "ys": [v / imax_th for v in ref["intensity"]],
               "label": "analytics (2 paths, virtual source)", "dash": "6,4"}],
             "Lloyd: intensity — analytics vs MC",
             "x on screen, µm", "I, arb. units", sub_i, w=760)
         mu_fig = render.line_chart(
-            [{"xs": xs_um, "ys": mu_mc, "label": "MC (stage 4)"},
+            [{"xs": xs_um, "ys": mu_mc, "label": "MC"},
              {"xs": xs_um, "ys": ref["mu"], "label": "analytics", "dash": "6,4"}],
             "Lloyd: degree of coherence — analytics vs MC",
             "x on screen, µm", "|μ|",
@@ -581,14 +581,14 @@ class Simulation:
                   "label": "full W, ref column", "dash": "6,4"},
                  {"xs": xs_um, "ys": maps["mu_wigner"],
                   "label": "Wigner phase space", "dash": "2,3"}],
-                f"Stage 7 [{stage}]: |μ(x, x_ref)| by three estimators",
+                f"|μ(x, x_ref)| by three estimators [{stage}]",
                 "x on screen, µm", "|μ|", sub,
                 vlines=[(ref_x, "ref")], w=760)
             self._save(out_dir, f"07-{stage}-alt-mu.svg", fig)
             extent = (xs_um[0], xs_um[-1], xs_um[0], xs_um[-1])
             fig = render.heatmap(
                 maps["mu_full"], extent,
-                f"Stage 7 [{stage}]: full |μ(x₁, x₂)| (no reference pixel)",
+                f"full |μ(x₁, x₂)| (no reference pixel) [{stage}]",
                 "x₁, µm", "x₂, µm",
                 "diagonal band width = coherence length; ray self-pairs off the diagonal",
                 "|μ|", mark=(ref_x, ref_x), vmax=1.0, w=640)
@@ -596,7 +596,7 @@ class Simulation:
             grid, u_lo, u_hi = res["alt"].wigner_grid()
             fig = render.heatmap(
                 grid, (xs_um[0], xs_um[-1], u_lo * 1e6, u_hi * 1e6),
-                f"Stage 7 [{stage}]: phase space B(x, u) (ray histogram)",
+                f"phase space B(x, u) (ray histogram) [{stage}]",
                 "x on screen, µm", "u = dx/dz, µrad",
                 f"u bin {res['alt'].du * 1e6:.2f} µrad; intensity weights, no phases",
                 "B", w=640)
@@ -664,7 +664,7 @@ class Simulation:
                           screen.y0f * _UM, (screen.y0f + screen.eyf) * _UM)
                 mark = (ref_xy[0] * _UM, ref_xy[1] * _UM)
                 figs = [render.heatmap(maps["mu_pair"], extent,
-                                       f"Stage 8 [{stage}]: pairwise |μ(P, P_ref)|",
+                                       f"pairwise |μ(P, P_ref)| [{stage}]",
                                        "x, µm", "y, µm", sub, "|μ|",
                                        mark=mark, vmax=1.0, w=430, equal=True),
                         render.heatmap(maps["mu_sketch"], extent,
@@ -680,7 +680,7 @@ class Simulation:
                     [{"xs": xs_um, "ys": maps["mu_pair"][0], "label": "pairwise"},
                      {"xs": xs_um, "ys": maps["mu_sketch"][0],
                       "label": f"sketch r={maps['rank']}", "dash": "6,4"}],
-                    f"Stage 8 [{stage}]: |μ(x, x_ref)|", "x, µm", "|μ|", sub,
+                    f"|μ(x, x_ref)| [{stage}]", "x, µm", "|μ|", sub,
                     vlines=[(ref_xy[0] * _UM, "ref")], w=760)
             self._save(out_dir, f"08-{stage}-sketch-mu.svg", fig)
             lam = maps["lam"]
@@ -689,7 +689,7 @@ class Simulation:
             fig = render.line_chart(
                 [{"xs": list(range(1, top + 1)),
                   "ys": [v / l1 for v in lam[:top]], "label": "λ_n / λ_1"}],
-                f"Stage 8 [{stage}]: coherent-mode spectrum of the field",
+                f"coherent-mode spectrum of the field [{stage}]",
                 "mode n", "λ_n / λ_1",
                 f"N_eff = {maps['neff']:.1f}; 99% of energy in {maps['n99']} modes; "
                 f"dark px {maps['dark_px']}", w=560)
@@ -754,7 +754,7 @@ class Simulation:
                 "label": f"{METHOD_LABELS[m]}: {agree[m]:.2f}% @1e{tol_exp}"})
         if series:
             fig = render.line_chart(
-                series, "Stage 9: share of hits matching python analytics",
+                series, "share of hits matching python analytics",
                 "log₁₀ of the |Δt|/t tolerance", "matched, %",
                 f"{st['hits']:,} wall hits of {st['rays']:,} rays; yaml precision "
                 f"{p} digits − 2 guard ⇒ tol = 1e{tol_exp}; "
@@ -876,10 +876,10 @@ class Simulation:
                 diff = [[abs(a - b) for a, b in zip(ra, rb)]
                         for ra, rb in zip(maps["mu"], vs["maps"]["mu"])]
                 fig = render.heatmap(diff, extent,
-                                     "|μ_jack − μ_stage6| (same rays)",
+                                     "|μ_jack − μ_pairwise| (same rays)",
                                      "x, µm", "y, µm",
                                      f"RMS on solid px {rms6:.2e}; bright isolated px = "
-                                     "stage-6 pairless residuals masked by the jackknife",
+                                     "pairless residuals of the pairwise estimator, masked by the jackknife",
                                      "Δ", w=640)
                 self._save(out_dir, f"{tag}c-{scene}-jack-vs6.svg", fig)
         else:
@@ -891,7 +891,7 @@ class Simulation:
                        "hi": [min(m + e, 1.0) for m, e in zip(row_mu, row_err)]}]
             if vs is not None:
                 series.append({"xs": xs_um, "ys": vs["maps"]["mu"][0],
-                               "label": "stage 6 (Number)", "dash": "6,4"})
+                               "label": "pairwise (Number)", "dash": "6,4"})
             if dub_i:
                 series.append({"xs": [xs_um[i] for i in dub_i],
                                "ys": [row_mu[i] for i in dub_i],
@@ -926,11 +926,11 @@ class Simulation:
                 fig = render.line_chart(
                     [{"xs": xs_um,
                       "ys": [a - b for a, b in zip(row_mu, vs["maps"]["mu"][0])],
-                      "label": "μ_jack − μ_stage6",
+                      "label": "μ_jack − μ_pairwise",
                       "lo": [-e for e in row_err], "hi": list(row_err)}],
-                    "jackknife vs stage 6: Δμ with the ±σ_jack band", "x, µm", "Δμ",
-                    f"RMS on solid px {rms6:.2e}; spikes = stage-6 pairless "
-                    "residuals masked by the jackknife",
+                    "jackknife vs pairwise: Δμ with the ±σ_jack band", "x, µm", "Δμ",
+                    f"RMS on solid px {rms6:.2e}; spikes = the pairwise estimator's "
+                    "pairless residuals, masked by the jackknife",
                     vlines=[(ref_xy[0] * _UM, "ref")], w=760, y_zero=False)
                 self._save(out_dir, f"{tag}c-{scene}-jack-vs6.svg", fig)
         xs_um_all = [x * _UM for x in screen.xs()]
@@ -1025,7 +1025,7 @@ class Simulation:
                     [{"xs": xs_um, "ys": maps["mu"][row], "label": "beamlets |μ|"},
                      {"xs": xs_um, "ys": mu_th,
                       "label": "van Cittert–Zernike analytics", "dash": "6,4"}],
-                    "Stage 11 [free]: beamlet |μ| vs vCZ analytics",
+                    "beamlet |μ| vs vCZ analytics [free]",
                     "x, µm", "|μ|", f"RMS(beamlets − vCZ) = {rms:.3f};  {sub}",
                     vlines=[(ref_xy[0] * _UM, "ref")], w=760)
                 self._save(out_dir, "11-free-beamlet-mu.svg", fig)
@@ -1038,7 +1038,7 @@ class Simulation:
                     mark = (ref_xy[0] * _UM, ref_xy[1] * _UM)
                     fig = render.hstack([
                         render.heatmap(maps["mu"], extent,
-                                       "Stage 11: beamlet |μ(P, P_ref)|",
+                                       "beamlet |μ(P, P_ref)|",
                                        "x, µm", "y, µm", sub, "|μ|",
                                        mark=mark, vmax=1.0, w=430, equal=True),
                         render.heatmap(maps["intensity"], extent,
@@ -1049,7 +1049,7 @@ class Simulation:
                 else:
                     fig = render.line_chart(
                         [{"xs": xs_um, "ys": maps["mu"][0], "label": "beamlets |μ|"}],
-                        "Stage 11: beamlet |μ(x, x_ref)|", "x, µm", "|μ|", sub,
+                        "beamlet |μ(x, x_ref)|", "x, µm", "|μ|", sub,
                         vlines=[(ref_xy[0] * _UM, "ref")], w=760)
                     self._save(out_dir, "11-capillary-beamlet-mu.svg", fig)
                     imax = max(maps["intensity"][0]) or 1.0
@@ -1057,7 +1057,7 @@ class Simulation:
                         [{"xs": xs_um,
                           "ys": [v / imax for v in maps["intensity"][0]],
                           "label": "beamlet intensity"}],
-                        "Stage 11: beamlet intensity", "x, µm", "I, arb. units", sub)
+                        "beamlet intensity", "x, µm", "I, arb. units", sub)
                     self._save(out_dir, "11a-capillary-beamlet-intensity.svg", fig)
                 lit = ([i for i, d in enumerate(flat(num["maps"]["density"]))
                         if d > 0] if num is not None else [])
@@ -1066,21 +1066,21 @@ class Simulation:
                     rms6 = analytic.rms_diff([a[i] for i in lit],
                                              [b[i] for i in lit])
                     sub6 = (f"RMS on lit px {rms6:.3f}; same rays, different "
-                            "estimators: stage 6 subtracts ray self-pairs, "
+                            "estimators: pairwise subtracts ray self-pairs, "
                             "beamlets smear the field")
                     if ny > 1:
                         diff = [[abs(x - y) for x, y in zip(ra, rb)]
                                 for ra, rb in zip(maps["mu"], num["maps"]["mu"])]
                         fig = render.heatmap(diff, extent,
-                                             "|μ_beamlet − μ_stage6| (same rays)",
+                                             "|μ_beamlet − μ_pairwise| (same rays)",
                                              "x, µm", "y, µm", sub6, "Δ", w=640)
                     else:
                         fig = render.line_chart(
                             [{"xs": xs_um,
                               "ys": [x - y for x, y in
                                      zip(maps["mu"][0], num["maps"]["mu"][0])],
-                              "label": "μ_beamlet − μ_stage6"}],
-                            "Stage 11 vs 6: Δμ (same rays)", "x, µm", "Δμ",
+                              "label": "μ_beamlet − μ_pairwise"}],
+                            "beamlets vs pairwise: Δμ (same rays)", "x, µm", "Δμ",
                             sub6, w=760, y_zero=False)
                     self._save(out_dir, "11b-capillary-beamlet-vs6.svg", fig)
                     report.append(
