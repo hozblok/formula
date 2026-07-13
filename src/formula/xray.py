@@ -69,7 +69,7 @@ class GlassMaterial:
         return Number(f"sqrt(2*({d}))", precision)
 
 
-# Fused silica (SiO2, ~2.20 g/cm^3): electron density ~6.6e29 /m^3, beta~6.5e-8 at 10 keV.
+# Fused silica (SiO2, ~2.20 g/cm^3): electron density ~6.6e29 /m^3, beta ~3.9e-8 at 10 keV.
 FUSED_SILICA = GlassMaterial(
     name="fused silica",
     electron_density="6.6e29",

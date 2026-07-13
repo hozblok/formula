@@ -226,6 +226,11 @@ class Simulation:
     def _stage1(self, out_dir):
         cfg = self.cfg
         cap = cfg.capillary
+        if cap is None:
+            # no capillary: to-scale traced schematic of the free scene only
+            G = schematic.build_geometry(cfg, "free")
+            self._save(out_dir, "01a-scheme-traced.svg", schematic.compose(G))
+            return
         src, scr = cfg.source, cfg.screen
         two_a = 2.0 * entrance_disk(cap.bores[0], float(cap.z0))[2]
         kinds = sorted({b.get("kind", "cylinder") for b in cap.bores})
@@ -308,7 +313,7 @@ class Simulation:
             series.append({"xs": [xs_um[i] for i in dub_i],
                            "ys": [mu_row[i] for i in dub_i],
                            "label": "don't trust: σ_jack>1 / pinned at clamp",
-                           "color": "#d62728", "dots": True})
+                           "color": "#ff7f0e", "dots": True})
         fig = render.line_chart(
             series, "Degree of coherence: analytics vs MC (without optics)",
             "x on screen, µm", "|μ|", sub,
@@ -735,10 +740,13 @@ class Simulation:
                 fh.write(json.dumps(row) + "\n")
         self.files.append("hit-validation.jsonl")
         _log("  → hit-validation.jsonl")
-        # match = same hit/pass call AND agreement to p digits minus 2 guard
-        # digits of root-refinement wobble in the last places
-        tol_exp = 2 - p
-        lo, hi = -(p + 8), tol_exp + 5
+        # match = same hit/pass call AND agreement to precision_target digits
+        # (default: p - 2 guard - torus conditioning, config._conditioning_loss)
+        target, loss = self.cfg.precision_target, self.cfg.precision_target_loss
+        origin = ((f"auto: {p} − 2 − {loss} torus" if loss else "auto: p − 2")
+                  if self.cfg.precision_target_auto else "yaml")
+        tol_exp = -target
+        lo, hi = -(p + 8), max(tol_exp, 2 - p) + 5
         exps = [lo + 0.5 * k for k in range(int(2 * (hi - lo)) + 1)]
         series, agree = [], {}
         for m, s in per.items():
@@ -753,21 +761,24 @@ class Simulation:
                        for e in exps],
                 "label": f"{METHOD_LABELS[m]}: {agree[m]:.2f}% @1e{tol_exp}"})
         if series:
+            vlines = [(float(tol_exp), f"target = {target}")]
+            if tol_exp != 2 - p:
+                vlines.append((float(2 - p), f"p − 2 = {p - 2}"))
             fig = render.line_chart(
                 series, "share of hits matching python analytics",
                 "log₁₀ of the |Δt|/t tolerance", "matched, %",
-                f"{st['hits']:,} wall hits of {st['rays']:,} rays; yaml precision "
-                f"{p} digits − 2 guard ⇒ tol = 1e{tol_exp}; "
+                f"{st['hits']:,} wall hits of {st['rays']:,} rays; "
+                f"precision_target = {target} ({origin}) ⇒ tol = 1e{tol_exp}; "
                 "hit/pass mismatches never match",
-                vlines=[(float(tol_exp), f"p = {p}")], w=760)
+                vlines=vlines, w=760)
             self._save(out_dir, "09-hit-validation.svg", fig)
         self.report += [
             "## Stage 9 — hit-method cross-validation",
             f"- rays: {st['rays']:,}; wall hits {st['hits']:,}, passes {st['passes']:,}, "
             f"skipped {st['skipped']:,} (entrance web / `surface:` bores)",
             f"- python analytics (reference): {st['py_seconds']:.1f} s",
-            f"- match tolerance from yaml precision: |Δt|/t ≤ 1e{tol_exp} "
-            f"({p} digits − 2 guard)",
+            f"- match tolerance: |Δt|/t ≤ 1e{tol_exp} "
+            f"(precision_target = {target}, {origin})",
         ]
         if not res["native"]:
             self.report.append("- C++ twin: wall kind unsupported — engine method only")
@@ -1198,7 +1209,9 @@ class Simulation:
             "",
             f"- energy: {float(cfg.energy_kev):g} keV (λ = {float(self.lam) * 1e10:.4f} Å); spectrum: {self._spectrum_note()}",
             f"- material: {cfg.material.name}; δ = {self.delta_f:.3e}, β = {self.beta_f:.3e}, θ_c = {self.theta_c * 1e3:.2f} mrad",
-            f"- precision: {cfg.precision} digits; seed = {cfg.seed}",
+            f"- precision: {cfg.precision} digits; certified target "
+            f"{cfg.precision_target}{' (auto)' if cfg.precision_target_auto else ''}; "
+            f"seed = {cfg.seed}",
             f"- Fresnel: {'per spectral line (per_line_fresnel)' if self.per_line else 'at the central energy E₀'}"
             + (f"; records: every {cfg.sample_every}-th ray" if cfg.sample_every > 1 else ""),
             f"- {fres_check}",
@@ -1213,10 +1226,7 @@ class Simulation:
         try:
             if 1 in wanted:
                 _log("Stage 1/6: simulation layout")
-                if cfg.capillary is None:
-                    _log("  skipped — no capillary in the config")
-                else:
-                    self._stage1(out_dir)
+                self._stage1(out_dir)
             res_free = None
             if 2 in wanted:
                 _log("Stage 2/6: |μ| without optics (jackknife estimator, same tracer)")

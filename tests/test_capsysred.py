@@ -511,6 +511,34 @@ def test_engine_method_config_wiring():
     assert bundle.walls[0].method == "sturm"
 
 
+def test_precision_target_config():
+    # default p - 2 on straight bores; a torus bore subtracts the conditioning
+    # loss ceil(2*log10(R/a) + log10(1/theta_c) + 2); explicit values above
+    # the ceiling warn
+    import warnings
+    from formula.capsysred.config import load
+    assert load({}).precision_target == 30
+    bent = {"precision": 64, "capillary": {"bores": [
+        {"center": [0.0, 0.0], "radius": 6.0e-6,
+         "bend": {"radius": 8625.0, "toward": [1.0, 0.0]}}]}}
+    cfg = load(bent)
+    assert cfg.precision_target_auto and cfg.precision_target_loss == 23
+    assert cfg.precision_target == 39
+    # theta_c is taken at the hardest spectral line: 24 keV -> theta_c/3
+    hard = load({**bent, "spectrum": {"mode": "lines", "lines": [
+        {"energy_kev": 8.0}, {"energy_kev": 24.0, "weight": 0.2}]}})
+    assert hard.precision_target_loss == 24 and hard.precision_target == 38
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        cfg = load({**bent, "precision_target": 45})
+    assert not cfg.precision_target_auto and cfg.precision_target == 45
+    assert any("ceiling 39" in str(w.message) for w in caught)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert load({**bent, "precision_target": 32}).precision_target == 32
+    assert not caught
+
+
 def test_sturm_engine_matches_closed_form_hit():
     # the polynomial wall expr_um is exactly Sturm's domain: the cross-check
     # must agree with the closed-form hit as tightly as subdivision does

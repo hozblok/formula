@@ -6,13 +6,19 @@ Counts stay int, spectral weights stay float (not phase-critical).
 """
 
 import copy
+import math
+import warnings
 
 from .._roots import get_backend
 from ..formula import Number
 from ..xray import FUSED_SILICA
+from .spectrum import spectral_lines
 
 DEFAULTS = {
     "precision": 32,
+    # certified digits: the stage-9 match tolerance is 1e-precision_target;
+    # None -> precision - 2 guard - torus conditioning loss (_conditioning_loss)
+    "precision_target": None,
     "seed": 12345,
     "energy_kev": 8.0,
     # monochromatic | gaussian {rel_fwhm, n_lines, n_sigma} | lines [{energy_kev, weight}]
@@ -174,6 +180,44 @@ def _bore(raw: dict, p: int, idx: int) -> dict:
     return out
 
 
+def _conditioning_loss(bores, theta_c: float) -> int:
+    """Digits burnt by the worst bent bore: ceil(2*log10(R/a) + log10(1/theta_c) + 2).
+
+    The expanded ray-torus quartic (w^2+K)^2 - 4R^2*(w^2-s^2) subtracts terms
+    ~4R^4 (2.2e40 um^4 at R = 8625 m, a = 6 um), so at 64 digits their ULP
+    ~2e-24 blurs the wall to ~1e-44 um, and grazing hits stretch the root
+    jitter by another 1/theta: doc/2026-07-13-torus-quartic-cancellation.ru.md.
+    """
+    loss = 0.0
+    for bore in bores:
+        if bore.get("kind") == "torus":
+            ra = float(bore["bend"]["radius"]) / float(bore["radius"])
+            loss = max(loss, 2 * math.log10(ra) + math.log10(1 / theta_c) + 2)
+    return math.ceil(loss)
+
+
+def _precision_target(raw, p: int, bores, theta_c: float):
+    """Certified digits for the hit cross-checks (stage-9 tolerance 1e-target).
+
+    Explicit yaml value, or the default max(4, ceiling) with
+    ceiling = p - 2 guard - _conditioning_loss(bores). A target above the
+    ceiling is unreachable by any method at this precision, so it warns and
+    the run proceeds, reporting the shortfall. Returns (target, auto, loss).
+    """
+    loss = _conditioning_loss(bores, theta_c)
+    ceiling = p - 2 - loss
+    target = int(raw) if raw is not None else max(4, ceiling)
+    if target < 1:
+        raise ValueError("precision_target must be >= 1")
+    if target > ceiling:
+        warnings.warn(
+            f"precision_target {target} exceeds the certifiable ceiling "
+            f"{ceiling} (precision {p} - 2 guard - {loss} torus conditioning): "
+            "stage-9 matches will undershoot; raise precision or lower the "
+            "target (doc/2026-07-13-torus-quartic-cancellation.ru.md)")
+    return target, raw is None, loss
+
+
 class CapillaryCfg:
     def __init__(self, raw: dict, base_source: dict, base_screen: dict, p: int):
         self.z0 = Number(str(raw["z0"]), p)
@@ -202,6 +246,15 @@ class Config:
         # capillary exists only when the config mentions it; empty config = full demo
         self.capillary = (CapillaryCfg(cfg["capillary"], cfg["source"], cfg["screen"], p)
                           if not raw or "capillary" in raw else None)
+        # theta_c of the hardest spectral line (theta_c ~ 1/E): the smallest
+        # critical angle bounds the grazing term of the conditioning loss
+        e_max = max((ln.e_kev for ln in spectral_lines(cfg["spectrum"], self.energy_kev)),
+                    key=float)
+        theta_c = float(self.material.critical_angle(e_max, p))
+        (self.precision_target, self.precision_target_auto,
+         self.precision_target_loss) = _precision_target(
+            cfg["precision_target"], p,
+            self.capillary.bores if self.capillary else [], theta_c)
         self.max_bounces = int(cfg["trace"]["max_bounces"])
         self.amplitude_min = float(cfg["trace"]["amplitude_min"])
         self.rays_jsonl = bool(cfg["trace"]["rays_jsonl"])
