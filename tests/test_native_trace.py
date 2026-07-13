@@ -150,14 +150,15 @@ def test_dk_roots_close():
     assert _formula.trace_dbg_dk_roots([]) == []
     assert _formula.trace_dbg_dk_roots([2.0]) == []
     rng = random.Random(3)
-    key = lambda z: (z.real, z.imag)
     for _ in range(300):
         cf = [1.0] + [rng.uniform(-1.0, 1.0) * 10.0 ** rng.randint(-9, 3)
                       for _ in range(4)]
         py = _dk_roots(cf)
-        cc = _formula.trace_dbg_dk_roots(cf)
+        cc = list(_formula.trace_dbg_dk_roots(cf))
         assert len(py) == len(cc)
-        for a, b in zip(sorted(py, key=key), sorted(cc, key=key)):
+        for a in py:  # nearest-match: sorting mispairs x±iy conjugates
+            b = min(cc, key=lambda z: abs(a - z))
+            cc.remove(b)
             assert abs(a - b) <= 1e-8 * max(1.0, abs(a))
 
 
