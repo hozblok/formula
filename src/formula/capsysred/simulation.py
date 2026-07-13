@@ -52,6 +52,16 @@ def _um(x) -> str:
     return f"{float(x) * _UM:g} µm"
 
 
+def _report_name(out_dir: str, base: str) -> str:
+    """Timestamped report name, never colliding with an existing file."""
+    stamp = time.strftime("%Y-%m-%d-%H%M%S")
+    name, n = f"{base}-{stamp}.md", 2
+    while os.path.exists(os.path.join(out_dir, name)):
+        name = f"{base}-{stamp}-{n}.md"
+        n += 1
+    return name
+
+
 class Simulation:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -1277,13 +1287,14 @@ class Simulation:
         if self.rays is not None:
             self.files.append(rays_name)
             _log(f"  → {rays_name}")
+        report_name = _report_name(out_dir, "report")
         self.report += ["", "## Files", ""]
-        self.report += [f"- {name}" for name in self.files + ["report.md"]]
-        report_path = os.path.join(out_dir, "report.md")
+        self.report += [f"- {name}" for name in self.files + [report_name]]
+        report_path = os.path.join(out_dir, report_name)
         with open(report_path, "w", encoding="utf-8") as fh:
             fh.write("\n".join(self.report) + "\n")
-        self.files.append("report.md")
-        _log(f"  → report.md")
+        self.files.append(report_name)
+        _log(f"  → {report_name}")
         _log(f"Done in {time.time() - t0:.0f} s.")
         return {"out_dir": out_dir, "files": list(self.files)}
 
@@ -1373,13 +1384,14 @@ class Simulation:
                 f"- time: {time.time() - t0:.1f} s",
                 "",
             ]
+        report_name = _report_name(out_dir, "report-replay")
         report += ["## Files", ""] + [f"- {n}"
-                                      for n in self.files + ["report-replay.md"]]
-        with open(os.path.join(out_dir, "report-replay.md"), "w",
+                                      for n in self.files + [report_name]]
+        with open(os.path.join(out_dir, report_name), "w",
                   encoding="utf-8") as fh:
             fh.write("\n".join(report) + "\n")
-        self.files.append("report-replay.md")
-        _log("  → report-replay.md")
+        self.files.append(report_name)
+        _log(f"  → {report_name}")
         return {"out_dir": out_dir, "files": list(self.files)}
 
     def _replay_figs(self, out_dir, stage, screen, maps):
