@@ -658,11 +658,12 @@ def test_simulation_native_equals_python(tmp_path, monkeypatch):
     sim_python = Simulation.from_dict(TINY)
     sim_python.run(str(tmp_path / "python"), stages=[2, 4, 6])
     p = TINY["precision"]
-    n_rows = [json.loads(line) for line in
-              (tmp_path / "native" / "rays.jsonl").read_text().splitlines()]
-    p_rows = [json.loads(line) for line in
-              (tmp_path / "python" / "rays.jsonl").read_text().splitlines()]
-    assert len(n_rows) == len(p_rows)
+    def ray_rows(sub):  # skip the v2 meta line and scene trailers
+        lines = (tmp_path / sub / "rays.jsonl").read_text().splitlines()
+        return [row for row in map(json.loads, lines) if "stage" in row]
+
+    n_rows, p_rows = ray_rows("native"), ray_rows("python")
+    assert n_rows and len(n_rows) == len(p_rows)
     keys = ("stage", "mode", "ray", "fate", "pixel")
     for rn, rp in zip(n_rows, p_rows):
         assert {k: rn[k] for k in keys} == {k: rp[k] for k in keys}
