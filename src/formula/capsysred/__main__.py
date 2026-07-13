@@ -4,7 +4,7 @@
 import argparse
 import sys
 
-from .simulation import ALL_STAGES, KNOWN_STAGES, Simulation
+from .simulation import KNOWN_STAGES, Simulation
 
 
 def main(argv=None) -> int:

@@ -293,7 +293,6 @@ class Simulation:
         return res
 
     def _stage3(self, out_dir, res_free):
-        cfg = self.cfg
         screen, maps = res_free["screen"], res_free["maps"]
         row = screen.ny // 2
         xs = screen.xs()
@@ -1332,7 +1331,7 @@ class Simulation:
             f"- energy: {float(cfg.energy_kev):g} keV; spectrum: {self._spectrum_note()}",
             f"- material: {cfg.material.name}; precision: {cfg.precision} digits",
             "- ray geometry comes from the records (no tracing): the config must match"
-            " the recording config in everything except the spectrum/material",
+            + " the recording config in everything except the spectrum/material",
             "",
         ]
         for stage, rows in sorted(by_stage.items()):
