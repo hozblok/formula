@@ -12,7 +12,9 @@ from .. import _formula
 from ..formula import Number
 from .surfaces import CapillaryBundle, Mirror
 from .trace import TraceResult, trace_ray
+from .types import _INSIDE_TOL
 from .wall_cylinder import CylinderWall
+from .wall_funnel import FunnelWall
 from .wall_polygon import PolygonWall
 from .wall_revolution import RevolutionWall
 from .wall_torus import TorusWall
@@ -50,6 +52,13 @@ def _wall_spec(wall):
                 tuple(_raw(v) for v in (*wall.C, *wall.nhat,
                                         wall.R, wall.K, wall.fourR2)),
                 (*wall._Cf, *wall._nf, wall._Rf, wall._in2))
+    if type(wall) is FunnelWall:
+        return ("funnel",
+                tuple(_raw(v) for v in (wall.center[0], wall.center[1],
+                                        wall.r0, wall.r02, wall.ag, wall.bg,
+                                        wall.af, wall.bf, wall.z0)),
+                (wall._cxf, wall._cyf, wall._r0f, wall._agf, wall._bgf,
+                 wall._aff, wall._bff, wall._z0f, 1.0 + _INSIDE_TOL))
     return None
 
 

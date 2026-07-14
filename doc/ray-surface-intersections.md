@@ -148,8 +148,11 @@ The polynomial path. It is **complete** (provable real-root count) for algebraic
 `g`:
 
 1. Sample `g` at `max_degree + 2` nodes and recover its monomial coefficients by
-   Newton divided differences (the extra node lets an over-degree surface be
-   detected and rejected, not silently under-fit).
+   Newton divided differences in the scaled coordinate `u ∈ [-1, 1]`,
+   `t = mid + span·u` (the extra node lets an over-degree surface be detected
+   and rejected, not silently under-fit; the scaling keeps the coefficients
+   comparable so the degree cutoff cannot clip a true leading term on badly
+   scaled polynomials).
 2. Make it **square-free** (`p / gcd(p, p')`) so every root is simple.
 3. Build the **Sturm chain** and count roots in any sub-interval by the
    difference of sign variations at its ends.

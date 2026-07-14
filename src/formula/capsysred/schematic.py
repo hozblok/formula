@@ -7,7 +7,7 @@ scales — both get a scale bar and every length is dimensioned. Multi-bore /
 faceted / bent optics also get a transverse (x–y) inset; a single in-plane
 bent bore gets a bore-relative (unrolled) panel.
 
-Used by stage 1 (01a-scheme-traced.svg) and the exp/schematic.py CLI.
+Used by stage 1 (01a-scheme-traced.svg).
 """
 
 import math
@@ -15,7 +15,7 @@ import random
 from xml.sax.saxutils import escape
 
 from .nums import lift, vunit
-from .surfaces import CapillaryBundle, Mirror, entrance_disk
+from .surfaces import CapillaryBundle, ImplicitWall, Mirror, entrance_disk
 from .trace import trace_ray
 
 UM, MM = 1e6, 1e3
@@ -106,7 +106,76 @@ def r_of_z(bore, zf):
         return math.sqrt(max(c0 + zf * (c1 + zf * c2), 0.0))
     if kind == "polygon":
         return float(bore["radius"])            # apothem: y=0 faces sit here
+    if kind == "implicit":
+        return float(bore["aim_radius"])        # fallback; spans use the probe
     return float(bore["radius"])
+
+
+_IMPL_PROBE = {}                                # id(bore) -> [wall, last_z, mid]
+
+
+def implicit_span(bore, zf):
+    """(x_lo, x_hi) of a generic bore on the y = 0 line at height z: scan
+    inside() for the sign-change bracket nearest the tracked run, bisect the
+    two walls. Falls back to an aim_radius tube when the scan finds nothing."""
+    st = _IMPL_PROBE.get(id(bore))
+    if st is None:
+        st = [ImplicitWall(bore["surface"], bore["center"],
+                           bore["aim_radius"]), None, None]
+        _IMPL_PROBE[id(bore)] = st
+    wall, last_z, mid = st
+    cx = float(bore["center"][0])
+    a = float(bore["aim_radius"])
+    if last_z is None or zf < last_z:
+        mid = cx                                # new monotone sweep
+    lo, hi = mid - 10 * a - 0.4 * abs(mid), mid + 10 * a + 0.4 * abs(mid)
+    n = 300
+    pts = [lo + (hi - lo) * i / n for i in range(n + 1)]
+    ins = [wall.inside(x, 0.0, zf) for x in pts]
+    runs = []
+    i = 0
+    while i <= n:
+        if ins[i]:
+            j = i
+            while j < n and ins[j + 1]:
+                j += 1
+            runs.append((i, j))
+            i = j + 1
+        else:
+            i += 1
+    if not runs:
+        return cx - a, cx + a
+    i, j = min(runs, key=lambda r: abs((pts[r[0]] + pts[r[1]]) / 2 - mid))
+
+    def bisect(x_out, x_in):
+        for _ in range(40):
+            xm = (x_out + x_in) / 2
+            if wall.inside(xm, 0.0, zf):
+                x_in = xm
+            else:
+                x_out = xm
+        return (x_out + x_in) / 2
+
+    x_lo = bisect(pts[i - 1], pts[i]) if i > 0 else pts[0]
+    x_hi = bisect(pts[j + 1], pts[j]) if j < n else pts[n]
+    st[1], st[2] = zf, (x_lo + x_hi) / 2
+    return x_lo, x_hi
+
+
+def wall_span(b, z0, zf):
+    """(x_lo, x_hi) silhouette of a bore at height z for the side view."""
+    if b.get("kind") == "implicit":
+        return implicit_span(b, zf)
+    if b.get("kind") == "funnel":
+        zr = zf - z0
+        ag, bg = (float(v) for v in b["g"])
+        af, bf = (float(v) for v in b["f"])
+        ax = float(b["center"][0]) * (1 + zr * (ag + zr * bg))
+        r = float(b["radius"]) * (1 + zr * (af + zr * bf))
+        return ax - r, ax + r
+    ax = torus_axis(b, z0, zf) if b.get("kind") == "torus" else float(b["center"][0])
+    r = r_of_z(b, zf)
+    return ax - r, ax + r
 
 
 def torus_axis(bore, z0f, zf):
@@ -234,12 +303,11 @@ def side_view(G):
         xs += [0.0, G["height"], -G["height"]]
     if mode == "capillary":
         for b in G["bores"]:
-            cx, cy = float(b["center"][0]), float(b["center"][1])
+            cy = float(b["center"][1])
             if abs(cy) < 1e-9:
                 for k in range(13):
                     zf = G["z0"] + (G["z1"] - G["z0"]) * k / 12
-                    ax = torus_axis(b, G["z0"], zf) if b.get("kind") == "torus" else cx
-                    xs += [ax + r_of_z(b, zf), ax - r_of_z(b, zf)]
+                    xs += list(wall_span(b, G["z0"], zf))
     xlo, xhi = min(xs), max(xs)
     xm = 0.12 * (xhi - xlo or 1e-6)
     xr = (xlo - xm, xhi + xm)
@@ -292,22 +360,19 @@ def draw_optic(G, v, box):
         cy = float(b["center"][1])
         if abs(cy) > 1e-9:
             continue
-        kind = b.get("kind", "cylinder")
         top, bot = [], []
         for zf in zs:
-            ax = torus_axis(b, G["z0"], zf) if kind == "torus" else float(b["center"][0])
-            r = r_of_z(b, zf)
-            top.append(v.pt(zf, ax + r))
-            bot.append(v.pt(zf, ax - r))
+            x_lo, x_hi = wall_span(b, G["z0"], zf)
+            top.append(v.pt(zf, x_hi))
+            bot.append(v.pt(zf, x_lo))
         poly = top + bot[::-1]
         fill = "#eaf2f8"
         e.append(f'<polygon points="{" ".join(f"{x:.2f},{y:.2f}" for x,y in poly)}" '
                  f'fill="{fill}" stroke="none" opacity="0.6"/>')
         e.append(POLY(top, WALL, 1.6))
         e.append(POLY(bot, WALL, 1.6))
-        e.append(L(*v.pt(G["z0"], float(b["center"][0]) + r_of_z(b, G["z0"])),
-                   *v.pt(G["z0"], float(b["center"][0]) - r_of_z(b, G["z0"])),
-                   WALL, 1.2))
+        x_lo, x_hi = wall_span(b, G["z0"], G["z0"])
+        e.append(L(*v.pt(G["z0"], x_hi), *v.pt(G["z0"], x_lo), WALL, 1.2))
     for b in G["bores"]:                           # bend geometry, once
         if b.get("kind") == "torus" and abs(float(b["center"][1])) < 1e-9:
             R = float(b["bend"]["radius"])

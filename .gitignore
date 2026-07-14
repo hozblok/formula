@@ -17,3 +17,4 @@ formula-*
 .mypy_cache
 .pytest_cache
 exp/out/*
+research/

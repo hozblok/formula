@@ -750,9 +750,9 @@ class Simulation:
         self.files.append("hit-validation.jsonl")
         _log("  → hit-validation.jsonl")
         # match = same hit/pass call AND agreement to precision_target digits
-        # (default: p - 2 guard - torus conditioning, config._conditioning_loss)
+        # (default: p - 2 guard - wall conditioning, config._conditioning_loss)
         target, loss = self.cfg.precision_target, self.cfg.precision_target_loss
-        origin = ((f"auto: {p} − 2 − {loss} torus" if loss else "auto: p − 2")
+        origin = ((f"auto: {p} − 2 − {loss} wall" if loss else "auto: p − 2")
                   if self.cfg.precision_target_auto else "yaml")
         tol_exp = -target
         lo, hi = -(p + 8), max(tol_exp, 2 - p) + 5
