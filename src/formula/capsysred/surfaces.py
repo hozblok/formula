@@ -17,6 +17,7 @@ from ..formula import Number
 from .nums import lift, vadd, vscale
 from .types import _EPS_LOC, _EPS_T, _INSIDE_TOL, _M_TO_UM, _TCAP_TOL
 from .wall_cylinder import CylinderWall
+from .wall_funnel import FunnelWall
 from .wall_polygon import PolygonWall
 from .wall_revolution import RevolutionWall
 from .wall_torus import TorusWall
@@ -120,6 +121,8 @@ def _make_wall(bore: dict, z0, engine_method="subdivision"):
     if kind == "torus":
         return TorusWall(center, bore["radius"], bore["bend"]["radius"],
                          bore["bend"]["toward"], z0)
+    if kind == "funnel":
+        return FunnelWall(center, bore["radius"], bore["g"], bore["f"], z0)
     raise ValueError(f"unknown bore kind: {kind!r}")
 
 

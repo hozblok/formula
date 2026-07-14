@@ -105,6 +105,11 @@ typename cstrace::Tracer<P>::Wall make_wall(py::sequence spec) {
                              F(5),
                              F(6)};
   }
+  if (kind == "funnel") {
+    return typename T::Funnel{M(0), M(1), M(2), M(3), M(4), M(5), M(6),
+                              M(7), M(8), F(0), F(1), F(2), F(3), F(4),
+                              F(5), F(6), F(7), F(8)};
+  }
   throw std::invalid_argument("unknown wall kind: " + kind);
 }
 

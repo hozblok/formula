@@ -135,7 +135,7 @@ def _bore(raw: dict, p: int, idx: int) -> dict:
     revolution x'^2+y'^2 = c0+c1*z+c2*z^2), surface (implicit F(x,y,z)=0 in µm,
     F<0 inside; needs aim_radius for source aiming).
     """
-    mods = [k for k in ("surface", "r2_poly", "bend", "sides")
+    mods = [k for k in ("surface", "r2_poly", "bend", "sides", "funnel")
             if raw.get(k) is not None]
     if len(mods) > 1:
         raise ValueError(f"bore {idx}: {' + '.join(mods)} cannot be combined")
@@ -175,28 +175,58 @@ def _bore(raw: dict, p: int, idx: int) -> dict:
             raise ValueError(f"bore {idx}: sides must be >= 3")
         out.update(kind="polygon", sides=n,
                    rotation=Number(f"({raw.get('rotation_deg', 0)})*pi/180", p))
+    elif raw.get("funnel") is not None:
+        fn = raw["funnel"]
+        g = list(fn.get("g", ()))
+        if len(g) != 2:
+            raise ValueError(f"bore {idx}: funnel needs g: [a, b] (per m, m^2)")
+        f = list(fn.get("f", g))          # conformal f = g unless overridden
+        if len(f) != 2:
+            raise ValueError(f"bore {idx}: funnel f takes [a, b]")
+        out.update(kind="funnel",
+                   g=tuple(Number(str(c), p) for c in g),
+                   f=tuple(Number(str(c), p) for c in f))
     else:
         out["kind"] = "cylinder"
     return out
 
 
-def _conditioning_loss(bores, theta_c: float) -> int:
-    """Digits burnt by the worst bent bore: ceil(2*log10(R/a) + log10(1/theta_c) + 2).
+def _conditioning_loss(bores, theta_c: float, z_span: float = 0.0) -> int:
+    """Digits burnt by the worst conditioned bore.
 
-    The expanded ray-torus quartic (w^2+K)^2 - 4R^2*(w^2-s^2) subtracts terms
-    ~4R^4 (2.2e40 um^4 at R = 8625 m, a = 6 um), so at 64 digits their ULP
-    ~2e-24 blurs the wall to ~1e-44 um, and grazing hits stretch the root
-    jitter by another 1/theta: doc/2026-07-13-torus-quartic-cancellation.ru.md.
+    Torus: ceil(2*log10(R/a) + log10(1/theta_c) + 2) — the expanded quartic
+    (w^2+K)^2 - 4R^2*(w^2-s^2) subtracts terms ~4R^4 (2.2e40 um^4 at
+    R = 8625 m, a = 6 um), so at 64 digits their ULP ~2e-24 blurs the wall
+    to ~1e-44 um, and grazing hits stretch the root jitter by another
+    1/theta: doc/2026-07-13-torus-quartic-cancellation.ru.md.
+    Funnel: 2*log10(S/r0) + 2 with S = max(|c|*g, r0*f) over the z-span —
+    the quartic mixes the dilated-axis scale against the r0-scale wall
+    (measured ~2 digits at S/r0 ~ 19: exp/out/37-quick stage 9).
     """
+    def poly_max(a, b):
+        vals = [1.0, abs(1.0 + a * z_span + b * z_span * z_span)]
+        if b != 0.0:
+            zv = -a / (2.0 * b)
+            if 0.0 < zv < z_span:
+                vals.append(abs(1.0 + a * zv + b * zv * zv))
+        return max(vals)
+
     loss = 0.0
     for bore in bores:
         if bore.get("kind") == "torus":
             ra = float(bore["bend"]["radius"]) / float(bore["radius"])
             loss = max(loss, 2 * math.log10(ra) + math.log10(1 / theta_c) + 2)
+        elif bore.get("kind") == "funnel":
+            r0 = float(bore["radius"])
+            cr = math.hypot(float(bore["center"][0]), float(bore["center"][1]))
+            gmax = poly_max(float(bore["g"][0]), float(bore["g"][1]))
+            fmax = poly_max(float(bore["f"][0]), float(bore["f"][1]))
+            s = max(cr * gmax, r0 * fmax)
+            loss = max(loss, 2 * math.log10(max(s / r0, 1.0)) + 2)
     return math.ceil(loss)
 
 
-def _precision_target(raw, p: int, bores, theta_c: float):
+def _precision_target(raw, p: int, bores, theta_c: float, z_span: float = 0.0):
     """Certified digits for the hit cross-checks (stage-9 tolerance 1e-target).
 
     Explicit yaml value, or the default max(4, ceiling) with
@@ -204,7 +234,7 @@ def _precision_target(raw, p: int, bores, theta_c: float):
     ceiling is unreachable by any method at this precision, so it warns and
     the run proceeds, reporting the shortfall. Returns (target, auto, loss).
     """
-    loss = _conditioning_loss(bores, theta_c)
+    loss = _conditioning_loss(bores, theta_c, z_span)
     ceiling = p - 2 - loss
     target = int(raw) if raw is not None else max(4, ceiling)
     if target < 1:
@@ -212,7 +242,7 @@ def _precision_target(raw, p: int, bores, theta_c: float):
     if target > ceiling:
         warnings.warn(
             f"precision_target {target} exceeds the certifiable ceiling "
-            f"{ceiling} (precision {p} - 2 guard - {loss} torus conditioning): "
+            f"{ceiling} (precision {p} - 2 guard - {loss} wall conditioning): "
             "stage-9 matches will undershoot; raise precision or lower the "
             "target (doc/2026-07-13-torus-quartic-cancellation.ru.md)")
     return target, raw is None, loss
@@ -254,7 +284,9 @@ class Config:
         (self.precision_target, self.precision_target_auto,
          self.precision_target_loss) = _precision_target(
             cfg["precision_target"], p,
-            self.capillary.bores if self.capillary else [], theta_c)
+            self.capillary.bores if self.capillary else [], theta_c,
+            float(self.capillary.z1 - self.capillary.z0)
+            if self.capillary else 0.0)
         self.max_bounces = int(cfg["trace"]["max_bounces"])
         self.amplitude_min = float(cfg["trace"]["amplitude_min"])
         self.rays_jsonl = bool(cfg["trace"]["rays_jsonl"])
