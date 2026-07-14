@@ -1,0 +1,834 @@
+"""Smoke and physics checks for the CAPSYSred package (tiny ray budgets)."""
+
+import json
+import math
+
+import pytest
+
+from formula.capsysred import Simulation
+from formula.capsysred.analytic import lloyd_reference, vcz_mu
+from formula.capsysred.nums import exp_i, lift, vunit
+from formula.capsysred.spectrum import spectral_lines, wavevector
+from formula.capsysred.surfaces import CapillaryBundle, Mirror, engine_hit_t
+from formula.capsysred.wall_cylinder import CylinderWall
+from formula.capsysred.wall_polygon import PolygonWall
+from formula.capsysred.wall_revolution import RevolutionWall
+from formula.capsysred.wall_torus import (_bisect_first, _float_seeds,
+                                          _quartic_first)
+from formula.capsysred.symbolic import (LineAmplitudes, ampl_template,
+                                     ray_expression, ray_field_template)
+from formula.capsysred.fresnel import FresnelAmplitude
+from formula.capsysred.trace import trace_ray
+from formula import xray
+from formula.formula import Number, Solver
+
+TINY = {
+    "source": {"n_modes": 4, "n_rays": 240, "size": 0.0, "shape": "point"},
+    "screen": {"nx": 21},
+    "lloyd": {"source": {"n_modes": 3, "n_rays": 60}, "screen": {"nx": 31}},
+    "capillary": {
+        "source": {"n_modes": 3, "n_rays": 40},
+        "screen": {"nx": 9, "ny": 9},
+    },
+}
+
+
+def test_full_pipeline_files_and_point_source_coherence(tmp_path):
+    sim = Simulation.from_dict(TINY)
+    result = sim.run(str(tmp_path), stages=[1, 2, 3, 4, 5, 6])
+    for name in result["files"]:
+        assert (tmp_path / name).stat().st_size > 0
+    # point source -> fully coherent: mu ~ 1 on well-lit pixels
+    maps = sim.results["free"]["maps"]
+    imax = max(maps["intensity"][0])
+    lit = [m for m, i in zip(maps["mu"][0], maps["intensity"][0]) if i > 0.3 * imax]
+    assert lit and min(lit) > 0.9
+    assert max(max(row) for row in maps["mu"]) <= 1.0 + 1e-9
+
+
+def test_fresnel_matches_engine_reflect_amplitude():
+    sim = Simulation.from_dict(TINY)
+    p = sim.cfg.precision
+    from formula.capsysred.nums import solver
+    s = solver("sin(x)", p).number({"x": "2.5e-4"})
+    r_fast = sim.fresnel(s)
+    r_ref = xray.reflect_amplitude("2.5e-4", str(sim.cfg.energy_kev),
+                                   sim.cfg.material, p)
+    assert float(abs(r_fast - r_ref)) < 1e-25
+
+
+def test_wall_hit_matches_raysurface_engine():
+    sim = Simulation.from_dict(TINY)
+    cap = sim.cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    p = sim.cfg.precision
+    d = vunit((lift(1.0e-3, p), lift(2.0e-4, p), lift(1.0, p)))
+    origin = (cap.bores[0]["center"][0], cap.bores[0]["center"][1], cap.z0)
+    kind, t_fast, _, _ = bundle.next_event(origin, d)
+    assert kind == "reflect"
+    a_um = float(cap.bores[0]["radius"]) * 1e6
+    t_engine = engine_hit_t(f"x^2+y^2-({a_um})^2", origin, d, 0.08)
+    assert abs(float(t_fast - t_engine)) / float(t_fast) < 1e-20
+
+
+def test_lloyd_mirror_reflection_physics():
+    sim = Simulation.from_dict(TINY)
+    lloyd = sim.cfg.lloyd
+    p = sim.cfg.precision
+    mirror = Mirror(lloyd.z0, lloyd.z1)
+    origin = lloyd.source.position
+    slope = -float(lloyd.height) / (0.03 - float(origin[2]))
+    d = vunit((lift(slope, p), lift(0.0, p), lift(1.0, p)))
+    tr = trace_ray(origin, d, mirror, sim.cfg.lloyd.screen.z, 10)
+    assert tr.fate == "screen" and len(tr.reflections) == 1
+    r = complex(sim.fresnel(tr.reflections[0][1]))
+    assert abs(r) > 0.99                        # far below the critical angle
+    assert abs(abs(math.atan2(r.imag, r.real)) - math.pi) < 0.1   # arg r ~ pi
+    # unit direction preserved -> opl is a true path length (>= straight line)
+    straight = math.hypot(float(tr.point[0]) - float(origin[0]),
+                          float(tr.point[2]) - float(origin[2]))
+    assert float(tr.opl) >= straight - 1e-15
+
+
+def test_capillary_multibounce_survives():
+    # A ray on the wall after each reflection must stay inside its bore:
+    # float rounding of the on-wall radius must not absorb it (coin-flip bug).
+    sim = Simulation.from_dict(TINY)
+    cap = sim.cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    p = sim.cfg.precision
+    a = float(cap.bores[0]["radius"])
+    length = float(cap.z1) - float(cap.z0)
+    slope = 3.5 * 2 * a / length          # ~3-4 wall crossings over the bore
+    d = vunit((lift(slope, p), lift(0.0, p), lift(1.0, p)))
+    origin = (cap.bores[0]["center"][0], cap.bores[0]["center"][1], cap.z0)
+    tr = trace_ray(origin, d, bundle, cap.screen.z, 50)
+    assert tr.fate == "screen" and len(tr.reflections) >= 3
+
+
+def test_symbolic_templates_match_references():
+    p = 30
+    mat = xray.FUSED_SILICA
+    fres = FresnelAmplitude(mat, Number("8.0", p))
+    for e in ("8.0", "9.0", "10.0"):
+        for theta in ("2.5e-4", "1.5e-3", "3.5e-3"):
+            s = Number(f"sin({theta})", p)
+            r_sym = ampl_template(1, mat, p).number({"s1": str(s), "E": e})
+            r_ref = xray.reflect_amplitude(theta, e, mat, p)
+            assert float(abs(r_sym - r_ref)) < 1e-27
+    sins = [Number(f"sin({t})", p) for t in ("8e-4", "1.2e-3", "2.1e-3")]
+    chain = fres(sins[0]) * fres(sins[1]) * fres(sins[2])
+    values = {f"s{j + 1}": str(s) for j, s in enumerate(sins)}
+    values["E"] = "8.0"
+    prod = ampl_template(3, mat, p).number(values)
+    assert float(abs(chain - prod)) < 1e-27
+    # a baked literal expression of E is the same function
+    lit = Solver(ray_expression(sins, mat), p).number({"E": "8.0"})
+    assert float(abs(lit - prod)) == 0.0
+    # max_bounces-sized template parses and evaluates
+    big = ampl_template(200, mat, p)
+    values = {f"s{j + 1}": "1.0e-3" for j in range(200)}
+    values["E"] = "8.0"
+    assert float(abs(big.number(values))) > 0.0
+
+
+def test_ray_field_template_carries_exact_phase():
+    p = 30
+    mat = xray.FUSED_SILICA
+    e, opl = Number("8.0", p), Number("0.1", p)
+    u0 = ray_field_template(0, mat, p).number({"E": str(e), "L": str(opl)})
+    ref = exp_i(wavevector(e) * opl)
+    assert float(abs(u0 - ref)) < 1e-20
+    s = Number("sin(1.5e-3)", p)
+    u1 = ray_field_template(1, mat, p).number(
+        {"E": str(e), "L": str(opl), "s1": str(s)})
+    r = ampl_template(1, mat, p).number({"s1": str(s), "E": str(e)})
+    assert float(abs(u1 - ref * r)) < 1e-20
+
+
+def test_cylinder_grazing_invariant_gives_r_pow_nb():
+    # A straight cylinder preserves sin(theta) across bounces -> ampl = r(s)^nb.
+    sim = Simulation.from_dict(TINY)
+    cap = sim.cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    p = sim.cfg.precision
+    a = float(cap.bores[0]["radius"])
+    length = float(cap.z1) - float(cap.z0)
+    d = vunit((lift(3.5 * 2 * a / length, p), lift(0.0, p), lift(1.0, p)))
+    origin = (cap.bores[0]["center"][0], cap.bores[0]["center"][1], cap.z0)
+    tr = trace_ray(origin, d, bundle, cap.screen.z, 50)
+    sins = [s for _, s in tr.reflections]
+    assert len(sins) >= 3
+    assert max(abs(float(s) - float(sins[0])) for s in sins) < 1e-15
+    r1 = sim.fresnel(sins[0])
+    assert float(abs(sim.fresnel.product(sins) - r1 ** len(sins))) < 1e-25
+
+
+def test_spectral_lines_carry_energy_and_k(tmp_path):
+    e0 = Number("8.0", 30)
+    lines = spectral_lines({"mode": "gaussian", "rel_fwhm": 2e-4, "n_lines": 5,
+                            "n_sigma": 3.0}, e0)
+    assert len(lines) == 5
+    assert abs(sum(l.weight for l in lines) - 1.0) < 1e-12
+    for l in lines:
+        assert float(abs(l.k - wavevector(l.e_kev))) == 0.0
+    table = tmp_path / "sp.txt"
+    table.write_text("# E w\n8.0 1\n8.5, 2\n\n", encoding="utf-8")
+    lines = spectral_lines({"mode": "table", "file": str(table)}, e0)
+    assert [float(l.e_kev) for l in lines] == [8.0, 8.5]
+    assert abs(lines[1].weight - 2.0 / 3.0) < 1e-12
+
+
+def test_line_amplitudes_energy_dependence():
+    # Between the two critical angles reflection collapses at the higher energy.
+    e0 = Number("8.0", 30)
+    lines = spectral_lines({"mode": "lines", "lines": [
+        {"energy_kev": 8.0}, {"energy_kev": 10.0}]}, e0)
+    la = LineAmplitudes(xray.FUSED_SILICA, lines, 30)
+    amps = la([str(Number("sin(3.4e-3)", 30))])
+    assert float(abs(amps[0])) > 2.0 * float(abs(amps[1]))
+    # no bounces -> unit amplitude on every line
+    ones = la([])
+    assert [float(abs(a)) for a in ones] == [1.0, 1.0]
+
+
+def test_rays_jsonl_records(tmp_path):
+    sim = Simulation.from_dict(TINY)
+    result = sim.run(str(tmp_path), stages=[4])
+    assert "rays.jsonl" in result["files"]
+    lines = [json.loads(line)
+             for line in (tmp_path / "rays.jsonl").read_text().splitlines()]
+    assert lines[0]["format"] == 2                       # v2 meta line
+    assert lines[-1] == {"scene_end": "lloyd", "rows": len(lines) - 2}
+    rows = [row for row in lines if "stage" in row]
+    assert len(rows) == sim.results["lloyd"]["stats"]["emitted"]
+    assert {"stage", "mode", "ray", "fate", "pixel", "opl", "sins"} <= set(rows[0])
+    hit = next(row for row in rows if row["fate"] == "screen")
+    assert {"x", "y", "dx", "dy"} <= set(hit)            # v2 float geometry
+    assert any(not row["sins"] for row in rows)          # direct rays recorded too
+    digits = rows[0]["opl"].replace(".", "").replace("-", "").lstrip("0")
+    assert len(digits) >= 25                             # full-precision strings
+    modes = [row["mode"] for row in rows]
+    assert modes == sorted(modes)                        # grouped by mode
+
+
+def test_sample_every_thins_records(tmp_path):
+    sim = Simulation.from_dict(dict(TINY, trace={"sample_every": 3}))
+    sim.run(str(tmp_path), stages=[4])
+    rows = [row for row in (tmp_path / "rays.jsonl").read_text().splitlines()
+            if "scene_end" not in row and "format" not in row]
+    st = sim.results["lloyd"]["stats"]
+    n_modes = sim.results["lloyd"]["n_modes"]
+    per_mode = st["emitted"] // n_modes
+    expected = n_modes * len(range(0, per_mode, 3))
+    assert len(rows) == expected
+
+
+def test_replay_matches_direct_mono(tmp_path):
+    sim = Simulation.from_dict(TINY)
+    sim.run(str(tmp_path), stages=[4])
+    direct = sim.results["lloyd"]["maps"]
+    sim.replay(str(tmp_path / "rays.jsonl"), str(tmp_path / "replay"))
+    rep = sim.results["replay:lloyd"]["maps"]
+    for key in ("mu", "intensity"):
+        scale = max(max(abs(v) for v in row) for row in direct[key]) or 1.0
+        diff = max(abs(x - y) for ra, rb in zip(direct[key], rep[key])
+                   for x, y in zip(ra, rb))
+        assert diff <= 1e-9 * scale, key
+
+
+def test_replay_matches_direct_gaussian(tmp_path):
+    cfg = dict(TINY, spectrum={"mode": "gaussian", "rel_fwhm": 2.0e-4,
+                               "n_lines": 3, "n_sigma": 2.0})
+    sim = Simulation.from_dict(cfg)
+    assert sim.per_line
+    sim.run(str(tmp_path), stages=[4])
+    direct = sim.results["lloyd"]["maps"]
+    sim.replay(str(tmp_path / "rays.jsonl"), str(tmp_path / "replay"))
+    rep = sim.results["replay:lloyd"]["maps"]
+    for key in ("mu", "intensity"):
+        scale = max(max(abs(v) for v in row) for row in direct[key]) or 1.0
+        diff = max(abs(x - y) for ra, rb in zip(direct[key], rep[key])
+                   for x, y in zip(ra, rb))
+        assert diff <= 1e-12 * scale, key
+
+
+def _cap_sim(bores, z0=0.0, z1=0.05, **cap):
+    over = dict(TINY)
+    over["capillary"] = dict(TINY["capillary"], bores=bores, z0=z0, z1=z1, **cap)
+    return Simulation.from_dict(over)
+
+
+def test_cone_adiabatic_invariant_and_engine():
+    # r(z) = 5e-6 - 3.5e-5*z: each bounce adds 2k to the grazing angle and
+    # a(z)*sin(theta) stays ~const; the hit must match the root-finding engine.
+    sim = _cap_sim([{"center": [0.0, 0.0],
+                     "r2_poly": [2.5e-11, -3.5e-10, 1.225e-9]}], z1=0.1,
+                    screen={"z": 0.101})
+    cap = sim.cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    p = sim.cfg.precision
+    d = vunit((lift(4.0e-4, p), lift(0.0, p), lift(1.0, p)))
+    origin = (cap.bores[0]["center"][0], cap.bores[0]["center"][1], cap.z0)
+    kind, t_fast, P, _ = bundle.next_event(origin, d)
+    assert kind == "reflect"
+    t_engine = engine_hit_t(bundle.walls[0].expr_um, origin, d, 0.12)
+    assert abs(float(t_fast - t_engine)) / float(t_fast) < 1e-18
+    tr = trace_ray(origin, d, bundle, cap.screen.z, 400)
+    assert tr.fate == "screen" and len(tr.reflections) >= 3
+    sins = [float(s) for _, s in tr.reflections]
+    steps = [b - a for a, b in zip(sins, sins[1:])]
+    assert all(5.0e-5 < s < 9.0e-5 for s in steps)      # ~2k = 7e-5 per bounce
+    wall = bundle.walls[0]
+    inv = [math.sqrt(wall.r2f(float(P[2]))) * float(s)
+           for P, s in tr.reflections]
+    assert max(inv) / min(inv) < 1.05                   # a·θ adiabatic invariant
+
+
+def test_torus_whispering_and_engine():
+    sim = _cap_sim([{"center": [0.0, 0.0], "radius": 3.0e-6,
+                     "bend": {"radius": 1.5, "toward": [1.0, 0.0]}}], z1=0.1,
+                    screen={"z": 0.101, "center": [3.40386e-3, 0.0]})
+    cap = sim.cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    p = sim.cfg.precision
+    d = vunit((lift(5.0e-4, p), lift(0.0, p), lift(1.0, p)))
+    origin = (cap.bores[0]["center"][0], cap.bores[0]["center"][1], cap.z0)
+    kind, t_fast, P, normal = bundle.next_event(origin, d)
+    assert kind == "reflect"
+    t_engine = engine_hit_t(bundle.walls[0].expr_um, origin, d, 0.12)
+    assert abs(float(t_fast - t_engine)) / float(t_fast) < 1e-16
+    # whispering gallery: many shallow bounces on the outer wall, z monotone
+    tr = trace_ray(origin, d, bundle, cap.screen.z, 400)
+    assert tr.fate == "screen" and len(tr.reflections) >= 5
+    zs = [float(P[2]) for P, _ in tr.reflections]
+    assert zs == sorted(zs)
+    R, a = 1.5, 3.0e-6
+    for P, sin_g in tr.reflections:
+        xf, zf = float(P[0]), float(P[2])
+        rho = math.hypot(xf - R, zf)
+        assert abs((rho - R) ** 2 + float(P[1]) ** 2 - a * a) < 1e-9 * a * a
+        assert float(sin_g) < 3.0e-3                    # stays shallow (< theta_c)
+
+
+def test_torus_gentle_bend_keeps_on_wall_points():
+    # R = 234 m: float rho-R cancellation in inside() is ~1e-8·a — the on-wall
+    # slack must scale with R or every reflected ray dies at the next locate.
+    sim = _cap_sim([{"center": [1.6e-5, 0.0], "radius": 3.0e-6,
+                     "bend": {"radius": 234.375, "toward": [-1.0, 0.0]}}])
+    cap = sim.cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    p = sim.cfg.precision
+    origin = (lift(1.6e-5, p), lift(0.0, p), lift(-0.01, p))
+    d = vunit((lift(1.9e-4, p), lift(0.0, p), lift(1.0, p)))
+    tr = trace_ray(origin, d, bundle, cap.screen.z, 50)
+    # the absorb-bug killed the ray right after its first reflection
+    assert tr.fate == "screen" and len(tr.reflections) >= 1
+
+
+def test_polygon_hex_flat_face_physics():
+    sim = _cap_sim([{"center": [0.0, 0.0], "radius": 3.0e-6, "sides": 6}])
+    cap = sim.cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    p = sim.cfg.precision
+    d = vunit((lift(5.0e-4, p), lift(0.0, p), lift(1.0, p)))
+    origin = (cap.bores[0]["center"][0], cap.bores[0]["center"][1], cap.z0)
+    kind, t_fast, _, _ = bundle.next_event(origin, d)
+    assert kind == "reflect"
+    t_engine = engine_hit_t(bundle.walls[0].expr_um, origin, d, 0.08)
+    assert abs(float(t_fast - t_engine)) / float(t_fast) < 1e-20
+    # opposite faces are parallel: grazing angle is exactly preserved
+    tr = trace_ray(origin, d, bundle, cap.screen.z, 50)
+    assert tr.fate == "screen" and len(tr.reflections) >= 3
+    sins = [float(s) for _, s in tr.reflections]
+    assert max(sins) - min(sins) < 1e-15
+    # a point beyond the flat (but inside the circumradius) is in the web
+    x = lift(3.2e-6, p)
+    event = bundle.next_event((x, lift(0.0, p), cap.z0 + lift(1e-6, p)), d)
+    assert event[0] == "absorb"
+
+
+def test_implicit_hex_product_matches_polygon():
+    # one smooth string for a polygon bore: F = -prod(m_k·r - a) over the faces
+    sim_t = _cap_sim([{"center": [0.0, 0.0], "radius": 3.0e-6, "sides": 6}])
+    cap_t = sim_t.cfg.capillary
+    bundle_t = CapillaryBundle(cap_t.bores, cap_t.z0, cap_t.z1)
+    fac = [f"((x)*({mx})+(y)*({my})-(3))" for mx, my in bundle_t.walls[0].faces]
+    sim_i = _cap_sim([{"center": [0.0, 0.0], "surface": "(0-1)*" + "*".join(fac),
+                       "aim_radius": 3.4641016151377543e-06}])
+    cap_i = sim_i.cfg.capillary
+    bundle_i = CapillaryBundle(cap_i.bores, cap_i.z0, cap_i.z1)
+    p = sim_t.cfg.precision
+    d = vunit((lift(4.0e-4, p), lift(1.5e-4, p), lift(1.0, p)))
+    origin = (lift(0.0, p), lift(0.0, p), cap_t.z0)
+    (k1, t1, _, n1) = bundle_t.next_event(origin, d)
+    (k2, t2, _, n2) = bundle_i.next_event(origin, d)
+    assert k1 == k2 == "reflect"
+    assert abs(float(t1 - t2)) / float(t1) < 1e-18
+    assert max(abs(float(x - y)) for x, y in zip(n1, n2)) < 1e-15
+
+
+def test_implicit_surface_matches_cylinder():
+    a_um = 3.0
+    sim_c = _cap_sim([{"center": [0.0, 0.0], "radius": 3.0e-6}])
+    sim_i = _cap_sim([{"center": [0.0, 0.0], "surface": f"x^2+y^2-({a_um})^2",
+                       "aim_radius": 3.0e-6}])
+    p = sim_c.cfg.precision
+    d = vunit((lift(1.0e-3, p), lift(2.0e-4, p), lift(1.0, p)))
+    events = []
+    for sim in (sim_c, sim_i):
+        cap = sim.cfg.capillary
+        bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+        origin = (cap.bores[0]["center"][0], cap.bores[0]["center"][1], cap.z0)
+        events.append(bundle.next_event(origin, d))
+    (k1, t1, P1, n1), (k2, t2, P2, n2) = events
+    assert k1 == k2 == "reflect"
+    assert abs(float(t1 - t2)) / float(t1) < 1e-18
+    assert max(abs(float(x - y)) for x, y in zip(n1, n2)) < 1e-15
+
+
+def test_ellipsoid_focus_opl_degeneracy():
+    # Ellipse property: every F1 -> wall -> F2 path is exactly 2A; the traced
+    # OPL to the focal-plane screen must reproduce 2A to full precision.
+    A, b, zc = 0.03, 7.5e-5, 0.02
+    k = (b / A) ** 2
+    sim = _cap_sim([{"center": [0.0, 0.0],
+                     "r2_poly": [b * b - k * zc * zc, 2 * k * zc, -k]}],
+                   z0=0.015, z1=0.025)
+    p = sim.cfg.precision
+    f = Number(f"(({A})^2-({b})^2)^0.5", p)
+    src = (lift(0.0, p), lift(0.0, p), lift(zc, p) - f)
+    cap = sim.cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    # aim at the wall band: z*=0.018, r(z*) = sqrt(r2(0.018))
+    r_star = math.sqrt(b * b - k * (0.018 - zc) ** 2)
+    target = (lift(r_star, p), lift(0.0, p), lift(0.018, p))
+    d = vunit((target[0] - src[0], target[1] - src[1], target[2] - src[2]))
+    screen_z = lift(zc, p) + f
+    tr = trace_ray(src, d, bundle, screen_z, 10)
+    assert tr.fate == "screen" and len(tr.reflections) == 1
+    assert float(tr.reflections[0][1]) < 3.0e-3         # grazing < theta_c
+    assert abs(float(tr.opl) - 2.0 * A) < 1e-20
+    assert math.hypot(float(tr.point[0]), float(tr.point[1])) < 1e-12
+
+
+def test_bore_config_validation():
+    good = {"center": [0.0, 0.0], "radius": 1e-6}
+    for bad in (
+        {"center": [0.0, 0.0]},                                   # no geometry
+        {"radius": 1e-6, "r2_poly": [1e-12]},                     # conflict
+        {"surface": "x^2+y^2-1"},                                 # no aim_radius
+        {"radius": 1e-6, "sides": 2},                             # sides < 3
+        {"radius": 1e-6, "bend": {"radius": 1.0}},                # bend w/o toward
+        {"radius": 1e-6, "bend": {"radius": 1.0, "toward": [1, 0]}, "sides": 6},
+    ):
+        with pytest.raises(ValueError):
+            _cap_sim([good, bad])
+
+
+def test_analytic_references_sane():
+    assert vcz_mu(0.0, "gaussian", 2e-6, 1.55e-10, 0.14) == 1.0
+    assert vcz_mu(5e-6, "gaussian", 2e-6, 1.55e-10, 0.14) < 0.1
+    ref = lloyd_reference([1e-6 * i for i in range(1, 12)], 5e-6, "point", 0.0,
+                          1e-5, -0.08, 0.0, 0.06, 0.06, 1.55e-10,
+                          7.1e-6, 1.6e-7)
+    assert max(ref["mu"]) <= 1.0 + 1e-9
+    v = ref["intensity"]
+    assert max(v) / (min(v) + 1e-12) > 5.0      # fringes present
+
+
+# --------------------------------------------- quartic solver & tolerance kit
+
+
+def _monic_quartic(roots, p):
+    """Monic Number quartic with the given integer roots (exact coefficients)."""
+    cs = [1]
+    for r in roots:
+        cs = [a - r * b for a, b in zip(cs + [0], [0] + cs)]
+    return tuple(Number(str(v), p) for v in cs)
+
+
+def test_quartic_newton_accuracy_scales_with_precision():
+    # stop threshold is 10^-max(24, p//2): a fixed 24-digit cap would leave
+    # ~1e-48 error at every precision and fail the p >= 64 bounds
+    for p, bound in ((32, "1e-45"), (64, "1e-60"), (256, "1e-200")):
+        t = _quartic_first(_monic_quartic((1, 2, 3, 4), p), 10.0)
+        assert t is not None
+        assert abs(t - Number("1", p)) < Number(bound, p)
+
+
+def test_quartic_bisection_scales_with_precision():
+    # rescue path: 8 + p*log2(10) halvings shrink the bracket to ~10^-p;
+    # the old fixed 90 gave only ~1e-27 of the bracket at any precision
+    for p, bound in ((32, "1e-30"), (256, "1e-240")):
+        t = _bisect_first(_monic_quartic((1, 2, 3, 4), p), 10.0)
+        assert t is not None
+        assert abs(t - Number("1", p)) < Number(bound, p)
+
+
+def test_float_seeds_window_and_complex_filter():
+    # (t^2+1)(t-3)(t-4): the genuinely complex pair is dropped, real kept
+    seeds = _float_seeds([1.0, -7.0, 13.0, -7.0, 12.0], 10.0)
+    assert [round(s) for s in seeds] == [3, 4]
+    # window cap: only roots inside (eps/2, t_capf] survive
+    seeds = _float_seeds([1.0, -10.0, 35.0, -50.0, 24.0], 2.5)
+    assert [round(s) for s in seeds] == [1, 2]
+
+
+def test_quartic_first_empty_window_returns_none():
+    # all roots beyond t_capf, no sign change inside -> honest None
+    assert _quartic_first(_monic_quartic((5, 6, 7, 8), 32), 2.0) is None
+
+
+def test_on_wall_point_counts_inside():
+    # _INSIDE_TOL: a reflection point sits exactly ON the wall; float rounding
+    # of dx^2+dy^2 vs a^2 must not flip it outside (coin-flip absorption)
+    p = 32
+    zero = Number("0", p)
+    a = float(Number("6e-6", p))
+    cyl = CylinderWall((zero, zero), Number("6e-6", p))
+    rev = RevolutionWall("revolution", (zero, zero),
+                         (Number("6e-6", p) * Number("6e-6", p), zero, zero))
+    poly = PolygonWall((zero, zero), Number("6e-6", p), 6, zero)
+    for wall in (cyl, rev, poly):
+        assert wall.inside(a, 0.0, 0.0)
+        assert not wall.inside(a * (1 + 1e-6), 0.0, 0.0)
+
+
+def test_engine_method_config_wiring():
+    # trace.engine_method: validated at the config boundary, reaches the
+    # ImplicitWall of a `surface:` bore through CapillaryBundle
+    from formula.capsysred.config import load
+    assert load({}).engine_method == "subdivision"
+    with pytest.raises(ValueError):
+        load({"trace": {"engine_method": "newton"}})
+    cfg = load({"trace": {"engine_method": "sturm"},
+                "capillary": {"bores": [{"surface": "x^2+y^2-36",
+                                         "aim_radius": 6.0e-6}]}})
+    bundle = CapillaryBundle(cfg.capillary.bores, cfg.capillary.z0,
+                             cfg.capillary.z1, cfg.engine_method)
+    assert bundle.walls[0].method == "sturm"
+
+
+def test_precision_target_config():
+    # default p - 2 on straight bores; a torus bore subtracts the conditioning
+    # loss ceil(2*log10(R/a) + log10(1/theta_c) + 2); explicit values above
+    # the ceiling warn
+    import warnings
+    from formula.capsysred.config import load
+    assert load({}).precision_target == 30
+    bent = {"precision": 64, "capillary": {"bores": [
+        {"center": [0.0, 0.0], "radius": 6.0e-6,
+         "bend": {"radius": 8625.0, "toward": [1.0, 0.0]}}]}}
+    cfg = load(bent)
+    assert cfg.precision_target_auto and cfg.precision_target_loss == 23
+    assert cfg.precision_target == 39
+    # theta_c is taken at the hardest spectral line: 24 keV -> theta_c/3
+    hard = load({**bent, "spectrum": {"mode": "lines", "lines": [
+        {"energy_kev": 8.0}, {"energy_kev": 24.0, "weight": 0.2}]}})
+    assert hard.precision_target_loss == 24 and hard.precision_target == 38
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        cfg = load({**bent, "precision_target": 45})
+    assert not cfg.precision_target_auto and cfg.precision_target == 45
+    assert any("ceiling 39" in str(w.message) for w in caught)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert load({**bent, "precision_target": 32}).precision_target == 32
+    assert not caught
+
+
+def test_sturm_engine_matches_closed_form_hit():
+    # the polynomial wall expr_um is exactly Sturm's domain: the cross-check
+    # must agree with the closed-form hit as tightly as subdivision does
+    sim = Simulation.from_dict(TINY)
+    cap = sim.cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    p = sim.cfg.precision
+    d = vunit((lift(1.0e-3, p), lift(2.0e-4, p), lift(1.0, p)))
+    origin = (cap.bores[0]["center"][0], cap.bores[0]["center"][1], cap.z0)
+    kind, t_fast, _, _ = bundle.next_event(origin, d)
+    assert kind == "reflect"
+    t_engine = engine_hit_t(bundle.walls[0].expr_um, origin, d, 0.08,
+                            method="sturm")
+    assert abs(float(t_fast - t_engine)) / float(t_fast) < 1e-25
+
+
+def test_stage9_hit_methods_agree_on_cylinder(tmp_path):
+    # every method must reproduce the python hit t and its pass/reflect calls
+    sim = Simulation.from_dict({**TINY, "validate": {"n_rays": 100}})
+    result = sim.run(str(tmp_path), stages=[9])
+    assert "hit-validation.jsonl" in result["files"]
+    with open(tmp_path / "hit-validation.jsonl") as fh:
+        rows = [json.loads(line) for line in fh]
+    assert len(rows) == 100          # one record per emitted ray
+    res = sim.results["validate"]
+    assert res["native"] and res["stats"]["hits"] > 0
+    for name, s in res["per"].items():
+        assert s["n"] == res["stats"]["hits"], name
+        assert s["missing"] == 0 and s["extra"] == 0, name
+        assert s["max_rel"] < 1e-20, name
+
+
+def test_stage11_beamlet_point_source_fully_coherent(tmp_path):
+    # point source -> one coherent field, honest estimator must give mu = 1
+    # on every pixel the beamlets light up; mu never exceeds 1
+    sim = Simulation.from_dict(TINY)
+    result = sim.run(str(tmp_path), stages=[11])
+    for name in result["files"]:
+        assert (tmp_path / name).stat().st_size > 0
+    assert "mu-beamlet.jsonl" in result["files"]
+    maps = sim.results["beamlet:free"]["maps"]
+    imax = max(maps["intensity"][0])
+    lit = [m for m, i in zip(maps["mu"][0], maps["intensity"][0])
+           if i > 0.3 * imax]
+    assert lit and min(lit) > 0.999
+    for key in ("beamlet:free", "beamlet:capillary"):
+        mu = sim.results[key]["maps"]["mu"]
+        assert max(max(r) for r in mu) <= 1.0 + 1e-9
+        for row in sim.results[key]["maps"]["intensity"]:
+            assert all(math.isfinite(v) and v >= 0.0 for v in row)
+
+
+def test_stage11_beamlet_gaussian_matches_vcz(tmp_path):
+    # extended gaussian source: the beamlet |mu| row must track the vCZ curve
+    from formula.capsysred.analytic import rms_diff
+    sim = Simulation.from_dict({
+        "source": {"n_modes": 36, "n_rays": 200},
+        "screen": {"nx": 41},
+        "capillary": {"source": {"n_modes": 2, "n_rays": 20},
+                      "screen": {"nx": 5, "ny": 5}},
+    })
+    sim.run(str(tmp_path), stages=[11])
+    res = sim.results["beamlet:free"]
+    maps, screen = res["maps"], res["screen"]
+    src = sim.cfg.free_source
+    dist = float(screen.z) - float(src.position[2])
+    ref_x = screen.pixel_xy(maps["ref_pixel"])[0]
+    mu_th = [vcz_mu(x - ref_x, src.shape, float(src.size), float(sim.lam), dist)
+             for x in screen.xs()]
+    assert rms_diff(maps["mu"][0], mu_th) < 0.2
+
+
+def test_stage11_beamlet_same_rays_as_stage6(tmp_path):
+    # the rng stream matches _mc_stage: arrival-pixel densities are identical
+    sim = Simulation.from_dict(TINY)
+    sim.run(str(tmp_path), stages=[6, 11])
+    d6 = sim.results["capillary"]["maps"]["density"]
+    d11 = sim.results["beamlet:capillary"]["maps"]["density"]
+    assert d6 == d11
+
+
+def test_estimator_protocol_direct_drive_identical_modes():
+    # the protocol lets tests feed estimators synthetic rays: no MC, no tracing
+    from formula.capsysred.coherence import CoherenceAccumulator
+    from formula.capsysred.jackknife import JackknifeCoherence
+    from formula.capsysred.types import RayRecord
+
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    rec = lambda mode, ray, pixel, opl: RayRecord(
+        mode, ray, "screen", pixel, None, None, opl, (), ())
+    jack = JackknifeCoherence(lines, 0)
+    for mode in range(3):
+        jack.new_mode()
+        for pixel in (0, 1):
+            for ray in (0, 1):
+                jack.add_ray(rec(mode, ray, pixel, 0.05), [1.0 + 0j])
+        jack.fold_mode()
+    maps = jack.finalize(2, 1)
+    assert maps["mu"][0][0] == 1.0 and maps["mu"][0][1] == 1.0
+    assert maps["mu_err"][0][1] == 0.0
+
+    acc = CoherenceAccumulator(lines, 0, 32)
+    one, opl = Number("1", 32), Number("0.05", 32)
+    for mode in range(2):
+        acc.new_mode()
+        for pixel in (0, 1):
+            for ray in (0, 1):
+                acc.add_ray(rec(mode, ray, pixel, opl), one)
+        acc.fold_mode()
+    maps = acc.finalize(2, 1)
+    assert maps["mu"][0][1] == 1.0 and maps["density"][0][0] == 4.0
+
+
+def test_jackknife_direct_drive_pi_flip_decoheres():
+    # ref phase fixed, pixel-1 phase flips by pi every other mode -> W sums to 0
+    from formula.capsysred.jackknife import JackknifeCoherence
+    from formula.capsysred.types import RayRecord
+
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    k = float(lines[0].k)
+    rec = lambda mode, ray, pixel, opl: RayRecord(
+        mode, ray, "screen", pixel, None, None, opl, (), ())
+    jack = JackknifeCoherence(lines, 0)
+    for mode in range(4):
+        jack.new_mode()
+        for ray in (0, 1):
+            jack.add_ray(rec(mode, ray, 0, 0.05), [1.0 + 0j])
+            jack.add_ray(rec(mode, ray, 1, 0.05 + (mode % 2) * math.pi / k),
+                         [1.0 + 0j])
+        jack.fold_mode()
+    maps = jack.finalize(2, 1)
+    assert maps["mu"][0][0] == 1.0
+    assert maps["mu"][0][1] < 1e-6
+
+
+def test_beamlet_direct_drive_single_mode_fully_coherent():
+    # one mode -> one coherent field: mu = 1 on every deposited pixel
+    from types import SimpleNamespace
+    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.screen import ScreenGrid
+    from formula.capsysred.types import RayRecord
+
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=0.06, nx=7, ny=1, center=[0.0, 0.0],
+                                     edge_x=1.0e-5, edge_y=2.0e-6))
+    bf = BeamletField(lines, scr, 3, 5.0e-7, 3.0)
+    bf.new_mode()
+    bf.add_ray(RayRecord(0, 0, "screen", 3, (1.0e-6, 0.0, 0.06),
+                         (1.0e-5, 0.0, 1.0), 0.06, (), ()), [1.0 + 0j])
+    bf.fold_mode()
+    maps = bf.finalize(7, 1)
+    lit = [m for m, i in zip(maps["mu"][0], maps["intensity"][0]) if i > 0.0]
+    assert lit and min(lit) > 1.0 - 1e-12
+
+
+def test_stage10_from_file_equals_traced(tmp_path):
+    # stage 6 records the capillary rays; stage 10 in the same run consumes
+    # the file and must land on the traced maps exactly
+    traced = Simulation.from_dict(TINY)
+    traced.run(str(tmp_path / "a"), stages=[10])
+    assert traced.results["jack:capillary"]["rays_from"] == "trace"
+    reused = Simulation.from_dict(TINY)
+    reused.run(str(tmp_path / "b"), stages=[6, 10])
+    assert reused.results["jack:capillary"]["rays_from"] == "file"
+    for key in ("mu", "mu_err", "intensity", "density"):
+        assert (traced.results["jack:capillary"]["maps"][key]
+                == reused.results["jack:capillary"]["maps"][key]), key
+
+
+def test_rays_file_reused_across_runs(tmp_path):
+    # run 1 records the capillary scene; run 2 (same out dir, same config)
+    # consumes it for stage 11 and appends the free scene it traces itself
+    Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+    sim = Simulation.from_dict(TINY)
+    sim.run(str(tmp_path), stages=[11])
+    assert sim.results["beamlet:capillary"]["rays_from"] == "file"
+    assert sim.results["beamlet:free"]["rays_from"] == "trace"
+    from formula.capsysred.rays import scan
+    meta, done, clean = scan(str(tmp_path / "rays.jsonl"))
+    assert clean and set(done) == {"capillary", "free"}
+
+
+def test_rays_file_rejected_on_geometry_change(tmp_path):
+    # a bore-length change flips the geometry fingerprint: the stale file is
+    # rejected and rewritten, the stage traces
+    Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+    changed = dict(TINY, capillary=dict(TINY["capillary"], z1=0.06))
+    sim = Simulation.from_dict(changed)
+    sim.run(str(tmp_path), stages=[11])
+    assert sim.results["beamlet:capillary"]["rays_from"] == "trace"
+
+
+def test_rays_gzip_roundtrip(tmp_path):
+    # rays_gzip writes .jsonl.gz; the same run reuses it for stage 10
+    cfg = dict(TINY, trace={"rays_gzip": True})
+    sim = Simulation.from_dict(cfg)
+    result = sim.run(str(tmp_path), stages=[6, 10])
+    assert "rays.jsonl.gz" in result["files"]
+    assert sim.results["jack:capillary"]["rays_from"] == "file"
+    d6 = sim.results["capillary"]["maps"]["density"]
+    assert d6 == sim.results["jack:capillary"]["maps"]["density"]
+
+
+def test_stage6_from_file_equals_traced(tmp_path):
+    # stage 10 run first records the capillary scene; a later stage-6 run
+    # consumes it — the Number path from full-precision strings must land on
+    # the traced maps exactly
+    traced = Simulation.from_dict(TINY)
+    traced.run(str(tmp_path / "a"), stages=[6])
+    assert traced.results["capillary"]["rays_from"] == "trace"
+    Simulation.from_dict(TINY).run(str(tmp_path / "b"), stages=[10])
+    reused = Simulation.from_dict(TINY)
+    reused.run(str(tmp_path / "b"), stages=[6])
+    assert reused.results["capillary"]["rays_from"] == "file"
+    assert traced.results["capillary"]["stats"] == reused.results["capillary"]["stats"]
+    for key in ("mu", "intensity", "density"):
+        assert (traced.results["capillary"]["maps"][key]
+                == reused.results["capillary"]["maps"][key]), key
+
+
+def test_gamma_free_drift_reduces_to_scalar_q():
+    # no bounces: Q = (q0+L)*I, no coupling, amplitude = q0/q (w0/w, Gouy)
+    import cmath
+    from formula.capsysred.gamma import det2, propagate
+    k = 2.0 * math.pi / 1.55e-10
+    zr = 0.5 * (5e-7) ** 2 * k
+    L = 0.14
+    q, amp = propagate(zr, [L], [])
+    q_scalar = complex(L, zr)
+    assert q[1] == 0 and q[0] == q[2] == q_scalar
+    assert cmath.isclose(amp, complex(0, zr) / q_scalar, rel_tol=1e-12)
+
+
+def test_gamma_meridional_reduces_to_two_scalar_q():
+    # phi in {0, pi} bounces keep Gamma diagonal: each axis is its own
+    # scalar-q chain (doc/capsysred-results.ru.md §5в reduction)
+    import cmath
+    from formula.capsysred.gamma import propagate
+    k = 2.0 * math.pi / 1.55e-10
+    zr = 0.5 * (5e-7) ** 2 * k
+    segs = [0.01, 0.006, 0.002]
+    inv_fs = 1.0 / 1.5e-3
+    q, _ = propagate(zr, segs, [(0.0, 0.0, inv_fs), (math.pi, 0.0, inv_fs)])
+    assert abs(q[1]) < 1e-12 * abs(q[0])       # sin(pi) float noise only
+
+    def scalar(inv_f):
+        qs = complex(0.0, zr)
+        for seg, invf in zip(segs, [inv_f, inv_f, 0.0]):
+            qs += seg
+            if invf:
+                qs = 1.0 / (1.0 / qs - invf)
+        return qs
+    assert cmath.isclose(q[0], scalar(0.0), rel_tol=1e-12)      # tangential
+    assert cmath.isclose(q[2], scalar(inv_fs), rel_tol=1e-12)   # sagittal
+
+
+def test_gamma_skew_bounces_couple_planes():
+    # a precessing azimuth mixes the axes: off-diagonal Gamma appears
+    from formula.capsysred.gamma import propagate
+    k = 2.0 * math.pi / 1.55e-10
+    zr = 0.5 * (5e-7) ** 2 * k
+    inv_fs = 1.0 / 1.5e-3
+    q, _ = propagate(zr, [0.01, 0.006, 0.002],
+                     [(0.0, 0.0, inv_fs), (math.pi / 3, 0.0, inv_fs)])
+    assert abs(q[1]) > 0.0
+
+
+def test_gamma_normal_incidence_isotropic():
+    # theta = 90 deg: f_t = f_s = R/2, the bounce must not depend on phi
+    from formula.capsysred.gamma import propagate
+    k = 2.0 * math.pi / 1.55e-10
+    zr = 0.5 * (5e-7) ** 2 * k
+    inv_f = 2.0 / 0.01
+    import cmath
+    outs = [propagate(zr, [0.01, 0.02], [(phi, inv_f, inv_f)])[0]
+            for phi in (0.0, 0.7, 2.0)]
+    for q in outs[1:]:
+        assert cmath.isclose(q[0], outs[0][0], rel_tol=1e-12)
+        assert cmath.isclose(q[2], outs[0][2], rel_tol=1e-12)
+        assert abs(q[1]) < 1e-12 * abs(q[0])
+
+
+def test_bounce_lenses_cylinder_wall():
+    # straight cylinder: f_t flat, 1/f_s = 2 sin/a, phi from the hit azimuth
+    from formula.capsysred.gamma import bounce_lenses
+    sim = Simulation.from_dict(TINY)
+    cap = sim.cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    a = float(cap.bores[0]["radius"])
+    s = 2.0e-3
+    [(phi, inv_ft, inv_fs)] = bounce_lenses(bundle, [(0.0, a, 0.02)], [s])
+    assert phi == pytest.approx(math.pi / 2)
+    assert inv_ft == 0.0
+    assert inv_fs == pytest.approx(2.0 * s / a)

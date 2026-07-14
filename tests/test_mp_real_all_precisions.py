@@ -68,6 +68,13 @@ def test_arithmetic(p):
 
 
 @pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
+def test_sqrt(p):
+    r = cls(p)
+    assert r("9").sqrt().str(10) == "3"
+    assert r("-1").sqrt().str(10) == "nan"  # same as the engine's real sqrt
+
+
+@pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
 def test_comparison_is_by_value(p):
     r = cls(p)
     assert r("1") == r("1.0")  # value equality, not object identity

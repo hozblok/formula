@@ -36,6 +36,10 @@ else:
 
 
 EXTRA_COMPILE_ARGS = []
+if sys.platform != "win32":
+    # No FMA contraction: the native tracer's double guards must take the
+    # same branches as the Python reference (parity tests compare exactly).
+    EXTRA_COMPILE_ARGS.append("-ffp-contract=off")
 if sys.platform == "darwin":
     # Default deployment target for wheels built outside cibuildwheel; CI
     # overrides this via env. 10.15 covers all currently supported macOS
@@ -66,6 +70,7 @@ EXT_MODULES = [
             "src/cpp/main.cpp",
             "src/cpp/bindings_mp_real.cpp",
             "src/cpp/bindings_mp_complex.cpp",
+            "src/cpp/bindings_trace.cpp",
         ],
         include_dirs=[
             BOOST_HEADERS,

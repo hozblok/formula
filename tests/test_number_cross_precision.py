@@ -82,5 +82,5 @@ def test_rewrap_preserves_precision_and_exact_value():
     n = Number("1/3", precision=256)
     same = Number(n)
     assert same.precision == 256
-    assert same.parts() == n.parts()
+    assert same.parts == n.parts
     assert same == n

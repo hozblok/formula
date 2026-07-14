@@ -21,12 +21,14 @@ def _estimate_m2(func, t_min: Number, t_max: Number, prec: int, samples: int) ->
     """Inflated estimate of max|g''| via the Lipschitz constant of g' on a grid."""
     step = (t_max - t_min) / Number(samples, prec)
     gp_prev = func.gprime(t_min)
-    m2 = Number(0, prec)
-    for i in range(1, samples + 1):
-        gp = func.gprime(t_min + step * Number(i, prec))
+    m2 = Number("0", prec)
+    t = t_min
+    for _ in range(samples):
+        t = t + step
+        gp = func.gprime(t)
         m2 = max(m2, abs(gp - gp_prev) / step)
         gp_prev = gp
-    return m2 * Number(2, prec)
+    return m2 * Number("2", prec)
 
 
 def _candidates(func, t_min, t_max, m2, region_tol):

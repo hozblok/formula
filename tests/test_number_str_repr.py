@@ -197,7 +197,7 @@ def test_roundtrip_pure_imag_from_arithmetic():
     # i*i*i produces mp_complex(-0, -1) at the raw mp level; the C++ strip
     # turns the real "-0" into "0", and __str__ then takes the r=="0" branch.
     n = Number("i") * Number("i") * Number("i")
-    assert n.parts() == ("0", "-1")
+    assert n.parts == ("0", "-1")
     assert str(n) == "-1*i"
     assert Number(str(n)) == n
 
@@ -226,7 +226,7 @@ def test_str_preserves_pure_imag_drift():
     # Mirror of test_str_preserves_drift_imag: drifted real, finite imag.
     # __str__ must NOT round the drift to "0" and emit a pure-imag form.
     n = Number("sin(pi) + i")
-    r, i = n.parts()
+    r, i = n.parts
     assert r != "0", f"setup: expected drifted real, got {r!r}"
     assert i == "1"
     s = str(n)
