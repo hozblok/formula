@@ -148,7 +148,8 @@ def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
                                       aim_factory, seed_offset, quick)
     stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
-             "off_window": 0}
+             "off_window": 0, "reflected_rays": 0, "reflections": 0,
+             "bounce_hist": {}}
     progress = Progress(label, n_modes * n_rays)
     t0 = time.time()
     mode_cur = None
@@ -159,6 +160,11 @@ def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
             jack.new_mode()
             mode_cur = rec.mode
         stats["emitted"] += 1
+        nb = len(rec.sins)
+        if nb:
+            stats["reflected_rays"] += 1
+            stats["reflections"] += nb
+            stats["bounce_hist"][nb] = stats["bounce_hist"].get(nb, 0) + 1
         fate, amps = rec.fate, None
         if fate == "screen":
             amps = amps_of([float(s) for s in rec.sins])

@@ -356,12 +356,12 @@ class Simulation:
         sub = (f"{res['n_modes']} modes × {res['n_rays']} rays; reflected rays "
                f"{st['reflected_rays']:,}; x_ref = {ref_xy[0] * _UM:.2f} µm")
         vl = [(ref_xy[0] * _UM, "ref"), (x_ov * _UM, "overlap edge")]
-        floor = 1.0 / math.sqrt(res["n_modes"])
+        limit = 1.0 / math.sqrt(res["n_modes"])
         mu_fig = render.line_chart(
             [{"xs": xs_um, "ys": maps["mu"][row], "label": "MC |μ(x, x_ref)|"},
-             {"xs": xs_um, "ys": [floor] * len(xs_um), "color": "#999",
+             {"xs": xs_um, "ys": [limit] * len(xs_um), "color": "#999",
               "dash": "2,4", "width": 1.0,
-              "label": f"noise floor 1/√N modes ≈ {floor:.2f}"}],
+              "label": f"statistical limit 1/√N modes ≈ {limit:.2f}"}],
             "Lloyd's mirror scheme: degree of coherence (MC, wall = capillary surface)",
             "x on screen, µm", "|μ|", sub, vlines=vl, w=680)
         self._save(out_dir, "04-lloyd-mc-coherence.svg", mu_fig)
@@ -509,10 +509,10 @@ class Simulation:
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
         extent = (screen.x0f * _UM, (screen.x0f + screen.exf) * _UM,
                   screen.y0f * _UM, (screen.y0f + screen.eyf) * _UM)
-        floor = 1.0 / math.sqrt(res["n_modes"])
+        limit = 1.0 / math.sqrt(res["n_modes"])
         sub = (f"{res['n_modes']} modes × {res['n_rays']} rays; transmitted {st['screen']:,}; "
                f"absorbed {st['absorbed']:,}; reflections {st['reflections']:,}")
-        sub_mu = (f"{res['n_modes']} modes × {res['n_rays']} rays; noise floor |μ| ≈ {floor:.2f}; "
+        sub_mu = (f"{res['n_modes']} modes × {res['n_rays']} rays; statistical limit |μ| ≈ {limit:.2f}; "
                   "isolated bright pixels — low statistics")
         if screen.ny > 1:
             mu_fig = render.heatmap(maps["mu"], extent,
@@ -826,14 +826,14 @@ class Simulation:
         n_dub = sum(1 for v in flat(maps["dubious"]) if v > 0)
         errs = [flat(maps["mu_err"])[i] for i in solid]
         med_err = sorted(errs)[len(errs) // 2] if errs else 0.0
-        floor = 1.0 / math.sqrt(res["n_modes"])
+        limit = 1.0 / math.sqrt(res["n_modes"])
         rms6 = None
         if vs is not None and solid:
             a, b = flat(maps["mu"]), flat(vs["maps"]["mu"])
             rms6 = analytic.rms_diff([a[i] for i in solid], [b[i] for i in solid])
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
         sub = (f"{res['n_modes']} modes × {res['n_rays']} rays; "
-               f"σ_jack median {med_err:.3f}; noise floor |μ| ≈ {floor:.2f}; "
+               f"σ_jack median {med_err:.3f}; statistical limit |μ| ≈ {limit:.2f}; "
                f"solid px {len(solid)} of {n_lit} lit")
         if ny > 1:
             extent = (screen.x0f * _UM, (screen.x0f + screen.exf) * _UM,
@@ -864,7 +864,7 @@ class Simulation:
                           "lo": [max(m - e, 0.0) for m, e in zip(row_mu, row_err)],
                           "hi": [min(m + e, 1.0) for m, e in zip(row_mu, row_err)]}]
             err_series = [{"xs": xs_um, "ys": row_err, "label": "σ_jack"},
-                          {"xs": xs_um, "ys": [floor] * nx,
+                          {"xs": xs_um, "ys": [limit] * nx,
                            "label": "1/√N_modes", "dash": "2,3"}]
             if dub_i:
                 xd = [xs_um[i] for i in dub_i]
@@ -923,7 +923,7 @@ class Simulation:
                                     vlines=[(ref_xy[0] * _UM, "ref")], w=760)
             self._save(out_dir, f"{tag}-{scene}-jack-mu.svg", fig)
             err_series = [{"xs": xs_um, "ys": row_err, "label": "σ_jack"},
-                          {"xs": xs_um, "ys": [floor] * nx,
+                          {"xs": xs_um, "ys": [limit] * nx,
                            "label": "1/√N_modes", "dash": "2,3"}]
             if dub_i:
                 err_series.append({"xs": [xs_um[i] for i in dub_i],
@@ -972,18 +972,26 @@ class Simulation:
         if "mu-jack.jsonl" not in self.files:
             self.files.append("mu-jack.jsonl")
         _log("  → mu-jack.jsonl")
-        below = (100.0 * sum(1 for e in errs if e < floor) / len(errs)
+        below = (100.0 * sum(1 for e in errs if e < limit) / len(errs)
                  if errs else 0.0)
+        refl = []
+        if scene != "free":
+            bh = ", ".join(f"{k}×: {v:,}" for k, v in sorted(st["bounce_hist"].items()))
+            mean_b = (st["reflections"] / st["reflected_rays"]
+                      if st["reflected_rays"] else 0.0)
+            refl = [f"- reflections: total {st['reflections']:,}; per ray: {bh or 'none'}; "
+                    f"mean {mean_b:.2f} per reflected ray"]
         self.report += [
             f"## Stage {int(tag)} — jackknife estimator [{scene}]",
             f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen {st['screen']:,} of {st['emitted']:,}",
             f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
+        ] + refl + [
             f"- solid pixels (≥2 same-mode rays, |μ| estimable): {len(solid)} of {n_lit} lit; "
             "the rest are masked to μ = σ_jack = 0",
             f"- don't-trust estimates on solid px (σ_jack > 1, pinned at |μ| = 1 with σ_jack = 0, "
             f"or no usable jackknife): {n_dub} of {len(solid)}",
             f"- σ_jack on solid pixels: median {med_err:.4f}, max {max(errs, default=0.0):.4f}; "
-            f"{below:.0f}% below the 1/√N floor ({floor:.3f})",
+            f"{below:.0f}% below the 1/√N limit ({limit:.3f})",
         ] + ([f"- RMS(|μ|_jack − |μ|_stage6) = {rms6:.2e} (same rays, solid pixels)"]
              if rms6 is not None else []) + [
             f"- time: {res['seconds']:.1f} s",
@@ -1139,12 +1147,12 @@ class Simulation:
         sub = (f"{res['n_modes']} modes × {res['n_rays']} rays, {self._spectrum_note()}, "
                f"x_ref = {ref_xy[0] * _UM:.2f} µm")
         row = screen.ny // 2
-        floor = 1.0 / math.sqrt(res["n_modes"])
+        limit = 1.0 / math.sqrt(res["n_modes"])
         mu_fig = render.line_chart(
             [{"xs": xs_um, "ys": maps["mu"][row], "label": "MC |μ(x, x_ref)|"},
-             {"xs": xs_um, "ys": [floor] * len(xs_um), "color": "#999",
+             {"xs": xs_um, "ys": [limit] * len(xs_um), "color": "#999",
               "dash": "2,4", "width": 1.0,
-              "label": f"noise floor 1/√N modes ≈ {floor:.2f}"}],
+              "label": f"statistical limit 1/√N modes ≈ {limit:.2f}"}],
             "Degree of coherence without optics (pairwise Number)",
             "x on screen, µm", "|μ|", sub,
             vlines=[(ref_xy[0] * _UM, "ref")], w=640)

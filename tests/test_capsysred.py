@@ -705,6 +705,10 @@ def test_stage10_from_file_equals_traced(tmp_path):
     for key in ("mu", "mu_err", "intensity", "density"):
         assert (traced.results["jack:capillary"]["maps"][key]
                 == reused.results["jack:capillary"]["maps"][key]), key
+    st_t = traced.results["jack:capillary"]["stats"]
+    st_r = reused.results["jack:capillary"]["stats"]
+    assert st_t["reflections"] > 0 and st_t["bounce_hist"]
+    assert (st_t["reflections"], st_t["bounce_hist"]) == (st_r["reflections"], st_r["bounce_hist"])
 
 
 def test_rays_file_reused_across_runs(tmp_path):
@@ -741,16 +745,19 @@ def test_rays_gzip_roundtrip(tmp_path):
     assert d6 == sim.results["jack:capillary"]["maps"]["density"]
 
 
-def test_stage6_from_file_equals_traced(tmp_path):
+@pytest.mark.parametrize("gz", [False, True])
+def test_stage6_from_file_equals_traced(tmp_path, gz):
     # stage 10 run first records the capillary scene; a later stage-6 run
     # consumes it — the Number path from full-precision strings must land on
     # the traced maps exactly
-    traced = Simulation.from_dict(TINY)
+    cfg = dict(TINY, trace={"rays_gzip": True}) if gz else TINY
+    traced = Simulation.from_dict(cfg)
     traced.run(str(tmp_path / "a"), stages=[6])
     assert traced.results["capillary"]["rays_from"] == "trace"
-    Simulation.from_dict(TINY).run(str(tmp_path / "b"), stages=[10])
-    reused = Simulation.from_dict(TINY)
+    Simulation.from_dict(cfg).run(str(tmp_path / "b"), stages=[10])
+    reused = Simulation.from_dict(cfg)
     reused.run(str(tmp_path / "b"), stages=[6])
+    assert (tmp_path / "b" / ("rays.jsonl.gz" if gz else "rays.jsonl")).exists()
     assert reused.results["capillary"]["rays_from"] == "file"
     assert traced.results["capillary"]["stats"] == reused.results["capillary"]["stats"]
     for key in ("mu", "intensity", "density"):
