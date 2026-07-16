@@ -23,7 +23,7 @@ import time
 
 from .altcoh import FloatLineAmplitudes
 from .progress import Progress
-from .rays import scene_stream
+from .rays import rescreen, scene_stream
 from .screen import ScreenGrid
 
 
@@ -136,17 +136,21 @@ class JackknifeCoherence:
 
 
 def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
-                   seed_offset: int, quick: int):
+                   seed_offset: int, quick: int, screen_cfg=None):
     """The stage-6 estimator over the scene's ray records — from the shared
-    rays file when it matches, else traced (the stage-2/6 rng stream)."""
+    rays file when it matches, else traced (the stage-2/6 rng stream).
+    screen_cfg re-bins the scr_cfg-plane records onto another screen."""
     cfg = sim.cfg
-    screen = ScreenGrid(scr_cfg)
+    target = screen_cfg or scr_cfg
+    screen = ScreenGrid(target)
     n_modes = max(2, src_cfg.n_modes // quick)
     n_rays = max(20, src_cfg.n_rays // quick)
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
-    jack = JackknifeCoherence(sim.lines, screen.ref_pixel(scr_cfg.reference))
+    jack = JackknifeCoherence(sim.lines, screen.ref_pixel(target.reference))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
                                       aim_factory, seed_offset, quick)
+    if screen_cfg is not None:
+        records = rescreen(records, float(scr_cfg.z), screen)
     stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
              "off_window": 0, "reflected_rays": 0, "reflections": 0,
              "bounce_hist": {}}

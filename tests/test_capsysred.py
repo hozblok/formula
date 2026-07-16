@@ -765,6 +765,48 @@ def test_stage6_from_file_equals_traced(tmp_path, gz):
                 == reused.results["capillary"]["maps"][key]), key
 
 
+def test_stage10_extra_screens(tmp_path):
+    # extra screens re-bin the same trace: the z-identical extra reproduces
+    # the canonical maps exactly, the downstream plane still catches rays
+    cap = dict(TINY["capillary"],
+               screens=[{}, {"z": 0.08, "edge_x": 6.4e-5, "edge_y": 6.4e-5}])
+    sim = Simulation.from_dict({**TINY, "capillary": cap})
+    result = sim.run(str(tmp_path), stages=[10])
+    base = sim.results["jack:capillary"]
+    same, far = sim.results["jack:capillary-s1"], sim.results["jack:capillary-s2"]
+    assert same["rays_from"] == "file" and far["rays_from"] == "file"
+    for key in ("mu", "mu_err", "intensity", "density"):
+        assert same["maps"][key] == base["maps"][key], key
+    assert far["stats"]["screen"] > 0
+    assert {"10-capillary-s1-jack-mu.svg",
+            "10-capillary-s2-jack-mu.svg"} <= set(result["files"])
+
+
+def test_rays_file_survives_added_screens(tmp_path):
+    # extra screens are post-trace re-binning: the fingerprint ignores them
+    Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+    cap = dict(TINY["capillary"], screens=[{"z": 0.08}])
+    sim = Simulation.from_dict({**TINY, "capillary": cap})
+    sim.run(str(tmp_path), stages=[10])
+    assert sim.results["jack:capillary"]["rays_from"] == "file"
+    assert sim.results["jack:capillary-s1"]["rays_from"] == "file"
+
+
+def test_stage1_one_scheme_shows_extra_screens(tmp_path):
+    cap = dict(TINY["capillary"], screens=[{"z": 0.08}])
+    result = Simulation.from_dict({**TINY, "capillary": cap}).run(
+        str(tmp_path), stages=[1])
+    schemes = sorted(f for f in result["files"] if "scheme" in f)
+    assert schemes == ["01-scheme.svg", "01a-scheme-traced.svg"]
+    assert "screen 1" in (tmp_path / "01a-scheme-traced.svg").read_text()
+
+
+def test_extra_screen_inside_optic_rejected():
+    cap = dict(TINY["capillary"], screens=[{"z": 0.01}])
+    with pytest.raises(ValueError, match="screens"):
+        Simulation.from_dict({**TINY, "capillary": cap})
+
+
 def test_gamma_free_drift_reduces_to_scalar_q():
     # no bounces: Q = (q0+L)*I, no coupling, amplitude = q0/q (w0/w, Gouy)
     import cmath

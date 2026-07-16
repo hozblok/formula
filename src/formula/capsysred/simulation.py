@@ -275,6 +275,9 @@ class Simulation:
                 f"Lloyd: r₀ = {_um(cfg.lloyd.height)}, mirror z ∈ [{_mm(cfg.lloyd.z0)}, {_mm(cfg.lloyd.z1)}], source {_um(cfg.lloyd.source.size)}.",
             ],
         }
+        if cap.screens:
+            info["screen_label"].append(
+                "+" + ", ".join(f"z = {_mm(s.z)}" for s in cap.screens))
         self._save(out_dir, "01-scheme.svg", render.scheme_setup(info))
         # to-scale twin: real geometry, 10 traced rays, dimensioned axes
         G = schematic.build_geometry(cfg, "capillary")
@@ -813,11 +816,23 @@ class Simulation:
         self.results["jack:capillary"] = res
         self._jack_outputs(out_dir, "10", "capillary", res,
                            vs=self.results.get("capillary"))
+        # extra screens: the same records re-binned onto each plane
+        for i, scr in enumerate(cap.screens, 1):
+            res_i = run_jack_stage(self, f"10 jackknife capillary s{i} (MC)",
+                                   "capillary", cap.source, cap.screen, bundle,
+                                   self._aim_capillary, 4, quick,
+                                   screen_cfg=scr)
+            self.results[f"jack:capillary-s{i}"] = res_i
+            self._jack_outputs(out_dir, "10", f"capillary-s{i}", res_i,
+                               note=f"screen {i}: z = {_mm(scr.z)}, "
+                                    f"window {_um(scr.edge_x)} × {_um(scr.edge_y)}, "
+                                    f"{scr.nx}×{scr.ny} px")
         return res
 
-    def _jack_outputs(self, out_dir, tag, scene, res, vs=None):
+    def _jack_outputs(self, out_dir, tag, scene, res, vs=None, note=None):
         """Jackknife scene outputs shared by stages 2 and 10: figures, report
-        section, mu-jack.jsonl rows; vs = same-rays stage-6 result for Δμ."""
+        section, mu-jack.jsonl rows; vs = same-rays stage-6 result for Δμ;
+        note = extra-screen geometry line for the report."""
         maps, screen, st = res["maps"], res["screen"], res["stats"]
         nx, ny = screen.nx, screen.ny
         flat = lambda grid: [v for row in grid for v in row]
@@ -983,6 +998,7 @@ class Simulation:
                     f"mean {mean_b:.2f} per reflected ray"]
         self.report += [
             f"## Stage {int(tag)} — jackknife estimator [{scene}]",
+        ] + ([f"- {note}"] if note else []) + [
             f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen {st['screen']:,} of {st['emitted']:,}",
             f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
         ] + refl + [

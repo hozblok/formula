@@ -31,9 +31,12 @@ FORMAT = 2
 
 def fingerprint(cfg) -> str:
     """Geometry-only config fingerprint: spectrum/material changes keep the
-    file valid (rays are energy-free), geometry/seed changes invalidate it."""
+    file valid (rays are energy-free), geometry/seed changes invalidate it.
+    Extra capillary screens are re-binned post-trace, so they don't count."""
     geo = {k: cfg.raw[k] for k in ("seed", "precision", "source", "screen",
                                    "free", "lloyd", "capillary")}
+    geo["capillary"] = {k: v for k, v in geo["capillary"].items()
+                        if k != "screens"}
     geo["max_bounces"] = cfg.max_bounces
     geo["engine_method"] = cfg.engine_method
     raw = json.dumps(geo, sort_keys=True, default=str).encode()
@@ -153,6 +156,25 @@ def _file_records(path, scene):
         yield RayRecord(row["mode"], row["ray"], row["fate"], row["pixel"],
                         point, direction, row["opl"], tuple(row["sins"]),
                         tuple(tuple(p) for p in row.get("refl", ())))
+
+
+def rescreen(records, z0f: float, grid):
+    """Screen-fate records re-projected from the plane z0 onto grid's plane:
+    straight vacuum flight, pixel re-binned, opl extended in float64."""
+    zf = float(grid.z)
+    for rec in records:
+        if rec.fate != "screen":
+            yield rec
+            continue
+        dxf, dyf, dzf = (float(c) for c in rec.direction)
+        if dzf <= 0.0:               # never reaches another plane
+            yield rec._replace(pixel=None)
+            continue
+        s = (zf - z0f) / dzf
+        x = float(rec.point[0]) + dxf * s
+        y = float(rec.point[1]) + dyf * s
+        yield rec._replace(point=(x, y, zf), direction=(dxf, dyf, dzf),
+                           pixel=grid.pixel((x, y)), opl=float(rec.opl) + s)
 
 
 def _traced_records(sim, scene, src_cfg, scr_cfg, optic, aim_factory,

@@ -214,6 +214,9 @@ def build_geometry(cfg, mode: str, bores=None):
                 "hx": float(scr.edge_x) / 2, "hy": float(scr.edge_y) / 2,
                 "nx": scr.nx, "ny": scr.ny,
                 "ref": scr.reference[0] if scr.reference else None}
+    G["scr_extra"] = [{"z": float(s.z), "cx": float(s.center[0]),
+                       "hx": float(s.edge_x) / 2}
+                      for s in (cfg.capillary.screens if mode == "capillary" else ())]
     G["cfg_src"], G["cfg_scr"] = src, scr
     G["rays"] = trace_rays(G, p, n=cfg.schematic_rays)
     return G
@@ -232,7 +235,8 @@ def trace_rays(G, p, n=N_RAYS, seed=7):
         mb = int(G["cfg"].max_bounces)
     else:
         mb = int(G["cfg"].max_bounces) if mode == "lloyd" else 4
-    screen_z = lift(scr["z"], p)
+    # rays fly on to the farthest screen so every plane is crossed on the scheme
+    screen_z = lift(max([scr["z"]] + [s["z"] for s in G["scr_extra"]]), p)
     rays = []
     for i in range(n):
         if src["shape"] == "point" or src["size"] <= 0:
@@ -293,12 +297,15 @@ class View:
 def side_view(G):
     mode = G["mode"]
     src, scr = G["src"], G["scr"]
-    za, zb = src["z"], scr["z"]
+    za = src["z"]
+    zb = max([scr["z"]] + [s["z"] for s in G["scr_extra"]])
     zpad = 0.03 * (zb - za)
     zr = (za - zpad, zb + zpad)
     # x extent from the features only (source, optic, window); stray rays clip
     xs = [src["x"] - src["size"], src["x"] + src["size"],
           scr["cx"] - scr["hx"], scr["cx"] + scr["hx"]]
+    for s in G["scr_extra"]:
+        xs += [s["cx"] - s["hx"], s["cx"] + s["hx"]]
     if mode == "lloyd":
         xs += [0.0, G["height"], -G["height"]]
     if mode == "capillary":
@@ -428,6 +435,12 @@ def draw_screen(G, v, box):
         ry = v.py(scr["ref"])
         e.append(CIRC(px, ry, 3.5, "none", "#d62728", 1.4))
         e.append(T(px - 8, ry + 4, "P_ref", 10, "end", "#d62728"))
+    for i, s in enumerate(G["scr_extra"], 1):
+        pxs = v.px(s["z"])
+        lo, hi = v.py(s["cx"] - s["hx"]), v.py(s["cx"] + s["hx"])
+        e.append(L(pxs, max(box[1], hi), pxs, min(box[3], lo), BLUE, 2.0, "7,4"))
+        e.append(T(pxs - 4, box[1] - 6, f"screen {i}", 11.5, "end", BLUE))
+        e.append(T(pxs - 4, box[1] + 9, "z = " + eng(s["z"]), 10, "end", BLUE))
     return e
 
 

@@ -254,7 +254,15 @@ class CapillaryCfg:
         self.z1 = Number(str(raw["z1"]), p)
         self.bores = [_bore(b, p, i) for i, b in enumerate(raw["bores"])]
         self.source = SourceCfg(_merge(base_source, raw.get("source", {})), p)
-        self.screen = ScreenCfg(_merge(base_screen, raw.get("screen", {})), p)
+        base = _merge(base_screen, raw.get("screen", {}))
+        self.screen = ScreenCfg(base, p)
+        # extra screens (stage 10): re-binned from the same trace, each merged
+        # onto the main capillary screen; must sit past the exit (straight flight)
+        self.screens = [ScreenCfg(_merge(base, s), p) for s in raw.get("screens", ())]
+        for i, s in enumerate(self.screens):
+            if float(s.z) < float(self.z1):
+                raise ValueError(f"capillary screens[{i}]: z = {float(s.z)} "
+                                 f"is inside the optic (z1 = {float(self.z1)})")
 
 
 class Config:
