@@ -22,6 +22,7 @@ import time
 
 from .altcoh import FloatLineAmplitudes
 from .gamma import EXACT_KINDS, bounce_lenses, inv2, propagate
+from .native import make_beamlet_grid
 from .progress import Progress
 from .rays import scene_stream
 from .screen import ScreenGrid
@@ -31,7 +32,7 @@ class BeamletField:
     """Per-mode complex beamlet fields per spectral line; honest mu totals."""
 
     def __init__(self, lines, screen: ScreenGrid, ref_pixel: int,
-                 w0: float, n_sigmas: float, optic=None):
+                 w0: float, n_sigmas: float, optic=None, use_native=True):
         self.kms = [float(l.k) for l in lines]
         self.wfs = [l.weight for l in lines]
         self.nl = len(self.kms)
@@ -53,10 +54,18 @@ class BeamletField:
         self.density = {}   # pixel -> ray count (arrival-point bin)
         self.w_sum, self.w_n = 0.0, 0   # mean spot width at screen (line 0)
         self.gamma_bad = 0  # deposits skipped: Im(G) lost negative-definiteness
+        self.native = (make_beamlet_grid(screen.nx, screen.ny,
+                                         screen.x0f, screen.y0f,
+                                         screen.exf, screen.eyf,
+                                         self.kms, self.zrs, n_sigmas)
+                       if use_native else None)
         self._g = None
 
     def new_mode(self):
-        self._g = [{} for _ in range(self.nl)]
+        if self.native is not None:
+            self.native.clear()
+        else:
+            self._g = [{} for _ in range(self.nl)]
 
     def add_ray(self, rec, amps):
         """Deposit one beamlet; rec.pixel None = tail only (the center lies
@@ -79,6 +88,15 @@ class BeamletField:
                                    [float(s) for s in rec.sins])
         else:
             segs, lenses = [opl], []
+        if self.native is not None:
+            w_spot, bad = self.native.add_ray(
+                x, y, dxf, dyf, opl, segs,
+                [v for lens in lenses for v in lens], list(amps))
+            self.gamma_bad += bad
+            if w_spot >= 0.0:
+                self.w_sum += w_spot
+                self.w_n += 1
+            return
         for m in range(self.nl):
             km = self.kms[m]
             q, a_geo = propagate(self.zrs[m], segs, lenses)
@@ -122,10 +140,17 @@ class BeamletField:
 
     def fold_mode(self):
         for m in range(self.nl):
-            g, wf = self._g[m], self.wfs[m]
-            g_ref = g.get(self.ref)
-            ref_c = g_ref.conjugate() if g_ref is not None else None
-            for pixel, value in g.items():
+            wf = self.wfs[m]
+            if self.native is not None:
+                items = self.native.items(m)
+                g_ref = self.native.at(m, self.ref)
+                ref_c = g_ref.conjugate() if g_ref != 0 else None
+            else:
+                g = self._g[m]
+                items = g.items()
+                g_ref = g.get(self.ref)
+                ref_c = g_ref.conjugate() if g_ref is not None else None
+            for pixel, value in items:
                 a2 = value.real * value.real + value.imag * value.imag
                 self.I[pixel] = self.I.get(pixel, 0.0) + wf * a2
                 if ref_c is not None:

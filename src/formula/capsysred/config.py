@@ -60,15 +60,15 @@ DEFAULTS = {
         "source": {"size": 3.0e-7, "position": [0.0, 0.0, -0.01], "n_modes": 80, "n_rays": 1000},
         "screen": {"z": 0.051, "edge_x": 1.6e-5, "edge_y": 1.6e-5, "nx": 41, "ny": 41},
     },
-    # rays_jsonl: full-precision per-ray records (replay input); sample_every:
-    # write every k-th ray. Records/multi-line runs trace with the amplitude_min
-    # kill off (E0-truncation would bias other energies) and apply the threshold
-    # after the per-line amplitudes are known.
+    # rays_jsonl: full-precision per-ray records (replay input), gzipped when
+    # rays_gzip; sample_every: write every k-th ray. Records/multi-line runs
+    # trace with the amplitude_min kill off (E0-truncation would bias other
+    # energies) and apply the threshold after the per-line amplitudes are known.
     # engine_method: RaySurface root finder for `surface:` bores and the hit
     # cross-checks — subdivision (default: grazing-safe, any F) | sturm (exact,
     # polynomial F only) | chebyshev | sampling | auto.
     "trace": {"max_bounces": 200, "amplitude_min": 1.0e-6,
-              "rays_jsonl": True, "rays_gzip": False, "sample_every": 1,
+              "rays_jsonl": True, "rays_gzip": True, "sample_every": 1,
               "engine_method": "subdivision"},
     # stage 1: rays traced onto the to-scale schematic (01a-scheme-traced.svg)
     "schematic": {"n_rays": 10},

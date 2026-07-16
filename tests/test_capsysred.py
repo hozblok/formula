@@ -30,6 +30,7 @@ TINY = {
         "source": {"n_modes": 3, "n_rays": 40},
         "screen": {"nx": 9, "ny": 9},
     },
+    "trace": {"rays_gzip": False},   # plain rays.jsonl, readable by the asserts
 }
 
 
@@ -213,7 +214,8 @@ def test_rays_jsonl_records(tmp_path):
 
 
 def test_sample_every_thins_records(tmp_path):
-    sim = Simulation.from_dict(dict(TINY, trace={"sample_every": 3}))
+    sim = Simulation.from_dict(
+        dict(TINY, trace={"sample_every": 3, "rays_gzip": False}))
     sim.run(str(tmp_path), stages=[4])
     rows = [row for row in (tmp_path / "rays.jsonl").read_text().splitlines()
             if "scene_end" not in row and "format" not in row]
@@ -724,6 +726,33 @@ def test_rays_file_reused_across_runs(tmp_path):
     assert clean and set(done) == {"capillary", "free"}
 
 
+def test_trace_command_records_all_scenes(tmp_path):
+    # --trace records every scene; a stage run with the same config and out
+    # dir consumes the file, a second trace skips everything
+    from formula.capsysred.rays import scan
+    result = Simulation.from_dict(TINY).trace(str(tmp_path))
+    assert result["files"] == ["rays.jsonl"]
+    meta, done, clean = scan(str(tmp_path / "rays.jsonl"))
+    assert clean and set(done) == {"free", "lloyd", "capillary"}
+    sim = Simulation.from_dict(TINY)
+    sim.run(str(tmp_path), stages=[2, 4, 6])
+    for scene in ("free", "lloyd", "capillary"):
+        assert sim.results[scene]["rays_from"] == "file", scene
+    Simulation.from_dict(TINY).trace(str(tmp_path))
+    assert scan(str(tmp_path / "rays.jsonl"))[1] == done
+
+
+def test_trace_command_gzip_default(tmp_path):
+    # rays_jsonl and rays_gzip default to true: trace writes rays.jsonl.gz,
+    # and replay reads the gzipped record transparently
+    cfg = {k: v for k, v in TINY.items() if k != "trace"}
+    result = Simulation.from_dict(cfg).trace(str(tmp_path))
+    assert result["files"] == ["rays.jsonl.gz"]
+    sim = Simulation.from_dict(cfg)
+    sim.replay(str(tmp_path / "rays.jsonl.gz"), str(tmp_path / "replay"))
+    assert sim.results["replay:lloyd"]["stats"]["rays"] > 0
+
+
 def test_rays_file_rejected_on_geometry_change(tmp_path):
     # a bore-length change flips the geometry fingerprint: the stale file is
     # rejected and rewritten, the stage traces
@@ -930,3 +959,48 @@ def test_stage11_funnel_bore_runs(tmp_path):
     assert max(max(r) for r in maps["mu"]) <= 1.0 + 1e-9
     for row in maps["intensity"]:
         assert all(math.isfinite(v) and v >= 0.0 for v in row)
+
+
+def test_beamlet_native_deposit_matches_python():
+    # the C++ BeamletGrid mirrors the Python window loop op-for-op: same
+    # records, native on/off -> the same maps to float64 roundoff
+    from types import SimpleNamespace
+    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.native import make_beamlet_grid
+    from formula.capsysred.screen import ScreenGrid
+    from formula.capsysred.types import RayRecord
+
+    if make_beamlet_grid(1, 1, 0.0, 0.0, 1.0, 1.0, [1.0], [1.0], 3.0) is None:
+        pytest.skip("BeamletGrid missing from the built .so")
+    lines = spectral_lines({"mode": "gaussian", "rel_fwhm": 1.0e-3,
+                            "n_lines": 3, "n_sigma": 2.0}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=0.06, nx=21, ny=5, center=[0.0, 0.0],
+                                     edge_x=1.2e-5, edge_y=6.0e-6))
+    rays = [
+        (0.0, 0.0, 0.0, 0.0, 0.06, ()),
+        (2.0e-6, 1.0e-6, 5.0e-5, -3.0e-5, 0.0612, ((1.0e-6, 0.0, 0.03),)),
+        (-3.0e-6, -2.0e-6, -1.0e-4, 2.0e-5, 0.0605,
+         ((2.0e-6, 1.0e-6, 0.02), (-1.0e-6, 5.0e-7, 0.045))),
+    ]
+    maps = []
+    for use_native in (True, False):
+        field = BeamletField(lines, scr, 52, 5.0e-7, 3.0, None,
+                             use_native=use_native)
+        assert (field.native is not None) == use_native
+        field.new_mode()
+        for i, (x, y, dx, dy, opl, refl) in enumerate(rays):
+            rec = RayRecord(0, i, "screen", scr.pixel((x, y)), (x, y, 0.06),
+                            (dx, dy, 1.0), opl,
+                            tuple(1.0e-3 * (j + 1) for j in range(len(refl))),
+                            refl)
+            field.add_ray(rec, [1.0 + 0.5j] * len(lines))
+        field.fold_mode()
+        maps.append(field.finalize(21, 5))
+    nat, ref = maps
+    imax = max(max(r) for r in ref["intensity"])
+    for key in ("mu", "intensity"):
+        scale = 1.0 if key == "mu" else imax
+        diff = max(abs(a - b) for ra, rb in zip(nat[key], ref[key])
+                   for a, b in zip(ra, rb))
+        assert diff <= 1e-12 * scale, key
+    assert nat["density"] == ref["density"]

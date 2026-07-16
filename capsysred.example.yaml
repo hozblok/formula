@@ -1,0 +1,102 @@
+# Example CAPSYSred config (all fields optional — these are the built-in defaults).
+# Run:  PYTHONPATH=src python3 -m formula.capsysred capsysred.example.yaml -o out/
+# Stages 1-6 run by default; 7-12 are opt-in via --stages (see the report sections).
+# Lengths in meters, angles in radians, energy in keV.
+# Wall material is fused silica (built in): n = 1 − δ − i·β.
+
+precision: 32          # digits of arbitrary precision (Number/Solver)
+# precision_target: 30 # certified digits: stage-9 match tolerance 1e-target; default
+                       # = precision − 2 − wall conditioning loss (torus/funnel bores)
+seed: 12345
+energy_kev: 8.0
+
+spectrum:
+  mode: monochromatic  # monochromatic | gaussian | lines | table
+  per_line_fresnel: true # r(E_m) at each line; false — frozen r(E₀)
+  # mode: gaussian     # temporal coherence: band of n_lines lines
+  # rel_fwhm: 2.0e-4
+  # n_lines: 7
+  # n_sigma: 3.0       # band half-width in sigmas
+  # lines: [{energy_kev: 8.04, weight: 1.0}, {energy_kev: 8.91, weight: 0.13}]
+  # mode: table        # arbitrary spectrum from file: columns "E_keV weight"
+  # file: spectrum.txt
+
+source:                # global source: incoherent point modes
+  shape: gaussian      # point | gaussian (size = sigma) | disk (size = radius)
+  size: 2.1e-6
+  position: [0.0, 0.0, -0.08]
+  n_modes: 100         # modes (source realizations)
+  n_rays: 800          # rays per mode
+
+screen:                # global screen
+  z: 0.06
+  center: [0.0, 0.0]
+  edge_x: 1.2e-5
+  edge_y: 2.0e-6       # ny=1 — thin strip: phase spread k·y²/2D per pixel ≪ 1 rad
+  nx: 121
+  ny: 1                # ny=1 — strip along x (profiles); ny>1 — 2D maps
+  reference: null      # reference point P_ref, [x, y]; null — window center
+
+free: {}               # stages 2-3 (and 7, 8, 11, 12): source/screen overrides
+
+lloyd:                 # stages 4-5: single wall (Lloyd's mirror experiment)
+  height: 1.0e-5       # r0 — source height above the mirror plane x=0
+  z0: 0.0              # mirror extent in z
+  z1: 0.06
+  source: {size: 1.5e-7, n_modes: 80, n_rays: 900}
+  screen: {center: [6.0e-6, 0.0], edge_x: 1.2e-5, nx: 161}
+
+capillary:             # stage 6 and the opt-in estimator stages 7, 8, 10, 11
+  bores:               # parallel bores (polycapillary — several entries), each ONE of:
+    - {center: [0.0, 0.0], radius: 6.0e-6}   # cylinder
+    # - {center: [...], radius: a, bend: {radius: R, toward: [1.0, 0.0]}}
+    #     bent bore: the axis is an arc of radius R curving toward `toward`
+    # - {center: [...], radius: a, sides: 6, rotation_deg: 0}
+    #     regular-polygon bore (flat faces); radius = apothem
+    # - {center: [...], radius: a, funnel: {g: [ag, bg], f: [af, bf]}}
+    #     conformal bundle (Liu wall): axis center·g(z), radius a·f(z), with
+    #     g = 1 + ag·(z−z0) + bg·(z−z0)² (per m, m²); f defaults to g
+    # - {center: [...], r2_poly: [c0, c1, c2]}
+    #     surface of revolution x'²+y'² = c0+c1·z+c2·z² (cone/ellipsoid/paraboloid)
+    # - {center: [...], surface: "x^2+y^2-36", aim_radius: 6.0e-6}
+    #     arbitrary implicit wall F(x,y,z)=0 (µm units, F<0 inside) traced by the
+    #     RaySurface engine per bounce: exact but slow — small budgets only
+  z0: 0.0
+  z1: 0.05
+  source: {size: 3.0e-7, position: [0.0, 0.0, -0.01], n_modes: 80, n_rays: 1000}
+  screen: {z: 0.051, edge_x: 1.6e-5, edge_y: 1.6e-5, nx: 41, ny: 41}
+  # screens: [{z: 0.08}, {z: 0.12, edge_x: 3.2e-5}]
+  #     extra stage-10 planes past the exit, re-binned from the same trace
+  #     (no re-tracing); each merges onto `screen`, own figures/report section
+
+trace:
+  max_bounces: 200
+  amplitude_min: 1.0e-6   # ray dies once |prod r| drops below threshold; with ray
+                          # recording/multi-E the threshold applies after tracing
+                          # (a ray is killed only if dead at every line)
+  rays_jsonl: true        # full-precision ray records shared by the stages;
+  rays_gzip: true         # replay input; gzipped (rays.jsonl.gz) by default
+  sample_every: 1         # write every k-th ray (k>1 disables in-run reuse)
+  engine_method: subdivision  # RaySurface root finder for `surface:` bores and the
+                              # hit cross-checks: subdivision (grazing-safe, any F)
+                              # | sturm (exact, polynomial F only) | chebyshev
+                              # | sampling | auto
+
+# schematic:             # stage 1: to-scale traced scheme (01a-scheme-traced.svg)
+#   n_rays: 10           # rays drawn on it
+
+# sketch:                # stage 8 (opt-in, --stages 8): streaming sketch of W
+#   rank: 96             # probe vectors (r ~ n99 modes)
+
+# validate:              # stage 9 (opt-in, --stages 9): hit-method cross-validation —
+#   n_rays: 5000         # first wall hit by python / C++ / implicit subdivision
+
+# beamlet:               # stage 11 (opt-in, --stages 11): Gaussian-beamlet estimator
+#   w0: 5.0e-7           # launch waist [m]
+#   window_sigmas: 3.0   # deposit window radius in beam widths
+
+# Trace only (record every scene, no stages); later runs with the same config,
+# output directory and --quick reuse the file instead of tracing:
+#   python3 -m formula.capsysred config.yaml -o out --trace
+# Re-evaluate recorded rays with a different spectrum/material without tracing:
+#   python3 -m formula.capsysred other.yaml -o out2 --replay out/rays.jsonl.gz

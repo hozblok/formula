@@ -1,5 +1,5 @@
 """CLI: python3 -m formula.capsysred [config.yaml] -o out/ [--stages 4,5] [--quick N]
-[--replay rays.jsonl]"""
+[--trace] [--replay rays.jsonl]"""
 
 import argparse
 import sys
@@ -21,6 +21,10 @@ def main(argv=None) -> int:
                              "3 requires 2, 5 requires 4 — added automatically)")
     parser.add_argument("--quick", type=int, default=1, metavar="N",
                         help="divisor for the mode/ray counts for a quick estimate")
+    parser.add_argument("--trace", action="store_true",
+                        help="trace-only: record every scene into the rays file and "
+                             "exit; a later run with the same config, output "
+                             "directory and --quick reuses it instead of tracing")
     parser.add_argument("--replay", metavar="RAYS_JSONL", default=None,
                         help="re-evaluate recorded rays on the spectrum/material from "
                              "the config, without tracing")
@@ -36,6 +40,7 @@ def main(argv=None) -> int:
     sim = (Simulation.from_yaml(args.config) if args.config
            else Simulation.from_dict({}))
     result = (sim.replay(args.replay, args.out) if args.replay
+              else sim.trace(args.out, quick=max(1, args.quick)) if args.trace
               else sim.run(args.out, stages=stages, quick=max(1, args.quick)))
     print(f"{result['out_dir']}: " + ", ".join(result["files"]))
     return 0

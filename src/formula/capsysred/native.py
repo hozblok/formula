@@ -114,3 +114,11 @@ def make_tracer(optic):
         return trace_ray_native(native, origin, direction, screen_z,
                                 max_bounces)
     return tracer
+
+
+def make_beamlet_grid(nx, ny, x0, y0, ex, ey, kms, zrs, ns):
+    """Native stage-11 deposit grids (propagate + window loop per ray); None
+    when the .so predates BeamletGrid — the Python path is the reference and
+    the fallback."""
+    cls = getattr(_formula, "BeamletGrid", None)
+    return None if cls is None else cls(nx, ny, x0, y0, ex, ey, kms, zrs, ns)

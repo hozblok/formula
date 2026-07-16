@@ -129,9 +129,176 @@ const typename cstrace::Tracer<P>::Bundle &bundle_of(const NativeOptic &nat) {
   return *b;
 }
 
+// Stage-11 beamlet deposit: the hot window loop of BeamletField.add_ray,
+// pure double (the beamlet field is float64 physics by design — no mp_real,
+// no precision dispatch). One dense complex grid per spectral line.
+class BeamletGrid {
+ public:
+  BeamletGrid(long nx, long ny, double x0, double y0, double ex, double ey,
+              std::vector<double> kms, std::vector<double> zrs, double ns)
+      : nx_(nx),
+        ny_(ny),
+        x0_(x0),
+        y0_(y0),
+        ex_(ex),
+        ey_(ey),
+        dx_(ex / nx),
+        dy_(ey / ny),
+        ns_(ns),
+        kms_(std::move(kms)),
+        zrs_(std::move(zrs)),
+        g_(kms_.size(), std::vector<std::complex<double>>(size_t(nx) * ny)) {}
+
+  void clear() {
+    for (auto &g : g_) {
+      std::fill(g.begin(), g.end(), std::complex<double>(0.0, 0.0));
+    }
+  }
+
+  // Mirrors the Python window loop op-for-op (pixel centers included):
+  // envelope exp((k/2)*d^T Im(G) d), phase tilt + (k/2)*d^T Re(G) d.
+  void add(size_t m, double x, double y, std::complex<double> pref, double tx,
+           double ty, std::complex<double> hxx, std::complex<double> hxy,
+           std::complex<double> hyy, double r) {
+    const long ix_lo = std::max(0L, long(std::floor((x - r - x0_) / dx_)));
+    const long ix_hi = std::min(nx_ - 1, long(std::floor((x + r - x0_) / dx_)));
+    const long iy_lo = std::max(0L, long(std::floor((y - r - y0_) / dy_)));
+    const long iy_hi = std::min(ny_ - 1, long(std::floor((y + r - y0_) / dy_)));
+    if (ix_lo > ix_hi || iy_lo > iy_hi) {
+      return;
+    }
+    auto &g = g_.at(m);
+    for (long iy = iy_lo; iy <= iy_hi; ++iy) {
+      const double dy_off = y0_ + (iy + 0.5) * ey_ / ny_ - y;
+      const std::complex<double> cy = hyy * (dy_off * dy_off);
+      const double phase_y = ty * dy_off;
+      std::complex<double> *row = g.data() + size_t(iy) * nx_;
+      for (long ix = ix_lo; ix <= ix_hi; ++ix) {
+        const double dx_off = x0_ + (ix + 0.5) * ex_ / nx_ - x;
+        const std::complex<double> quad =
+            hxx * (dx_off * dx_off) + 2.0 * hxy * (dx_off * dy_off) + cy;
+        row[ix] += pref * std::exp(std::complex<double>(
+                              quad.imag(),
+                              quad.real() + tx * dx_off + phase_y));
+      }
+    }
+  }
+
+  // Whole-ray deposit: gamma.propagate + the spot per line, one call per
+  // ray. lenses is flat [(phi, 1/f_t, 1/f_s), ...]; returns (spot width of
+  // line 0, geometric mean of the axes; -1 when skipped) and the number of
+  // lines whose Im(G) lost negative-definiteness (not deposited).
+  py::tuple add_ray(double x, double y, double dxf, double dyf, double opl,
+                    const std::vector<double> &segs,
+                    const std::vector<double> &lenses,
+                    const std::vector<std::complex<double>> &amps) {
+    const size_t n_lens = lenses.size() / 3;
+    double w_spot = -1.0;
+    long bad = 0;
+    for (size_t m = 0; m < kms_.size(); ++m) {
+      const double km = kms_[m];
+      // gamma.propagate, op-for-op (nsub = 2, principal sqrt per sub-step)
+      std::complex<double> qxx(0.0, zrs_[m]), qxy(0.0, 0.0), qyy(0.0, zrs_[m]);
+      std::complex<double> a_geo(1.0, 0.0);
+      for (size_t j = 0; j < segs.size(); ++j) {
+        const double step = segs[j] / 2;
+        for (int sub = 0; sub < 2; ++sub) {
+          const std::complex<double> pre = qxx * qyy - qxy * qxy;
+          qxx += step;
+          qyy += step;
+          a_geo *= std::sqrt(pre / (qxx * qyy - qxy * qxy));
+        }
+        if (j < n_lens) {
+          const double phi = lenses[3 * j], ift = lenses[3 * j + 1],
+                       ifs = lenses[3 * j + 2];
+          if (ift == 0.0 && ifs == 0.0) {
+            continue;
+          }
+          const double c = std::cos(phi), sn = std::sin(phi);
+          const double pxx = ift * c * c + ifs * sn * sn;
+          const double pxy = (ift - ifs) * c * sn;
+          const double pyy = ift * sn * sn + ifs * c * c;
+          std::complex<double> det = qxx * qyy - qxy * qxy;
+          const std::complex<double> gxx = qyy / det - pxx;
+          const std::complex<double> gxy = -qxy / det - pxy;
+          const std::complex<double> gyy = qxx / det - pyy;
+          det = gxx * gyy - gxy * gxy;
+          qxx = gyy / det;
+          qxy = -gxy / det;
+          qyy = gxx / det;
+        }
+      }
+      const std::complex<double> det = qxx * qyy - qxy * qxy;
+      const std::complex<double> gxx = qyy / det;
+      const std::complex<double> gxy = -qxy / det;
+      const std::complex<double> gyy = qxx / det;
+      const double mean = 0.5 * (gxx.imag() + gyy.imag());
+      const double dev =
+          std::hypot(0.5 * (gxx.imag() - gyy.imag()), gxy.imag());
+      if (mean + dev >= 0.0) {   // beam blew up: no Gaussian to deposit
+        ++bad;
+        continue;
+      }
+      const double w_hi = std::sqrt(-2.0 / (km * (mean + dev)));
+      if (m == 0) {
+        const double w_lo = std::sqrt(-2.0 / (km * (mean - dev)));
+        w_spot = std::sqrt(w_hi * w_lo);
+      }
+      const std::complex<double> pref =
+          amps[m] * std::conj(a_geo) *
+          std::exp(std::complex<double>(0.0, km * opl));
+      add(m, x, y, pref, km * dxf, km * dyf, 0.5 * km * gxx, 0.5 * km * gxy,
+          0.5 * km * gyy, ns_ * w_hi);
+    }
+    return py::make_tuple(w_spot, bad);
+  }
+
+  std::complex<double> at(size_t m, long pixel) const {
+    return g_.at(m).at(size_t(pixel));
+  }
+
+  py::list items(size_t m) const {
+    py::list out;
+    const auto &g = g_.at(m);
+    const std::complex<double> zero(0.0, 0.0);
+    for (size_t p = 0; p < g.size(); ++p) {
+      if (g[p] != zero) {
+        out.append(py::make_tuple(long(p), g[p]));
+      }
+    }
+    return out;
+  }
+
+ private:
+  long nx_, ny_;
+  double x0_, y0_, ex_, ey_, dx_, dy_, ns_;
+  std::vector<double> kms_, zrs_;
+  std::vector<std::vector<std::complex<double>>> g_;
+};
+
 }  // namespace
 
 void register_trace(py::module_ &m) {
+  py::class_<BeamletGrid>(m, "BeamletGrid",
+                          "Stage-11 beamlet deposit grids (one per spectral "
+                          "line): the hot window loop of BeamletField.")
+      .def(py::init<long, long, double, double, double, double,
+                    std::vector<double>, std::vector<double>, double>(),
+           py::arg("nx"), py::arg("ny"), py::arg("x0"), py::arg("y0"),
+           py::arg("ex"), py::arg("ey"), py::arg("kms"), py::arg("zrs"),
+           py::arg("ns"))
+      .def("clear", &BeamletGrid::clear)
+      .def("add_ray", &BeamletGrid::add_ray, py::arg("x"), py::arg("y"),
+           py::arg("dx"), py::arg("dy"), py::arg("opl"), py::arg("segs"),
+           py::arg("lenses"), py::arg("amps"),
+           "propagate + deposit for every line of one ray.")
+      .def("add", &BeamletGrid::add, py::arg("m"), py::arg("x"), py::arg("y"),
+           py::arg("pref"), py::arg("tx"), py::arg("ty"), py::arg("hxx"),
+           py::arg("hxy"), py::arg("hyy"), py::arg("r"))
+      .def("at", &BeamletGrid::at, "Cell value: (line, pixel) -> complex.")
+      .def("items", &BeamletGrid::items,
+           "Nonzero cells of one line: [(pixel, complex), ...].");
+
   py::class_<NativeOptic>(m, "NativeOptic")
       .def_readonly("precision", &NativeOptic::precision)
       .def_readonly("kind", &NativeOptic::kind);

@@ -32,7 +32,7 @@ from .spectrum import SpectralLine, spectral_lines, wavelength_m
 from .surfaces import CapillaryBundle, Mirror, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
-from .rays import RaysFile, SceneSeed, scene_stream
+from .rays import RaysFile, SceneSeed, _lines, scene_stream
 from .types import RayRecord
 from .units import (
     m_to_angstrom, m_to_mm, m_to_um, rad_to_mrad, rad_to_urad)
@@ -1222,6 +1222,51 @@ class Simulation:
         _log(f"  {heading.lstrip('# ')}: skipped — no capillary in the config")
         self.report += [heading, "- skipped: no capillary section in the config"]
 
+    # ------------------------------------------------------------- trace
+
+    def trace(self, out_dir, quick: int = 1) -> dict:
+        """Trace-only run: record every scene's geometry (no physics) into the
+        rays file; a later run with the same config/out_dir/--quick reuses it."""
+        cfg = self.cfg
+        os.makedirs(out_dir, exist_ok=True)
+        t0 = time.time()
+        self.files = []
+        rays_name = "rays.jsonl.gz" if cfg.rays_gzip else "rays.jsonl"
+        _log(f"CAPSYSred: trace only, output to {out_dir}"
+             + (f", speedup ×{quick}" if quick > 1 else ""))
+        self.rays = RaysFile(os.path.join(out_dir, rays_name), cfg, quick)
+        scenes = [("free", cfg.free_source, cfg.free_screen, None,
+                   self._aim_free, SceneSeed.FREE),
+                  ("lloyd", cfg.lloyd.source, cfg.lloyd.screen,
+                   Mirror(cfg.lloyd.z0, cfg.lloyd.z1), self._aim_lloyd,
+                   SceneSeed.LLOYD)]
+        cap = cfg.capillary
+        if cap is not None:
+            scenes.append(("capillary", cap.source, cap.screen,
+                           CapillaryBundle(cap.bores, cap.z0, cap.z1,
+                                           cfg.engine_method),
+                           self._aim_capillary, SceneSeed.CAPILLARY))
+        try:
+            for scene, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
+                records, rays_from = scene_stream(self, scene, src_cfg, scr_cfg,
+                                                  optic, aim_factory, off, quick)
+                if rays_from == "file":
+                    _log(f"  trace {scene}: already recorded, skipped")
+                    continue
+                n_modes, n_rays = src_cfg.budget(quick)
+                progress = Progress(f"trace {scene}", n_modes * n_rays)
+                on_screen = 0
+                for rec in records:
+                    on_screen += rec.fate == "screen"
+                    progress.step()
+                progress.finish(f"on screen {on_screen:,}")
+        finally:
+            self.rays.close()
+        self.files.append(rays_name)
+        _log(f"  → {rays_name}")
+        _log(f"Done in {time.time() - t0:.0f} s.")
+        return {"out_dir": out_dir, "files": list(self.files)}
+
     # ------------------------------------------------------------- run
 
     def run(self, out_dir, stages=None, quick: int = 1) -> dict:
@@ -1336,11 +1381,10 @@ class Simulation:
         if cfg.capillary is not None:
             screens["capillary"] = cfg.capillary.screen
         by_stage = {}
-        with open(records_path, encoding="utf-8") as fh:
-            for line in fh:
-                row = json.loads(line)
-                if "stage" in row:   # skip the v2 meta line and scene trailers
-                    by_stage.setdefault(row["stage"], []).append(row)
+        for line in _lines(records_path):   # transparently reads .jsonl.gz
+            row = json.loads(line)
+            if "stage" in row:   # skip the v2 meta line and scene trailers
+                by_stage.setdefault(row["stage"], []).append(row)
         if not by_stage:
             raise ValueError(f"no ray records in {records_path!r}")
         p = cfg.precision
