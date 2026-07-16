@@ -14,9 +14,10 @@ from ..intersect import RaySurface
 from .native import compile_optic, trace_ray_native
 from .nums import lift, vadd, vscale
 from .progress import Progress
+from .rays import _SCENE_SEED_STRIDE, SceneSeed
 from .source import Source
 from .surfaces import CapillaryBundle
-from .types import _EPS_T, _M_TO_UM, _TCAP_TOL
+from .types import _EPS_T, _M_TO_UM, _ONWALL_TOL, _TCAP_TOL
 
 METHOD_LABELS = {"cpp": "C++ analytic", "subdivision": "implicit subdivision"}
 
@@ -38,7 +39,7 @@ def _engine_t(rs, scale, O, d, t_exit, method):
     ts = rs.intersect(tuple(c * scale for c in O), d,
                       t_max=float(t_exit) * _M_TO_UM * (1.0 + _TCAP_TOL),
                       t_min=eps_um, method=method)
-    ts = [t for t in ts if float(t) > 1.5 * eps_um]
+    ts = [t for t in ts if float(t) > _ONWALL_TOL * eps_um]
     if not ts:
         return None
     t = ts[0] / scale
@@ -55,7 +56,7 @@ def run_validate_stage(sim, n_rays: int):
     scale = lift(_M_TO_UM, p)
     engines = {id(w): RaySurface(full_expr_um(w), p)
                for w in bundle.walls if w.expr_um is not None}
-    rng = random.Random(cfg.seed * 1000003 + 9)
+    rng = random.Random(cfg.seed * _SCENE_SEED_STRIDE + SceneSeed.VALIDATE)
     source = Source(cap.source, rng)
     aim = sim._aim_capillary(source, None, rng)
     methods = tuple(m for m in METHOD_LABELS if m != "cpp" or native is not None)

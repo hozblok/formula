@@ -102,6 +102,10 @@ class SourceCfg:
         self.n_modes = int(raw["n_modes"])
         self.n_rays = int(raw["n_rays"])
 
+    def budget(self, quick: int) -> tuple[int, int]:
+        """(n_modes, n_rays) at reduction factor `quick`, with sampling floors."""
+        return max(2, self.n_modes // quick), max(20, self.n_rays // quick)
+
 
 class ScreenCfg:
     def __init__(self, raw: dict, p: int):

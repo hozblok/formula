@@ -15,7 +15,7 @@ import math
 
 from ..formula import Number
 from .nums import lift, vadd, vscale
-from .types import _EPS_LOC, _EPS_T, _INSIDE_TOL, _M_TO_UM, _TCAP_TOL
+from .types import _EPS_LOC, _EPS_T, _INSIDE_TOL, _M_TO_UM, _ONWALL_TOL, _TCAP_TOL
 from .wall_cylinder import CylinderWall
 from .wall_funnel import FunnelWall
 from .wall_polygon import PolygonWall
@@ -82,7 +82,7 @@ class ImplicitWall:
         ts = self.rs.intersect(Oum, d,
                                t_max=float(t_exit) * _M_TO_UM * (1.0 + _TCAP_TOL),
                                t_min=eps_um, method=self.method)
-        ts = [t for t in ts if float(t) > 1.5 * eps_um]
+        ts = [t for t in ts if float(t) > _ONWALL_TOL * eps_um]
         if not ts:
             return None
         t = ts[0] / self._scale

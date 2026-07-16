@@ -162,8 +162,7 @@ def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     rays file when it matches, else traced (the stage-2/6 rng stream)."""
     cfg = sim.cfg
     screen = ScreenGrid(scr_cfg)
-    n_modes = max(2, src_cfg.n_modes // quick)
-    n_rays = max(20, src_cfg.n_rays // quick)
+    n_modes, n_rays = src_cfg.budget(quick)
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
     field = BeamletField(sim.lines, screen, screen.ref_pixel(scr_cfg.reference),
                          cfg.beamlet_w0, cfg.beamlet_ns, optic)

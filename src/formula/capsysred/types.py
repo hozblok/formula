@@ -30,6 +30,10 @@ def ray_record(tr, screen, mode: int, ray: int, fate: str) -> RayRecord:
 # reflection origin (on-wall point); far below any physical chord.
 _EPS_T = 1e-12
 
+# On-wall root filter: discard hits below this multiple of eps, the t~0 root
+# sitting on the reflection origin. Shared by ImplicitWall.hit and stage 9.
+_ONWALL_TOL = 1.5
+
 # Bore-membership nudge along the ray (m): far below any bounce spacing, far
 # above the on-wall inside() tolerance band.
 _EPS_LOC = 1e-7

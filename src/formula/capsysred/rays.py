@@ -14,6 +14,7 @@ for the Number path (--replay of stages 2/4/6). rays_gzip writes/reads
 .jsonl.gz transparently.
 """
 
+import enum
 import gzip
 import hashlib
 import json
@@ -27,6 +28,18 @@ from .source import Source
 from .types import RayRecord, ray_record
 
 FORMAT = 2
+
+# Mixes cfg.seed with a per-scene offset into an independent rng stream.
+_SCENE_SEED_STRIDE = 1000003
+
+
+class SceneSeed(enum.IntEnum):
+    """Per-scene rng-stream tag added to cfg.seed*_SCENE_SEED_STRIDE; stages
+    reusing a scene's rays pass its tag, stage 9 gets its own."""
+    FREE = 2         # no-optics scene (stages 2, 7, 8, 11, 12)
+    LLOYD = 3        # Lloyd mirror (stage 4)
+    CAPILLARY = 4    # capillary (stages 6, 7, 8, 10, 11)
+    VALIDATE = 9     # stage 9 hit-method cross-check
 
 
 def fingerprint(cfg) -> str:
@@ -46,7 +59,7 @@ def fingerprint(cfg) -> str:
 def budgets(cfg, quick: int) -> dict:
     """Scene -> [n_modes, n_rays], the same clamps as the stage loops."""
     def per(src):
-        return [max(2, src.n_modes // quick), max(20, src.n_rays // quick)]
+        return list(src.budget(quick))
     out = {"free": per(cfg.free_source), "lloyd": per(cfg.lloyd.source)}
     if cfg.capillary is not None:
         out["capillary"] = per(cfg.capillary.source)
@@ -181,11 +194,10 @@ def _traced_records(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
                     seed_offset, quick):
     """The stage-2/6 rng stream; every record is teed into the run's writer."""
     cfg = sim.cfg
-    rng = random.Random(cfg.seed * 1000003 + seed_offset)
+    rng = random.Random(cfg.seed * _SCENE_SEED_STRIDE + seed_offset)
     source = Source(src_cfg, rng)
     screen = ScreenGrid(scr_cfg)
-    n_modes = max(2, src_cfg.n_modes // quick)
-    n_rays = max(20, src_cfg.n_rays // quick)
+    n_modes, n_rays = src_cfg.budget(quick)
     aim = aim_factory(source, screen, rng)
     tracer = make_tracer(optic)
     writer = sim.rays
@@ -205,8 +217,7 @@ def scene_stream(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
                  seed_offset: int, quick: int):
     """(records, "file"|"trace"): the file when the run's rays file already
     holds this scene at these budgets, else tracing (teeing into the file)."""
-    n_modes = max(2, src_cfg.n_modes // quick)
-    n_rays = max(20, src_cfg.n_rays // quick)
+    n_modes, n_rays = src_cfg.budget(quick)
     w = sim.rays
     if (w is not None and scene in w.done and w.meta["sample_every"] == 1
             and w.meta["budgets"].get(scene) == [n_modes, n_rays]):

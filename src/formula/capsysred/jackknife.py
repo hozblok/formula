@@ -143,8 +143,7 @@ def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     cfg = sim.cfg
     target = screen_cfg or scr_cfg
     screen = ScreenGrid(target)
-    n_modes = max(2, src_cfg.n_modes // quick)
-    n_rays = max(20, src_cfg.n_rays // quick)
+    n_modes, n_rays = src_cfg.budget(quick)
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
     jack = JackknifeCoherence(sim.lines, screen.ref_pixel(target.reference))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,

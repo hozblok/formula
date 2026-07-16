@@ -32,7 +32,7 @@ from .spectrum import SpectralLine, spectral_lines, wavelength_m
 from .surfaces import CapillaryBundle, Mirror, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
-from .rays import RaysFile, scene_stream
+from .rays import RaysFile, SceneSeed, scene_stream
 from .types import RayRecord
 
 ALL_STAGES = (1, 2, 3, 4, 5, 6)
@@ -127,8 +127,7 @@ class Simulation:
         cfg = self.cfg
         p = cfg.precision
         screen = ScreenGrid(scr_cfg)
-        n_modes = max(2, src_cfg.n_modes // quick)
-        n_rays = max(20, src_cfg.n_rays // quick)
+        n_modes, n_rays = src_cfg.budget(quick)
         acc = CoherenceAccumulator(self.lines, screen.ref_pixel(scr_cfg.reference),
                                    cfg.precision)
         records, rays_from = scene_stream(self, stage, src_cfg, scr_cfg, optic,
@@ -290,7 +289,7 @@ class Simulation:
         algorithm and outputs, optic = None."""
         res = run_jack_stage(self, "2/6 without optics (MC)", "free",
                              self.cfg.free_source, self.cfg.free_screen,
-                             None, self._aim_free, 2, quick)
+                             None, self._aim_free, SceneSeed.FREE, quick)
         self.results["free"] = res
         self._jack_outputs(out_dir, "02", "free", res)
         return res
@@ -344,7 +343,7 @@ class Simulation:
         mirror = Mirror(lloyd.z0, lloyd.z1)
         check = self._lloyd_engine_check(mirror)
         res = self._mc_stage("lloyd", "4/6 Lloyd (MC)", lloyd.source, lloyd.screen,
-                             mirror, self._aim_lloyd, 3, quick)
+                             mirror, self._aim_lloyd, SceneSeed.LLOYD, quick)
         self.results["lloyd"] = res
         screen, maps = res["screen"], res["maps"]
         xs_um = [x * _UM for x in screen.xs()]
@@ -504,7 +503,7 @@ class Simulation:
         bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1, self.cfg.engine_method)
         check = self._capillary_engine_check(bundle)
         res = self._mc_stage("capillary", "6/6 capillary (MC)", cap.source,
-                             cap.screen, bundle, self._aim_capillary, 4,
+                             cap.screen, bundle, self._aim_capillary, SceneSeed.CAPILLARY,
                              quick)
         self.results["capillary"] = res
         screen, maps = res["screen"], res["maps"]
@@ -560,14 +559,14 @@ class Simulation:
         same ray streams as stages 2/6 (same seed offsets)."""
         cap = self.cfg.capillary
         scenes = [("free", "7 alt free (MC)", self.cfg.free_source,
-                   self.cfg.free_screen, None, self._aim_free, 2)]
+                   self.cfg.free_screen, None, self._aim_free, SceneSeed.FREE)]
         if cap is None:
             self._skip_cap("## Stage 7 — alternative estimators [capillary]")
         else:
             scenes.append(
                 ("capillary", "7 alt capillary (MC)", cap.source, cap.screen,
                  CapillaryBundle(cap.bores, cap.z0, cap.z1, self.cfg.engine_method),
-                 self._aim_capillary, 4))
+                 self._aim_capillary, SceneSeed.CAPILLARY))
         rows = []
         for stage, label, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
             if scr_cfg.ny != 1:
@@ -650,14 +649,14 @@ class Simulation:
         Nystrom column + coherent-mode spectrum, 2D screens supported."""
         cap = self.cfg.capillary
         scenes = [("free", "8 sketch free (MC)", self.cfg.free_source,
-                   self.cfg.free_screen, None, self._aim_free, 2)]
+                   self.cfg.free_screen, None, self._aim_free, SceneSeed.FREE)]
         if cap is None:
             self._skip_cap("## Stage 8 — sketch estimator [capillary]")
         else:
             scenes.append(
                 ("capillary", "8 sketch capillary (MC)", cap.source, cap.screen,
                  CapillaryBundle(cap.bores, cap.z0, cap.z1, self.cfg.engine_method),
-                 self._aim_capillary, 4))
+                 self._aim_capillary, SceneSeed.CAPILLARY))
         rows = []
         for stage, label, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
             res = run_sketch_stage(self, label, stage, src_cfg, scr_cfg,
@@ -812,7 +811,7 @@ class Simulation:
         bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1, self.cfg.engine_method)
         res = run_jack_stage(self, "10 jackknife capillary (MC)", "capillary",
                              cap.source, cap.screen, bundle,
-                             self._aim_capillary, 4, quick)
+                             self._aim_capillary, SceneSeed.CAPILLARY, quick)
         self.results["jack:capillary"] = res
         self._jack_outputs(out_dir, "10", "capillary", res,
                            vs=self.results.get("capillary"))
@@ -820,7 +819,7 @@ class Simulation:
         for i, scr in enumerate(cap.screens, 1):
             res_i = run_jack_stage(self, f"10 jackknife capillary s{i} (MC)",
                                    "capillary", cap.source, cap.screen, bundle,
-                                   self._aim_capillary, 4, quick,
+                                   self._aim_capillary, SceneSeed.CAPILLARY, quick,
                                    screen_cfg=scr)
             self.results[f"jack:capillary-s{i}"] = res_i
             self._jack_outputs(out_dir, "10", f"capillary-s{i}", res_i,
@@ -1023,14 +1022,14 @@ class Simulation:
         capillary scene compares to stage 6 on the same rays."""
         cap = self.cfg.capillary
         scenes = [("free", "11 beamlet free (MC)", self.cfg.free_source,
-                   self.cfg.free_screen, None, self._aim_free, 2)]
+                   self.cfg.free_screen, None, self._aim_free, SceneSeed.FREE)]
         if cap is None:
             self._skip_cap("## Stage 11 — beamlet estimator [capillary]")
         else:
             scenes.append(
                 ("capillary", "11 beamlet capillary (MC)", cap.source, cap.screen,
                  CapillaryBundle(cap.bores, cap.z0, cap.z1, self.cfg.engine_method),
-                 self._aim_capillary, 4))
+                 self._aim_capillary, SceneSeed.CAPILLARY))
         rows = []
         for stage, label, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
             res = run_beamlet_stage(self, label, stage, src_cfg, scr_cfg,
@@ -1154,7 +1153,7 @@ class Simulation:
         """The pre-jackknife stage 2: pairwise Number estimator on the free
         scene (same rays as stage 2, no σ_jack), kept for cross-checks."""
         res = self._mc_stage("free", "12 pairwise free (MC)", self.cfg.free_source,
-                             self.cfg.free_screen, None, self._aim_free, 2,
+                             self.cfg.free_screen, None, self._aim_free, SceneSeed.FREE,
                              quick)
         self.results["pairwise:free"] = res
         screen, maps = res["screen"], res["maps"]

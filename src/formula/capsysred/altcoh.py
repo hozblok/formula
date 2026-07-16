@@ -192,8 +192,7 @@ def run_alt_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     screen = ScreenGrid(scr_cfg)
     if screen.ny != 1:
         raise ValueError("stage 7 supports 1D screens (ny = 1) only")
-    n_modes = max(2, src_cfg.n_modes // quick)
-    n_rays = max(20, src_cfg.n_rays // quick)
+    n_modes, n_rays = src_cfg.budget(quick)
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
     alt = AltCoherence(sim.lines, screen, screen.ref_pixel(scr_cfg.reference))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
