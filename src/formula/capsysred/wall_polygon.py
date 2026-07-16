@@ -8,7 +8,8 @@ sits at rotation + 2πk/n. Hits are plane intersections (exact linear)."""
 
 from ..formula import Number
 from .nums import lift, solver, vadd, vscale
-from .types import _EPS_T, _INSIDE_TOL, _M_TO_UM
+from .types import _EPS_T, _INSIDE_TOL
+from .units import m_to_um
 
 
 class PolygonWall:
@@ -25,7 +26,7 @@ class PolygonWall:
             self.faces.append((cos_s.number({"x": phi}), sin_s.number({"x": phi})))
         self._facesf = [(float(mx), float(my)) for mx, my in self.faces]
         self._cxf, self._cyf, self._af = float(center[0]), float(center[1]), float(apothem)
-        um = lift(_M_TO_UM, p)
+        um = lift(m_to_um(1), p)
         m0x, m0y = self.faces[0]
         self.expr_um = (f"(x-({center[0] * um}))*({m0x})"
                         f"+(y-({center[1] * um}))*({m0y})-({apothem * um})")

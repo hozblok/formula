@@ -17,8 +17,7 @@ from xml.sax.saxutils import escape
 from .nums import lift, vunit
 from .surfaces import CapillaryBundle, ImplicitWall, Mirror, entrance_disk
 from .trace import trace_ray
-
-UM, MM = 1e6, 1e3
+from .units import m_to_mm, m_to_nm, m_to_um, rad_to_mrad
 N_RAYS = 10
 GREEN, BLUE, WALL, AXIS = "#2ca02c", "#3060c0", "#5a7a94", "#bbbbbb"
 INK, DIM = "#222", "#333"
@@ -73,10 +72,10 @@ def eng(v, unit="auto"):
         return "0"
     a = abs(v)
     if a >= 1e-3 * (1 - 1e-9):                      # epsilon: dodge float-subtraction noise
-        return f"{v*MM:.4g} mm"
+        return f"{m_to_mm(v):.4g} mm"
     if a >= 1e-7 * (1 - 1e-9):
-        return f"{v*UM:.4g} µm"
-    return f"{v*1e9:.4g} nm"
+        return f"{m_to_um(v):.4g} µm"
+    return f"{m_to_nm(v):.4g} nm"
 
 
 # ---------------------------------------------------------------- dimensions
@@ -388,7 +387,7 @@ def draw_optic(G, v, box):
             zm = (G["z0"] + G["z1"]) / 2
             apex = torus_axis(b, G["z0"], zm) + r_of_z(b, zm)
             e.append(T(v.px(zm), v.py(apex) - 8,
-                      f"bend R = {R:g} m,  θ = {th*1e3:.2f} mrad", 10.5,
+                      f"bend R = {R:g} m,  θ = {rad_to_mrad(th):.2f} mrad", 10.5,
                       "end", "#37474f"))
             cx = float(b["center"][0])
             e += arrow_v(v.px(G["z1"]) + 14, v.py(cx),

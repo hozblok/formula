@@ -34,10 +34,11 @@ from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
 from .rays import RaysFile, SceneSeed, scene_stream
 from .types import RayRecord
+from .units import (
+    m_to_angstrom, m_to_mm, m_to_um, rad_to_mrad, rad_to_urad)
 
 ALL_STAGES = (1, 2, 3, 4, 5, 6)
 KNOWN_STAGES = ALL_STAGES + (7, 8, 9, 10, 11, 12)  # 7 (alt), 8 (sketch), 9 (hit methods), 10 (jackknife), 11 (beamlets), 12 (pairwise free, ex-stage 2) — opt-in
-_UM = 1e6
 
 
 def _log(msg: str):
@@ -45,11 +46,11 @@ def _log(msg: str):
 
 
 def _mm(x) -> str:
-    return f"{float(x) * 1e3:g} mm"
+    return f"{m_to_mm(x):g} mm"
 
 
 def _um(x) -> str:
-    return f"{float(x) * _UM:g} µm"
+    return f"{m_to_um(x):g} µm"
 
 
 def _report_name(out_dir: str, base: str) -> str:
@@ -254,17 +255,17 @@ class Simulation:
             "source_label": ["source",
                              f"{shape_ru}, {_um(src.size)}",
                              f"z = {_mm(src.position[2])}"],
-            "capillary_title": (f"capillaries: {len(cap.bores)}, bore ⌀{two_a * _UM:g} µm, "
+            "capillary_title": (f"capillaries: {len(cap.bores)}, bore ⌀{m_to_um(two_a):g} µm, "
                                 f"L = {_mm(float(cap.z1) - float(cap.z0))}{kind_note}"),
-            "bore_label": f"2a = {two_a * _UM:g} µm",
+            "bore_label": f"2a = {m_to_um(two_a):g} µm",
             "screen_label": ["screen", f"{cap.screen.nx}×{cap.screen.ny} px"],
             "window_label": f"window {_um(cap.screen.edge_x)}",
             "d0_label": f"d₀ = {_mm(d0)} (capillary scene)",
             "len_label": f"L = {_mm(float(cap.z1) - float(cap.z0))}",
             "d2_label": f"d₂ = {_mm(d2)}",
             "description": [
-                f"Energy E = {float(cfg.energy_kev):g} keV,  λ = {float(self.lam) * 1e10:.4f} Å;  spectrum: {self._spectrum_note()}.",
-                f"Wall material: {cfg.material.name};  δ = {self.delta_f:.3e},  β = {self.beta_f:.3e},  θ_c = {self.theta_c * 1e3:.2f} mrad.",
+                f"Energy E = {float(cfg.energy_kev):g} keV,  λ = {m_to_angstrom(self.lam):.4f} Å;  spectrum: {self._spectrum_note()}.",
+                f"Wall material: {cfg.material.name};  δ = {self.delta_f:.3e},  β = {self.beta_f:.3e},  θ_c = {rad_to_mrad(self.theta_c):.2f} mrad.",
                 f"Source — a set of mutually incoherent point modes (van Cittert–Zernike method from a Monte-Carlo ensemble).",
                 f"Engine precision: {cfg.precision} digits (Number/Solver, no float64 in the physics path);  seed = {cfg.seed}.",
                 "Pipeline: |μ| on screen without optics (MC) + van Cittert–Zernike analytics;  Lloyd's mirror scheme",
@@ -298,7 +299,7 @@ class Simulation:
         screen, maps = res_free["screen"], res_free["maps"]
         row = screen.ny // 2
         xs = screen.xs()
-        xs_um = [x * _UM for x in xs]
+        xs_um = [m_to_um(x) for x in xs]
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
         src = res_free["src_cfg"]
         dist = float(screen.z) - float(src.position[2])
@@ -309,7 +310,7 @@ class Simulation:
         rms = analytic.rms_diff(mu_row, mu_th)
         if src.shape == "gaussian":
             xi = lam_f * dist / (2.0 * math.pi * float(src.size))
-            note = f"ξ = λD/(2πσ) = {xi * _UM:.3f} µm;  "
+            note = f"ξ = λD/(2πσ) = {m_to_um(xi):.3f} µm;  "
         else:
             note = ""
         sub = (f"{note}RMS(MC − analytics) = {rms:.3f};  source: {src.shape}, "
@@ -328,11 +329,11 @@ class Simulation:
         fig = render.line_chart(
             series, "Degree of coherence: analytics vs MC (without optics)",
             "x on screen, µm", "|μ|", sub,
-            vlines=[(ref_xy[0] * _UM, "ref")], w=760)
+            vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
         self._save(out_dir, "03-free-analytic-vs-mc.svg", fig)
         self.report += [
             "## Stage 3 — van Cittert–Zernike analytics",
-            f"- RMS(|μ|_MC − |μ|_vCZ) = {rms:.4f}" + (f", ξ = {xi * _UM:.3f} µm" if src.shape == "gaussian" else ""),
+            f"- RMS(|μ|_MC − |μ|_vCZ) = {rms:.4f}" + (f", ξ = {m_to_um(xi):.3f} µm" if src.shape == "gaussian" else ""),
         ]
 
     # ------------------------------------------------------------- stage 4+5
@@ -346,7 +347,7 @@ class Simulation:
                              mirror, self._aim_lloyd, SceneSeed.LLOYD, quick)
         self.results["lloyd"] = res
         screen, maps = res["screen"], res["maps"]
-        xs_um = [x * _UM for x in screen.xs()]
+        xs_um = [m_to_um(x) for x in screen.xs()]
         row = screen.ny // 2
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
         d_total = float(screen.z) - float(lloyd.source.position[2])
@@ -356,8 +357,8 @@ class Simulation:
                 - float(lloyd.height))
         st = res["stats"]
         sub = (f"{res['n_modes']} modes × {res['n_rays']} rays; reflected rays "
-               f"{st['reflected_rays']:,}; x_ref = {ref_xy[0] * _UM:.2f} µm")
-        vl = [(ref_xy[0] * _UM, "ref"), (x_ov * _UM, "overlap edge")]
+               f"{st['reflected_rays']:,}; x_ref = {m_to_um(ref_xy[0]):.2f} µm")
+        vl = [(m_to_um(ref_xy[0]), "ref"), (m_to_um(x_ov), "overlap edge")]
         limit = 1.0 / math.sqrt(res["n_modes"])
         mu_fig = render.line_chart(
             [{"xs": xs_um, "ys": maps["mu"][row], "label": "MC |μ(x, x_ref)|"},
@@ -377,7 +378,7 @@ class Simulation:
               "label": "ray density", "dash": "4,3"}],
             "Lloyd's mirror scheme: intensity on screen (MC)",
             "x on screen, µm", "I, arb. units",
-            f"fringes Δx = λD/(2r₀) = {dx_fringe * _UM:.3f} µm; {sub}",
+            f"fringes Δx = λD/(2r₀) = {m_to_um(dx_fringe):.3f} µm; {sub}",
             vlines=vl, w=680)
         self._save(out_dir, "04a-lloyd-mc-intensity.svg", int_fig)
 
@@ -396,10 +397,10 @@ class Simulation:
             "mirror_len_label": f"L = {_mm(float(lloyd.z1) - float(lloyd.z0))}",
             "total_label": f"D = {_mm(d_total)}",
             "description": [
-                f"The direct and reflected rays interfere: Δx = λD/(2r₀) = {dx_fringe * _UM:.3f} µm,",
-                f"overlap zone x ∈ [0, {x_ov * _UM:.2f} µm];  grazing angles "
-                f"{float(lloyd.height) / (float(lloyd.z1) - float(src.position[2])) * 1e3:.3f}…"
-                f"{float(lloyd.height) / (float(lloyd.z0) - float(src.position[2])) * 1e3:.3f} mrad ≪ θ_c = {self.theta_c * 1e3:.2f} mrad.",
+                f"The direct and reflected rays interfere: Δx = λD/(2r₀) = {m_to_um(dx_fringe):.3f} µm,",
+                f"overlap zone x ∈ [0, {m_to_um(x_ov):.2f} µm];  grazing angles "
+                f"{rad_to_mrad(float(lloyd.height) / (float(lloyd.z1) - float(src.position[2]))):.3f}…"
+                f"{rad_to_mrad(float(lloyd.height) / (float(lloyd.z0) - float(src.position[2]))):.3f} mrad ≪ θ_c = {rad_to_mrad(self.theta_c):.2f} mrad.",
                 "arg r ≈ π below θ_c: a dark fringe at the mirror edge. Reflection is computed by the same tracer",
                 "as the capillary (wall = capillary surface), with the complex Fresnel r.",
                 check,
@@ -412,7 +413,7 @@ class Simulation:
             f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen {st['screen']:,}; absorbed {st['absorbed']:,}",
             f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
             f"- reflections per ray: {bh or 'none'}",
-            f"- Δx (formula) = {dx_fringe * _UM:.3f} µm; overlap zone up to {x_ov * _UM:.2f} µm",
+            f"- Δx (formula) = {m_to_um(dx_fringe):.3f} µm; overlap zone up to {m_to_um(x_ov):.2f} µm",
             f"- {check}",
             f"- time: {res['seconds']:.1f} s",
         ]
@@ -442,7 +443,7 @@ class Simulation:
         screen, maps = res_lloyd["screen"], res_lloyd["maps"]
         row = screen.ny // 2
         xs = screen.xs()
-        xs_um = [x * _UM for x in xs]
+        xs_um = [m_to_um(x) for x in xs]
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
         src = res_lloyd["src_cfg"]
         ref = analytic.lloyd_reference(
@@ -467,8 +468,8 @@ class Simulation:
                     if vals and max(vals) + min(vals) > 0 else 0.0)
 
         corr = analytic.pearson(i_mc, ref["intensity"])
-        sub_i = (f"Δx: analytics {ref['fringe_dx'] * _UM:.3f} µm"
-                 + (f", MC {dx_mc * _UM:.3f} µm" if dx_mc else "")
+        sub_i = (f"Δx: analytics {m_to_um(ref['fringe_dx']):.3f} µm"
+                 + (f", MC {m_to_um(dx_mc):.3f} µm" if dx_mc else "")
                  + f";  I correlation: {corr:.3f};  visibility: MC {vis(sm):.2f}, "
                  f"analytics {vis(ref['intensity']):.2f}")
         int_fig = render.line_chart(
@@ -482,14 +483,14 @@ class Simulation:
              {"xs": xs_um, "ys": ref["mu"], "label": "analytics", "dash": "6,4"}],
             "Lloyd: degree of coherence — analytics vs MC",
             "x on screen, µm", "|μ|",
-            f"RMS(MC − analytics) = {rms_mu:.3f};  x_ref = {ref_xy[0] * _UM:.2f} µm",
-            vlines=[(ref_xy[0] * _UM, "ref")], w=760)
+            f"RMS(MC − analytics) = {rms_mu:.3f};  x_ref = {m_to_um(ref_xy[0]):.2f} µm",
+            vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
         self._save(out_dir, "05-lloyd-analytic-vs-mc.svg",
                    render.vstack([int_fig, mu_fig]))
         self.report += [
             "## Stage 5 — Lloyd analytics vs MC",
-            f"- Δx: formula λD/(2r₀) = {ref['fringe_dx'] * _UM:.4f} µm"
-            + (f", from MC peaks = {dx_mc * _UM:.4f} µm" if dx_mc else " (no MC peaks found)"),
+            f"- Δx: formula λD/(2r₀) = {m_to_um(ref['fringe_dx']):.4f} µm"
+            + (f", from MC peaks = {m_to_um(dx_mc):.4f} µm" if dx_mc else " (no MC peaks found)"),
             f"- Pearson correlation I_MC ↔ I_analytics: {corr:.3f}",
             f"- fringe visibility (0.15…0.85 of the overlap zone): MC {vis(sm):.3f}, analytics {vis(ref['intensity']):.3f} "
             "(MC minima are filled by shot noise; grows with the ray count)",
@@ -509,8 +510,8 @@ class Simulation:
         screen, maps = res["screen"], res["maps"]
         st = res["stats"]
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
-        extent = (screen.x0f * _UM, (screen.x0f + screen.exf) * _UM,
-                  screen.y0f * _UM, (screen.y0f + screen.eyf) * _UM)
+        extent = (m_to_um(screen.x0f), m_to_um(screen.x0f + screen.exf),
+                  m_to_um(screen.y0f), m_to_um(screen.y0f + screen.eyf))
         limit = 1.0 / math.sqrt(res["n_modes"])
         sub = (f"{res['n_modes']} modes × {res['n_rays']} rays; transmitted {st['screen']:,}; "
                f"absorbed {st['absorbed']:,}; reflections {st['reflections']:,}")
@@ -520,13 +521,13 @@ class Simulation:
             mu_fig = render.heatmap(maps["mu"], extent,
                                     "Capillary: degree of coherence |μ(P, P_ref)|",
                                     "x, µm", "y, µm", sub_mu, "|μ|",
-                                    mark=(ref_xy[0] * _UM, ref_xy[1] * _UM), vmax=1.0,
+                                    mark=(m_to_um(ref_xy[0]), m_to_um(ref_xy[1])), vmax=1.0,
                                     w=640)
             int_fig = render.heatmap(maps["intensity"], extent,
                                      "Capillary: intensity on screen",
                                      "x, µm", "y, µm", sub, "I, arb. units", w=640)
         else:
-            xs_um = [x * _UM for x in screen.xs()]
+            xs_um = [m_to_um(x) for x in screen.xs()]
             row = 0
             mu_fig = render.line_chart(
                 [{"xs": xs_um, "ys": maps["mu"][row], "label": "MC |μ|"}],
@@ -580,7 +581,7 @@ class Simulation:
                                 optic, aim_factory, off, quick)
             self.results[f"alt:{stage}"] = res
             maps, screen, st = res["maps"], res["screen"], res["stats"]
-            xs_um = [x * _UM for x in screen.xs()]
+            xs_um = [m_to_um(x) for x in screen.xs()]
             ref_x = xs_um[maps["ref_pixel"]]
             rms_full = analytic.rms_diff(maps["mu_pair"], maps["mu_full_col"])
             rms_wig = analytic.rms_diff(maps["mu_pair"], maps["mu_wigner"])
@@ -611,10 +612,10 @@ class Simulation:
             self._save(out_dir, f"07-{stage}-alt-fullw.svg", fig)
             grid, u_lo, u_hi = res["alt"].wigner_grid()
             fig = render.heatmap(
-                grid, (xs_um[0], xs_um[-1], u_lo * 1e6, u_hi * 1e6),
+                grid, (xs_um[0], xs_um[-1], rad_to_urad(u_lo), rad_to_urad(u_hi)),
                 f"phase space B(x, u) (ray histogram) [{stage}]",
                 "x on screen, µm", "u = dx/dz, µrad",
-                f"u bin {res['alt'].du * 1e6:.2f} µrad; intensity weights, no phases",
+                f"u bin {rad_to_urad(res['alt'].du):.2f} µrad; intensity weights, no phases",
                 "B", w=640)
             self._save(out_dir, f"07-{stage}-alt-wigner.svg", fig)
             for est, mu in (("pairwise", maps["mu_pair"]),
@@ -632,7 +633,7 @@ class Simulation:
                 f"- RMS(|μ|_pair − |μ|_fullW_col) = {rms_full:.2e} (must be ~0: same sums)",
                 f"- RMS(|μ|_pair − |μ|_Wigner) = {rms_wig:.4f}; RMS(I_pair − I_Wigner, normalized) = {rms_int:.2e}",
                 f"- Fresnel float64 mirror vs Number (center line): |Δr| = {res['fresnel_check']:.1e}",
-                f"- Wigner u bin: {res['alt'].du * 1e6:.3f} µrad",
+                f"- Wigner u bin: {rad_to_urad(res['alt'].du):.3f} µrad",
                 f"- time: {res['seconds']:.1f} s",
             ]
         path = os.path.join(out_dir, "mu-alt.jsonl")
@@ -676,9 +677,9 @@ class Simulation:
             sub = (f"{res['n_modes']} modes × {res['n_rays']} rays; rank r = {maps['rank']}; "
                    f"RMS pair↔sketch {maps['rms_pair_sketch']:.3f} on {maps['solid_px']} px")
             if screen.ny > 1:
-                extent = (screen.x0f * _UM, (screen.x0f + screen.exf) * _UM,
-                          screen.y0f * _UM, (screen.y0f + screen.eyf) * _UM)
-                mark = (ref_xy[0] * _UM, ref_xy[1] * _UM)
+                extent = (m_to_um(screen.x0f), m_to_um(screen.x0f + screen.exf),
+                          m_to_um(screen.y0f), m_to_um(screen.y0f + screen.eyf))
+                mark = (m_to_um(ref_xy[0]), m_to_um(ref_xy[1]))
                 figs = [render.heatmap(maps["mu_pair"], extent,
                                        f"pairwise |μ(P, P_ref)| [{stage}]",
                                        "x, µm", "y, µm", sub, "|μ|",
@@ -691,13 +692,13 @@ class Simulation:
                                        "x, µm", "y, µm", "", "Δ", w=430, equal=True)]
                 fig = render.hstack(figs)
             else:
-                xs_um = [x * _UM for x in screen.xs()]
+                xs_um = [m_to_um(x) for x in screen.xs()]
                 fig = render.line_chart(
                     [{"xs": xs_um, "ys": maps["mu_pair"][0], "label": "pairwise"},
                      {"xs": xs_um, "ys": maps["mu_sketch"][0],
                       "label": f"sketch r={maps['rank']}", "dash": "6,4"}],
                     f"|μ(x, x_ref)| [{stage}]", "x, µm", "|μ|", sub,
-                    vlines=[(ref_xy[0] * _UM, "ref")], w=760)
+                    vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
             self._save(out_dir, f"08-{stage}-sketch-mu.svg", fig)
             lam = maps["lam"]
             top = min(len(lam), 60)
@@ -850,9 +851,9 @@ class Simulation:
                f"σ_jack median {med_err:.3f}; statistical limit |μ| ≈ {limit:.2f}; "
                f"solid px {len(solid)} of {n_lit} lit")
         if ny > 1:
-            extent = (screen.x0f * _UM, (screen.x0f + screen.exf) * _UM,
-                      screen.y0f * _UM, (screen.y0f + screen.eyf) * _UM)
-            mark = (ref_xy[0] * _UM, ref_xy[1] * _UM)
+            extent = (m_to_um(screen.x0f), m_to_um(screen.x0f + screen.exf),
+                      m_to_um(screen.y0f), m_to_um(screen.y0f + screen.eyf))
+            mark = (m_to_um(ref_xy[0]), m_to_um(ref_xy[1]))
             trust = [[1.0 if s > 0 and d == 0 else (0.5 if d > 0 else 0.0)
                       for s, d in zip(s_row, d_row)]
                      for s_row, d_row in zip(maps["solid"], maps["dubious"])]
@@ -870,8 +871,8 @@ class Simulation:
             self._save(out_dir, f"{tag}-{scene}-jack-mu.svg", fig)
             # y ≈ 0 slice of the three maps: |μ| ± σ_jack, σ_jack, trust
             iy0 = min(range(ny), key=lambda j: abs(screen.ys()[j]))
-            y0_um = screen.ys()[iy0] * _UM
-            xs_um = [x * _UM for x in screen.xs()]
+            y0_um = m_to_um(screen.ys()[iy0])
+            xs_um = [m_to_um(x) for x in screen.xs()]
             row_mu, row_err = maps["mu"][iy0], maps["mu_err"][iy0]
             dub_i = [i for i, d in enumerate(maps["dubious"][iy0]) if d > 0]
             mu_series = [{"xs": xs_um, "ys": row_mu, "label": "jackknife |μ| ± σ_jack",
@@ -888,7 +889,7 @@ class Simulation:
                 err_series.append({"xs": xd, "ys": [row_err[i] for i in dub_i],
                                    "label": "don't trust",
                                    "color": "#d62728", "dots": True})
-            vl = [(ref_xy[0] * _UM, "ref")] if maps["ref_pixel"] // nx == iy0 else []
+            vl = [(m_to_um(ref_xy[0]), "ref")] if maps["ref_pixel"] // nx == iy0 else []
             fig = render.hstack([
                 render.line_chart(mu_series, "|μ(P, P_ref)| ± σ_jack", "x, µm",
                                   "|μ|", f"slice y = {y0_um:.2f} µm",
@@ -917,7 +918,7 @@ class Simulation:
                                      "Δ", w=640)
                 self._save(out_dir, f"{tag}c-{scene}-jack-vs6.svg", fig)
         else:
-            xs_um = [x * _UM for x in screen.xs()]
+            xs_um = [m_to_um(x) for x in screen.xs()]
             row_mu, row_err = maps["mu"][0], maps["mu_err"][0]
             dub_i = [i for i, d in enumerate(maps["dubious"][0]) if d > 0]
             series = [{"xs": xs_um, "ys": row_mu, "label": "jackknife |μ| ± σ_jack",
@@ -934,7 +935,7 @@ class Simulation:
             fig = render.line_chart(series,
                                     "|μ(x, x_ref)| with jackknife errors",
                                     "x, µm", "|μ|", sub,
-                                    vlines=[(ref_xy[0] * _UM, "ref")], w=760)
+                                    vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
             self._save(out_dir, f"{tag}-{scene}-jack-mu.svg", fig)
             err_series = [{"xs": xs_um, "ys": row_err, "label": "σ_jack"},
                           {"xs": xs_um, "ys": [limit] * nx,
@@ -965,10 +966,10 @@ class Simulation:
                     "jackknife vs pairwise: Δμ with the ±σ_jack band", "x, µm", "Δμ",
                     f"RMS on solid px {rms6:.2e}; spikes = the pairwise estimator's "
                     "pairless residuals, masked by the jackknife",
-                    vlines=[(ref_xy[0] * _UM, "ref")], w=760, y_zero=False)
+                    vlines=[(m_to_um(ref_xy[0]), "ref")], w=760, y_zero=False)
                 self._save(out_dir, f"{tag}c-{scene}-jack-vs6.svg", fig)
-        xs_um_all = [x * _UM for x in screen.xs()]
-        ys_um_all = [y * _UM for y in screen.ys()]
+        xs_um_all = [m_to_um(x) for x in screen.xs()]
+        ys_um_all = [m_to_um(y) for y in screen.ys()]
         for iy in range(ny):
             for ix in range(nx):
                 self.jack_rows.append({
@@ -1040,14 +1041,14 @@ class Simulation:
             flat = lambda grid: [v for row in grid for v in row]
             ref_xy = screen.pixel_xy(maps["ref_pixel"])
             sub = (f"{res['n_modes']} modes × {res['n_rays']} rays; "
-                   f"w₀ = {self.cfg.beamlet_w0 * _UM:.2f} µm, "
-                   f"mean w on screen = {maps['w_mean'] * _UM:.2f} µm")
+                   f"w₀ = {m_to_um(self.cfg.beamlet_w0):.2f} µm, "
+                   f"mean w on screen = {m_to_um(maps['w_mean']):.2f} µm")
             report = [f"## Stage 11 — beamlet estimator [{stage}]",
                       f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen "
                       f"{st['screen']:,} of {st['emitted']:,} (tails off window: {st['off_window']:,})",
                       f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
-                      f"- w₀ = {self.cfg.beamlet_w0 * _UM:.2f} µm; mean spot width on screen "
-                      f"= {maps['w_mean'] * _UM:.2f} µm; Γ-tensor deposit; honest |μ| "
+                      f"- w₀ = {m_to_um(self.cfg.beamlet_w0):.2f} µm; mean spot width on screen "
+                      f"= {m_to_um(maps['w_mean']):.2f} µm; Γ-tensor deposit; honest |μ| "
                       "(no self-pair subtraction)"]
             if maps["flat_walls"]:
                 report.append("- implicit bore(s): no closed-form curvature — "
@@ -1056,7 +1057,7 @@ class Simulation:
                 report.append(f"- deposits skipped (beam blew up, Im G ⊁ 0): "
                               f"{maps['gamma_bad']:,}")
             row = ny // 2
-            xs_um = [x * _UM for x in screen.xs()]
+            xs_um = [m_to_um(x) for x in screen.xs()]
             if stage == "free":
                 src = src_cfg
                 dist = float(screen.z) - float(src.position[2])
@@ -1070,15 +1071,15 @@ class Simulation:
                       "label": "van Cittert–Zernike analytics", "dash": "6,4"}],
                     "beamlet |μ| vs vCZ analytics [free]",
                     "x, µm", "|μ|", f"RMS(beamlets − vCZ) = {rms:.3f};  {sub}",
-                    vlines=[(ref_xy[0] * _UM, "ref")], w=760)
+                    vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
                 self._save(out_dir, "11-free-beamlet-mu.svg", fig)
                 report.append(f"- RMS(|μ|_beamlet − |μ|_vCZ) = {rms:.4f}")
             else:
                 num = self.results.get("capillary")   # stage 6 maps, same rays
-                extent = (screen.x0f * _UM, (screen.x0f + screen.exf) * _UM,
-                          screen.y0f * _UM, (screen.y0f + screen.eyf) * _UM)
+                extent = (m_to_um(screen.x0f), m_to_um(screen.x0f + screen.exf),
+                          m_to_um(screen.y0f), m_to_um(screen.y0f + screen.eyf))
                 if ny > 1:
-                    mark = (ref_xy[0] * _UM, ref_xy[1] * _UM)
+                    mark = (m_to_um(ref_xy[0]), m_to_um(ref_xy[1]))
                     fig = render.hstack([
                         render.heatmap(maps["mu"], extent,
                                        "beamlet |μ(P, P_ref)|",
@@ -1093,7 +1094,7 @@ class Simulation:
                     fig = render.line_chart(
                         [{"xs": xs_um, "ys": maps["mu"][0], "label": "beamlets |μ|"}],
                         "beamlet |μ(x, x_ref)|", "x, µm", "|μ|", sub,
-                        vlines=[(ref_xy[0] * _UM, "ref")], w=760)
+                        vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
                     self._save(out_dir, "11-capillary-beamlet-mu.svg", fig)
                     imax = max(maps["intensity"][0]) or 1.0
                     fig = render.line_chart(
@@ -1130,7 +1131,7 @@ class Simulation:
                         f"- RMS(|μ|_beamlet − |μ|_stage6) = {rms6:.4f} on "
                         f"{len(lit)} lit px (same rays; estimators differ — "
                         "stage 6 subtracts self-pairs, beamlets do not)")
-            ys_um = [y * _UM for y in screen.ys()]
+            ys_um = [m_to_um(y) for y in screen.ys()]
             for iy in range(ny):
                 for ix in range(nx):
                     rows.append({"stage": stage, "pixel": iy * nx + ix,
@@ -1157,10 +1158,10 @@ class Simulation:
                              quick)
         self.results["pairwise:free"] = res
         screen, maps = res["screen"], res["maps"]
-        xs_um = [x * _UM for x in screen.xs()]
+        xs_um = [m_to_um(x) for x in screen.xs()]
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
         sub = (f"{res['n_modes']} modes × {res['n_rays']} rays, {self._spectrum_note()}, "
-               f"x_ref = {ref_xy[0] * _UM:.2f} µm")
+               f"x_ref = {m_to_um(ref_xy[0]):.2f} µm")
         row = screen.ny // 2
         limit = 1.0 / math.sqrt(res["n_modes"])
         mu_fig = render.line_chart(
@@ -1170,7 +1171,7 @@ class Simulation:
               "label": f"statistical limit 1/√N modes ≈ {limit:.2f}"}],
             "Degree of coherence without optics (pairwise Number)",
             "x on screen, µm", "|μ|", sub,
-            vlines=[(ref_xy[0] * _UM, "ref")], w=640)
+            vlines=[(m_to_um(ref_xy[0]), "ref")], w=640)
         imax = max(max(r) for r in maps["intensity"]) or 1.0
         dmax = max(max(r) for r in maps["density"]) or 1.0
         int_fig = render.line_chart(
@@ -1239,8 +1240,8 @@ class Simulation:
         self.report = [
             "# CAPSYSred report",
             "",
-            f"- energy: {float(cfg.energy_kev):g} keV (λ = {float(self.lam) * 1e10:.4f} Å); spectrum: {self._spectrum_note()}",
-            f"- material: {cfg.material.name}; δ = {self.delta_f:.3e}, β = {self.beta_f:.3e}, θ_c = {self.theta_c * 1e3:.2f} mrad",
+            f"- energy: {float(cfg.energy_kev):g} keV (λ = {m_to_angstrom(self.lam):.4f} Å); spectrum: {self._spectrum_note()}",
+            f"- material: {cfg.material.name}; δ = {self.delta_f:.3e}, β = {self.beta_f:.3e}, θ_c = {rad_to_mrad(self.theta_c):.2f} mrad",
             f"- precision: {cfg.precision} digits; certified target "
             f"{cfg.precision_target}{' (auto)' if cfg.precision_target_auto else ''}; "
             f"seed = {cfg.seed}",
@@ -1417,25 +1418,25 @@ class Simulation:
         return {"out_dir": out_dir, "files": list(self.files)}
 
     def _replay_figs(self, out_dir, stage, screen, maps):
-        extent = (screen.x0f * _UM, (screen.x0f + screen.exf) * _UM,
-                  screen.y0f * _UM, (screen.y0f + screen.eyf) * _UM)
+        extent = (m_to_um(screen.x0f), m_to_um(screen.x0f + screen.exf),
+                  m_to_um(screen.y0f), m_to_um(screen.y0f + screen.eyf))
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
         sub = self._spectrum_note()
         if screen.ny > 1:
             mu_fig = render.heatmap(maps["mu"], extent,
                                     f"Replay {stage}: |μ(P, P_ref)|",
                                     "x, µm", "y, µm", sub, "|μ|",
-                                    mark=(ref_xy[0] * _UM, ref_xy[1] * _UM),
+                                    mark=(m_to_um(ref_xy[0]), m_to_um(ref_xy[1])),
                                     vmax=1.0, w=640)
             int_fig = render.heatmap(maps["intensity"], extent,
                                      f"Replay {stage}: intensity",
                                      "x, µm", "y, µm", sub, "I, arb. units", w=640)
         else:
-            xs_um = [x * _UM for x in screen.xs()]
+            xs_um = [m_to_um(x) for x in screen.xs()]
             mu_fig = render.line_chart(
                 [{"xs": xs_um, "ys": maps["mu"][0], "label": "|μ| (replay)"}],
                 f"Replay {stage}: degree of coherence", "x, µm", "|μ|", sub,
-                vlines=[(ref_xy[0] * _UM, "ref")])
+                vlines=[(m_to_um(ref_xy[0]), "ref")])
             imax = max(maps["intensity"][0]) or 1.0
             int_fig = render.line_chart(
                 [{"xs": xs_um, "ys": [v / imax for v in maps["intensity"][0]],

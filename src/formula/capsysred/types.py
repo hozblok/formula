@@ -38,15 +38,6 @@ _ONWALL_TOL = 1.5
 # above the on-wall inside() tolerance band.
 _EPS_LOC = 1e-7
 
-# Metres -> micrometres for expr_um. Geometry lives in SI, but the RaySurface
-# cross-check equation is written in micrometre coordinates: in metres the
-# coefficients are ~a^2 ~ 1e-12 and the subdivision root finder is badly
-# conditioned; in micrometres they are ~1. Linear terms scale by the factor,
-# the quadratic ones by its square; engine_hit_t applies the same scale to the
-# ray origin and divides the returned t back. Lifted to precision p at use
-# site so coefficient strings never pass through double (1e6 is exact).
-_M_TO_UM = 1e6
-
 # Relative widening of the float root-search cap past t_exit in hit(). The
 # cap is only float(t_exit), so a wall hit landing within rounding of the exit
 # plane could fall just outside the window and be lost — the ray would

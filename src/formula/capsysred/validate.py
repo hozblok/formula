@@ -17,7 +17,8 @@ from .progress import Progress
 from .rays import _SCENE_SEED_STRIDE, SceneSeed
 from .source import Source
 from .surfaces import CapillaryBundle
-from .types import _EPS_T, _M_TO_UM, _ONWALL_TOL, _TCAP_TOL
+from .types import _EPS_T, _ONWALL_TOL, _TCAP_TOL
+from .units import m_to_um
 
 METHOD_LABELS = {"cpp": "C++ analytic", "subdivision": "implicit subdivision"}
 
@@ -26,7 +27,7 @@ def full_expr_um(wall):
     """Whole-surface F=0 in µm; a polygon is the product of its face planes."""
     if wall.kind != "polygon":
         return wall.expr_um
-    um = lift(_M_TO_UM, wall.center[0].precision)
+    um = lift(m_to_um(1), wall.center[0].precision)
     return "*".join(
         f"((x-({wall.center[0] * um}))*({mx})"
         f"+(y-({wall.center[1] * um}))*({my})-({wall.apothem * um}))"
@@ -35,9 +36,9 @@ def full_expr_um(wall):
 
 def _engine_t(rs, scale, O, d, t_exit, method):
     """First-hit t via a prebuilt RaySurface (ImplicitWall.hit's root path)."""
-    eps_um = _EPS_T * _M_TO_UM
+    eps_um = m_to_um(_EPS_T)
     ts = rs.intersect(tuple(c * scale for c in O), d,
-                      t_max=float(t_exit) * _M_TO_UM * (1.0 + _TCAP_TOL),
+                      t_max=m_to_um(t_exit) * (1.0 + _TCAP_TOL),
                       t_min=eps_um, method=method)
     ts = [t for t in ts if float(t) > _ONWALL_TOL * eps_um]
     if not ts:
@@ -53,7 +54,7 @@ def run_validate_stage(sim, n_rays: int):
     p = cfg.precision
     bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1, cfg.engine_method)
     native = compile_optic(bundle)
-    scale = lift(_M_TO_UM, p)
+    scale = lift(m_to_um(1), p)
     engines = {id(w): RaySurface(full_expr_um(w), p)
                for w in bundle.walls if w.expr_um is not None}
     rng = random.Random(cfg.seed * _SCENE_SEED_STRIDE + SceneSeed.VALIDATE)

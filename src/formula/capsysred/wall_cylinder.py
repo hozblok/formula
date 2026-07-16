@@ -7,7 +7,8 @@ and the normal is radial with zero z-component."""
 
 from ..formula import Number
 from .nums import lift, sqrt, vadd, vscale, vunit
-from .types import _EPS_T, _INSIDE_TOL, _M_TO_UM, Vec3
+from .types import _EPS_T, _INSIDE_TOL, Vec3
+from .units import m_to_um
 
 
 class CylinderWall:
@@ -20,7 +21,7 @@ class CylinderWall:
         self._p = center[0].precision
         self._cxf, self._cyf = float(center[0]), float(center[1])
         self._a2f = float(self._a2)
-        um = lift(_M_TO_UM, self._p)
+        um = lift(m_to_um(1), self._p)
         self.expr_um = (f"(x-({center[0] * um}))^2+(y-({center[1] * um}))^2"
                         f"-({self._a2 * um * um})")
         self.probe_xy = (1.0, 0.0)

@@ -11,7 +11,8 @@ as the fallback."""
 
 from ..formula import Number
 from .nums import lift, vadd, vscale, vunit
-from .types import _EPS_T, _INSIDE_TOL, _M_TO_UM, _TCAP_TOL
+from .types import _EPS_T, _INSIDE_TOL, _TCAP_TOL
+from .units import m_to_um
 from .wall_torus import _quartic_first
 
 
@@ -51,7 +52,7 @@ class FunnelWall:
         self._agf, self._bgf = float(g[0]), float(g[1])
         self._aff, self._bff = float(f[0]), float(f[1])
         self.probe_xy = (1.0, 0.0)
-        um = lift(_M_TO_UM, p)
+        um = lift(m_to_um(1), p)
         zr = f"(z-({self.z0 * um}))"
         G = f"(1+({self.ag / um})*{zr}+({self.bg / (um * um)})*{zr}^2)"
         F = f"(1+({self.af / um})*{zr}+({self.bf / (um * um)})*{zr}^2)"

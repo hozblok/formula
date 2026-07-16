@@ -10,7 +10,8 @@ import math
 
 from ..formula import Number
 from .nums import lift, sqrt, vadd, vdot, vnorm, vscale, vsub, vunit
-from .types import _EPS_T, _INSIDE_TOL, _M_TO_UM, _TCAP_TOL
+from .types import _EPS_T, _INSIDE_TOL, _TCAP_TOL
+from .units import m_to_um
 
 # Newton polish stop, in digits: quit once the step falls below
 # 10^-max(24, p//2) of the root. Newton doubles digits per step, so the final
@@ -168,7 +169,7 @@ class TorusWall:
         # float rho-R cancellation noise grows with R: widen the on-wall slack
         self._in2 = (self._af * self._af * (1.0 + _INSIDE_TOL)
                      + 64.0 * 2.2e-16 * self._Rf * self._af)
-        um = lift(_M_TO_UM, p)
+        um = lift(m_to_um(1), p)
         cx, cy, cz = (str(c * um) for c in self.C)
         w2 = f"(x-({cx}))^2+(y-({cy}))^2+(z-({cz}))^2"
         s = f"((x-({cx}))*({self.nhat[0]})+(y-({cy}))*({self.nhat[1]}))"

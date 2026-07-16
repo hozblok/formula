@@ -8,7 +8,8 @@ The straight cylinder is served by its own wall_cylinder.CylinderWall."""
 
 from ..formula import Number
 from .nums import lift, sqrt, vadd, vscale, vunit
-from .types import _EPS_T, _INSIDE_TOL, _M_TO_UM, Vec3
+from .types import _EPS_T, _INSIDE_TOL, Vec3
+from .units import m_to_um
 
 
 class RevolutionWall:
@@ -21,7 +22,7 @@ class RevolutionWall:
         self._zero, self._half = Number("0", p), Number("0.5", p)
         self._cxf, self._cyf = float(center[0]), float(center[1])
         self._c0f, self._c1f, self._c2f = (float(v) for v in r2)
-        um = lift(_M_TO_UM, p)
+        um = lift(m_to_um(1), p)
         self.expr_um = (f"(x-({center[0] * um}))^2+(y-({center[1] * um}))^2"
                         f"-(({self.c0 * um * um})+({self.c1 * um})*z+({self.c2})*z^2)")
         self.probe_xy = (1.0, 0.0)

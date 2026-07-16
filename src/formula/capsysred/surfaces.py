@@ -15,7 +15,8 @@ import math
 
 from ..formula import Number
 from .nums import lift, vadd, vscale
-from .types import _EPS_LOC, _EPS_T, _INSIDE_TOL, _M_TO_UM, _ONWALL_TOL, _TCAP_TOL
+from .types import _EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _TCAP_TOL
+from .units import m_to_um
 from .wall_cylinder import CylinderWall
 from .wall_funnel import FunnelWall
 from .wall_polygon import PolygonWall
@@ -61,14 +62,14 @@ class ImplicitWall:
         p = center[0].precision
         self.rs = RaySurface(expr, p)
         self.method = method
-        self._scale = lift(_M_TO_UM, p)
+        self._scale = lift(m_to_um(1), p)
         self.expr_um = None            # the engine IS the hit path here
         self.probe_xy = (1.0, 0.0)
 
     def _f(self, xf, yf, zf) -> float:
         val = self.rs.surface.evaluate(
-            {"x": repr(xf * _M_TO_UM), "y": repr(yf * _M_TO_UM),
-             "z": repr(zf * _M_TO_UM)})
+            {"x": repr(m_to_um(xf)), "y": repr(m_to_um(yf)),
+             "z": repr(m_to_um(zf))})
         return float(Number(val, self.rs.precision))
 
     def inside(self, xf, yf, zf):
@@ -77,10 +78,10 @@ class ImplicitWall:
         return self._f(xf, yf, zf) < _INSIDE_TOL * depth
 
     def hit(self, O, d, t_exit):
-        eps_um = _EPS_T * _M_TO_UM
+        eps_um = m_to_um(_EPS_T)
         Oum = tuple(x * self._scale for x in O)
         ts = self.rs.intersect(Oum, d,
-                               t_max=float(t_exit) * _M_TO_UM * (1.0 + _TCAP_TOL),
+                               t_max=m_to_um(t_exit) * (1.0 + _TCAP_TOL),
                                t_min=eps_um, method=self.method)
         ts = [t for t in ts if float(t) > _ONWALL_TOL * eps_um]
         if not ts:
@@ -176,8 +177,8 @@ def engine_hit_t(surface_expr_um: str, O, d, t_max_m: float,
     """
     from ..intersect import RaySurface
     p = O[0].precision
-    scale = lift(_M_TO_UM, p)
+    scale = lift(m_to_um(1), p)
     rs = RaySurface(surface_expr_um, p)
     ts = rs.intersect(tuple(c * scale for c in O), tuple(d),
-                      t_max=t_max_m * _M_TO_UM, method=method)
+                      t_max=m_to_um(t_max_m), method=method)
     return ts[0] / scale if ts else None
