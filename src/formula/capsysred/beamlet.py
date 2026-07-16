@@ -21,7 +21,7 @@ import math
 import time
 
 from .altcoh import FloatLineAmplitudes
-from .gamma import bounce_lenses, inv2, propagate
+from .gamma import EXACT_KINDS, bounce_lenses, inv2, propagate
 from .progress import Progress
 from .rays import scene_stream
 from .screen import ScreenGrid
@@ -38,7 +38,7 @@ class BeamletField:
         self.zrs = [0.5 * w0 * w0 * k for k in self.kms]   # z_R = w0^2*k/2
         self.w0, self.ns = w0, n_sigmas
         self.optic = optic
-        self.flat_walls = any(w.kind == "implicit"
+        self.flat_walls = any(w.kind not in EXACT_KINDS
                               for w in getattr(optic, "walls", ()))
         self.ref = ref_pixel
         self.nx, self.ny = screen.nx, screen.ny

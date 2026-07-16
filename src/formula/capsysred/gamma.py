@@ -65,10 +65,14 @@ def _center(wall):
     return (wall._cxf, wall._cyf)
 
 
+# walls whose bounce lens here is exact (polygon: exactly flat); anything
+# else — implicit, future kinds — deposits flat, the stage-11a scalar model
+EXACT_KINDS = frozenset(("cylinder", "revolution", "torus", "funnel",
+                         "polygon"))
+
+
 def _wall_lens(wall, x, y, z, s):
     kind = wall.kind
-    if kind in ("polygon", "implicit"):   # flat face / no closed-form curvature
-        return (0.0, 0.0, 0.0)
     cx, cy = _center(wall)
     if kind == "cylinder":
         phi = math.atan2(y - cy, x - cx)
@@ -82,19 +86,35 @@ def _wall_lens(wall, x, y, z, s):
         # R_merid = -(1+r'^2)^1.5/r'': waists (r'' < 0) curve toward the ray
         inv_ft = -2.0 * rpp / ((1.0 + rp * rp) ** 1.5 * s) if rpp else 0.0
         return (phi, inv_ft, 2.0 * s / r)
-    # torus: tube radius sagittal; the bend radius meridional, concave
-    # (focusing) on the outer wall of the bend, convex on the inner
-    cx3, cy3, cz3 = wall._Cf
-    nx, ny = wall._nf
-    vx, vy, vz = x - cx3, y - cy3, z - cz3
-    dot = vx * nx + vy * ny
-    px, py, pz = vx - dot * nx, vy - dot * ny, vz
-    rho = math.sqrt(px * px + py * py + pz * pz)
-    tcx = cx3 + wall._Rf * px / rho
-    tcy = cy3 + wall._Rf * py / rho
-    phi = math.atan2(y - tcy, x - tcx)
-    r_mer = wall._Rf if rho > wall._Rf else -wall._Rf
-    return (phi, 2.0 / (r_mer * s), 2.0 * s / wall._af)
+    if kind == "funnel":
+        # axis center*g(z), radius r0*f(z); the meridional profile along the
+        # outward normal is rho(z) = (C·n)*g(z) + r0*f(z) — the axis bend
+        # projects onto the bounce azimuth and adds to the radius curvature
+        zr = z - wall._z0f
+        gg = 1.0 + zr * (wall._agf + zr * wall._bgf)
+        ff = 1.0 + zr * (wall._aff + zr * wall._bff)
+        phi = math.atan2(y - wall._cyf * gg, x - wall._cxf * gg)
+        cn = wall._cxf * math.cos(phi) + wall._cyf * math.sin(phi)
+        rp = (cn * (wall._agf + 2.0 * zr * wall._bgf)
+              + wall._r0f * (wall._aff + 2.0 * zr * wall._bff))
+        rpp = 2.0 * (cn * wall._bgf + wall._r0f * wall._bff)
+        inv_ft = -2.0 * rpp / ((1.0 + rp * rp) ** 1.5 * s) if rpp else 0.0
+        return (phi, inv_ft, 2.0 * s / (wall._r0f * ff))
+    if kind == "torus":
+        # tube radius sagittal; the bend radius meridional, concave
+        # (focusing) on the outer wall of the bend, convex on the inner
+        cx3, cy3, cz3 = wall._Cf
+        nx, ny = wall._nf
+        vx, vy, vz = x - cx3, y - cy3, z - cz3
+        dot = vx * nx + vy * ny
+        px, py, pz = vx - dot * nx, vy - dot * ny, vz
+        rho = math.sqrt(px * px + py * py + pz * pz)
+        tcx = cx3 + wall._Rf * px / rho
+        tcy = cy3 + wall._Rf * py / rho
+        phi = math.atan2(y - tcy, x - tcx)
+        r_mer = wall._Rf if rho > wall._Rf else -wall._Rf
+        return (phi, 2.0 / (r_mer * s), 2.0 * s / wall._af)
+    return (0.0, 0.0, 0.0)   # polygon: exactly flat; implicit/unknown: no curvature
 
 
 def bounce_lenses(optic, pts, sins):

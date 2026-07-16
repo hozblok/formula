@@ -881,3 +881,52 @@ def test_bounce_lenses_cylinder_wall():
     assert phi == pytest.approx(math.pi / 2)
     assert inv_ft == 0.0
     assert inv_fs == pytest.approx(2.0 * s / a)
+
+
+def test_bounce_lenses_funnel_wall():
+    # degenerate funnel (g = f = 1) must reproduce the cylinder lens; a
+    # parabolic centered funnel adds the r0*f''(z) meridional curvature
+    from formula.capsysred.gamma import bounce_lenses
+    r0, s, z = 6.0e-6, 2.0e-3, 0.01
+    flat = _cap_sim([{"center": [0.0, 0.0], "radius": r0,
+                      "funnel": {"g": [0.0, 0.0]}}])
+    bundle = CapillaryBundle(flat.cfg.capillary.bores, flat.cfg.capillary.z0,
+                             flat.cfg.capillary.z1)
+    [(phi, ift, ifs)] = bounce_lenses(bundle, [(0.0, r0, z)], [s])
+    assert phi == pytest.approx(math.pi / 2)
+    assert ift == 0.0 and ifs == pytest.approx(2.0 * s / r0)
+
+    bf = -2.0e2                       # r(z) = r0*(1 + bf*z^2): waist profile
+    para = _cap_sim([{"center": [0.0, 0.0], "radius": r0,
+                      "funnel": {"g": [0.0, 0.0], "f": [0.0, bf]}}])
+    bundle = CapillaryBundle(para.cfg.capillary.bores, para.cfg.capillary.z0,
+                             para.cfg.capillary.z1)
+    ff = 1.0 + bf * z * z
+    rp = r0 * 2.0 * bf * z
+    rpp = 2.0 * r0 * bf
+    [(phi, ift, ifs)] = bounce_lenses(bundle, [(r0 * ff, 0.0, z)], [s])
+    assert phi == pytest.approx(0.0)
+    assert ifs == pytest.approx(2.0 * s / (r0 * ff))
+    assert ift == pytest.approx(-2.0 * rpp / ((1.0 + rp * rp) ** 1.5 * s))
+    assert ift > 0.0                  # waist wall curves toward the ray: focusing
+
+
+def test_bounce_lenses_unknown_kind_falls_flat():
+    # future wall kinds must degrade to the flat (scalar-q) model, not crash
+    from formula.capsysred.gamma import bounce_lenses
+    wall = type("OddWall", (), {"kind": "odd", "_cxf": 0.0, "_cyf": 0.0})()
+    optic = type("Optic", (), {"walls": [wall]})()
+    assert bounce_lenses(optic, [(1e-6, 0.0, 0.01)], [1e-3]) == [(0.0, 0.0, 0.0)]
+
+
+def test_stage11_funnel_bore_runs(tmp_path):
+    # taper: bore radius shrinks 6 -> ~4.2 um over 5 cm; stage 11 must
+    # deposit finite maps with the funnel meridional lens engaged
+    sim = _cap_sim([{"center": [0.0, 0.0], "radius": 6.0e-6,
+                     "funnel": {"g": [0.0, 0.0], "f": [-6.0, 0.0]}}])
+    sim.run(str(tmp_path), stages=[11])
+    maps = sim.results["beamlet:capillary"]["maps"]
+    assert not maps["flat_walls"]
+    assert max(max(r) for r in maps["mu"]) <= 1.0 + 1e-9
+    for row in maps["intensity"]:
+        assert all(math.isfinite(v) and v >= 0.0 for v in row)
