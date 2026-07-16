@@ -288,7 +288,7 @@ class Config:
         # critical angle bounds the grazing term of the conditioning loss
         e_max = max((ln.e_kev for ln in spectral_lines(cfg["spectrum"], self.energy_kev)),
                     key=float)
-        theta_c = float(self.material.critical_angle(e_max, p))
+        theta_c = float(self.material.critical_angle(e_max, precision=p))
         (self.precision_target, self.precision_target_auto,
          self.precision_target_loss) = _precision_target(
             cfg["precision_target"], p,

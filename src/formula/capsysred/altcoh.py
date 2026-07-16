@@ -33,8 +33,8 @@ class FloatLineAmplitudes:
     material model; cross-checked against the Number Fresnel via check()."""
 
     def __init__(self, material, lines, precision):
-        self.db = [(2.0 * float(material.delta(l.e_kev, precision)),
-                    2.0 * float(material.beta(l.e_kev, precision)))
+        self.db = [(2.0 * float(material.delta(l.e_kev, precision=precision)),
+                    2.0 * float(material.beta(l.e_kev, precision=precision)))
                    for l in lines]
 
     def __call__(self, sins):

@@ -53,7 +53,7 @@ def test_fresnel_matches_engine_reflect_amplitude():
     s = solver("sin(x)", p).number({"x": "2.5e-4"})
     r_fast = sim.fresnel(s)
     r_ref = xray.reflect_amplitude("2.5e-4", str(sim.cfg.energy_kev),
-                                   sim.cfg.material, p)
+                                   sim.cfg.material, precision=p)
     assert float(abs(r_fast - r_ref)) < 1e-25
 
 
@@ -114,7 +114,7 @@ def test_symbolic_templates_match_references():
         for theta in ("2.5e-4", "1.5e-3", "3.5e-3"):
             s = Number(f"sin({theta})", p)
             r_sym = ampl_template(1, mat, p).number({"s1": str(s), "E": e})
-            r_ref = xray.reflect_amplitude(theta, e, mat, p)
+            r_ref = xray.reflect_amplitude(theta, e, mat, precision=p)
             assert float(abs(r_sym - r_ref)) < 1e-27
     sins = [Number(f"sin({t})", p) for t in ("8e-4", "1.2e-3", "2.1e-3")]
     chain = fres(sins[0]) * fres(sins[1]) * fres(sins[2])

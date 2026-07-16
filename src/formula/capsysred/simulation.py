@@ -72,9 +72,9 @@ class Simulation:
         self.line_amps = LineAmplitudes(cfg.material, self.lines, cfg.precision)
         self.lam = wavelength_m(cfg.energy_kev)
         p = cfg.precision
-        self.theta_c = float(cfg.material.critical_angle(cfg.energy_kev, p))
-        self.delta_f = float(cfg.material.delta(cfg.energy_kev, p))
-        self.beta_f = float(cfg.material.beta(cfg.energy_kev, p))
+        self.theta_c = float(cfg.material.critical_angle(cfg.energy_kev, precision=p))
+        self.delta_f = float(cfg.material.delta(cfg.energy_kev, precision=p))
+        self.beta_f = float(cfg.material.beta(cfg.energy_kev, precision=p))
         self.report = []
         self.files = []
         self.results = {}   # stage name -> MC result dict (maps, stats, ...)
@@ -112,7 +112,7 @@ class Simulation:
         s = solver("sin(x)", p).number({"x": theta})
         r_fast = self.fresnel(s)
         r_ref = xray.reflect_amplitude(theta, str(self.cfg.energy_kev),
-                                       self.cfg.material, p)
+                                       self.cfg.material, precision=p)
         r_sym = ampl_template(1, self.cfg.material, p).number(
             {"s1": str(s), "E": str(self.cfg.energy_kev)})
         diff = float(abs(r_fast - r_ref))
