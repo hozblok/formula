@@ -6,7 +6,7 @@ Templates are cached Solvers keyed by bounce count (variables s1..s_nb, E, L);
 `ray_expression` bakes one ray's angles into a standalone expression of E.
 """
 
-from ..xray import HC_KEV_ANGSTROM, R_E
+from ..physical_constants import HC_KEV_ANGSTROM, R_E
 from ..formula import Number
 from .nums import solver
 

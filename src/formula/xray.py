@@ -13,11 +13,14 @@ from typing import Union
 
 from .formula import Number
 from .intersect import RaySurface
-
-# Classical electron radius (m) and photon energy*wavelength product (keV*angstrom).
-R_E = "2.8179403262e-15"
-HC_KEV_ANGSTROM = "12.398419843320026"
-_ANGSTROM = "1e-10"
+from .physical_constants import (
+    ANGSTROM,
+    HC_KEV_ANGSTROM,
+    R_E,
+    SILICA_BETA_REF,
+    SILICA_ELECTRON_DENSITY,
+    SILICA_ENERGY_REF_KEV,
+)
 
 
 def wavelength_angstrom(energy_kev, *, precision: int) -> Number:
@@ -54,7 +57,7 @@ class GlassMaterial:
 
     def delta(self, energy_kev_value, *, precision: int) -> Number:
         """Refractive-index decrement delta(E)."""
-        lam_m = f"({HC_KEV_ANGSTROM})/({_s(energy_kev_value)})*({_ANGSTROM})"
+        lam_m = f"({HC_KEV_ANGSTROM})/({_s(energy_kev_value)})*({ANGSTROM})"
         expr = f"({R_E})*({lam_m})^2*({self.electron_density})/(2*pi)"
         return Number(expr, precision)
 
@@ -69,12 +72,12 @@ class GlassMaterial:
         return Number(f"sqrt(2*({d}))", precision)
 
 
-# Fused silica (SiO2, ~2.20 g/cm^3): electron density ~6.6e29 /m^3, beta ~3.9e-8 at 10 keV.
+# Fused silica (SiO2, ~2.20 g/cm^3); optical constants in physical_constants.
 FUSED_SILICA = GlassMaterial(
     name="fused silica",
-    electron_density="6.6e29",
-    beta_ref="3.89e-8",
-    energy_ref_kev="10.0",
+    electron_density=SILICA_ELECTRON_DENSITY,
+    beta_ref=SILICA_BETA_REF,
+    energy_ref_kev=SILICA_ENERGY_REF_KEV,
 )
 
 
