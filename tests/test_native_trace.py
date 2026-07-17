@@ -7,6 +7,7 @@ inside() booleans — and values within tolerances far below any physical
 scale yet far above the twins' rounding noise.
 """
 
+import gzip
 import json
 import math
 import random
@@ -660,8 +661,8 @@ def test_simulation_native_equals_python(tmp_path, monkeypatch):
     sim_python.run(str(tmp_path / "python"), stages=[2, 4, 6])
     p = TINY["precision"]
     def ray_rows(sub):  # skip the v2 meta line and scene trailers
-        lines = (tmp_path / sub / "rays.jsonl").read_text().splitlines()
-        return [row for row in map(json.loads, lines) if "stage" in row]
+        with gzip.open(tmp_path / sub / "rays.jsonl.gz", "rt") as fh:
+            return [row for row in map(json.loads, fh) if "stage" in row]
 
     n_rows, p_rows = ray_rows("native"), ray_rows("python")
     assert n_rows and len(n_rows) == len(p_rows)

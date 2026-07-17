@@ -10,8 +10,8 @@ Layout: meta line {"format": 2, ...}, one row per ray, and a
 {"scene_end": scene, "rows": n} trailer per completed scene. Screen-fate
 rows add x, y, dx, dy and the refl bounce points in float64 (enough for the
 float estimators, stages 7/8/10/11); opl/sins stay full-precision strings
-for the Number path (--replay of stages 2/4/6). rays_gzip writes/reads
-.jsonl.gz transparently.
+for the Number path (--replay of stages 2/4/6). The file is gzipped
+(rays.jsonl.gz).
 """
 
 import enum

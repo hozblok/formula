@@ -1261,7 +1261,7 @@ class Simulation:
         os.makedirs(out_dir, exist_ok=True)
         t0 = time.time()
         self.files = []
-        rays_name = "rays.jsonl.gz" if cfg.rays_gzip else "rays.jsonl"
+        rays_name = "rays.jsonl.gz"
         _log(f"CAPSYSred: trace only, output to {out_dir}"
              + (f", speedup ×{quick}" if quick > 1 else ""))
         self.rays = RaysFile(os.path.join(out_dir, rays_name), cfg, quick)
@@ -1330,7 +1330,7 @@ class Simulation:
         ]
         self.files = []
         self.jack_rows = []
-        rays_name = "rays.jsonl.gz" if cfg.rays_gzip else "rays.jsonl"
+        rays_name = "rays.jsonl.gz"
         if rays_src is not None:
             self.report.insert(-1, f"- replay: rays from {rays_src.path} "
                                    "(no tracing)")

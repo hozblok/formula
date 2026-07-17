@@ -1,5 +1,6 @@
 """Smoke and physics checks for the CAPSYSred package (tiny ray budgets)."""
 
+import gzip
 import json
 import math
 
@@ -30,7 +31,6 @@ TINY = {
         "source": {"n_modes": 3, "n_rays": 40},
         "screen": {"nx": 9, "ny": 9},
     },
-    "trace": {"rays_gzip": False},   # plain rays.jsonl, readable by the asserts
 }
 
 
@@ -209,9 +209,9 @@ def test_line_amplitudes_energy_dependence():
 def test_rays_jsonl_records(tmp_path):
     sim = Simulation.from_dict(TINY)
     result = sim.run(str(tmp_path), stages=[4])
-    assert "rays.jsonl" in result["files"]
-    lines = [json.loads(line)
-             for line in (tmp_path / "rays.jsonl").read_text().splitlines()]
+    assert "rays.jsonl.gz" in result["files"]
+    with gzip.open(tmp_path / "rays.jsonl.gz", "rt") as fh:
+        lines = [json.loads(line) for line in fh]
     assert lines[0]["format"] == 2                       # v2 meta line
     assert lines[-1] == {"scene_end": "lloyd", "rows": len(lines) - 2}
     rows = [row for row in lines if "stage" in row]
@@ -230,7 +230,7 @@ def test_replay_matches_direct_mono(tmp_path):
     sim = Simulation.from_dict(TINY)
     sim.run(str(tmp_path), stages=[4])
     direct = sim.results["lloyd"]["maps"]
-    sim.replay(str(tmp_path / "rays.jsonl"), str(tmp_path / "replay"))
+    sim.replay(str(tmp_path / "rays.jsonl.gz"), str(tmp_path / "replay"))
     rep = sim.results["lloyd"]["maps"]
     for key in ("mu", "intensity"):
         scale = max(max(abs(v) for v in row) for row in direct[key]) or 1.0
@@ -246,7 +246,7 @@ def test_replay_matches_direct_gaussian(tmp_path):
     assert sim.per_line
     sim.run(str(tmp_path), stages=[4])
     direct = sim.results["lloyd"]["maps"]
-    sim.replay(str(tmp_path / "rays.jsonl"), str(tmp_path / "replay"))
+    sim.replay(str(tmp_path / "rays.jsonl.gz"), str(tmp_path / "replay"))
     rep = sim.results["lloyd"]["maps"]
     for key in ("mu", "intensity"):
         scale = max(max(abs(v) for v in row) for row in direct[key]) or 1.0
@@ -276,7 +276,7 @@ def test_replay_with_other_material(tmp_path):
     sim.run(str(tmp_path), stages=[4])
     direct = sim.results["lloyd"]
     other = Simulation.from_dict(dict(TINY, material="zysk"))
-    other.replay(str(tmp_path / "rays.jsonl"), str(tmp_path / "replay"))
+    other.replay(str(tmp_path / "rays.jsonl.gz"), str(tmp_path / "replay"))
     rep = other.results["lloyd"]
     assert rep["rays_from"] == "file"
     assert rep["stats"]["emitted"] == direct["stats"]["emitted"]
@@ -291,7 +291,7 @@ def test_cli_trace_then_stages_reuse(tmp_path):
     cfg.write_text(yaml.safe_dump(TINY))
     out = tmp_path / "out"
     assert main([str(cfg), "-o", str(out), "--trace"]) == 0
-    assert (out / "rays.jsonl").exists()
+    assert (out / "rays.jsonl.gz").exists()
     assert main([str(cfg), "-o", str(out), "--stages", "6"]) == 0
     reports = list(out.glob("report-*.md"))
     assert any("reused from the rays file" in r.read_text() for r in reports)
@@ -764,7 +764,7 @@ def test_rays_file_reused_across_runs(tmp_path):
     assert sim.results["beamlet:capillary"]["rays_from"] == "file"
     assert sim.results["beamlet:free"]["rays_from"] == "trace"
     from formula.capsysred.rays import scan
-    meta, done, clean = scan(str(tmp_path / "rays.jsonl"))
+    meta, done, clean = scan(str(tmp_path / "rays.jsonl.gz"))
     assert clean and set(done) == {"capillary", "free"}
 
 
@@ -773,24 +773,22 @@ def test_trace_command_records_all_scenes(tmp_path):
     # dir consumes the file, a second trace skips everything
     from formula.capsysred.rays import scan
     result = Simulation.from_dict(TINY).trace(str(tmp_path))
-    assert result["files"] == ["rays.jsonl"]
-    meta, done, clean = scan(str(tmp_path / "rays.jsonl"))
+    assert result["files"] == ["rays.jsonl.gz"]
+    meta, done, clean = scan(str(tmp_path / "rays.jsonl.gz"))
     assert clean and set(done) == {"free", "lloyd", "capillary"}
     sim = Simulation.from_dict(TINY)
     sim.run(str(tmp_path), stages=[2, 4, 6])
     for scene in ("free", "lloyd", "capillary"):
         assert sim.results[scene]["rays_from"] == "file", scene
     Simulation.from_dict(TINY).trace(str(tmp_path))
-    assert scan(str(tmp_path / "rays.jsonl"))[1] == done
+    assert scan(str(tmp_path / "rays.jsonl.gz"))[1] == done
 
 
-def test_trace_command_gzip_default(tmp_path):
-    # rays_jsonl and rays_gzip default to true: trace writes rays.jsonl.gz,
-    # and replay reads the gzipped record transparently
-    cfg = {k: v for k, v in TINY.items() if k != "trace"}
-    result = Simulation.from_dict(cfg).trace(str(tmp_path))
+def test_trace_then_replay(tmp_path):
+    # trace records rays.jsonl.gz; replay reads it back with no tracing
+    result = Simulation.from_dict(TINY).trace(str(tmp_path))
     assert result["files"] == ["rays.jsonl.gz"]
-    sim = Simulation.from_dict(cfg)
+    sim = Simulation.from_dict(TINY)
     sim.replay(str(tmp_path / "rays.jsonl.gz"), str(tmp_path / "replay"))
     assert sim.results["lloyd"]["stats"]["emitted"] > 0
     assert sim.results["lloyd"]["rays_from"] == "file"
@@ -806,10 +804,9 @@ def test_rays_file_rejected_on_geometry_change(tmp_path):
     assert sim.results["beamlet:capillary"]["rays_from"] == "trace"
 
 
-def test_rays_gzip_roundtrip(tmp_path):
-    # rays_gzip writes .jsonl.gz; the same run reuses it for stage 10
-    cfg = dict(TINY, trace={"rays_gzip": True})
-    sim = Simulation.from_dict(cfg)
+def test_rays_file_reused_within_run(tmp_path):
+    # the run's own record is reused by stage 10 after stage 6
+    sim = Simulation.from_dict(TINY)
     result = sim.run(str(tmp_path), stages=[6, 10])
     assert "rays.jsonl.gz" in result["files"]
     assert sim.results["jack:capillary"]["rays_from"] == "file"
@@ -817,19 +814,18 @@ def test_rays_gzip_roundtrip(tmp_path):
     assert d6 == sim.results["jack:capillary"]["maps"]["density"]
 
 
-@pytest.mark.parametrize("gz", [False, True])
-def test_stage6_from_file_equals_traced(tmp_path, gz):
+def test_stage6_from_file_equals_traced(tmp_path):
     # stage 10 run first records the capillary scene; a later stage-6 run
     # consumes it — the Number path from full-precision strings must land on
     # the traced maps exactly
-    cfg = dict(TINY, trace={"rays_gzip": True}) if gz else TINY
+    cfg = TINY
     traced = Simulation.from_dict(cfg)
     traced.run(str(tmp_path / "a"), stages=[6])
     assert traced.results["capillary"]["rays_from"] == "trace"
     Simulation.from_dict(cfg).run(str(tmp_path / "b"), stages=[10])
     reused = Simulation.from_dict(cfg)
     reused.run(str(tmp_path / "b"), stages=[6])
-    assert (tmp_path / "b" / ("rays.jsonl.gz" if gz else "rays.jsonl")).exists()
+    assert (tmp_path / "b" / "rays.jsonl.gz").exists()
     assert reused.results["capillary"]["rays_from"] == "file"
     assert traced.results["capillary"]["stats"] == reused.results["capillary"]["stats"]
     for key in ("mu", "intensity", "density"):
@@ -1399,7 +1395,7 @@ def test_universal_replay_runs_any_streaming_stage(tmp_path):
     direct = Simulation.from_dict(TINY)
     direct.run(str(tmp_path / "direct"), stages=[6, 10, 11])
     rep = Simulation.from_dict(TINY)
-    rep.replay(str(tmp_path / "rec" / "rays.jsonl"),
+    rep.replay(str(tmp_path / "rec" / "rays.jsonl.gz"),
                str(tmp_path / "rep"), stages=[6, 10, 11])
     for key, maps_key in (("capillary", "mu"), ("jack:capillary", "mu_err"),
                           ("beamlet:capillary", "mu")):
@@ -1410,10 +1406,10 @@ def test_universal_replay_runs_any_streaming_stage(tmp_path):
 
 def test_universal_replay_default_stages_and_guards(tmp_path):
     # default stages come from the scenes present; stage 9 and absent
-    # scenes are refused; sampled records are refused
+    # scenes are refused
     rec = Simulation.from_dict(TINY)
     rec.run(str(tmp_path), stages=[6])          # capillary scene only
-    path = str(tmp_path / "rays.jsonl")
+    path = str(tmp_path / "rays.jsonl.gz")
     sim = Simulation.from_dict(TINY)
     sim.replay(path, str(tmp_path / "rep"))     # -> stage 6 by default
     assert sim.results["capillary"]["rays_from"] == "file"
@@ -1436,7 +1432,7 @@ def test_universal_replay_new_spectrum(tmp_path):
     band = dict(TINY, spectrum={"mode": "gaussian", "rel_fwhm": 2.0e-4,
                                 "n_lines": 3, "n_sigma": 2.0})
     sim = Simulation.from_dict(band)
-    sim.replay(str(tmp_path / "rays.jsonl"), str(tmp_path / "rep"),
+    sim.replay(str(tmp_path / "rays.jsonl.gz"), str(tmp_path / "rep"),
                stages=[6, 11])
     assert sim.results["capillary"]["rays_from"] == "file"
     assert sim.results["beamlet:capillary"]["rays_from"] == "file"
