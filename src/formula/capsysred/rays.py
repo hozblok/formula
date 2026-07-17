@@ -1,9 +1,9 @@
 """rays.jsonl v2: one traced-geometry stream shared by the stages.
 
 The tracer's work (geometry, no physics) is recorded once and reused: a
-stage consumes the file instead of re-tracing when the geometry fingerprint,
-the per-scene budgets and sample_every == 1 all match; otherwise it traces
-and tees the records into the run's writer. Rows carry the PRE-threshold
+stage consumes the file instead of re-tracing when the geometry fingerprint
+and the per-scene budgets match; otherwise it traces and tees the records
+into the run's writer. Rows carry the PRE-threshold
 fate — amplitude_min is physics and every consumer applies its own.
 
 Layout: meta line {"format": 2, ...}, one row per ray, and a
@@ -137,7 +137,6 @@ class RaysFile:
     def __init__(self, path, cfg, quick):
         self.path = path
         self.meta = {"format": FORMAT, "geometry": fingerprint(cfg),
-                     "sample_every": cfg.sample_every,
                      "budgets": budgets(cfg, quick)}
         self.done = {}
         mode = "w"
@@ -152,7 +151,7 @@ class RaysFile:
         self._scene, self._count = None, 0
 
     def write(self, scene: str, rec: RayRecord):
-        if scene in self.done or rec.ray % self.meta["sample_every"]:
+        if scene in self.done:
             return
         if scene != self._scene:
             self._scene, self._count = scene, 0
@@ -250,16 +249,13 @@ def scene_stream(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
         if scene not in w.done:
             raise ValueError(f"--replay: scene {scene!r} is not in {w.path} "
                              f"(recorded: {sorted(w.done)})")
-        if w.meta["sample_every"] != 1:
-            raise ValueError("--replay: the records are sampled "
-                             "(sample_every > 1), estimators need every ray")
         if w.meta["budgets"].get(scene) != [n_modes, n_rays]:
             raise ValueError(
                 f"--replay: scene {scene!r} budgets "
                 f"{w.meta['budgets'].get(scene)} != config {[n_modes, n_rays]}"
                 " — match n_modes/n_rays and --quick to the recording")
         return _file_records(w.path, scene), "file"
-    if (w is not None and scene in w.done and w.meta["sample_every"] == 1
+    if (w is not None and scene in w.done
             and w.meta["budgets"].get(scene) == [n_modes, n_rays]):
         return _file_records(w.path, scene), "file"
     return _traced_records(sim, scene, src_cfg, scr_cfg, optic, aim_factory,

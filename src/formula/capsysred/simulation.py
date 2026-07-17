@@ -1324,8 +1324,7 @@ class Simulation:
             f"- precision: {cfg.precision} digits; certified target "
             f"{cfg.precision_target}{' (auto)' if cfg.precision_target_auto else ''}; "
             f"seed = {cfg.seed}",
-            f"- Fresnel: {'per spectral line (per_line_fresnel)' if self.per_line else 'at the central energy E₀'}"
-            + (f"; records: every {cfg.sample_every}-th ray" if cfg.sample_every > 1 else ""),
+            f"- Fresnel: {'per spectral line (per_line_fresnel)' if self.per_line else 'at the central energy E₀'}",
             f"- {fres_check}",
             "",
         ]

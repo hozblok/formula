@@ -226,19 +226,6 @@ def test_rays_jsonl_records(tmp_path):
     assert modes == sorted(modes)                        # grouped by mode
 
 
-def test_sample_every_thins_records(tmp_path):
-    sim = Simulation.from_dict(
-        dict(TINY, trace={"sample_every": 3, "rays_gzip": False}))
-    sim.run(str(tmp_path), stages=[4])
-    rows = [row for row in (tmp_path / "rays.jsonl").read_text().splitlines()
-            if "scene_end" not in row and "format" not in row]
-    st = sim.results["lloyd"]["stats"]
-    n_modes = sim.results["lloyd"]["n_modes"]
-    per_mode = st["emitted"] // n_modes
-    expected = n_modes * len(range(0, per_mode, 3))
-    assert len(rows) == expected
-
-
 def test_replay_matches_direct_mono(tmp_path):
     sim = Simulation.from_dict(TINY)
     sim.run(str(tmp_path), stages=[4])

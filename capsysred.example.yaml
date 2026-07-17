@@ -2,13 +2,15 @@
 # Run:  PYTHONPATH=src python3 -m formula.capsysred capsysred.example.yaml -o out/
 # Stages 1-6 run by default; 7-12 are opt-in via --stages (see the report sections).
 # Lengths in meters, angles in radians, energy in keV.
-# Wall material is fused silica (built in): n = 1 − δ − i·β.
 
 precision: 32          # digits of arbitrary precision (Number/Solver)
 # precision_target: 30 # certified digits: stage-9 match tolerance 1e-target; default
                        # = precision − 2 − wall conditioning loss (torus/funnel bores)
 seed: 12345
 energy_kev: 8.0
+material: fused_silica # wall glass n = 1 − δ − i·β: fused_silica | zysk
+                       # (ε = 1 − 9.115e-6 + i·1.145e-7 at 8 keV, i.e. δ = 4.56e-6 —
+                       # Opt. Express 20, 3975; note his ε carries 2δ, 2β)
 
 spectrum:
   mode: monochromatic  # monochromatic | gaussian | lines | table
@@ -76,7 +78,6 @@ trace:
                           # (a ray is killed only if dead at every line)
   rays_jsonl: true        # full-precision ray records shared by the stages;
   rays_gzip: true         # replay input; gzipped (rays.jsonl.gz) by default
-  sample_every: 1         # write every k-th ray (k>1 disables in-run reuse)
   engine_method: subdivision  # RaySurface root finder for `surface:` bores and the
                               # hit cross-checks: subdivision (grazing-safe, any F)
                               # | sturm (exact, polynomial F only) | chebyshev

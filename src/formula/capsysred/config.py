@@ -65,14 +65,14 @@ DEFAULTS = {
         "screen": {"z": 0.051, "edge_x": 1.6e-5, "edge_y": 1.6e-5, "nx": 41, "ny": 41},
     },
     # rays_jsonl: full-precision per-ray records (replay input), gzipped when
-    # rays_gzip; sample_every: write every k-th ray. Records/multi-line runs
-    # trace with the amplitude_min kill off (E0-truncation would bias other
-    # energies) and apply the threshold after the per-line amplitudes are known.
+    # rays_gzip. Records/multi-line runs trace with the amplitude_min kill off
+    # (E0-truncation would bias other energies) and apply the threshold after
+    # the per-line amplitudes are known.
     # engine_method: RaySurface root finder for `surface:` bores and the hit
     # cross-checks — subdivision (default: grazing-safe, any F) | sturm (exact,
     # polynomial F only) | chebyshev | sampling | auto.
     "trace": {"max_bounces": 200, "amplitude_min": 1.0e-6,
-              "rays_jsonl": True, "rays_gzip": True, "sample_every": 1,
+              "rays_jsonl": True, "rays_gzip": True,
               "engine_method": "subdivision"},
     # stage 1: rays traced onto the to-scale schematic (01a-scheme-traced.svg)
     "schematic": {"n_rays": 10},
@@ -311,7 +311,6 @@ class Config:
         self.amplitude_min = float(cfg["trace"]["amplitude_min"])
         self.rays_jsonl = bool(cfg["trace"]["rays_jsonl"])
         self.rays_gzip = bool(cfg["trace"]["rays_gzip"])
-        self.sample_every = max(1, int(cfg["trace"]["sample_every"]))
         self.engine_method = str(cfg["trace"]["engine_method"])
         get_backend(self.engine_method)  # fail fast on an unknown method name
         self.per_line_fresnel = bool(cfg["spectrum"]["per_line_fresnel"])
