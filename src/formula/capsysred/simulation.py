@@ -1115,6 +1115,13 @@ class Simulation:
         if maps["gamma_bad"]:
             report.append(f"- deposits skipped (beam blew up, Im G ⊁ 0): "
                           f"{maps['gamma_bad']:,}")
+        lit_px = [i for i, v in enumerate(flat(maps["intensity"])) if v > 0.0]
+        errs = sorted(flat(maps["mu_err"])[i] for i in lit_px)
+        n_dub = int(sum(flat(maps["dubious"])))
+        report.append(
+            f"- σ_jack (delete-one-mode) on {len(lit_px)} lit px: median "
+            f"{errs[len(errs) // 2] if errs else 0.0:.4f}, max "
+            f"{errs[-1] if errs else 0.0:.4f}; don't-trust {n_dub}")
         if tag != "free":
             extent = (m_to_um(screen.x0f), m_to_um(screen.x0f + screen.exf),
                       m_to_um(screen.y0f), m_to_um(screen.y0f + screen.eyf))
@@ -1171,12 +1178,24 @@ class Simulation:
                     f"- RMS(|μ|_beamlet − |μ|_stage6) = {rms6:.4f} on "
                     f"{len(lit)} lit px (same rays; estimators differ — "
                     "stage 6 subtracts self-pairs, beamlets do not)")
+        if ny > 1:
+            extent = (m_to_um(screen.x0f), m_to_um(screen.x0f + screen.exf),
+                      m_to_um(screen.y0f), m_to_um(screen.y0f + screen.eyf))
+            fig = render.heatmap(maps["mu_err"], extent, "σ_jack(P)",
+                                 "x, µm", "y, µm", sub, "σ", w=640)
+        else:
+            fig = render.line_chart(
+                [{"xs": xs_um, "ys": maps["mu_err"][0], "label": "σ_jack"}],
+                "σ_jack by pixel", "x, µm", "σ", sub)
+        self._save(out_dir, f"11c-{tag}-beamlet-err.svg", fig)
         ys_um = [m_to_um(y) for y in screen.ys()]
         for iy in range(ny):
             for ix in range(nx):
                 rows.append({"stage": tag, "pixel": iy * nx + ix,
                              "x_um": xs_um[ix], "y_um": ys_um[iy],
                              "mu": maps["mu"][iy][ix],
+                             "mu_err": maps["mu_err"][iy][ix],
+                             "dubious": bool(maps["dubious"][iy][ix]),
                              "I": maps["intensity"][iy][ix],
                              "n_rays": int(maps["density"][iy][ix])})
         report.append(f"- time: {res['seconds']:.1f} s")

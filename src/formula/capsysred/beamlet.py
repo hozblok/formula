@@ -56,8 +56,11 @@ class BeamletField:
         self.dx = screen.exf / screen.nx
         self.dy = screen.eyf / screen.ny
         self.x0f, self.y0f = screen.x0f, screen.y0f
-        self.W = {}         # pixel -> complex sum_s w_m g g*_ref
-        self.I = {}         # pixel -> float sum_s w_m |g|^2
+        # per-mode rows (line-weighted): the totals give mu, delete-one-mode
+        # gives sigma_jack; memory O(n_modes * lit pixels)
+        self.Ws = []        # [mode] {pixel: complex w_m g g*_ref}
+        self.Is = []        # [mode] {pixel: float w_m |g|^2}
+        self.i_refs = []    # [mode] float intensity at ref
         self.density = {}   # pixel -> ray count (arrival-point bin)
         self.w_sum, self.w_n = 0.0, 0   # mean spot width at screen (line 0)
         self.gamma_bad = 0  # deposits skipped: Im(G) lost negative-definiteness
@@ -161,6 +164,7 @@ class BeamletField:
                     g[pix] = val if prev is None else prev + val
 
     def fold_mode(self):
+        w_row, i_row = {}, {}
         for m in range(self.nl):
             wf = self.wfs[m]
             if self.native is not None:
@@ -174,31 +178,63 @@ class BeamletField:
                 ref_c = g_ref.conjugate() if g_ref is not None else None
             for pixel, value in items:
                 a2 = value.real * value.real + value.imag * value.imag
-                self.I[pixel] = self.I.get(pixel, 0.0) + wf * a2
+                i_row[pixel] = i_row.get(pixel, 0.0) + wf * a2
                 if ref_c is not None:
-                    self.W[pixel] = self.W.get(pixel, 0j) + wf * (value * ref_c)
+                    w_row[pixel] = w_row.get(pixel, 0j) + wf * (value * ref_c)
+        self.Ws.append(w_row)
+        self.Is.append(i_row)
+        self.i_refs.append(i_row.get(self.ref, 0.0))
         self._g = None
 
     def finalize(self, nx: int, ny: int):
-        """Row-major [iy][ix] maps: mu, intensity, density."""
+        """Row-major [iy][ix] maps: mu, mu_err (delete-one-mode jackknife),
+        dubious, intensity, density. No self-pair subtraction, so I itself
+        is the mu denominator and every lit pixel is estimable; the trust
+        flags are sigma > 1, pinned at the |mu| = 1 clamp with sigma = 0,
+        or fewer than 2 usable leave-one-out modes."""
+        n_modes = len(self.Ws)
+        W, I = {}, {}
+        for row in self.Ws:
+            for pixel, w in row.items():
+                W[pixel] = W.get(pixel, 0j) + w
+        for row in self.Is:
+            for pixel, v in row.items():
+                I[pixel] = I.get(pixel, 0.0) + v
+        i_ref = sum(self.i_refs)
         zeros = lambda: [[0.0] * nx for _ in range(ny)]
-        mu, intensity, density = zeros(), zeros(), zeros()
-        i_ref = self.I.get(self.ref, 0.0)
-        for pixel, value in self.I.items():
+        mu, err, dubious = zeros(), zeros(), zeros()
+        intensity, density = zeros(), zeros()
+        for pixel, value in I.items():
             iy, ix = divmod(pixel, nx)
             intensity[iy][ix] = value
         for pixel, count in self.density.items():
             iy, ix = divmod(pixel, nx)
             density[iy][ix] = float(count)
         if i_ref > 0.0:
-            for pixel, w in self.W.items():
-                i_pix = self.I.get(pixel, 0.0)
+            for pixel, w in W.items():
+                i_pix = I.get(pixel, 0.0)
                 if i_pix <= 0.0:
                     continue
                 iy, ix = divmod(pixel, nx)
                 mu[iy][ix] = min(abs(w) / math.sqrt(i_pix * i_ref), 1.0)
+                loo = []   # a mode that solely lights the pixel is skipped
+                for s in range(n_modes):
+                    i_s = i_pix - self.Is[s].get(pixel, 0.0)
+                    iref_s = i_ref - self.i_refs[s]
+                    if i_s > 0.0 and iref_s > 0.0:
+                        w_s = w - self.Ws[s].get(pixel, 0j)
+                        loo.append(min(abs(w_s) / math.sqrt(i_s * iref_s), 1.0))
+                if len(loo) > 1:
+                    mean = sum(loo) / len(loo)
+                    err[iy][ix] = math.sqrt(
+                        sum((v - mean) ** 2 for v in loo)
+                        * (len(loo) - 1) / len(loo))
+                if (err[iy][ix] > 1.0 or len(loo) < 2
+                        or (mu[iy][ix] >= 1.0 and err[iy][ix] == 0.0)):
+                    dubious[iy][ix] = 1.0
         w_mean = self.w_sum / self.w_n if self.w_n else 0.0
-        return {"mu": mu, "intensity": intensity, "density": density,
+        return {"mu": mu, "mu_err": err, "dubious": dubious,
+                "intensity": intensity, "density": density,
                 "ref_pixel": self.ref, "i_ref": i_ref, "w_mean": w_mean,
                 "gamma_bad": self.gamma_bad, "flat_walls": self.flat_walls}
 

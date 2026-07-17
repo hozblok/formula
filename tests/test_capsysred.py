@@ -1378,6 +1378,7 @@ def test_stage11_extra_screens_rebin_same_records(tmp_path):
     main = sim.results["beamlet:capillary"]["maps"]
     s1 = sim.results["beamlet:capillary-s1"]["maps"]
     assert s1["mu"] == main["mu"]
+    assert s1["mu_err"] == main["mu_err"]
     assert s1["intensity"] == main["intensity"]
     assert s1["density"] == main["density"]
     s2 = sim.results["beamlet:capillary-s2"]["maps"]
@@ -1536,3 +1537,222 @@ def test_stage11_w0t_auto(tmp_path):
     assert res["w0_t"] != sim.cfg.beamlet_w0
     mu = res["maps"]["mu"]
     assert max(max(r) for r in mu) <= 1.0 + 1e-9
+
+
+def test_beamlet_jackknife_identical_modes_pinned():
+    # identical modes: mu = 1 with sigma = 0 everywhere lit — pinned at the
+    # clamp, so every lit pixel must carry the don't-trust flag
+    from formula.capsysred.types import RayRecord
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    field, scr = _beamlet_field_1d(lines, nx=21, edge=1.2e-5, z=0.06, w0=5e-7)
+    rec = RayRecord(0, 0, "screen", scr.pixel((0.0, 0.0)), (0.0, 0.0, 0.06),
+                    (0.0, 0.0, 1.0), 0.06, (), ())
+    for _ in range(4):
+        field.new_mode()
+        field.add_ray(rec, [1.0 + 0j])
+        field.fold_mode()
+    maps = field.finalize(21, 1)
+    lit = [i for i, v in enumerate(maps["intensity"][0]) if v > 0.0]
+    assert lit
+    assert all(maps["mu"][0][i] > 1.0 - 1e-12 for i in lit)
+    assert all(maps["mu_err"][0][i] < 1e-9 for i in lit)
+    # at ref the numerator and denominator share the float path: mu is
+    # exactly 1 with sigma exactly 0 — pinned at the clamp, don't-trust
+    ref = maps["ref_pixel"]
+    assert maps["mu"][0][ref] == 1.0 and maps["mu_err"][0][ref] == 0.0
+    assert maps["dubious"][0][ref] == 1.0
+
+
+def test_beamlet_jackknife_matches_bruteforce_leave_one_out():
+    # the incremental rows (W - W_s, I - I_s) must land on the sigma computed
+    # the hard way: an independent field rebuilt from every K-1 mode subset
+    from formula.capsysred.types import RayRecord
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    K = 5
+
+    def mode_rays(mode):
+        ph = 0.9 * mode
+        return [(-2.0e-6 + 1.0e-6 * mode, 0.0, 3.0e-5 * math.cos(ph),
+                 1.0e-5 * math.sin(ph), 0.06 + mode * 3.0e-11),
+                (1.5e-6, -1.0e-6 * (mode % 2), -2.0e-5, 0.0,
+                 0.0600000002 + mode * 1.0e-11)]
+
+    def build(skip=None):
+        field, scr = _beamlet_field_1d(lines, nx=21, edge=1.2e-5, z=0.06,
+                                       w0=5.0e-7)
+        for mode in range(K):
+            if mode == skip:
+                continue
+            field.new_mode()
+            for i, (x, y, dx, dy, opl) in enumerate(mode_rays(mode)):
+                field.add_ray(RayRecord(mode, i, "screen", scr.pixel((x, y)),
+                                        (x, y, 0.06), (dx, dy, 1.0), opl,
+                                        (), ()), [1.0 + 0j])
+            field.fold_mode()
+        return field.finalize(21, 1)
+
+    full = build()
+    for pixel in (6, 10, 14):
+        loo = [min(build(skip=s)["mu"][0][pixel], 1.0) for s in range(K)]
+        mean = sum(loo) / len(loo)
+        sigma = math.sqrt(sum((v - mean) ** 2 for v in loo)
+                          * (len(loo) - 1) / len(loo))
+        assert full["mu_err"][0][pixel] == pytest.approx(sigma, abs=1e-9), pixel
+
+
+def test_beamlet_jackknife_outlier_mode_inflates_sigma():
+    # ref phased identically every mode; the probe pixel flips phase by pi in
+    # ONE of three modes: the loo set is asymmetric and sigma is large
+    from formula.capsysred.types import RayRecord
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    k = float(lines[0].k)
+    field, scr = _beamlet_field_1d(lines, nx=21, edge=1.2e-5, z=0.06,
+                                   w0=3.0e-6)
+    probe_x = 4.0e-6
+    for mode in range(3):
+        field.new_mode()
+        field.add_ray(RayRecord(mode, 0, "screen", scr.pixel((-4.0e-6, 0.0)),
+                                (-4.0e-6, 0.0, 0.06), (0.0, 0.0, 1.0),
+                                0.06, (), ()), [1.0 + 0j])
+        flip = (mode == 2) * math.pi / k
+        field.add_ray(RayRecord(mode, 1, "screen", scr.pixel((probe_x, 0.0)),
+                                (probe_x, 0.0, 0.06), (0.0, 0.0, 1.0),
+                                0.06 + flip, (), ()), [1.0 + 0j])
+        field.fold_mode()
+    maps = field.finalize(21, 1)
+    ref_i = maps["ref_pixel"]
+    probe = scr.pixel((probe_x, 0.0))
+    assert maps["mu_err"][0][probe] > 0.1          # overlap tails soften it
+    assert maps["dubious"][0][probe] == 0.0        # sigma < 1: trusted, just wide
+    assert maps["mu_err"][0][probe] > 5.0 * maps["mu_err"][0][ref_i]
+
+
+def test_beamlet_jackknife_single_mode_pixel_guard():
+    # a pixel lit by exactly one mode: its own leave-out term is skipped
+    # (denominator would vanish) and sigma stays finite
+    from formula.capsysred.types import RayRecord
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    field, scr = _beamlet_field_1d(lines, nx=41, edge=4.0e-5, z=0.01,
+                                   w0=3.0e-6)
+    lone_x = 1.5e-5
+    for mode in range(3):
+        field.new_mode()
+        field.add_ray(RayRecord(mode, 0, "screen", scr.pixel((0.0, 0.0)),
+                                (0.0, 0.0, 0.01), (0.0, 0.0, 1.0),
+                                0.01, (), ()), [1.0 + 0j])
+        if mode == 1:      # the lone contributor to the far pixel
+            field.add_ray(RayRecord(mode, 1, "screen", scr.pixel((lone_x, 0.0)),
+                                    (lone_x, 0.0, 0.01), (0.0, 0.0, 1.0),
+                                    0.01, (), ()), [1.0 + 0j])
+        field.fold_mode()
+    maps = field.finalize(41, 1)
+    lone = scr.pixel((lone_x, 0.0))
+    assert maps["intensity"][0][lone] > 0.0
+    assert math.isfinite(maps["mu_err"][0][lone])
+    assert 0.0 <= maps["mu_err"][0][lone] <= 1.0
+
+
+def test_beamlet_aniso_free_widths_match_gaussian():
+    # quantitative anisotropy: the deposited spot's second moments must land
+    # on the per-axis Gaussian widths w(L) of the two launch waists
+    from types import SimpleNamespace
+    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.screen import ScreenGrid
+    from formula.capsysred.types import RayRecord
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    k = float(lines[0].k)
+    w0s, w0t, L = 5.0e-7, 3.0e-6, 0.06
+    scr = ScreenGrid(SimpleNamespace(z=L, nx=61, ny=61, center=[0.0, 0.0],
+                                     edge_x=4.0e-5, edge_y=4.0e-5))
+    field = BeamletField(lines, scr, scr.ref_pixel(None), w0s, 3.0, None,
+                         w0_t=w0t)
+    field.new_mode()
+    field.add_ray(RayRecord(0, 0, "screen", scr.ref_pixel(None),
+                            (0.0, 0.0, L), (0.0, 0.0, 1.0), L, (), ()),
+                  [1.0 + 0j])
+    field.fold_mode()
+    maps = field.finalize(61, 61)
+    xs, ys = scr.xs(), scr.ys()
+    tot = sx2 = sy2 = 0.0
+    for iy in range(61):
+        for ix in range(61):
+            v = maps["intensity"][iy][ix]
+            tot += v
+            sx2 += v * xs[ix] * xs[ix]
+            sy2 += v * ys[iy] * ys[iy]
+    wx = 2.0 * math.sqrt(sx2 / tot)      # I ~ exp(-2x^2/w^2): <x^2> = w^2/4
+    wy = 2.0 * math.sqrt(sy2 / tot)
+    zrt, zrs = 0.5 * w0t * w0t * k, 0.5 * w0s * w0s * k
+    assert wx == pytest.approx(w0t * math.hypot(1.0, L / zrt), rel=0.05)
+    assert wy == pytest.approx(w0s * math.hypot(1.0, L / zrs), rel=0.05)
+
+
+def test_beamlet_aniso_ellipse_follows_direction_azimuth():
+    # a bounce-free ray at azimuth 45 deg carries its launch ellipse with it:
+    # the far field is wide along the anti-diagonal (the narrow sagittal
+    # launch axis) and narrow along the diagonal
+    from types import SimpleNamespace
+    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.screen import ScreenGrid
+    from formula.capsysred.types import RayRecord
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=0.06, nx=61, ny=61, center=[0.0, 0.0],
+                                     edge_x=4.0e-5, edge_y=4.0e-5))
+    field = BeamletField(lines, scr, scr.ref_pixel(None), 5.0e-7, 3.0, None,
+                         w0_t=3.0e-6)
+    field.new_mode()
+    d = 7.0e-5
+    field.add_ray(RayRecord(0, 0, "screen", scr.ref_pixel(None),
+                            (0.0, 0.0, 0.06), (d, d, 1.0), 0.06, (), ()),
+                  [1.0 + 0j])
+    field.fold_mode()
+    maps = field.finalize(61, 61)
+    r = 4.0e-6 / math.sqrt(2.0)
+    at = lambda x, y: maps["intensity"][
+        min(range(61), key=lambda i: abs(scr.ys()[i] - y))][
+        min(range(61), key=lambda i: abs(scr.xs()[i] - x))]
+    assert at(-r, r) > 3.0 * at(r, r)      # anti-diagonal wide, diagonal narrow
+
+
+def test_gamma_aniso_amp_squared_is_per_axis_product():
+    # psi = 0 keeps the axes independent even through an astigmatic bounce:
+    # amp^2 must equal the product of the two scalar per-axis chains
+    import cmath
+    from formula.capsysred.gamma import propagate
+    k = 2.0 * math.pi / 1.55e-10
+    zrt, zrs = 0.5 * (2.0e-6) ** 2 * k, 0.5 * (3.0e-7) ** 2 * k
+    segs, ift, ifs = [0.01, 0.02], 1.0 / 0.04, 1.0 / 0.004
+    q, amp = propagate((zrt, zrs, 0.0), segs, [(0.0, ift, ifs)])
+
+    def chain(zr0, inv_f):
+        qs, prod = complex(0.0, zr0), complex(1.0, 0.0)
+        for seg, invf in zip(segs, [inv_f, 0.0]):
+            prod *= qs / (qs + seg)
+            qs += seg
+            if invf:
+                qs = 1.0 / (1.0 / qs - invf)
+        return qs, prod
+
+    qx, px = chain(zrt, ift)
+    qy, py = chain(zrs, ifs)
+    assert cmath.isclose(q[0], qx, rel_tol=1e-9)
+    assert cmath.isclose(q[2], qy, rel_tol=1e-9)
+    assert cmath.isclose(amp * amp, px * py, rel_tol=1e-9)
+
+
+def test_stage11_aniso_auto_shrinks_spot_and_reports_sigma(tmp_path):
+    # w0_t auto narrows the mean deposited spot vs the isotropic default,
+    # and the jackknife maps ride along in maps and mu-beamlet.jsonl
+    iso = Simulation.from_dict(TINY)
+    iso.run(str(tmp_path / "iso"), stages=[11])
+    aniso = Simulation.from_dict(dict(TINY, beamlet={"w0_t": "auto"}))
+    aniso.run(str(tmp_path / "aniso"), stages=[11])
+    w_iso = iso.results["beamlet:capillary"]["maps"]["w_mean"]
+    w_ani = aniso.results["beamlet:capillary"]["maps"]["w_mean"]
+    assert w_ani < w_iso
+    maps = aniso.results["beamlet:capillary"]["maps"]
+    flat = [v for row in maps["mu_err"] for v in row]
+    assert all(0.0 <= v <= 1.0 + 1e-9 for v in flat)
+    rows = [json.loads(l)
+            for l in (tmp_path / "aniso" / "mu-beamlet.jsonl").read_text().splitlines()]
+    assert all("mu_err" in r and "dubious" in r for r in rows)
