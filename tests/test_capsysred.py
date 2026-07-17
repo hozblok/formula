@@ -1005,6 +1005,64 @@ def test_bounce_lenses_unknown_kind_falls_flat():
     assert bounce_lenses(optic, [(1e-6, 0.0, 0.01)], [1e-3]) == [(0.0, 0.0, 0.0)]
 
 
+_IMPLICIT_PAIR = [
+    {"center": [0.0, 0.0], "surface": "x^2+y^2-9", "aim_radius": 3.0e-6},
+    {"center": [1.2e-5, 0.0], "surface": "(x-12)^2+y^2-9",
+     "aim_radius": 3.0e-6},
+]
+
+
+def test_bounce_lenses_implicit_multibore_flat():
+    # regression: nearest-bore selection read _cxf off ImplicitWall and
+    # crashed; implicit bounces come out flat whichever bore is hit
+    from formula.capsysred.gamma import bounce_lenses
+    cap = _cap_sim(_IMPLICIT_PAIR).cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    pts = [(3.0e-6, 0.0, 0.01), (1.5e-5, 0.0, 0.02)]
+    assert bounce_lenses(bundle, pts, [2.0e-3, 2.0e-3]) == [(0.0, 0.0, 0.0)] * 2
+
+
+def test_bounce_lenses_mixed_kinds_nearest_center():
+    # an implicit bore in the bundle: the closed-form neighbour still wins
+    # the center-distance pick, the implicit hit falls flat
+    from formula.capsysred.gamma import bounce_lenses
+    a, s = 3.0e-6, 2.0e-3
+    cap = _cap_sim([{"center": [0.0, 0.0], "radius": a},
+                    _IMPLICIT_PAIR[1]]).cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    (phi, ift, ifs), flat = bounce_lenses(
+        bundle, [(0.0, a, 0.01), (1.5e-5, 0.0, 0.02)], [s, s])
+    assert phi == pytest.approx(math.pi / 2)
+    assert ift == 0.0 and ifs == pytest.approx(2.0 * s / a)
+    assert flat == (0.0, 0.0, 0.0)
+
+
+def test_beamlet_deposit_implicit_multibore():
+    # the stage-11 path of the same regression: add_ray over an implicit
+    # bundle deposits a flat-bounce beamlet and flags flat_walls
+    from types import SimpleNamespace
+    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.screen import ScreenGrid
+    from formula.capsysred.types import RayRecord
+    cap = _cap_sim(_IMPLICIT_PAIR).cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=0.06, nx=21, ny=5, center=[0.0, 0.0],
+                                     edge_x=1.2e-5, edge_y=6.0e-6))
+    field = BeamletField(lines, scr, 52, 5.0e-7, 3.0, bundle)
+    assert field.flat_walls
+    field.new_mode()
+    rec = RayRecord(0, 0, "screen", scr.pixel((2.0e-6, 1.0e-6)),
+                    (2.0e-6, 1.0e-6, 0.06), (5.0e-5, -3.0e-5, 1.0), 0.0612,
+                    (2.0e-3,), ((1.4e-5, 0.0, 0.03),))
+    field.add_ray(rec, [1.0 + 0j])
+    field.fold_mode()
+    maps = field.finalize(scr.nx, scr.ny)
+    assert maps["gamma_bad"] == 0
+    total = sum(v for row in maps["intensity"] for v in row)
+    assert math.isfinite(total) and total > 0.0
+
+
 def test_stage11_funnel_bore_runs(tmp_path):
     # taper: bore radius shrinks 6 -> ~4.2 um over 5 cm; stage 11 must
     # deposit finite maps with the funnel meridional lens engaged

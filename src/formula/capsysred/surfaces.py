@@ -59,6 +59,8 @@ class ImplicitWall:
         from ..intersect import RaySurface
         self.kind = "implicit"
         self.center = center
+        # float center cache: the wall protocol read by gamma._center
+        self._cxf, self._cyf = float(center[0]), float(center[1])
         p = center[0].precision
         self.rs = RaySurface(expr, p)
         self.method = method
