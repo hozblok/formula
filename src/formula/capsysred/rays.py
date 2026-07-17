@@ -103,9 +103,36 @@ def scan(path):
     return meta, done, clean
 
 
+class RaysReader:
+    """Read-only rays file for --replay: stages consume, nothing traces or
+    writes. Geometry fingerprint is NOT checked — replaying on a different
+    spectrum/material/precision is the point; budgets are (scene_stream)."""
+
+    readonly = True
+
+    def __init__(self, path):
+        meta, done, _ = scan(path)
+        if meta is None:
+            raise ValueError(
+                f"{path}: not a rays.jsonl v2 file (v1 records predate the "
+                "shared-stream format — re-trace to record a v2 file)")
+        self.path, self.meta, self.done = path, meta, done
+
+    def write(self, scene, rec):
+        pass
+
+    def finish_scene(self, scene):
+        pass
+
+    def close(self):
+        pass
+
+
 class RaysFile:
     """The run's rays file: appends to a matching existing file, else starts
     fresh; `done` scenes are complete and readable back mid-run."""
+
+    readonly = False
 
     def __init__(self, path, cfg, quick):
         self.path = path
@@ -219,6 +246,19 @@ def scene_stream(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
     holds this scene at these budgets, else tracing (teeing into the file)."""
     n_modes, n_rays = src_cfg.budget(quick)
     w = sim.rays
+    if w is not None and w.readonly:   # --replay: the file is the only source
+        if scene not in w.done:
+            raise ValueError(f"--replay: scene {scene!r} is not in {w.path} "
+                             f"(recorded: {sorted(w.done)})")
+        if w.meta["sample_every"] != 1:
+            raise ValueError("--replay: the records are sampled "
+                             "(sample_every > 1), estimators need every ray")
+        if w.meta["budgets"].get(scene) != [n_modes, n_rays]:
+            raise ValueError(
+                f"--replay: scene {scene!r} budgets "
+                f"{w.meta['budgets'].get(scene)} != config {[n_modes, n_rays]}"
+                " — match n_modes/n_rays and --quick to the recording")
+        return _file_records(w.path, scene), "file"
     if (w is not None and scene in w.done and w.meta["sample_every"] == 1
             and w.meta["budgets"].get(scene) == [n_modes, n_rays]):
         return _file_records(w.path, scene), "file"

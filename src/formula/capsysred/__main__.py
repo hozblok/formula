@@ -39,7 +39,8 @@ def main(argv=None) -> int:
 
     sim = (Simulation.from_yaml(args.config) if args.config
            else Simulation.from_dict({}))
-    result = (sim.replay(args.replay, args.out) if args.replay
+    result = (sim.replay(args.replay, args.out, stages=stages,
+                         quick=max(1, args.quick)) if args.replay
               else sim.trace(args.out, quick=max(1, args.quick)) if args.trace
               else sim.run(args.out, stages=stages, quick=max(1, args.quick)))
     print(f"{result['out_dir']}: " + ", ".join(result["files"]))

@@ -42,14 +42,27 @@ def reflect(q, phi, inv_ft, inv_fs):
     return inv2((g[0] - pxx, g[1] - pxy, g[2] - pyy))
 
 
-def propagate(zr, segments, lenses, nsub=2):
+def propagate(zr, segments, lenses, nsub=None):
     """(Q at screen, on-axis amplitude factor) through the drift/bounce
-    chain; len(segments) == len(lenses) + 1, waist i*zr*I at the source."""
+    chain; len(segments) == len(lenses) + 1, waist i*zr*I at the source.
+
+    Drift sub-steps adapt to the per-axis Rayleigh range (Im Q is constant
+    along a drift, its eigenvalues ARE the axis z_R's): step <= min z_R
+    keeps each Gouy increment under a radian, so the principal square root
+    of the det ratio never leaves its branch — a fixed step loses pi
+    through a focus tighter than the step. Capped at 256 sub-steps."""
     q = (complex(0.0, zr), 0j, complex(0.0, zr))
     amp = 1.0 + 0j
     for j, seg in enumerate(segments):
-        step = seg / nsub
-        for _ in range(nsub):
+        n = nsub
+        if n is None:
+            mean = 0.5 * (q[0].imag + q[2].imag)
+            dev = math.hypot(0.5 * (q[0].imag - q[2].imag), q[1].imag)
+            zr_min = mean - dev
+            n = (max(2, min(256, math.ceil(seg / zr_min)))
+                 if zr_min > 0.0 and seg > 0.0 else 2)
+        step = seg / n
+        for _ in range(n):
             pre = det2(q)
             q = (q[0] + step, q[1], q[2] + step)
             amp *= cmath.sqrt(pre / det2(q))

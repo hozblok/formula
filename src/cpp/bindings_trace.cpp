@@ -197,12 +197,21 @@ class BeamletGrid {
     long bad = 0;
     for (size_t m = 0; m < kms_.size(); ++m) {
       const double km = kms_[m];
-      // gamma.propagate, op-for-op (nsub = 2, principal sqrt per sub-step)
+      // gamma.propagate, op-for-op (adaptive sub-steps, principal sqrt)
       std::complex<double> qxx(0.0, zrs_[m]), qxy(0.0, 0.0), qyy(0.0, zrs_[m]);
       std::complex<double> a_geo(1.0, 0.0);
       for (size_t j = 0; j < segs.size(); ++j) {
-        const double step = segs[j] / 2;
-        for (int sub = 0; sub < 2; ++sub) {
+        // adaptive sub-steps (gamma.propagate twin): step <= min axis z_R
+        const double mean = 0.5 * (qxx.imag() + qyy.imag());
+        const double dev =
+            std::hypot(0.5 * (qxx.imag() - qyy.imag()), qxy.imag());
+        const double zr_min = mean - dev;
+        const int nsub =
+            (zr_min > 0.0 && segs[j] > 0.0)
+                ? std::max(2, std::min(256, int(std::ceil(segs[j] / zr_min))))
+                : 2;
+        const double step = segs[j] / nsub;
+        for (int sub = 0; sub < nsub; ++sub) {
           const std::complex<double> pre = qxx * qyy - qxy * qxy;
           qxx += step;
           qyy += step;

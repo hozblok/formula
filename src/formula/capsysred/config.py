@@ -11,8 +11,10 @@ import warnings
 
 from .._roots import get_backend
 from ..formula import Number
-from ..xray import FUSED_SILICA
+from ..xray import FUSED_SILICA, ZYSK_GLASS
 from .spectrum import spectral_lines
+
+MATERIALS = {"fused_silica": FUSED_SILICA, "zysk": ZYSK_GLASS}
 
 DEFAULTS = {
     "precision": 32,
@@ -21,6 +23,8 @@ DEFAULTS = {
     "precision_target": None,
     "seed": 12345,
     "energy_kev": 8.0,
+    # wall glass n = 1 - delta - i*beta: fused_silica | zysk (Opt. Express 20, 3975)
+    "material": "fused_silica",
     # monochromatic | gaussian {rel_fwhm, n_lines, n_sigma} | lines [{energy_kev, weight}]
     # | table {file}; per_line_fresnel: r(E_m) per line instead of frozen r(E0)
     "spectrum": {"mode": "monochromatic", "rel_fwhm": 2.0e-4, "n_lines": 7,
@@ -278,7 +282,11 @@ class Config:
         self.seed = int(cfg["seed"])
         self.energy_kev = Number(str(cfg["energy_kev"]), p)
         self.spectrum = cfg["spectrum"]
-        self.material = FUSED_SILICA
+        mat = str(cfg["material"])
+        if mat not in MATERIALS:
+            raise ValueError(f"unknown material: {mat!r}; "
+                             f"available {sorted(MATERIALS)}")
+        self.material = MATERIALS[mat]
         self.source = SourceCfg(cfg["source"], p)
         self.screen = ScreenCfg(cfg["screen"], p)
         free = cfg["free"]

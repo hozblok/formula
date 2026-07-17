@@ -47,6 +47,19 @@ def test_full_pipeline_files_and_point_source_coherence(tmp_path):
     assert max(max(row) for row in maps["mu"]) <= 1.0 + 1e-9
 
 
+def test_material_enum_selects_wall_glass():
+    # Zysk 2012 glass: eps = 1 - 9.115e-6 + i*1.145e-7 at 8 keV -> 2*delta, 2*beta
+    sim = Simulation.from_dict(dict(TINY, material="zysk"))
+    assert sim.cfg.material is xray.ZYSK_GLASS
+    assert abs(2.0 * float(sim.cfg.material.delta("8.0", precision=32))
+               - 9.115e-6) < 1e-9
+    assert abs(2.0 * float(sim.cfg.material.beta("8.0", precision=32))
+               - 1.145e-7) < 1e-12
+    assert Simulation.from_dict(TINY).cfg.material is xray.FUSED_SILICA
+    with pytest.raises(ValueError, match="unknown material"):
+        Simulation.from_dict(dict(TINY, material="lead"))
+
+
 def test_fresnel_matches_engine_reflect_amplitude():
     sim = Simulation.from_dict(TINY)
     p = sim.cfg.precision
@@ -231,7 +244,7 @@ def test_replay_matches_direct_mono(tmp_path):
     sim.run(str(tmp_path), stages=[4])
     direct = sim.results["lloyd"]["maps"]
     sim.replay(str(tmp_path / "rays.jsonl"), str(tmp_path / "replay"))
-    rep = sim.results["replay:lloyd"]["maps"]
+    rep = sim.results["lloyd"]["maps"]
     for key in ("mu", "intensity"):
         scale = max(max(abs(v) for v in row) for row in direct[key]) or 1.0
         diff = max(abs(x - y) for ra, rb in zip(direct[key], rep[key])
@@ -247,12 +260,54 @@ def test_replay_matches_direct_gaussian(tmp_path):
     sim.run(str(tmp_path), stages=[4])
     direct = sim.results["lloyd"]["maps"]
     sim.replay(str(tmp_path / "rays.jsonl"), str(tmp_path / "replay"))
-    rep = sim.results["replay:lloyd"]["maps"]
+    rep = sim.results["lloyd"]["maps"]
     for key in ("mu", "intensity"):
         scale = max(max(abs(v) for v in row) for row in direct[key]) or 1.0
         diff = max(abs(x - y) for ra, rb in zip(direct[key], rep[key])
                    for x, y in zip(ra, rb))
         assert diff <= 1e-12 * scale, key
+
+
+def test_material_change_keeps_rays_file_valid(tmp_path):
+    # rays are material-free: a zysk re-run reuses the silica trace and only
+    # the physics (Fresnel amplitudes -> intensity) changes
+    silica = Simulation.from_dict(TINY)
+    silica.run(str(tmp_path), stages=[6])
+    zysk = Simulation.from_dict(dict(TINY, material="zysk"))
+    zysk.run(str(tmp_path), stages=[6])
+    assert zysk.results["capillary"]["rays_from"] == "file"
+    a = silica.results["capillary"]["maps"]
+    b = zysk.results["capillary"]["maps"]
+    assert a["density"] == b["density"]              # same geometry
+    assert a["intensity"] != b["intensity"]          # different Fresnel
+
+
+def test_replay_with_other_material(tmp_path):
+    # same recorded rays, zysk wall on replay: ray bookkeeping identical,
+    # reflected amplitudes differ
+    sim = Simulation.from_dict(TINY)
+    sim.run(str(tmp_path), stages=[4])
+    direct = sim.results["lloyd"]
+    other = Simulation.from_dict(dict(TINY, material="zysk"))
+    other.replay(str(tmp_path / "rays.jsonl"), str(tmp_path / "replay"))
+    rep = other.results["lloyd"]
+    assert rep["rays_from"] == "file"
+    assert rep["stats"]["emitted"] == direct["stats"]["emitted"]
+    assert rep["stats"]["screen"] == direct["stats"]["screen"]
+    assert rep["maps"]["intensity"] != direct["maps"]["intensity"]
+
+
+def test_cli_trace_then_stages_reuse(tmp_path):
+    import yaml
+    from formula.capsysred.__main__ import main
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text(yaml.safe_dump(TINY))
+    out = tmp_path / "out"
+    assert main([str(cfg), "-o", str(out), "--trace"]) == 0
+    assert (out / "rays.jsonl").exists()
+    assert main([str(cfg), "-o", str(out), "--stages", "6"]) == 0
+    reports = list(out.glob("report-*.md"))
+    assert any("reused from the rays file" in r.read_text() for r in reports)
 
 
 def _cap_sim(bores, z0=0.0, z1=0.05, **cap):
@@ -750,7 +805,8 @@ def test_trace_command_gzip_default(tmp_path):
     assert result["files"] == ["rays.jsonl.gz"]
     sim = Simulation.from_dict(cfg)
     sim.replay(str(tmp_path / "rays.jsonl.gz"), str(tmp_path / "replay"))
-    assert sim.results["replay:lloyd"]["stats"]["rays"] > 0
+    assert sim.results["lloyd"]["stats"]["emitted"] > 0
+    assert sim.results["lloyd"]["rays_from"] == "file"
 
 
 def test_rays_file_rejected_on_geometry_change(tmp_path):
@@ -845,7 +901,8 @@ def test_gamma_free_drift_reduces_to_scalar_q():
     L = 0.14
     q, amp = propagate(zr, [L], [])
     q_scalar = complex(L, zr)
-    assert q[1] == 0 and q[0] == q[2] == q_scalar
+    assert q[1] == 0 and q[0] == q[2]
+    assert cmath.isclose(q[0], q_scalar, rel_tol=1e-12)
     assert cmath.isclose(amp, complex(0, zr) / q_scalar, rel_tol=1e-12)
 
 
@@ -1004,3 +1061,339 @@ def test_beamlet_native_deposit_matches_python():
                    for a, b in zip(ra, rb))
         assert diff <= 1e-12 * scale, key
     assert nat["density"] == ref["density"]
+
+
+# ---------------------------------------------------------------- beamlets
+
+
+def _beamlet_field_1d(lines, nx=161, edge=8.0e-6, z=0.1, w0=2.5e-7):
+    from types import SimpleNamespace
+    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.screen import ScreenGrid
+    scr = ScreenGrid(SimpleNamespace(z=z, nx=nx, ny=1, center=[0.0, 0.0],
+                                     edge_x=edge, edge_y=2.0e-6))
+    return BeamletField(lines, scr, nx // 2, w0, 3.0, None), scr
+
+
+def test_beamlet_fan_reconstructs_diffraction_limited_focus():
+    # the raison d'etre of beamlets (beamlets.ru.md §7B): a converging fan
+    # is FINITE at the caustic and its coherent sum narrows to the
+    # diffraction limit FWHM = 0.886*lam*f/(2a), where rays give infinity
+    import cmath
+    from formula.capsysred.types import RayRecord
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    k = float(lines[0].k)
+    lam = 2.0 * math.pi / k
+    f, a, n = 0.1, 5.0e-6, 81
+    field, scr = _beamlet_field_1d(lines, z=f)
+    field.new_mode()
+    for i in range(n):
+        ai = -a + 2.0 * a * i / (n - 1)
+        rec = RayRecord(0, i, "screen", scr.pixel((0.0, 0.0)), (0.0, 0.0, f),
+                        (-ai / f, 0.0, 1.0), f + ai * ai / (2.0 * f), (), ())
+        # lens at the aperture: the converging wave cancels the chirp
+        field.add_ray(rec, [cmath.exp(-1j * k * ai * ai / (2.0 * f))])
+    field.fold_mode()
+    maps = field.finalize(scr.nx, 1)
+    prof = maps["intensity"][0]
+    xs = scr.xs()
+    peak = max(prof)
+    assert math.isfinite(peak) and prof.index(peak) == scr.nx // 2
+    above = [x for x, v in zip(xs, prof) if v > 0.5 * peak]
+    fwhm = max(above) - min(above)
+    expected = 0.886 * lam * f / (2.0 * a)
+    assert abs(fwhm - expected) < 0.1 * expected
+    # first sinc zero at lam*f/(2a): the profile must dip deeply there
+    zero_px = min(range(scr.nx), key=lambda i: abs(xs[i] - lam * f / (2 * a)))
+    assert prof[zero_px] < 0.05 * peak
+
+
+def test_beamlet_two_beam_fringes_period():
+    # two crossed beamlets interfere with period lam/(2*theta): the direct
+    # regression for the tilt-phase term of the deposit
+    from formula.capsysred.types import RayRecord
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lam = 2.0 * math.pi / float(lines[0].k)
+    theta = 5.0e-5
+    field, scr = _beamlet_field_1d(lines, z=0.06, w0=5.0e-7)
+    field.new_mode()
+    for i, sgn in enumerate((1.0, -1.0)):
+        rec = RayRecord(0, i, "screen", scr.pixel((0.0, 0.0)),
+                        (0.0, 0.0, 0.06), (sgn * theta, 0.0, 1.0), 0.06, (), ())
+        field.add_ray(rec, [1.0 + 0j])
+    field.fold_mode()
+    maps = field.finalize(scr.nx, 1)
+    prof, xs = maps["intensity"][0], scr.xs()
+    peak = prof[scr.nx // 2]
+    dx = lam / (2.0 * theta)
+    at = lambda x: prof[min(range(scr.nx), key=lambda i: abs(xs[i] - x))]
+    assert at(0.5 * dx) < 0.03 * peak          # dark fringe
+    assert at(dx) > 0.6 * peak                 # next bright fringe
+
+
+def test_gamma_amp_through_focus_matches_scalar_ratios():
+    # a strong isotropic lens puts the focus inside the next drift: the
+    # sub-stepped principal square roots must telescope to the exact
+    # per-segment ratios q_start/q_end (branch-safe: q stays in the upper
+    # half-plane), Gouy pi-jump included
+    import cmath
+    from formula.capsysred.gamma import propagate
+    k = 2.0 * math.pi / 1.55e-10
+    zr = 0.5 * (2.0e-7) ** 2 * k
+    f = 5.0e-3
+    segs, inv_f = [0.01, 0.02], 1.0 / f
+    q, amp = propagate(zr, segs, [(0.7, inv_f, inv_f)])
+    qs, expected = complex(0.0, zr), complex(1.0, 0.0)
+    for seg, invf in zip(segs, [inv_f, 0.0]):
+        expected *= qs / (qs + seg)
+        qs += seg
+        if invf:
+            qs = 1.0 / (1.0 / qs - invf)
+    assert cmath.isclose(q[0], qs, rel_tol=1e-9) and q[1] == 0
+    assert cmath.isclose(amp, expected, rel_tol=1e-9)
+    assert abs(cmath.phase(amp) - cmath.phase(1.0 / (1.0 + segs[0] / complex(0, zr)))) > 2.0
+
+
+def test_gamma_marginal_channel_hundred_bounces_stays_physical():
+    # s/f_s = 4*cos(theta) is the stability boundary of the periodic lens
+    # chain: after 100 meridional bounces Im(G) must stay negative-definite
+    # and the amplitude finite — the long-chain regression for reflect/inv2
+    from formula.capsysred.gamma import inv2, propagate
+    k = 2.0 * math.pi / 1.55e-10
+    zr = 0.5 * (5.0e-7) ** 2 * k
+    a, theta = 6.0e-6, 2.0e-3
+    seg = 2.0 * a / math.tan(theta)
+    inv_fs = 2.0 * math.sin(theta) / a
+    lenses = [(0.0 if i % 2 else math.pi, 0.0, inv_fs) for i in range(100)]
+    q, amp = propagate(zr, [seg] * 101, lenses)
+    gm = inv2(q)
+    mean = 0.5 * (gm[0].imag + gm[2].imag)
+    dev = math.hypot(0.5 * (gm[0].imag - gm[2].imag), gm[1].imag)
+    assert mean + dev < 0.0
+    assert 0.0 < abs(amp) < math.inf
+    assert abs(q[1]) < 1e-9 * abs(q[0])       # sin(pi) float noise only
+
+
+def test_beamlet_edge_deposits():
+    # (a) center off the window deposits the tail only, density stays empty;
+    # (b) far beyond the 3w window deposits nothing and must not crash;
+    # (c) a bounce exactly at the source (zero first segment) stays finite
+    from formula.capsysred.types import RayRecord
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    field, scr = _beamlet_field_1d(lines, nx=21, edge=1.2e-5, z=0.06, w0=5e-7)
+    field.new_mode()
+    field.add_ray(RayRecord(0, 0, "screen", None, (8.0e-6, 0.0, 0.06),
+                            (0.0, 0.0, 1.0), 0.06, (), ()), [1.0 + 0j])
+    field.fold_mode()
+    maps = field.finalize(21, 1)
+    assert all(v == 0.0 for v in maps["density"][0])
+    prof = maps["intensity"][0]
+    assert prof[-1] > 100.0 * prof[0] > 0.0    # tail lights the near edge
+
+    field, scr = _beamlet_field_1d(lines, nx=21, edge=1.2e-5, z=0.06, w0=5e-7)
+    field.new_mode()
+    field.add_ray(RayRecord(0, 0, "screen", None, (4.0e-5, 0.0, 0.06),
+                            (0.0, 0.0, 1.0), 0.06, (), ()), [1.0 + 0j])
+    field.fold_mode()
+    maps = field.finalize(21, 1)
+    assert all(v == 0.0 for v in maps["intensity"][0])
+
+    field, scr = _beamlet_field_1d(lines, nx=21, edge=1.2e-5, z=0.06, w0=5e-7)
+    field.new_mode()
+    hit = (1.0e-6, 0.0, 0.03)
+    opl = math.dist(hit, (2.0e-6, 0.0, 0.06))  # source ON the wall: L0 = 0
+    field.add_ray(RayRecord(0, 0, "screen", scr.pixel((2.0e-6, 0.0)),
+                            (2.0e-6, 0.0, 0.06), (3.3e-5, 0.0, 1.0), opl,
+                            (1.0e-3,), (hit,)), [1.0 + 0j])
+    field.fold_mode()
+    maps = field.finalize(21, 1)
+    assert all(math.isfinite(v) for v in maps["intensity"][0])
+    assert max(maps["intensity"][0]) > 0.0
+
+
+def test_beamlet_single_pixel_screen():
+    # nx = ny = 1: the window clamps to one cell, mu of the lit cell is 1
+    from types import SimpleNamespace
+    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.screen import ScreenGrid
+    from formula.capsysred.types import RayRecord
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=0.06, nx=1, ny=1, center=[0.0, 0.0],
+                                     edge_x=2.0e-6, edge_y=2.0e-6))
+    field = BeamletField(lines, scr, 0, 5.0e-7, 3.0, None)
+    field.new_mode()
+    field.add_ray(RayRecord(0, 0, "screen", 0, (0.0, 0.0, 0.06),
+                            (0.0, 0.0, 1.0), 0.06, (), ()), [1.0 + 0j])
+    field.fold_mode()
+    maps = field.finalize(1, 1)
+    assert maps["mu"] == [[1.0]] and maps["intensity"][0][0] > 0.0
+
+
+# ------------------------------------------------------------------ funnel
+
+
+def test_funnel_linear_taper_equals_revolution_twin():
+    # r(z) = r0*(1 + af*z) is exactly r2_poly (r0^2, 2 r0^2 af, r0^2 af^2):
+    # two independent _wall_lens branches must produce one lens
+    from formula.capsysred.gamma import bounce_lenses
+    r0, af, s = 5.0e-6, -8.0, 1.5e-3
+    fun = _cap_sim([{"center": [0.0, 0.0], "radius": r0,
+                     "funnel": {"g": [0.0, 0.0], "f": [af, 0.0]}}])
+    rev = _cap_sim([{"center": [0.0, 0.0],
+                     "r2_poly": [r0 * r0, 2 * r0 * r0 * af,
+                                 r0 * r0 * af * af]}])
+    bf = CapillaryBundle(fun.cfg.capillary.bores, fun.cfg.capillary.z0,
+                         fun.cfg.capillary.z1)
+    br = CapillaryBundle(rev.cfg.capillary.bores, rev.cfg.capillary.z0,
+                         rev.cfg.capillary.z1)
+    for z in (0.005, 0.02, 0.04):
+        pt = (r0 * (1.0 + af * z), 0.0, z)
+        (pf, tf, sf), = bounce_lenses(bf, [pt], [s])
+        (pr, tr, sr), = bounce_lenses(br, [pt], [s])
+        assert pf == pr == pytest.approx(0.0)
+        assert tf == pytest.approx(tr, rel=1e-12)
+        assert sf == pytest.approx(sr, rel=1e-12)
+
+
+def test_funnel_bent_axis_matches_torus_arc():
+    # a parabolic axis bend c*g(z) with 2*c*bg = 1/R approximates the torus
+    # arc: the meridional lens must agree on BOTH walls — focusing on the
+    # outer wall of the bend, defocusing on the inner (sign included)
+    from formula.capsysred.gamma import bounce_lenses
+    R, a, c, s, z = 1.0, 5.0e-6, 1.0e-3, 2.0e-3, 0.01
+    tor = _cap_sim([{"center": [0.0, 0.0], "radius": a,
+                     "bend": {"radius": R, "toward": [1.0, 0.0]}}])
+    fun = _cap_sim([{"center": [c, 0.0], "radius": a,
+                     "funnel": {"g": [0.0, 1.0 / (2.0 * c * R)],
+                                "f": [0.0, 0.0]}}])
+    bt = CapillaryBundle(tor.cfg.capillary.bores, tor.cfg.capillary.z0,
+                         tor.cfg.capillary.z1)
+    bfu = CapillaryBundle(fun.cfg.capillary.bores, fun.cfg.capillary.z0,
+                          fun.cfg.capillary.z1)
+    xc_t = R - math.sqrt(R * R - z * z)            # torus centerline at z
+    xc_f = c * (1.0 + z * z / (2.0 * c * R))       # funnel axis at z
+    for side in (-1.0, +1.0):                      # outer (-x) / inner (+x)
+        (_, tt, ts), = bounce_lenses(bt, [(xc_t + side * a, 0.0, z)], [s])
+        (_, ft, fs), = bounce_lenses(bfu, [(xc_f + side * a, 0.0, z)], [s])
+        expected = -side * 2.0 / (R * s)
+        assert tt == pytest.approx(expected, rel=1e-3)
+        assert ft == pytest.approx(expected, rel=1e-3)
+        assert ts == fs == pytest.approx(2.0 * s / a)
+
+
+def test_funnel_azimuth_from_local_axis():
+    # g(z) shifts the bore axis: phi must follow the LOCAL axis, not the
+    # entrance center
+    from formula.capsysred.gamma import bounce_lenses
+    r0, c, z = 2.0e-6, 1.0e-3, 0.01
+    fun = _cap_sim([{"center": [c, 0.0], "radius": r0,
+                     "funnel": {"g": [0.0, 500.0]}}])
+    b = CapillaryBundle(fun.cfg.capillary.bores, fun.cfg.capillary.z0,
+                        fun.cfg.capillary.z1)
+    axis_x = c * (1.0 + 500.0 * z * z)
+    (phi, _, _), = bounce_lenses(b, [(axis_x, r0, z)], [2.0e-3])
+    assert phi == pytest.approx(math.pi / 2)
+
+
+def test_funnel_true_cone_has_no_meridional_lens():
+    # straight generatrix r = r0*(1 + af*z): f'' = 0 exactly -> 1/f_t = 0
+    from formula.capsysred.gamma import bounce_lenses
+    r0, af = 5.0e-6, -6.0
+    fun = _cap_sim([{"center": [0.0, 0.0], "radius": r0,
+                     "funnel": {"g": [0.0, 0.0], "f": [af, 0.0]}}])
+    b = CapillaryBundle(fun.cfg.capillary.bores, fun.cfg.capillary.z0,
+                        fun.cfg.capillary.z1)
+    (_, inv_ft, _), = bounce_lenses(b, [(r0 * (1.0 + af * 0.03), 0.0, 0.03)],
+                                    [1.0e-3])
+    assert inv_ft == 0.0
+
+
+def test_funnel_multibore_picks_nearest_axis():
+    # two funnels: the hit near bore 2 must use ITS local axis for phi
+    from formula.capsysred.gamma import bounce_lenses
+    r0, z = 2.0e-6, 0.02
+    sim = _cap_sim([{"center": [-4.0e-6, 0.0], "radius": r0,
+                     "funnel": {"g": [0.0, 0.0]}},
+                    {"center": [4.0e-6, 0.0], "radius": r0,
+                     "funnel": {"g": [0.0, 0.0]}}])
+    b = CapillaryBundle(sim.cfg.capillary.bores, sim.cfg.capillary.z0,
+                        sim.cfg.capillary.z1)
+    (phi, _, ifs), = bounce_lenses(b, [(4.0e-6 - r0, 0.0, z)], [1.0e-3])
+    assert phi == pytest.approx(math.pi)
+    assert ifs == pytest.approx(2.0 * 1.0e-3 / r0)
+
+
+def test_stage11_extra_screens_rebin_same_records(tmp_path):
+    # an extra screen on the SAME plane must reproduce the main maps exactly
+    # (rescreen is a zero-length flight); a farther screen re-bins the same
+    # records into a finite, bounded map
+    cfg = dict(TINY)
+    cfg["capillary"] = dict(TINY["capillary"], screens=[
+        {"z": 0.051},
+        {"z": 0.06, "edge_x": 4.0e-5, "edge_y": 4.0e-5},
+    ])
+    sim = Simulation.from_dict(cfg)
+    result = sim.run(str(tmp_path), stages=[11])
+    main = sim.results["beamlet:capillary"]["maps"]
+    s1 = sim.results["beamlet:capillary-s1"]["maps"]
+    assert s1["mu"] == main["mu"]
+    assert s1["intensity"] == main["intensity"]
+    assert s1["density"] == main["density"]
+    s2 = sim.results["beamlet:capillary-s2"]["maps"]
+    assert max(max(r) for r in s2["mu"]) <= 1.0 + 1e-9
+    assert any(v > 0.0 for row in s2["intensity"] for v in row)
+    for name in ("11-capillary-s1-beamlet-mu.svg", "11-capillary-s2-beamlet-mu.svg"):
+        assert name in result["files"]
+
+
+def test_universal_replay_runs_any_streaming_stage(tmp_path):
+    # record once (trace-only), then replay stages 6, 10 and 11 from the
+    # file on a fresh Simulation: maps must equal the directly-run ones
+    rec = Simulation.from_dict(TINY)
+    rec.trace(str(tmp_path / "rec"))
+    direct = Simulation.from_dict(TINY)
+    direct.run(str(tmp_path / "direct"), stages=[6, 10, 11])
+    rep = Simulation.from_dict(TINY)
+    rep.replay(str(tmp_path / "rec" / "rays.jsonl"),
+               str(tmp_path / "rep"), stages=[6, 10, 11])
+    for key, maps_key in (("capillary", "mu"), ("jack:capillary", "mu_err"),
+                          ("beamlet:capillary", "mu")):
+        assert rep.results[key]["rays_from"] == "file", key
+        assert (rep.results[key]["maps"][maps_key]
+                == direct.results[key]["maps"][maps_key]), key
+
+
+def test_universal_replay_default_stages_and_guards(tmp_path):
+    # default stages come from the scenes present; stage 9 and absent
+    # scenes are refused; sampled records are refused
+    rec = Simulation.from_dict(TINY)
+    rec.run(str(tmp_path), stages=[6])          # capillary scene only
+    path = str(tmp_path / "rays.jsonl")
+    sim = Simulation.from_dict(TINY)
+    sim.replay(path, str(tmp_path / "rep"))     # -> stage 6 by default
+    assert sim.results["capillary"]["rays_from"] == "file"
+    assert "lloyd" not in sim.results
+    with pytest.raises(ValueError, match="stage 9"):
+        Simulation.from_dict(TINY).replay(path, str(tmp_path / "r9"),
+                                          stages=[9])
+    with pytest.raises(ValueError, match="scene 'lloyd'"):
+        Simulation.from_dict(TINY).replay(path, str(tmp_path / "r4"),
+                                          stages=[4])
+    with pytest.raises(ValueError, match="budgets"):
+        Simulation.from_dict(TINY).replay(path, str(tmp_path / "rq"),
+                                          stages=[6], quick=2)
+
+
+def test_universal_replay_new_spectrum(tmp_path):
+    # the point of replay: same geometry, different physics — a gaussian
+    # band replayed over rays recorded monochromatically
+    Simulation.from_dict(TINY).trace(str(tmp_path))
+    band = dict(TINY, spectrum={"mode": "gaussian", "rel_fwhm": 2.0e-4,
+                                "n_lines": 3, "n_sigma": 2.0})
+    sim = Simulation.from_dict(band)
+    sim.replay(str(tmp_path / "rays.jsonl"), str(tmp_path / "rep"),
+               stages=[6, 11])
+    assert sim.results["capillary"]["rays_from"] == "file"
+    assert sim.results["beamlet:capillary"]["rays_from"] == "file"
+    mu = sim.results["capillary"]["maps"]["mu"]
+    assert max(max(r) for r in mu) <= 1.0 + 1e-9

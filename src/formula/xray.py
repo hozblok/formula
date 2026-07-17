@@ -20,6 +20,9 @@ from .physical_constants import (
     SILICA_BETA_REF,
     SILICA_ELECTRON_DENSITY,
     SILICA_ENERGY_REF_KEV,
+    ZYSK_BETA_REF,
+    ZYSK_ELECTRON_DENSITY,
+    ZYSK_ENERGY_REF_KEV,
 )
 
 
@@ -78,6 +81,14 @@ FUSED_SILICA = GlassMaterial(
     electron_density=SILICA_ELECTRON_DENSITY,
     beta_ref=SILICA_BETA_REF,
     energy_ref_kev=SILICA_ENERGY_REF_KEV,
+)
+
+# Zysk 2012 polycapillary glass (Opt. Express 20, 3975).
+ZYSK_GLASS = GlassMaterial(
+    name="Zysk 2012 glass",
+    electron_density=ZYSK_ELECTRON_DENSITY,
+    beta_ref=ZYSK_BETA_REF,
+    energy_ref_kev=ZYSK_ENERGY_REF_KEV,
 )
 
 

@@ -28,11 +28,11 @@ from .nums import lift, solver, vunit
 from .progress import Progress
 from .screen import ScreenGrid
 from .source import aim_disk_direction, slope_direction
-from .spectrum import SpectralLine, spectral_lines, wavelength_m
+from .spectrum import spectral_lines, wavelength_m
 from .surfaces import CapillaryBundle, Mirror, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
-from .rays import RaysFile, SceneSeed, _lines, scene_stream
+from .rays import RaysFile, RaysReader, SceneSeed, scene_stream
 from .types import RayRecord
 from .units import (
     m_to_angstrom, m_to_mm, m_to_um, rad_to_mrad, rad_to_urad)
@@ -1020,133 +1020,163 @@ class Simulation:
         elliptic Gaussian phase spots instead of point bins, the 2x2 Gamma
         tensor through the bounces (general astigmatism), honest mu with no
         self-pair subtraction. Free scene validates against vCZ; the
-        capillary scene compares to stage 6 on the same rays."""
+        capillary scene compares to stage 6 on the same rays; extra
+        capillary screens re-bin the same records onto each plane."""
         cap = self.cfg.capillary
-        scenes = [("free", "11 beamlet free (MC)", self.cfg.free_source,
-                   self.cfg.free_screen, None, self._aim_free, SceneSeed.FREE)]
+        rows = []
+        res = run_beamlet_stage(self, "11 beamlet free (MC)", "free",
+                                self.cfg.free_source, self.cfg.free_screen,
+                                None, self._aim_free, SceneSeed.FREE, quick)
+        self.results["beamlet:free"] = res
+        maps, screen = res["maps"], res["screen"]
+        ref_xy = screen.pixel_xy(maps["ref_pixel"])
+        row = screen.ny // 2
+        xs_um = [m_to_um(x) for x in screen.xs()]
+        src = self.cfg.free_source
+        dist = float(screen.z) - float(src.position[2])
+        mu_th = [analytic.vcz_mu(x - ref_xy[0], src.shape, float(src.size),
+                                 float(self.lam), dist) for x in screen.xs()]
+        rms = analytic.rms_diff(maps["mu"][row], mu_th)
+        fig = render.line_chart(
+            [{"xs": xs_um, "ys": maps["mu"][row], "label": "beamlets |μ|"},
+             {"xs": xs_um, "ys": mu_th,
+              "label": "van Cittert–Zernike analytics", "dash": "6,4"}],
+            "beamlet |μ| vs vCZ analytics [free]",
+            "x, µm", "|μ|",
+            f"RMS(beamlets − vCZ) = {rms:.3f};  {self._beamlet_sub(res)}",
+            vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
+        self._save(out_dir, "11-free-beamlet-mu.svg", fig)
+        self._beamlet_outputs(out_dir, "free", res, rows,
+                              extra=[f"- RMS(|μ|_beamlet − |μ|_vCZ) = {rms:.4f}"])
         if cap is None:
             self._skip_cap("## Stage 11 — beamlet estimator [capillary]")
         else:
-            scenes.append(
-                ("capillary", "11 beamlet capillary (MC)", cap.source, cap.screen,
-                 CapillaryBundle(cap.bores, cap.z0, cap.z1, self.cfg.engine_method),
-                 self._aim_capillary, SceneSeed.CAPILLARY))
-        rows = []
-        for stage, label, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
-            res = run_beamlet_stage(self, label, stage, src_cfg, scr_cfg,
-                                    optic, aim_factory, off, quick)
-            self.results[f"beamlet:{stage}"] = res
-            maps, screen, st = res["maps"], res["screen"], res["stats"]
-            nx, ny = screen.nx, screen.ny
-            flat = lambda grid: [v for row in grid for v in row]
-            ref_xy = screen.pixel_xy(maps["ref_pixel"])
-            sub = (f"{res['n_modes']} modes × {res['n_rays']} rays; "
-                   f"w₀ = {m_to_um(self.cfg.beamlet_w0):.2f} µm, "
-                   f"mean w on screen = {m_to_um(maps['w_mean']):.2f} µm")
-            report = [f"## Stage 11 — beamlet estimator [{stage}]",
-                      f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen "
-                      f"{st['screen']:,} of {st['emitted']:,} (tails off window: {st['off_window']:,})",
-                      f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
-                      f"- w₀ = {m_to_um(self.cfg.beamlet_w0):.2f} µm; mean spot width on screen "
-                      f"= {m_to_um(maps['w_mean']):.2f} µm; Γ-tensor deposit; honest |μ| "
-                      "(no self-pair subtraction)"]
-            if maps["flat_walls"]:
-                report.append("- implicit bore(s): no closed-form curvature — "
-                              "flat-wall (scalar q) bounces")
-            if maps["gamma_bad"]:
-                report.append(f"- deposits skipped (beam blew up, Im G ⊁ 0): "
-                              f"{maps['gamma_bad']:,}")
-            row = ny // 2
-            xs_um = [m_to_um(x) for x in screen.xs()]
-            if stage == "free":
-                src = src_cfg
-                dist = float(screen.z) - float(src.position[2])
-                mu_th = [analytic.vcz_mu(x - ref_xy[0], src.shape,
-                                         float(src.size), float(self.lam), dist)
-                         for x in screen.xs()]
-                rms = analytic.rms_diff(maps["mu"][row], mu_th)
-                fig = render.line_chart(
-                    [{"xs": xs_um, "ys": maps["mu"][row], "label": "beamlets |μ|"},
-                     {"xs": xs_um, "ys": mu_th,
-                      "label": "van Cittert–Zernike analytics", "dash": "6,4"}],
-                    "beamlet |μ| vs vCZ analytics [free]",
-                    "x, µm", "|μ|", f"RMS(beamlets − vCZ) = {rms:.3f};  {sub}",
-                    vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
-                self._save(out_dir, "11-free-beamlet-mu.svg", fig)
-                report.append(f"- RMS(|μ|_beamlet − |μ|_vCZ) = {rms:.4f}")
-            else:
-                num = self.results.get("capillary")   # stage 6 maps, same rays
-                extent = (m_to_um(screen.x0f), m_to_um(screen.x0f + screen.exf),
-                          m_to_um(screen.y0f), m_to_um(screen.y0f + screen.eyf))
-                if ny > 1:
-                    mark = (m_to_um(ref_xy[0]), m_to_um(ref_xy[1]))
-                    fig = render.hstack([
-                        render.heatmap(maps["mu"], extent,
-                                       "beamlet |μ(P, P_ref)|",
-                                       "x, µm", "y, µm", sub, "|μ|",
-                                       mark=mark, vmax=1.0, w=430, equal=True),
-                        render.heatmap(maps["intensity"], extent,
-                                       "beamlet intensity", "x, µm", "y, µm",
-                                       "coherent beamlet sum |Σ g|²",
-                                       "I, arb. units", w=430, equal=True)])
-                    self._save(out_dir, "11-capillary-beamlet-mu.svg", fig)
-                else:
-                    fig = render.line_chart(
-                        [{"xs": xs_um, "ys": maps["mu"][0], "label": "beamlets |μ|"}],
-                        "beamlet |μ(x, x_ref)|", "x, µm", "|μ|", sub,
-                        vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
-                    self._save(out_dir, "11-capillary-beamlet-mu.svg", fig)
-                    imax = max(maps["intensity"][0]) or 1.0
-                    fig = render.line_chart(
-                        [{"xs": xs_um,
-                          "ys": [v / imax for v in maps["intensity"][0]],
-                          "label": "beamlet intensity"}],
-                        "beamlet intensity", "x, µm", "I, arb. units", sub)
-                    self._save(out_dir, "11a-capillary-beamlet-intensity.svg", fig)
-                lit = ([i for i, d in enumerate(flat(num["maps"]["density"]))
-                        if d > 0] if num is not None else [])
-                if lit:
-                    a, b = flat(maps["mu"]), flat(num["maps"]["mu"])
-                    rms6 = analytic.rms_diff([a[i] for i in lit],
-                                             [b[i] for i in lit])
-                    sub6 = (f"RMS on lit px {rms6:.3f}; same rays, different "
-                            "estimators: pairwise subtracts ray self-pairs, "
-                            "beamlets smear the field")
-                    if ny > 1:
-                        diff = [[abs(x - y) for x, y in zip(ra, rb)]
-                                for ra, rb in zip(maps["mu"], num["maps"]["mu"])]
-                        fig = render.heatmap(diff, extent,
-                                             "|μ_beamlet − μ_pairwise| (same rays)",
-                                             "x, µm", "y, µm", sub6, "Δ", w=640)
-                    else:
-                        fig = render.line_chart(
-                            [{"xs": xs_um,
-                              "ys": [x - y for x, y in
-                                     zip(maps["mu"][0], num["maps"]["mu"][0])],
-                              "label": "μ_beamlet − μ_pairwise"}],
-                            "beamlets vs pairwise: Δμ (same rays)", "x, µm", "Δμ",
-                            sub6, w=760, y_zero=False)
-                    self._save(out_dir, "11b-capillary-beamlet-vs6.svg", fig)
-                    report.append(
-                        f"- RMS(|μ|_beamlet − |μ|_stage6) = {rms6:.4f} on "
-                        f"{len(lit)} lit px (same rays; estimators differ — "
-                        "stage 6 subtracts self-pairs, beamlets do not)")
-            ys_um = [m_to_um(y) for y in screen.ys()]
-            for iy in range(ny):
-                for ix in range(nx):
-                    rows.append({"stage": stage, "pixel": iy * nx + ix,
-                                 "x_um": xs_um[ix], "y_um": ys_um[iy],
-                                 "mu": maps["mu"][iy][ix],
-                                 "I": maps["intensity"][iy][ix],
-                                 "n_rays": int(maps["density"][iy][ix])})
-            report.append(f"- time: {res['seconds']:.1f} s")
-            self.report += report
+            bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1,
+                                     self.cfg.engine_method)
+            res = run_beamlet_stage(self, "11 beamlet capillary (MC)",
+                                    "capillary", cap.source, cap.screen,
+                                    bundle, self._aim_capillary,
+                                    SceneSeed.CAPILLARY, quick)
+            self.results["beamlet:capillary"] = res
+            self._beamlet_outputs(out_dir, "capillary", res, rows,
+                                  vs=self.results.get("capillary"))
+            # extra screens: the same records re-binned onto each plane
+            for i, scr in enumerate(cap.screens, 1):
+                res_i = run_beamlet_stage(self, f"11 beamlet capillary s{i} (MC)",
+                                          "capillary", cap.source, cap.screen,
+                                          bundle, self._aim_capillary,
+                                          SceneSeed.CAPILLARY, quick,
+                                          screen_cfg=scr)
+                self.results[f"beamlet:capillary-s{i}"] = res_i
+                self._beamlet_outputs(
+                    out_dir, f"capillary-s{i}", res_i, rows,
+                    note=f"- screen {i}: z = {_mm(scr.z)}, "
+                         f"window {_um(scr.edge_x)} × {_um(scr.edge_y)}, "
+                         f"{scr.nx}×{scr.ny} px")
         path = os.path.join(out_dir, "mu-beamlet.jsonl")
         with open(path, "w", encoding="utf-8") as fh:
             for row in rows:
                 fh.write(json.dumps(row) + "\n")
         self.files.append("mu-beamlet.jsonl")
         _log("  → mu-beamlet.jsonl")
+
+    def _beamlet_sub(self, res):
+        return (f"{res['n_modes']} modes × {res['n_rays']} rays; "
+                f"w₀ = {m_to_um(self.cfg.beamlet_w0):.2f} µm, "
+                f"mean w on screen = {m_to_um(res['maps']['w_mean']):.2f} µm")
+
+    def _beamlet_outputs(self, out_dir, tag, res, rows, vs=None, note=None,
+                         extra=()):
+        """Beamlet scene outputs: report section, figures (capillary tags),
+        mu-beamlet.jsonl rows; vs = same-rays pairwise result for Δμ."""
+        maps, screen, st = res["maps"], res["screen"], res["stats"]
+        nx, ny = screen.nx, screen.ny
+        flat = lambda grid: [v for row in grid for v in row]
+        ref_xy = screen.pixel_xy(maps["ref_pixel"])
+        sub = self._beamlet_sub(res)
+        xs_um = [m_to_um(x) for x in screen.xs()]
+        report = [f"## Stage 11 — beamlet estimator [{tag}]",
+                  f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen "
+                  f"{st['screen']:,} of {st['emitted']:,} (tails off window: {st['off_window']:,})",
+                  f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
+                  f"- w₀ = {m_to_um(self.cfg.beamlet_w0):.2f} µm; mean spot width on screen "
+                  f"= {m_to_um(maps['w_mean']):.2f} µm; Γ-tensor deposit; honest |μ| "
+                  "(no self-pair subtraction)"]
+        if note:
+            report.append(note)
+        report += list(extra)
+        if maps["flat_walls"]:
+            report.append("- implicit bore(s): no closed-form curvature — "
+                          "flat-wall (scalar q) bounces")
+        if maps["gamma_bad"]:
+            report.append(f"- deposits skipped (beam blew up, Im G ⊁ 0): "
+                          f"{maps['gamma_bad']:,}")
+        if tag != "free":
+            extent = (m_to_um(screen.x0f), m_to_um(screen.x0f + screen.exf),
+                      m_to_um(screen.y0f), m_to_um(screen.y0f + screen.eyf))
+            if ny > 1:
+                mark = (m_to_um(ref_xy[0]), m_to_um(ref_xy[1]))
+                fig = render.hstack([
+                    render.heatmap(maps["mu"], extent,
+                                   "beamlet |μ(P, P_ref)|",
+                                   "x, µm", "y, µm", sub, "|μ|",
+                                   mark=mark, vmax=1.0, w=430, equal=True),
+                    render.heatmap(maps["intensity"], extent,
+                                   "beamlet intensity", "x, µm", "y, µm",
+                                   "coherent beamlet sum |Σ g|²",
+                                   "I, arb. units", w=430, equal=True)])
+                self._save(out_dir, f"11-{tag}-beamlet-mu.svg", fig)
+            else:
+                fig = render.line_chart(
+                    [{"xs": xs_um, "ys": maps["mu"][0], "label": "beamlets |μ|"}],
+                    "beamlet |μ(x, x_ref)|", "x, µm", "|μ|", sub,
+                    vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
+                self._save(out_dir, f"11-{tag}-beamlet-mu.svg", fig)
+                imax = max(maps["intensity"][0]) or 1.0
+                fig = render.line_chart(
+                    [{"xs": xs_um,
+                      "ys": [v / imax for v in maps["intensity"][0]],
+                      "label": "beamlet intensity"}],
+                    "beamlet intensity", "x, µm", "I, arb. units", sub)
+                self._save(out_dir, f"11a-{tag}-beamlet-intensity.svg", fig)
+            lit = ([i for i, d in enumerate(flat(vs["maps"]["density"]))
+                    if d > 0] if vs is not None else [])
+            if lit:
+                a, b = flat(maps["mu"]), flat(vs["maps"]["mu"])
+                rms6 = analytic.rms_diff([a[i] for i in lit],
+                                         [b[i] for i in lit])
+                sub6 = (f"RMS on lit px {rms6:.3f}; same rays, different "
+                        "estimators: pairwise subtracts ray self-pairs, "
+                        "beamlets smear the field")
+                if ny > 1:
+                    diff = [[abs(x - y) for x, y in zip(ra, rb)]
+                            for ra, rb in zip(maps["mu"], vs["maps"]["mu"])]
+                    fig = render.heatmap(diff, extent,
+                                         "|μ_beamlet − μ_pairwise| (same rays)",
+                                         "x, µm", "y, µm", sub6, "Δ", w=640)
+                else:
+                    fig = render.line_chart(
+                        [{"xs": xs_um,
+                          "ys": [x - y for x, y in
+                                 zip(maps["mu"][0], vs["maps"]["mu"][0])],
+                          "label": "μ_beamlet − μ_pairwise"}],
+                        "beamlets vs pairwise: Δμ (same rays)", "x, µm", "Δμ",
+                        sub6, w=760, y_zero=False)
+                self._save(out_dir, f"11b-{tag}-beamlet-vs6.svg", fig)
+                report.append(
+                    f"- RMS(|μ|_beamlet − |μ|_stage6) = {rms6:.4f} on "
+                    f"{len(lit)} lit px (same rays; estimators differ — "
+                    "stage 6 subtracts self-pairs, beamlets do not)")
+        ys_um = [m_to_um(y) for y in screen.ys()]
+        for iy in range(ny):
+            for ix in range(nx):
+                rows.append({"stage": tag, "pixel": iy * nx + ix,
+                             "x_um": xs_um[ix], "y_um": ys_um[iy],
+                             "mu": maps["mu"][iy][ix],
+                             "I": maps["intensity"][iy][ix],
+                             "n_rays": int(maps["density"][iy][ix])})
+        report.append(f"- time: {res['seconds']:.1f} s")
+        self.report += report
 
     # ------------------------------------------------------------- stage 12
 
@@ -1269,17 +1299,21 @@ class Simulation:
 
     # ------------------------------------------------------------- run
 
-    def run(self, out_dir, stages=None, quick: int = 1) -> dict:
+    def run(self, out_dir, stages=None, quick: int = 1, rays_src=None) -> dict:
         cfg = self.cfg
         wanted = set(stages or ALL_STAGES)
         if 3 in wanted:
             wanted.add(2)
         if 5 in wanted:
             wanted.add(4)
+        if rays_src is not None and 9 in wanted:
+            raise ValueError("stage 9 validates the tracers themselves and "
+                             "cannot run from a rays file")
         os.makedirs(out_dir, exist_ok=True)
         t0 = time.time()
         _log(f"CAPSYSred: stages {sorted(wanted)}, output to {out_dir}"
-             + (f", speedup ×{quick}" if quick > 1 else ""))
+             + (f", speedup ×{quick}" if quick > 1 else "")
+             + (f", rays from {rays_src.path}" if rays_src is not None else ""))
         fres_check = self._fresnel_check()
         _log("  " + fres_check)
         self.report = [
@@ -1298,9 +1332,14 @@ class Simulation:
         self.files = []
         self.jack_rows = []
         rays_name = "rays.jsonl.gz" if cfg.rays_gzip else "rays.jsonl"
-        self.rays = (RaysFile(os.path.join(out_dir, rays_name), cfg, quick)
-                     if cfg.rays_jsonl and wanted & {2, 4, 6, 7, 8, 10, 11, 12}
-                     else None)
+        if rays_src is not None:
+            self.report.insert(-1, f"- replay: rays from {rays_src.path} "
+                                   "(no tracing)")
+            self.rays = rays_src
+        else:
+            self.rays = (RaysFile(os.path.join(out_dir, rays_name), cfg, quick)
+                         if cfg.rays_jsonl and wanted & {2, 4, 6, 7, 8, 10, 11, 12}
+                         else None)
         try:
             if 1 in wanted:
                 _log("Stage 1/6: simulation layout")
@@ -1352,7 +1391,7 @@ class Simulation:
         finally:
             if self.rays is not None:
                 self.rays.close()
-        if self.rays is not None:
+        if self.rays is not None and rays_src is None:
             self.files.append(rays_name)
             _log(f"  → {rays_name}")
         report_name = _report_name(out_dir, "report")
@@ -1368,123 +1407,22 @@ class Simulation:
 
     # ------------------------------------------------------------- replay
 
-    def replay(self, records_path, out_dir) -> dict:
-        """Re-evaluate recorded rays on THIS config's spectrum/material — no tracing.
+    def replay(self, records_path, out_dir, stages=None,
+               quick: int = 1) -> dict:
+        """Run stages from a recorded rays file — no tracing at all.
 
-        Ray geometry (fate, pixel, opl, angles) comes from rays.jsonl and is
-        energy-independent; the spectrum and the material may differ from the
-        recording run, the rest of the config must match it.
+        Any streaming stage replays (2-8, 10-12, plus analytics 3/5; stage 9
+        validates live tracers and is refused); default = the Number stages
+        of the scenes present (free -> 2, lloyd -> 4, capillary -> 6). The
+        spectrum and the material may differ from the recording — rays are
+        energy-free; the geometry, seed, budgets and --quick must match it.
         """
-        cfg = self.cfg
-        os.makedirs(out_dir, exist_ok=True)
-        screens = {"free": cfg.free_screen, "lloyd": cfg.lloyd.screen}
-        if cfg.capillary is not None:
-            screens["capillary"] = cfg.capillary.screen
-        by_stage = {}
-        for line in _lines(records_path):   # transparently reads .jsonl.gz
-            row = json.loads(line)
-            if "stage" in row:   # skip the v2 meta line and scene trailers
-                by_stage.setdefault(row["stage"], []).append(row)
-        if not by_stage:
-            raise ValueError(f"no ray records in {records_path!r}")
-        p = cfg.precision
-        # Frozen-Fresnel replay evaluates one amplitude at E0 for every line.
-        amps_of = (self.line_amps if self.per_line else LineAmplitudes(
-            cfg.material, [SpectralLine(cfg.energy_kev, None, 1.0)], p))
-        self.files = []
-        report = [
-            "# CAPSYSred report — replay",
-            "",
-            f"- records: {records_path}",
-            f"- energy: {float(cfg.energy_kev):g} keV; spectrum: {self._spectrum_note()}",
-            f"- material: {cfg.material.name}; precision: {cfg.precision} digits",
-            "- ray geometry comes from the records (no tracing): the config must match"
-            + " the recording config in everything except the spectrum/material",
-            "",
-        ]
-        for stage, rows in sorted(by_stage.items()):
-            if stage not in screens:
-                raise ValueError(f"unknown stage in records: {stage!r}")
-            scr_cfg = screens[stage]
-            screen = ScreenGrid(scr_cfg)
-            acc = CoherenceAccumulator(self.lines,
-                                       screen.ref_pixel(scr_cfg.reference), p)
-            stats = {"rays": 0, "screen": 0, "absorbed": 0, "lost": 0,
-                     "off_window": 0, "below_min": 0}
-            mode_cur = None
-            t0 = time.time()
-            for row in rows:
-                if row["mode"] != mode_cur:
-                    if mode_cur is not None:
-                        acc.fold_mode()
-                    acc.new_mode()
-                    mode_cur = row["mode"]
-                stats["rays"] += 1
-                if row["fate"] != "screen":
-                    stats[row["fate"]] = stats.get(row["fate"], 0) + 1
-                    continue
-                if row["pixel"] is None:
-                    stats["off_window"] += 1
-                    continue
-                amps = amps_of(row["sins"])
-                if (cfg.amplitude_min > 0.0
-                        and max(float(abs(a)) for a in amps) < cfg.amplitude_min):
-                    stats["below_min"] += 1      # below threshold on every line
-                    continue
-                # v1 records carry no arrival point/direction/refl
-                rec = RayRecord(row["mode"], row["ray"], "screen",
-                                int(row["pixel"]), None, None,
-                                Number(row["opl"], p), tuple(row["sins"]), None)
-                acc.add_ray(rec, amps if self.per_line else amps[0])
-                stats["screen"] += 1
-            if mode_cur is not None:
-                acc.fold_mode()
-            maps = acc.finalize(screen.nx, screen.ny)
-            self.results[f"replay:{stage}"] = {"maps": maps, "screen": screen,
-                                               "stats": stats}
-            self._replay_figs(out_dir, stage, screen, maps)
-            report += [
-                f"## {stage}",
-                f"- rays in records: {stats['rays']:,}; to the screen: {stats['screen']:,};"
-                f" absorbed/lost in records: {stats['absorbed']:,}/{stats['lost']:,};"
-                f" below threshold on the new spectrum: {stats['below_min']:,}",
-                f"- time: {time.time() - t0:.1f} s",
-                "",
-            ]
-        report_name = _report_name(out_dir, "report-replay")
-        report += ["## Files", ""] + [f"- {n}"
-                                      for n in self.files + [report_name]]
-        with open(os.path.join(out_dir, report_name), "w",
-                  encoding="utf-8") as fh:
-            fh.write("\n".join(report) + "\n")
-        self.files.append(report_name)
-        _log(f"  → {report_name}")
-        return {"out_dir": out_dir, "files": list(self.files)}
+        reader = RaysReader(records_path)
+        if stages is None:
+            per_scene = {"free": 2, "lloyd": 4, "capillary": 6}
+            stages = sorted(per_scene[sc] for sc in reader.done
+                            if sc in per_scene)
+            if not stages:
+                raise ValueError(f"no replayable scenes in {records_path!r}")
+        return self.run(out_dir, stages=stages, quick=quick, rays_src=reader)
 
-    def _replay_figs(self, out_dir, stage, screen, maps):
-        extent = (m_to_um(screen.x0f), m_to_um(screen.x0f + screen.exf),
-                  m_to_um(screen.y0f), m_to_um(screen.y0f + screen.eyf))
-        ref_xy = screen.pixel_xy(maps["ref_pixel"])
-        sub = self._spectrum_note()
-        if screen.ny > 1:
-            mu_fig = render.heatmap(maps["mu"], extent,
-                                    f"Replay {stage}: |μ(P, P_ref)|",
-                                    "x, µm", "y, µm", sub, "|μ|",
-                                    mark=(m_to_um(ref_xy[0]), m_to_um(ref_xy[1])),
-                                    vmax=1.0, w=640)
-            int_fig = render.heatmap(maps["intensity"], extent,
-                                     f"Replay {stage}: intensity",
-                                     "x, µm", "y, µm", sub, "I, arb. units", w=640)
-        else:
-            xs_um = [m_to_um(x) for x in screen.xs()]
-            mu_fig = render.line_chart(
-                [{"xs": xs_um, "ys": maps["mu"][0], "label": "|μ| (replay)"}],
-                f"Replay {stage}: degree of coherence", "x, µm", "|μ|", sub,
-                vlines=[(m_to_um(ref_xy[0]), "ref")])
-            imax = max(maps["intensity"][0]) or 1.0
-            int_fig = render.line_chart(
-                [{"xs": xs_um, "ys": [v / imax for v in maps["intensity"][0]],
-                  "label": "I (replay)"}],
-                f"Replay {stage}: intensity", "x, µm", "I, arb. units", sub)
-        self._save(out_dir, f"replay-{stage}-coherence.svg", mu_fig)
-        self._save(out_dir, f"replay-{stage}-intensity.svg", int_fig)

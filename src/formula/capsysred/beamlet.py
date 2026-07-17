@@ -24,7 +24,7 @@ from .altcoh import FloatLineAmplitudes
 from .gamma import EXACT_KINDS, bounce_lenses, inv2, propagate
 from .native import make_beamlet_grid
 from .progress import Progress
-from .rays import scene_stream
+from .rays import rescreen, scene_stream
 from .screen import ScreenGrid
 
 
@@ -182,17 +182,23 @@ class BeamletField:
 
 
 def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
-                      seed_offset: int, quick: int):
+                      seed_offset: int, quick: int, screen_cfg=None):
     """The beamlet deposit over the scene's ray records — from the shared
-    rays file when it matches, else traced (the stage-2/6 rng stream)."""
+    rays file when it matches, else traced (the stage-2/6 rng stream).
+    screen_cfg re-projects the scr_cfg-plane records onto another screen
+    (straight vacuum flight: arrival point, opl and pixel move together, so
+    the Q-tensor segments stay consistent)."""
     cfg = sim.cfg
-    screen = ScreenGrid(scr_cfg)
+    target = screen_cfg or scr_cfg
+    screen = ScreenGrid(target)
     n_modes, n_rays = src_cfg.budget(quick)
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
-    field = BeamletField(sim.lines, screen, screen.ref_pixel(scr_cfg.reference),
+    field = BeamletField(sim.lines, screen, screen.ref_pixel(target.reference),
                          cfg.beamlet_w0, cfg.beamlet_ns, optic)
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
                                       aim_factory, seed_offset, quick)
+    if screen_cfg is not None:
+        records = rescreen(records, float(scr_cfg.z), screen)
     stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
              "off_window": 0}
     progress = Progress(label, n_modes * n_rays)
