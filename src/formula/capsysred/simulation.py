@@ -1081,8 +1081,11 @@ class Simulation:
         _log("  → mu-beamlet.jsonl")
 
     def _beamlet_sub(self, res):
+        w0t = res.get("w0_t", self.cfg.beamlet_w0)
+        aniso = (f" (sag) / {m_to_um(w0t):.2f} µm (tang)"
+                 if w0t != self.cfg.beamlet_w0 else "")
         return (f"{res['n_modes']} modes × {res['n_rays']} rays; "
-                f"w₀ = {m_to_um(self.cfg.beamlet_w0):.2f} µm, "
+                f"w₀ = {m_to_um(self.cfg.beamlet_w0):.2f} µm{aniso}, "
                 f"mean w on screen = {m_to_um(res['maps']['w_mean']):.2f} µm")
 
     def _beamlet_outputs(self, out_dir, tag, res, rows, vs=None, note=None,
@@ -1099,7 +1102,11 @@ class Simulation:
                   f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen "
                   f"{st['screen']:,} of {st['emitted']:,} (tails off window: {st['off_window']:,})",
                   f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
-                  f"- w₀ = {m_to_um(self.cfg.beamlet_w0):.2f} µm; mean spot width on screen "
+                  f"- w₀ = {m_to_um(self.cfg.beamlet_w0):.2f} µm"
+                  + (f" (sagittal), {m_to_um(res['w0_t']):.2f} µm (tangential)"
+                     if res.get("w0_t", self.cfg.beamlet_w0)
+                     != self.cfg.beamlet_w0 else "")
+                  + f"; mean spot width on screen "
                   f"= {m_to_um(maps['w_mean']):.2f} µm; Γ-tensor deposit; honest |μ| "
                   "(no self-pair subtraction)"]
         if note:

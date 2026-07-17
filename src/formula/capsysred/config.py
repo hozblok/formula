@@ -80,8 +80,11 @@ DEFAULTS = {
     # stage 9: rays for the hit-method cross-validation
     # (python / C++ / implicit subdivision)
     "validate": {"n_rays": 5000},
-    # stage 11: beamlet launch waist [m] and deposit window radius in beam widths
-    "beamlet": {"w0": 5.0e-7, "window_sigmas": 3.0},
+    # stage 11: beamlet launch waists [m] and deposit window radius in beam
+    # widths. w0 is the sagittal (channel) waist; w0_t the tangential one:
+    # null = isotropic (= w0), "auto" = the scene's Fresnel scale
+    # sqrt(lam*L/pi) of the source->screen flight, or an explicit number.
+    "beamlet": {"w0": 5.0e-7, "w0_t": None, "window_sigmas": 3.0},
 }
 
 
@@ -316,6 +319,10 @@ class Config:
         self.sketch_rank = int(cfg["sketch"]["rank"])
         self.validate_rays = int(cfg["validate"]["n_rays"])
         self.beamlet_w0 = float(cfg["beamlet"]["w0"])
+        w0t = cfg["beamlet"].get("w0_t")
+        if not (w0t is None or w0t == "auto" or isinstance(w0t, (int, float))):
+            raise ValueError(f"beamlet w0_t: null, \"auto\" or a number, got {w0t!r}")
+        self.beamlet_w0_t = float(w0t) if isinstance(w0t, (int, float)) else w0t
         self.beamlet_ns = float(cfg["beamlet"]["window_sigmas"])
 
 

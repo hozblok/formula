@@ -116,9 +116,14 @@ def make_tracer(optic):
     return tracer
 
 
-def make_beamlet_grid(nx, ny, x0, y0, ex, ey, kms, zrs, ns):
+def make_beamlet_grid(nx, ny, x0, y0, ex, ey, kms, zrs, zrs_t, ns):
     """Native stage-11 deposit grids (propagate + window loop per ray); None
     when the .so predates BeamletGrid — the Python path is the reference and
     the fallback."""
     cls = getattr(_formula, "BeamletGrid", None)
-    return None if cls is None else cls(nx, ny, x0, y0, ex, ey, kms, zrs, ns)
+    if cls is None:
+        return None
+    try:
+        return cls(nx, ny, x0, y0, ex, ey, kms, zrs, zrs_t, ns)
+    except TypeError:      # stale .so without the anisotropic launch
+        return None

@@ -1068,7 +1068,7 @@ def test_beamlet_native_deposit_matches_python():
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.types import RayRecord
 
-    if make_beamlet_grid(1, 1, 0.0, 0.0, 1.0, 1.0, [1.0], [1.0], 3.0) is None:
+    if make_beamlet_grid(1, 1, 0.0, 0.0, 1.0, 1.0, [1.0], [1.0], [1.0], 3.0) is None:
         pytest.skip("BeamletGrid missing from the built .so")
     lines = spectral_lines({"mode": "gaussian", "rel_fwhm": 1.0e-3,
                             "n_lines": 3, "n_sigma": 2.0}, Number("8.0", 32))
@@ -1437,4 +1437,102 @@ def test_universal_replay_new_spectrum(tmp_path):
     assert sim.results["capillary"]["rays_from"] == "file"
     assert sim.results["beamlet:capillary"]["rays_from"] == "file"
     mu = sim.results["capillary"]["maps"]["mu"]
+    assert max(max(r) for r in mu) <= 1.0 + 1e-9
+
+
+def test_gamma_anisotropic_launch():
+    # isotropic triple == scalar for any psi; an elliptic launch drifts as
+    # two independent scalar axes; psi = pi/2 swaps the axes
+    import cmath
+    from formula.capsysred.gamma import propagate
+    k = 2.0 * math.pi / 1.55e-10
+    zrt, zrs = 0.5 * (3.0e-6) ** 2 * k, 0.5 * (5.0e-7) ** 2 * k
+    L = 0.1
+    assert (propagate((zrs, zrs, 1.234), [L], [])
+            == propagate(zrs, [L], []))
+    q, _ = propagate((zrt, zrs, 0.0), [L], [])
+    assert q[1] == 0
+    assert cmath.isclose(q[0], complex(L, zrt), rel_tol=1e-12)
+    assert cmath.isclose(q[2], complex(L, zrs), rel_tol=1e-12)
+    q90, _ = propagate((zrt, zrs, math.pi / 2), [L], [])
+    assert cmath.isclose(q90[0], complex(L, zrs), rel_tol=1e-9)
+    assert cmath.isclose(q90[2], complex(L, zrt), rel_tol=1e-9)
+
+
+def test_beamlet_anisotropic_spot_flips_aspect():
+    # launch narrow sagittal (y), wide tangential (x): the far field flips
+    # the aspect — the spot lands WIDER along y than along x
+    from types import SimpleNamespace
+    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.screen import ScreenGrid
+    from formula.capsysred.types import RayRecord
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=0.06, nx=41, ny=41, center=[0.0, 0.0],
+                                     edge_x=2.4e-5, edge_y=2.4e-5))
+    field = BeamletField(lines, scr, scr.ref_pixel(None), 5.0e-7, 3.0, None,
+                         w0_t=3.0e-6)
+    field.new_mode()
+    field.add_ray(RayRecord(0, 0, "screen", scr.ref_pixel(None),
+                            (0.0, 0.0, 0.06), (0.0, 0.0, 1.0), 0.06, (), ()),
+                  [1.0 + 0j])
+    field.fold_mode()
+    maps = field.finalize(41, 41)
+    mid = 20
+    peak = maps["intensity"][mid][mid]
+    row = [maps["intensity"][mid][ix] for ix in range(41)]   # along x
+    col = [maps["intensity"][iy][mid] for iy in range(41)]   # along y
+    wx = sum(1 for v in row if v > 0.5 * peak)
+    wy = sum(1 for v in col if v > 0.5 * peak)
+    assert wy > 1.3 * wx
+
+
+def test_beamlet_native_parity_anisotropic():
+    # the C++ elliptic launch mirrors the Python one, bounces included
+    from types import SimpleNamespace
+    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.screen import ScreenGrid
+    from formula.capsysred.types import RayRecord
+    lines = spectral_lines({"mode": "gaussian", "rel_fwhm": 1.0e-3,
+                            "n_lines": 2, "n_sigma": 2.0}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=0.06, nx=21, ny=5, center=[0.0, 0.0],
+                                     edge_x=1.2e-5, edge_y=6.0e-6))
+    rays = [
+        (1.0e-6, 0.0, 3.0e-5, -1.0e-5, 0.0611, ((0.0, 1.0e-6, 0.03),)),
+        (-2.0e-6, 1.0e-6, -5.0e-5, 2.0e-5, 0.0604, ()),
+    ]
+    maps = []
+    for use_native in (True, False):
+        field = BeamletField(lines, scr, 52, 5.0e-7, 3.0, None,
+                             use_native=use_native, w0_t=2.5e-6)
+        if use_native and field.native is None:
+            pytest.skip("BeamletGrid missing from the built .so")
+        field.new_mode()
+        for i, (x, y, dx, dy, opl, refl) in enumerate(rays):
+            field.add_ray(RayRecord(0, i, "screen", scr.pixel((x, y)),
+                                    (x, y, 0.06), (dx, dy, 1.0), opl,
+                                    tuple(1.0e-3 for _ in refl), refl),
+                          [1.0 + 0.5j] * len(lines))
+        field.fold_mode()
+        maps.append(field.finalize(21, 5))
+    nat, ref = maps
+    imax = max(max(r) for r in ref["intensity"])
+    for key in ("mu", "intensity"):
+        scale = 1.0 if key == "mu" else imax
+        diff = max(abs(a - b) for ra, rb in zip(nat[key], ref[key])
+                   for a, b in zip(ra, rb))
+        assert diff <= 1e-12 * scale, key
+
+
+def test_stage11_w0t_auto(tmp_path):
+    # w0_t: "auto" resolves to the scene's Fresnel scale sqrt(lam*L/pi)
+    cfg = dict(TINY, beamlet={"w0_t": "auto"})
+    sim = Simulation.from_dict(cfg)
+    sim.run(str(tmp_path), stages=[11])
+    res = sim.results["beamlet:capillary"]
+    src = sim.cfg.capillary.source
+    flight = float(res["screen"].z) - float(src.position[2])
+    expected = math.sqrt(float(sim.lam) * flight / math.pi)
+    assert res["w0_t"] == pytest.approx(expected)
+    assert res["w0_t"] != sim.cfg.beamlet_w0
+    mu = res["maps"]["mu"]
     assert max(max(r) for r in mu) <= 1.0 + 1e-9

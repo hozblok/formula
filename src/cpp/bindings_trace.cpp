@@ -135,7 +135,8 @@ const typename cstrace::Tracer<P>::Bundle &bundle_of(const NativeOptic &nat) {
 class BeamletGrid {
  public:
   BeamletGrid(long nx, long ny, double x0, double y0, double ex, double ey,
-              std::vector<double> kms, std::vector<double> zrs, double ns)
+              std::vector<double> kms, std::vector<double> zrs,
+              std::vector<double> zrs_t, double ns)
       : nx_(nx),
         ny_(ny),
         x0_(x0),
@@ -147,6 +148,7 @@ class BeamletGrid {
         ns_(ns),
         kms_(std::move(kms)),
         zrs_(std::move(zrs)),
+        zrs_t_(std::move(zrs_t)),
         g_(kms_.size(), std::vector<std::complex<double>>(size_t(nx) * ny)) {}
 
   void clear() {
@@ -189,7 +191,7 @@ class BeamletGrid {
   // line 0, geometric mean of the axes; -1 when skipped) and the number of
   // lines whose Im(G) lost negative-definiteness (not deposited).
   py::tuple add_ray(double x, double y, double dxf, double dyf, double opl,
-                    const std::vector<double> &segs,
+                    double psi, const std::vector<double> &segs,
                     const std::vector<double> &lenses,
                     const std::vector<std::complex<double>> &amps) {
     const size_t n_lens = lenses.size() / 3;
@@ -197,8 +199,20 @@ class BeamletGrid {
     long bad = 0;
     for (size_t m = 0; m < kms_.size(); ++m) {
       const double km = kms_[m];
-      // gamma.propagate, op-for-op (adaptive sub-steps, principal sqrt)
-      std::complex<double> qxx(0.0, zrs_[m]), qxy(0.0, 0.0), qyy(0.0, zrs_[m]);
+      // gamma.propagate, op-for-op (adaptive sub-steps, principal sqrt);
+      // elliptic launch: tangential axis at azimuth psi
+      const double zrt = zrs_t_[m], zrsm = zrs_[m];
+      std::complex<double> qxx, qxy, qyy;
+      if (zrt == zrsm) {
+        qxx = std::complex<double>(0.0, zrt);
+        qxy = std::complex<double>(0.0, 0.0);
+        qyy = std::complex<double>(0.0, zrt);
+      } else {
+        const double c = std::cos(psi), sn = std::sin(psi);
+        qxx = std::complex<double>(0.0, zrt * c * c + zrsm * sn * sn);
+        qxy = std::complex<double>(0.0, (zrt - zrsm) * c * sn);
+        qyy = std::complex<double>(0.0, zrt * sn * sn + zrsm * c * c);
+      }
       std::complex<double> a_geo(1.0, 0.0);
       for (size_t j = 0; j < segs.size(); ++j) {
         // adaptive sub-steps (gamma.propagate twin): step <= min axis z_R
@@ -281,7 +295,7 @@ class BeamletGrid {
  private:
   long nx_, ny_;
   double x0_, y0_, ex_, ey_, dx_, dy_, ns_;
-  std::vector<double> kms_, zrs_;
+  std::vector<double> kms_, zrs_, zrs_t_;
   std::vector<std::vector<std::complex<double>>> g_;
 };
 
@@ -292,14 +306,15 @@ void register_trace(py::module_ &m) {
                           "Stage-11 beamlet deposit grids (one per spectral "
                           "line): the hot window loop of BeamletField.")
       .def(py::init<long, long, double, double, double, double,
-                    std::vector<double>, std::vector<double>, double>(),
+                    std::vector<double>, std::vector<double>,
+                    std::vector<double>, double>(),
            py::arg("nx"), py::arg("ny"), py::arg("x0"), py::arg("y0"),
            py::arg("ex"), py::arg("ey"), py::arg("kms"), py::arg("zrs"),
-           py::arg("ns"))
+           py::arg("zrs_t"), py::arg("ns"))
       .def("clear", &BeamletGrid::clear)
       .def("add_ray", &BeamletGrid::add_ray, py::arg("x"), py::arg("y"),
-           py::arg("dx"), py::arg("dy"), py::arg("opl"), py::arg("segs"),
-           py::arg("lenses"), py::arg("amps"),
+           py::arg("dx"), py::arg("dy"), py::arg("opl"), py::arg("psi"),
+           py::arg("segs"), py::arg("lenses"), py::arg("amps"),
            "propagate + deposit for every line of one ray.")
       .def("add", &BeamletGrid::add, py::arg("m"), py::arg("x"), py::arg("y"),
            py::arg("pref"), py::arg("tx"), py::arg("ty"), py::arg("hxx"),

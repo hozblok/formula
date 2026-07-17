@@ -46,12 +46,26 @@ def propagate(zr, segments, lenses, nsub=None):
     """(Q at screen, on-axis amplitude factor) through the drift/bounce
     chain; len(segments) == len(lenses) + 1, waist i*zr*I at the source.
 
+    zr is the isotropic launch Rayleigh range, or (zr_t, zr_s, psi) — an
+    elliptic waist with the tangential axis at azimuth psi (the channel
+    frame of the first bounce).
+
     Drift sub-steps adapt to the per-axis Rayleigh range (Im Q is constant
     along a drift, its eigenvalues ARE the axis z_R's): step <= min z_R
     keeps each Gouy increment under a radian, so the principal square root
     of the det ratio never leaves its branch — a fixed step loses pi
     through a focus tighter than the step. Capped at 256 sub-steps."""
-    q = (complex(0.0, zr), 0j, complex(0.0, zr))
+    if isinstance(zr, tuple):
+        zrt, zrs, psi = zr
+        if zrt == zrs:
+            q = (complex(0.0, zrt), 0j, complex(0.0, zrt))
+        else:
+            c, sn = math.cos(psi), math.sin(psi)
+            q = (complex(0.0, zrt * c * c + zrs * sn * sn),
+                 complex(0.0, (zrt - zrs) * c * sn),
+                 complex(0.0, zrt * sn * sn + zrs * c * c))
+    else:
+        q = (complex(0.0, zr), 0j, complex(0.0, zr))
     amp = 1.0 + 0j
     for j, seg in enumerate(segments):
         n = nsub

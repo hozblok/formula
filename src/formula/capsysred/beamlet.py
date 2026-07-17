@@ -32,12 +32,18 @@ class BeamletField:
     """Per-mode complex beamlet fields per spectral line; honest mu totals."""
 
     def __init__(self, lines, screen: ScreenGrid, ref_pixel: int,
-                 w0: float, n_sigmas: float, optic=None, use_native=True):
+                 w0: float, n_sigmas: float, optic=None, use_native=True,
+                 w0_t=None):
         self.kms = [float(l.k) for l in lines]
         self.wfs = [l.weight for l in lines]
         self.nl = len(self.kms)
         self.zrs = [0.5 * w0 * w0 * k for k in self.kms]   # z_R = w0^2*k/2
         self.w0, self.ns = w0, n_sigmas
+        # anisotropic launch: tangential waist may differ from the sagittal
+        # one (the channel wants the matched mode, the free flight the
+        # Fresnel scale); the ellipse is oriented per ray, see add_ray
+        self.w0_t = w0 if w0_t is None else float(w0_t)
+        self.zrt = [0.5 * self.w0_t * self.w0_t * k for k in self.kms]
         self.optic = optic
         self.flat_walls = any(w.kind not in EXACT_KINDS
                               for w in getattr(optic, "walls", ()))
@@ -57,7 +63,8 @@ class BeamletField:
         self.native = (make_beamlet_grid(screen.nx, screen.ny,
                                          screen.x0f, screen.y0f,
                                          screen.exf, screen.eyf,
-                                         self.kms, self.zrs, n_sigmas)
+                                         self.kms, self.zrs, self.zrt,
+                                         n_sigmas)
                        if use_native else None)
         self._g = None
 
@@ -88,9 +95,12 @@ class BeamletField:
                                    [float(s) for s in rec.sins])
         else:
             segs, lenses = [opl], []
+        # ellipse orientation: the channel frame of the first bounce, or the
+        # ray's own transverse azimuth when it never touches a wall
+        psi = lenses[0][0] if lenses else math.atan2(dyf, dxf)
         if self.native is not None:
             w_spot, bad = self.native.add_ray(
-                x, y, dxf, dyf, opl, segs,
+                x, y, dxf, dyf, opl, psi, segs,
                 [v for lens in lenses for v in lens], list(amps))
             self.gamma_bad += bad
             if w_spot >= 0.0:
@@ -99,7 +109,7 @@ class BeamletField:
             return
         for m in range(self.nl):
             km = self.kms[m]
-            q, a_geo = propagate(self.zrs[m], segs, lenses)
+            q, a_geo = propagate((self.zrt[m], self.zrs[m], psi), segs, lenses)
             gm = inv2(q)
             gi = (gm[0].imag, gm[1].imag, gm[2].imag)
             mean = 0.5 * (gi[0] + gi[2])
@@ -193,8 +203,12 @@ def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     screen = ScreenGrid(target)
     n_modes, n_rays = src_cfg.budget(quick)
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
+    w0_t = cfg.beamlet_w0_t
+    if w0_t == "auto":   # Fresnel scale of the scene's source->screen flight
+        flight = float(target.z) - float(src_cfg.position[2])
+        w0_t = math.sqrt(float(sim.lam) * flight / math.pi)
     field = BeamletField(sim.lines, screen, screen.ref_pixel(target.reference),
-                         cfg.beamlet_w0, cfg.beamlet_ns, optic)
+                         cfg.beamlet_w0, cfg.beamlet_ns, optic, w0_t=w0_t)
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
                                       aim_factory, seed_offset, quick)
     if screen_cfg is not None:
@@ -229,5 +243,6 @@ def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     progress.finish(f"on screen {stats['screen']:,}")
     maps = field.finalize(screen.nx, screen.ny)
     return {"maps": maps, "screen": screen, "stats": stats,
-            "rays_from": rays_from, "n_modes": n_modes, "n_rays": n_rays,
+            "rays_from": rays_from, "w0_t": field.w0_t,
+            "n_modes": n_modes, "n_rays": n_rays,
             "seconds": time.time() - t0}
