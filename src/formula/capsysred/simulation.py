@@ -1053,20 +1053,17 @@ class Simulation:
         else:
             bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1,
                                      self.cfg.engine_method)
+            # one pass over the records deposits the main and every extra
+            # screen together (the shared prep feeds all planes)
             res = run_beamlet_stage(self, "11 beamlet capillary (MC)",
                                     "capillary", cap.source, cap.screen,
                                     bundle, self._aim_capillary,
-                                    SceneSeed.CAPILLARY, quick)
+                                    SceneSeed.CAPILLARY, quick,
+                                    extra_screens=cap.screens)
             self.results["beamlet:capillary"] = res
             self._beamlet_outputs(out_dir, "capillary", res, rows,
                                   vs=self.results.get("capillary"))
-            # extra screens: the same records re-binned onto each plane
-            for i, scr in enumerate(cap.screens, 1):
-                res_i = run_beamlet_stage(self, f"11 beamlet capillary s{i} (MC)",
-                                          "capillary", cap.source, cap.screen,
-                                          bundle, self._aim_capillary,
-                                          SceneSeed.CAPILLARY, quick,
-                                          screen_cfg=scr)
+            for i, (scr, res_i) in enumerate(zip(cap.screens, res["extras"]), 1):
                 self.results[f"beamlet:capillary-s{i}"] = res_i
                 self._beamlet_outputs(
                     out_dir, f"capillary-s{i}", res_i, rows,

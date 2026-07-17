@@ -24,7 +24,7 @@ from .altcoh import FloatLineAmplitudes
 from .gamma import EXACT_KINDS, bounce_lenses, inv2, propagate
 from .native import make_beamlet_grid
 from .progress import Progress
-from .rays import rescreen, scene_stream
+from .rays import scene_stream
 from .screen import ScreenGrid
 
 
@@ -48,6 +48,7 @@ class BeamletField:
         self.flat_walls = any(w.kind not in EXACT_KINDS
                               for w in getattr(optic, "walls", ()))
         self.ref = ref_pixel
+        self.grid = screen
         self.nx, self.ny = screen.nx, screen.ny
         self.zf = float(screen.z)
         self.xs = screen.xs()
@@ -74,18 +75,14 @@ class BeamletField:
         else:
             self._g = [{} for _ in range(self.nl)]
 
-    def add_ray(self, rec, amps):
-        """Deposit one beamlet; rec.pixel None = tail only (the center lies
-        outside the window), still deposited. The spot is elliptic from
-        G = Q^-1 at the screen: phase = tilt + (k/2)·δᵀRe(G)δ, envelope
-        exp((k/2)·δᵀIm(G)δ) — without the tilt term k*(d_x*δx + d_y*δy) the
-        beamlets of one point source disagree at a pixel and the spherical
-        front never reconstructs."""
+    def prep(self, rec):
+        """The shared per-record work: floats, segments to THIS plane, wall
+        lenses, ellipse azimuth. Extra planes shift the result arithmetically
+        (straight final flight) instead of re-doing it."""
         opl = float(rec.opl)
         x, y = float(rec.point[0]), float(rec.point[1])
         dxf, dyf = float(rec.direction[0]), float(rec.direction[1])
-        if rec.pixel is not None:
-            self.density[rec.pixel] = self.density.get(rec.pixel, 0) + 1
+        dzf = float(rec.direction[2])
         pts = [tuple(float(c) for c in p) for p in rec.refl]
         if pts:
             segs = [math.dist(a, b) for a, b in zip(pts, pts[1:])]
@@ -98,6 +95,21 @@ class BeamletField:
         # ellipse orientation: the channel frame of the first bounce, or the
         # ray's own transverse azimuth when it never touches a wall
         psi = lenses[0][0] if lenses else math.atan2(dyf, dxf)
+        return x, y, dxf, dyf, dzf, opl, psi, segs, lenses
+
+    def add_ray(self, rec, amps):
+        """Deposit one beamlet; rec.pixel None = tail only (the center lies
+        outside the window), still deposited. The spot is elliptic from
+        G = Q^-1 at the screen: phase = tilt + (k/2)·δᵀRe(G)δ, envelope
+        exp((k/2)·δᵀIm(G)δ) — without the tilt term k*(d_x*δx + d_y*δy) the
+        beamlets of one point source disagree at a pixel and the spherical
+        front never reconstructs."""
+        x, y, dxf, dyf, _, opl, psi, segs, lenses = self.prep(rec)
+        self.deposit(x, y, dxf, dyf, opl, psi, segs, lenses, amps, rec.pixel)
+
+    def deposit(self, x, y, dxf, dyf, opl, psi, segs, lenses, amps, pixel):
+        if pixel is not None:
+            self.density[pixel] = self.density.get(pixel, 0) + 1
         if self.native is not None:
             w_spot, bad = self.native.add_ray(
                 x, y, dxf, dyf, opl, psi, segs,
@@ -192,39 +204,51 @@ class BeamletField:
 
 
 def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
-                      seed_offset: int, quick: int, screen_cfg=None):
+                      seed_offset: int, quick: int, extra_screens=()):
     """The beamlet deposit over the scene's ray records — from the shared
     rays file when it matches, else traced (the stage-2/6 rng stream).
-    screen_cfg re-projects the scr_cfg-plane records onto another screen
-    (straight vacuum flight: arrival point, opl and pixel move together, so
-    the Q-tensor segments stay consistent)."""
+
+    ONE pass serves every screen: the per-record prep (parse, segments, wall
+    lenses, azimuth) is shared, and each extra plane only shifts the straight
+    final flight — arrival x + dx*s, opl + s, last segment + s with
+    s = (z_i - z_main)/dz. The launch waist is resolved once from the main
+    flight (one beamlet, one launch). Returns the main-plane result with the
+    extra planes under "extras"."""
     cfg = sim.cfg
-    target = screen_cfg or scr_cfg
-    screen = ScreenGrid(target)
+    screen = ScreenGrid(scr_cfg)
     n_modes, n_rays = src_cfg.budget(quick)
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
     w0_t = cfg.beamlet_w0_t
     if w0_t == "auto":   # Fresnel scale of the scene's source->screen flight
-        flight = float(target.z) - float(src_cfg.position[2])
+        flight = float(scr_cfg.z) - float(src_cfg.position[2])
         w0_t = math.sqrt(float(sim.lam) * flight / math.pi)
-    field = BeamletField(sim.lines, screen, screen.ref_pixel(target.reference),
-                         cfg.beamlet_w0, cfg.beamlet_ns, optic, w0_t=w0_t)
+
+    def make(scr):
+        grid = ScreenGrid(scr)
+        return BeamletField(sim.lines, grid, grid.ref_pixel(scr.reference),
+                            cfg.beamlet_w0, cfg.beamlet_ns, optic, w0_t=w0_t)
+
+    def blank():
+        return {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
+                "off_window": 0}
+
+    planes = [(make(scr_cfg), 0.0, blank())]
+    for scr in extra_screens:
+        field = make(scr)
+        planes.append((field, float(field.zf) - float(screen.z), blank()))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
                                       aim_factory, seed_offset, quick)
-    if screen_cfg is not None:
-        records = rescreen(records, float(scr_cfg.z), screen)
-    stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
-             "off_window": 0}
     progress = Progress(label, n_modes * n_rays)
     t0 = time.time()
     mode_cur = None
     for rec in records:
         if rec.mode != mode_cur:
             if mode_cur is not None:
-                field.fold_mode()
-            field.new_mode()
+                for field, _, _ in planes:
+                    field.fold_mode()
+            for field, _, _ in planes:
+                field.new_mode()
             mode_cur = rec.mode
-        stats["emitted"] += 1
         fate, amps = rec.fate, None
         if fate == "screen":
             amps = amps_of([float(s) for s in rec.sins])
@@ -232,17 +256,38 @@ def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
                     and max(abs(a) for a in amps) < cfg.amplitude_min):
                 fate = "absorbed"
         if fate == "screen":
-            # tail beamlets (center outside the window) still deposit
-            field.add_ray(rec, amps)
-            stats["screen" if rec.pixel is not None else "off_window"] += 1
+            # tail beamlets (center outside a window) still deposit there
+            x, y, dxf, dyf, dzf, opl, psi, segs, lenses = planes[0][0].prep(rec)
+            for field, dz, st in planes:
+                st["emitted"] += 1
+                if dz == 0.0:
+                    xi, yi, opl_i, segs_i, pix = x, y, opl, segs, rec.pixel
+                else:
+                    step = dz / dzf
+                    xi, yi = x + dxf * step, y + dyf * step
+                    opl_i = opl + step
+                    segs_i = ([opl_i] if not lenses and len(segs) == 1
+                              else segs[:-1] + [segs[-1] + step])
+                    pix = field.grid.pixel((xi, yi))
+                field.deposit(xi, yi, dxf, dyf, opl_i, psi, segs_i, lenses,
+                              amps, pix)
+                st["screen" if pix is not None else "off_window"] += 1
         else:
-            stats[fate] += 1
+            for _, _, st in planes:
+                st["emitted"] += 1
+                st[fate] += 1
         progress.step()
     if mode_cur is not None:
-        field.fold_mode()
-    progress.finish(f"on screen {stats['screen']:,}")
-    maps = field.finalize(screen.nx, screen.ny)
-    return {"maps": maps, "screen": screen, "stats": stats,
-            "rays_from": rays_from, "w0_t": field.w0_t,
-            "n_modes": n_modes, "n_rays": n_rays,
-            "seconds": time.time() - t0}
+        for field, _, _ in planes:
+            field.fold_mode()
+    progress.finish(f"on screen {planes[0][2]['screen']:,}")
+    seconds = time.time() - t0
+
+    def pack(field, st):
+        return {"maps": field.finalize(field.nx, field.ny), "screen": field.grid,
+                "stats": st, "rays_from": rays_from, "w0_t": field.w0_t,
+                "n_modes": n_modes, "n_rays": n_rays, "seconds": seconds}
+
+    out = pack(planes[0][0], planes[0][2])
+    out["extras"] = [pack(field, st) for field, _, st in planes[1:]]
+    return out
