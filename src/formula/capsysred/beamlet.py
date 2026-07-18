@@ -19,6 +19,7 @@ are the stage-2/6 rays.
 import cmath
 import math
 import time
+from array import array
 
 from .altcoh import FloatLineAmplitudes
 from .gamma import EXACT_KINDS, bounce_lenses, inv2, propagate
@@ -56,11 +57,14 @@ class BeamletField:
         self.dx = screen.exf / screen.nx
         self.dy = screen.eyf / screen.ny
         self.x0f, self.y0f = screen.x0f, screen.y0f
-        # per-mode rows (line-weighted): the totals give mu, delete-one-mode
-        # gives sigma_jack; memory O(n_modes * lit pixels)
-        self.Ws = []        # [mode] {pixel: complex w_m g g*_ref}
-        self.Is = []        # [mode] {pixel: float w_m |g|^2}
-        self.i_refs = []    # [mode] float intensity at ref
+        # mu comes from the float64 totals; the delete-one-mode rows are
+        # dense float32 arrays (sigma is statistical, 7 digits are plenty):
+        # 12 B/pixel/mode — a 201x201 x 1000-mode x 3-screen run fits RAM
+        self.W = {}         # pixel -> complex float64 total
+        self.I = {}         # pixel -> float float64 total
+        self.Ws = []        # [mode] array('f') interleaved re, im
+        self.Is = []        # [mode] array('f')
+        self.i_refs = []    # [mode] float32-consistent intensity at ref
         self.density = {}   # pixel -> ray count (arrival-point bin)
         self.w_sum, self.w_n = 0.0, 0   # mean spot width at screen (line 0)
         self.gamma_bad = 0  # deposits skipped: Im(G) lost negative-definiteness
@@ -164,7 +168,9 @@ class BeamletField:
                     g[pix] = val if prev is None else prev + val
 
     def fold_mode(self):
-        w_row, i_row = {}, {}
+        npix = self.nx * self.ny
+        w_row = array("f", bytes(8 * npix))
+        i_row = array("f", bytes(4 * npix))
         for m in range(self.nl):
             wf = self.wfs[m]
             if self.native is not None:
@@ -178,12 +184,16 @@ class BeamletField:
                 ref_c = g_ref.conjugate() if g_ref is not None else None
             for pixel, value in items:
                 a2 = value.real * value.real + value.imag * value.imag
-                i_row[pixel] = i_row.get(pixel, 0.0) + wf * a2
+                self.I[pixel] = self.I.get(pixel, 0.0) + wf * a2
+                i_row[pixel] += wf * a2
                 if ref_c is not None:
-                    w_row[pixel] = w_row.get(pixel, 0j) + wf * (value * ref_c)
+                    cross = value * ref_c
+                    self.W[pixel] = self.W.get(pixel, 0j) + wf * cross
+                    w_row[2 * pixel] += wf * cross.real
+                    w_row[2 * pixel + 1] += wf * cross.imag
         self.Ws.append(w_row)
         self.Is.append(i_row)
-        self.i_refs.append(i_row.get(self.ref, 0.0))
+        self.i_refs.append(float(i_row[self.ref]))
         self._g = None
 
     def finalize(self, nx: int, ny: int):
@@ -193,14 +203,8 @@ class BeamletField:
         flags are sigma > 1, pinned at the |mu| = 1 clamp with sigma = 0,
         or fewer than 2 usable leave-one-out modes."""
         n_modes = len(self.Ws)
-        W, I = {}, {}
-        for row in self.Ws:
-            for pixel, w in row.items():
-                W[pixel] = W.get(pixel, 0j) + w
-        for row in self.Is:
-            for pixel, v in row.items():
-                I[pixel] = I.get(pixel, 0.0) + v
-        i_ref = sum(self.i_refs)
+        W, I = self.W, self.I
+        i_ref = I.get(self.ref, 0.0)
         zeros = lambda: [[0.0] * nx for _ in range(ny)]
         mu, err, dubious = zeros(), zeros(), zeros()
         intensity, density = zeros(), zeros()
@@ -219,10 +223,11 @@ class BeamletField:
                 mu[iy][ix] = min(abs(w) / math.sqrt(i_pix * i_ref), 1.0)
                 loo = []   # a mode that solely lights the pixel is skipped
                 for s in range(n_modes):
-                    i_s = i_pix - self.Is[s].get(pixel, 0.0)
+                    i_s = i_pix - self.Is[s][pixel]
                     iref_s = i_ref - self.i_refs[s]
                     if i_s > 0.0 and iref_s > 0.0:
-                        w_s = w - self.Ws[s].get(pixel, 0j)
+                        w_s = w - complex(self.Ws[s][2 * pixel],
+                                          self.Ws[s][2 * pixel + 1])
                         loo.append(min(abs(w_s) / math.sqrt(i_s * iref_s), 1.0))
                 if len(loo) > 1:
                     mean = sum(loo) / len(loo)

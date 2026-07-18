@@ -76,8 +76,7 @@ trace:
   amplitude_min: 1.0e-6   # ray dies once |prod r| drops below threshold; with ray
                           # recording/multi-E the threshold applies after tracing
                           # (a ray is killed only if dead at every line)
-  rays_jsonl: true        # full-precision ray records shared by the stages;
-  rays_gzip: true         # replay input; gzipped (rays.jsonl.gz) by default
+  rays_jsonl: true        # full-precision ray records (rays.jsonl.gz), replay input
   engine_method: subdivision  # RaySurface root finder for `surface:` bores and the
                               # hit cross-checks: subdivision (grazing-safe, any F)
                               # | sturm (exact, polynomial F only) | chebyshev

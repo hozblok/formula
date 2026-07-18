@@ -1597,7 +1597,9 @@ def test_beamlet_jackknife_matches_bruteforce_leave_one_out():
         mean = sum(loo) / len(loo)
         sigma = math.sqrt(sum((v - mean) ** 2 for v in loo)
                           * (len(loo) - 1) / len(loo))
-        assert full["mu_err"][0][pixel] == pytest.approx(sigma, abs=1e-9), pixel
+        # rows are float32: the incremental sigma matches the float64
+        # brute force to single precision
+        assert full["mu_err"][0][pixel] == pytest.approx(sigma, abs=1e-5), pixel
 
 
 def test_beamlet_jackknife_outlier_mode_inflates_sigma():
