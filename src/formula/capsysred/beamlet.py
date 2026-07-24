@@ -25,7 +25,7 @@ from .altcoh import FloatLineAmplitudes
 from .gamma import EXACT_KINDS, bounce_lenses, inv2, propagate
 from .native import make_beamlet_grid
 from .progress import Progress
-from .rays import scene_stream
+from .rays import require_full_rows, scene_stream
 from .screen import ScreenGrid
 
 
@@ -279,6 +279,7 @@ def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
         planes.append((field, float(field.zf) - float(screen.z), blank()))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
                                       aim_factory, seed_offset, quick)
+    require_full_rows(sim.rays, rays_from, "beamlet stage (refl segments)")
     progress = Progress(label, n_modes * n_rays)
     t0 = time.time()
     mode_cur = None

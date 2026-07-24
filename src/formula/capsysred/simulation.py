@@ -32,7 +32,8 @@ from .spectrum import spectral_lines, wavelength_m
 from .surfaces import CapillaryBundle, Mirror, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
-from .rays import RaysFile, RaysReader, SceneSeed, scene_stream
+from .rays import (RaysFile, RaysReader, SceneSeed, require_full_rows,
+                   scene_stream)
 from .types import RayRecord
 from .units import (
     m_to_angstrom, m_to_mm, m_to_um, rad_to_mrad, rad_to_urad)
@@ -133,6 +134,8 @@ class Simulation:
                                    cfg.precision)
         records, rays_from = scene_stream(self, stage, src_cfg, scr_cfg, optic,
                                           aim_factory, seed_offset, quick)
+        require_full_rows(self.rays, rays_from,
+                          "Number-path estimator (full-precision opl/sins)")
         stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
                  "off_window": 0, "reflected_rays": 0, "reflections": 0,
                  "bounce_hist": {}}

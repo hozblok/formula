@@ -73,8 +73,12 @@ DEFAULTS = {
     # engine_method: RaySurface root finder for `surface:` bores and the hit
     # cross-checks — subdivision (default: grazing-safe, any F) | sturm (exact,
     # polynomial F only) | chebyshev | sampling | auto.
+    # lean_rays: drop refl and write opl/sins as float64 in the rays file —
+    # stage 10/rescreen read floats anyway (bit-identical); the file cannot
+    # feed the Number-path replay (stages 2/4/6) or the beamlet stage.
     "trace": {"max_bounces": 200, "amplitude_min": 1.0e-6,
-              "rays_jsonl": True, "engine_method": "subdivision"},
+              "rays_jsonl": True, "lean_rays": False,
+              "engine_method": "subdivision"},
     # stage 1: rays traced onto the to-scale schematic (01a-scheme-traced.svg)
     "schematic": {"n_rays": 10},
     # stage 8: number of sketch probe vectors (r ~ n99 modes, see methods §8)
@@ -318,6 +322,7 @@ class Config:
         self.max_bounces = int(cfg["trace"]["max_bounces"])
         self.amplitude_min = float(cfg["trace"]["amplitude_min"])
         self.rays_jsonl = bool(cfg["trace"]["rays_jsonl"])
+        self.lean_rays = bool(cfg["trace"]["lean_rays"])
         self.engine_method = str(cfg["trace"]["engine_method"])
         get_backend(self.engine_method)  # fail fast on an unknown method name
         self.per_line_fresnel = bool(cfg["spectrum"]["per_line_fresnel"])

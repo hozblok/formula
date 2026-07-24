@@ -12,6 +12,11 @@ rows add x, y, dx, dy and the refl bounce points in float64 (enough for the
 float estimators, stages 7/8/10/11); opl/sins stay full-precision strings
 for the Number path (--replay of stages 2/4/6). The file is gzipped
 (rays.jsonl.gz).
+
+trace.lean_rays writes opl/sins as float64 json numbers and drops refl
+(meta gains "lean": true): stage 10 and rescreen are bit-identical (they
+float() these fields anyway), the file shrinks ~4x on bounce-heavy scenes;
+the Number path and the beamlet stage refuse such a file (require_full_rows).
 """
 
 import enum
@@ -138,8 +143,11 @@ class RaysFile:
 
     def __init__(self, path, cfg, quick):
         self.path = path
+        self.lean = bool(getattr(cfg, "lean_rays", False))
         self.meta = {"format": FORMAT, "geometry": fingerprint(cfg),
                      "budgets": budgets(cfg, quick)}
+        if self.lean:
+            self.meta["lean"] = True
         self.done = {}
         mode = "w"
         if os.path.exists(path):
@@ -158,13 +166,18 @@ class RaysFile:
         if scene != self._scene:
             self._scene, self._count = scene, 0
         row = {"stage": scene, "mode": rec.mode, "ray": rec.ray,
-               "fate": rec.fate, "pixel": rec.pixel, "opl": str(rec.opl),
-               "sins": [str(s) for s in rec.sins]}
+               "fate": rec.fate, "pixel": rec.pixel}
+        if self.lean:
+            row["opl"] = float(rec.opl)
+            row["sins"] = [float(s) for s in rec.sins]
+        else:
+            row["opl"] = str(rec.opl)
+            row["sins"] = [str(s) for s in rec.sins]
         if rec.fate == "screen":
             row["x"], row["y"] = float(rec.point[0]), float(rec.point[1])
             row["dx"] = float(rec.direction[0])
             row["dy"] = float(rec.direction[1])
-            if rec.refl:
+            if rec.refl and not self.lean:
                 row["refl"] = [[float(c) for c in p] for p in rec.refl]
         self._fh.write(json.dumps(row, ensure_ascii=False) + "\n")
         self._count += 1
@@ -197,6 +210,13 @@ def _file_records(path, scene):
         yield RayRecord(row["mode"], row["ray"], row["fate"], row["pixel"],
                         point, direction, row["opl"], tuple(row["sins"]),
                         tuple(tuple(p) for p in row.get("refl", ())))
+
+
+def require_full_rows(rays, rays_from: str, what: str):
+    """Consumers of refl / full-precision opl+sins refuse a lean rays file."""
+    if rays_from == "file" and rays is not None and rays.meta.get("lean"):
+        raise ValueError(f"{what}: rays file is lean (trace.lean_rays) — no "
+                         "refl / full-precision rows; re-trace without it")
 
 
 def rescreen(records, z0f: float, grid):
