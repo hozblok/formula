@@ -110,7 +110,8 @@ def main(argv=None):
     dst_path = os.path.join(args.out, "rays.jsonl.gz")
     counts = {"free": 0, "lloyd": 0, "capillary": 0}
     gmode = -1
-    with gzip.open(dst_path, "wt", encoding="utf-8") as dst:
+    # newline="\n": no \r\n translation on Windows text-mode writes
+    with gzip.open(dst_path, "wt", encoding="utf-8", newline="\n") as dst:
         dst.write(json.dumps(meta) + "\n")
         for k in range(args.jobs):
             rec = os.path.join(args.out, f"shard-{k}", "rays.jsonl.gz")

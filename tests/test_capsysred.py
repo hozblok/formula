@@ -1758,3 +1758,27 @@ def test_stage11_aniso_auto_shrinks_spot_and_reports_sigma(tmp_path):
     rows = [json.loads(l)
             for l in (tmp_path / "aniso" / "mu-beamlet.jsonl").read_text().splitlines()]
     assert all("mu_err" in r and "dubious" in r for r in rows)
+
+
+def test_grid_source_draws_weighted_nodes():
+    # importance draws land on the fixed lattice with gaussian-weighted rates
+    import random
+    from formula.capsysred.config import SourceCfg
+    from formula.capsysred.source import Source
+
+    cfg = SourceCfg({"shape": "grid", "size": 2.1e-6, "grid_n": 7,
+                     "grid_step": 1.5085e-6, "position": [0.0, 0.0, -0.03],
+                     "n_modes": 49, "n_rays": 10}, 32)
+    src = Source(cfg, random.Random(7))
+    counts = {}
+    for _ in range(20000):
+        o = src.mode_origin()
+        counts[(float(o[0]), float(o[1]))] = counts.get((float(o[0]), float(o[1])), 0) + 1
+    xs = sorted({x for x, _ in counts})
+    assert len(counts) <= 49 and len(xs) <= 7
+    step = xs[1] - xs[0]
+    assert math.isclose(step, 1.5085e-6, rel_tol=1e-9)
+    # corner node sits at the printed 6.4 um max radial position
+    assert math.isclose(math.hypot(min(xs), min(xs)), 6.4e-6, rel_tol=1e-3)
+    # center outdraws the corner by the weight ratio exp(dr^2/2s^2) ~ 104
+    assert counts[(0.0, 0.0)] > 20 * counts.get((min(xs), min(xs)), counts[(0.0, 0.0)] // 100 + 1)

@@ -30,7 +30,7 @@ def vcz_mu(delta_x: float, shape: str, size: float, lam: float, dist: float) -> 
     if shape == "point" or size <= 0.0:
         return 1.0
     k = 2.0 * math.pi / lam
-    if shape == "gaussian":
+    if shape in ("gaussian", "grid"):
         return math.exp(-0.5 * (k * size * delta_x / dist) ** 2)
     u = k * size * abs(delta_x) / dist          # disk of radius `size`
     return 1.0 if u < 1e-12 else abs(2.0 * bessel_j1(u) / u)

@@ -32,6 +32,8 @@ DEFAULTS = {
     # extended incoherent source: n_modes coherent point modes, n_rays per mode
     "source": {
         "shape": "gaussian",          # point | gaussian (size=sigma) | disk (size=radius)
+                                      # | grid (grid_n x grid_n nodes, step grid_step,
+                                      #   importance draws with weights exp(-r^2/2*size^2))
         "size": 2.1e-6,
         "position": [0.0, 0.0, -0.08],
         "n_modes": 100,
@@ -101,12 +103,16 @@ def _merge(base: dict, override: dict) -> dict:
 class SourceCfg:
     def __init__(self, raw: dict, p: int):
         self.shape = raw["shape"]
-        if self.shape not in ("point", "gaussian", "disk"):
+        if self.shape not in ("point", "gaussian", "disk", "grid"):
             raise ValueError(f"unknown source shape: {self.shape!r}")
         self.size = Number(str(raw["size"]), p)
         self.position = tuple(Number(str(c), p) for c in raw["position"])
         self.n_modes = int(raw["n_modes"])
         self.n_rays = int(raw["n_rays"])
+        if self.shape == "grid":
+            # deterministic anode lattice: grid_n x grid_n nodes, gaussian weights
+            self.grid_n = int(raw["grid_n"])
+            self.grid_step = Number(str(raw["grid_step"]), p)
 
     def budget(self, quick: int) -> tuple[int, int]:
         """(n_modes, n_rays) at reduction factor `quick`, with sampling floors."""

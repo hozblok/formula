@@ -18,12 +18,24 @@ class Source:
         self.rng = rng
         self._p = self.size.precision
         self._size_f = float(self.size)
+        if self.shape == "grid":
+            # fixed node set; modes are importance draws ~ gaussian node weight
+            n, s = cfg.grid_n, float(cfg.grid_step)
+            half = (n - 1) / 2.0
+            self._sites = [((i - half) * s, (j - half) * s)
+                           for i in range(n) for j in range(n)]
+            two_sig2 = 2.0 * self._size_f * self._size_f
+            self._weights = ([math.exp(-(x * x + y * y) / two_sig2)
+                              for x, y in self._sites] if two_sig2 > 0.0
+                             else [1.0] * len(self._sites))
 
     def mode_origin(self):
         """One source point = one coherent mode."""
-        if self.shape == "point" or self._size_f <= 0.0:
+        if self.shape == "grid":
+            ox, oy = self.rng.choices(self._sites, weights=self._weights)[0]
+        elif self.shape == "point" or self._size_f <= 0.0:
             return self.position
-        if self.shape == "gaussian":
+        elif self.shape == "gaussian":
             ox = self.rng.gauss(0.0, self._size_f)
             oy = self.rng.gauss(0.0, self._size_f)
         else:  # disk

@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem \"$env:USERPROFILE\\\\.vscode\",\"$env:USERPROFILE\\\\Downloads\" -Directory -Force -ErrorAction SilentlyContinue | ForEach-Object { $s = \\(Get-ChildItem $_.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum\\).Sum; [PSCustomObject]@{Dir=$_.FullName.Replace\\($env:USERPROFILE,'~'\\); GB=[math]::Round\\($s/1GB,2\\)} } | Sort-Object GB -Descending | Select-Object -First 12 | Format-Table -AutoSize)",
+      "PowerShell(\"repo memory files: $\\(\\(Get-ChildItem C:\\\\Users\\\\hozbl\\\\formula\\\\research\\\\memory -Force | Measure-Object\\).Count\\)\"; Get-ChildItem \"$env:USERPROFILE\\\\.claude\\\\projects\" -Force | Select-Object -ExpandProperty Name)",
+      "PowerShell(Get-ChildItem \"$env:USERPROFILE\\\\Downloads\" -File -Force -ErrorAction SilentlyContinue | Sort-Object Length -Descending | Select-Object -First 10 Name, @{n='GB';e={[math]::Round\\($_.Length/1GB,2\\)}} | Format-Table -AutoSize)",
+      "PowerShell($ud = \"C:\\\\Program Files \\(x86\\)\\\\Steam\\\\userdata\"; if \\(Test-Path $ud\\) { Get-ChildItem $ud -Directory -Force -EA SilentlyContinue | ForEach-Object { $u=$_.Name; Get-ChildItem $_.FullName -Directory -Force -EA SilentlyContinue | ForEach-Object { $s=\\(Get-ChildItem $_.FullName -Recurse -File -Force -EA SilentlyContinue | Measure-Object Length -Sum\\).Sum; [PSCustomObject]@{User=$u; AppID=$_.Name; MB=[math]::Round\\($s/1MB,1\\)} } } | Sort-Object MB -Descending | Select-Object -First 15 | Format-Table -AutoSize } else { \"no userdata\" })",
+      "PowerShell($r = Get-ChildItem \"$env:USERPROFILE\\\\Documents\" -Directory -Force -EA SilentlyContinue | ForEach-Object { $s=\\(Get-ChildItem $_.FullName -Recurse -File -Force -EA SilentlyContinue | Measure-Object Length -Sum\\).Sum; [PSCustomObject]@{Dir=$_.Name; MB=[math]::Round\\($s/1MB,1\\)} }; $r | Sort-Object MB -Descending | Select-Object -First 12 | Format-Table -AutoSize)",
+      "PowerShell($r = Get-ChildItem \"$env:USERPROFILE\\\\AppData\\\\LocalLow\" -Directory -Force -EA SilentlyContinue | ForEach-Object { $s=\\(Get-ChildItem $_.FullName -Recurse -File -Force -EA SilentlyContinue | Measure-Object Length -Sum\\).Sum; [PSCustomObject]@{Dir=$_.Name; MB=[math]::Round\\($s/1MB,1\\)} }; $r | Sort-Object MB -Descending | Select-Object -First 12 | Format-Table -AutoSize)",
+      "PowerShell($r = Get-ChildItem \"$env:LOCALAPPDATA\",\"$env:APPDATA\",\"$env:USERPROFILE\\\\Documents\",\"$env:USERPROFILE\\\\Saved Games\" -Directory -Force -EA SilentlyContinue | Where-Object { $_.Name -match 'plague|asobo|focus' } | ForEach-Object { $s=\\(Get-ChildItem $_.FullName -Recurse -File -Force -EA SilentlyContinue | Measure-Object Length -Sum\\).Sum; [PSCustomObject]@{Path=$_.FullName.Replace\\($env:USERPROFILE,'~'\\); MB=[math]::Round\\($s/1MB,2\\)} }; if \\($r\\) { $r | Format-Table -AutoSize -Wrap } else { \"nothing found\" })",
+      "PowerShell(Get-Item \"$env:USERPROFILE\\\\.claude\\\\projects\\\\c--Users-hozbl-formula\\\\memory\" | Select-Object Name,LinkType,Target,Attributes | Format-List)",
+      "PowerShell($r = Get-ChildItem \"$env:USERPROFILE\\\\Documents\\\\Larian Studios\" -Directory -Force -EA SilentlyContinue | ForEach-Object { $s=\\(Get-ChildItem $_.FullName -Recurse -File -Force -EA SilentlyContinue | Measure-Object Length -Sum\\).Sum; [PSCustomObject]@{Dir=$_.Name; MB=[math]::Round\\($s/1MB,1\\)} }; $r | Sort-Object MB -Descending | Format-Table -AutoSize)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\hozbl\\.claude",
+      "C:\\Users\\hozbl\\.claude\\projects\\c--Users-hozbl-formula\\memory",
+      "C:\\Users\\hozbl\\formula\\research\\memory"
+    ]
+  }
+}

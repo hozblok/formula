@@ -67,8 +67,10 @@ def budgets(cfg, quick: int) -> dict:
 
 
 def _open(path, mode):
-    return (gzip.open(path, mode + "t", encoding="utf-8")
-            if path.endswith(".gz") else open(path, mode, encoding="utf-8"))
+    # newline="\n": no \r\n translation on Windows text-mode writes
+    return (gzip.open(path, mode + "t", encoding="utf-8", newline="\n")
+            if path.endswith(".gz") else open(path, mode, encoding="utf-8",
+                                              newline="\n"))
 
 
 def _lines(path):
