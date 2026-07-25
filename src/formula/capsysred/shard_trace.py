@@ -73,7 +73,7 @@ def main(argv=None):
     ap.add_argument("--keep-shards", action="store_true")
     args = ap.parse_args(argv)
 
-    raw = yaml.safe_load(open(args.config))
+    raw = yaml.safe_load(open(args.config, encoding="utf-8"))
     cfg = Config(raw)
     if cfg.capillary is None:
         sys.exit("config has no capillary scene")
