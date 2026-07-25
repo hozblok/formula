@@ -22,8 +22,27 @@ class Source:
             # fixed node set; modes are importance draws ~ gaussian node weight
             n, s = cfg.grid_n, float(cfg.grid_step)
             half = (n - 1) / 2.0
-            self._sites = [((i - half) * s, (j - half) * s)
-                           for i in range(n) for j in range(n)]
+            rot = math.radians(getattr(cfg, "grid_rot_deg", 0.0))
+            c, q = math.cos(rot), math.sin(rot)
+            self._sites = [(x * c - y * q, x * q + y * c)
+                           for i in range(n) for j in range(n)
+                           for x, y in [((i - half) * s, (j - half) * s)]]
+            self._alloc = None
+            if getattr(cfg, "grid_alloc", "draws") == "deterministic":
+                # largest-remainder apportionment: multiplicity ~ weight, no draw noise
+                two_sig2 = 2.0 * self._size_f * self._size_f
+                w = ([math.exp(-(x * x + y * y) / two_sig2) for x, y in self._sites]
+                     if two_sig2 > 0.0 else [1.0] * len(self._sites))
+                quota = [self.n_modes * wi / sum(w) for wi in w]
+                counts = [int(qi) for qi in quota]
+                for k in sorted(range(len(w)), key=lambda k: quota[k] - counts[k],
+                                reverse=True)[:self.n_modes - sum(counts)]:
+                    counts[k] += 1
+                self._alloc = [site for site, ci in zip(self._sites, counts)
+                               for _ in range(ci)]
+                # shuffled: a --quick prefix stays a fair no-replacement sample
+                rng.shuffle(self._alloc)
+                self._next = 0
             two_sig2 = 2.0 * self._size_f * self._size_f
             self._weights = ([math.exp(-(x * x + y * y) / two_sig2)
                               for x, y in self._sites] if two_sig2 > 0.0
@@ -32,7 +51,11 @@ class Source:
     def mode_origin(self):
         """One source point = one coherent mode."""
         if self.shape == "grid":
-            ox, oy = self.rng.choices(self._sites, weights=self._weights)[0]
+            if self._alloc is not None and self._next < len(self._alloc):
+                ox, oy = self._alloc[self._next]
+                self._next += 1
+            else:
+                ox, oy = self.rng.choices(self._sites, weights=self._weights)[0]
         elif self.shape == "point" or self._size_f <= 0.0:
             return self.position
         elif self.shape == "gaussian":
