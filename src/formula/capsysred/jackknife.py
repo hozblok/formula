@@ -24,7 +24,7 @@ import time
 from .altcoh import FloatLineAmplitudes
 from .progress import Progress
 from .rays import rescreen, scene_stream
-from .screen import ScreenGrid
+from .screen import ScatterRaster, ScreenGrid
 
 
 class JackknifeCoherence:
@@ -143,6 +143,7 @@ def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     cfg = sim.cfg
     target = screen_cfg or scr_cfg
     screen = ScreenGrid(target)
+    scat = ScatterRaster(target)
     n_modes, n_rays = src_cfg.budget(quick)
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
     jack = JackknifeCoherence(sim.lines, screen.ref_pixel(target.reference))
@@ -175,6 +176,7 @@ def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
                     and max(abs(a) for a in amps) < cfg.amplitude_min):
                 fate = "absorbed"
         if fate == "screen":
+            scat.add(rec.point)
             if rec.pixel is None:
                 stats["off_window"] += 1
             else:
@@ -187,6 +189,6 @@ def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
         jack.fold_mode()
     progress.finish(f"on screen {stats['screen']:,}")
     maps = jack.finalize(screen.nx, screen.ny)
-    return {"maps": maps, "screen": screen, "stats": stats,
+    return {"maps": maps, "screen": screen, "stats": stats, "scatter": scat,
             "rays_from": rays_from, "n_modes": n_modes, "n_rays": n_rays,
             "seconds": time.time() - t0, "src_cfg": src_cfg}

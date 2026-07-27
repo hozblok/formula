@@ -219,6 +219,29 @@ def heatmap(grid, extent, title, xlabel, ylabel, subtitle="", cbar_label="",
     return {"w": w, "h": h, "body": "".join(e)}
 
 
+def ray_scatter(counts, extent, title, xlabel, ylabel, subtitle="", w=640):
+    """Ray-location image: white background, blue density; counts row-major
+    [iy][ix], iy=0 at the bottom edge; always equal aspect."""
+    vmax = max((v for row in counts for v in row), default=1) or 1
+    blue = (34, 34, 187)
+    rows = []
+    for iy in range(len(counts) - 1, -1, -1):
+        row = []
+        for v in counts[iy]:
+            t = (v / vmax) ** 0.4 if v else 0.0
+            row.append(tuple(round(255 + (c - 255) * t) for c in blue))
+        rows.append(row)
+    ax = _Axes(w, 460, (extent[0], extent[1]), (extent[2], extent[3]))
+    span = (ax.px1 - ax.px0) * (extent[3] - extent[2]) / (extent[1] - extent[0])
+    h = round(460 - (ax.py0 - ax.py1) + span)
+    ax = _Axes(w, h, (extent[0], extent[1]), (extent[2], extent[3]))
+    e = ax.frame(xlabel, ylabel, title, subtitle)
+    e.append(f'<image x="{ax.px0:.1f}" y="{ax.py1:.1f}" '
+             f'width="{ax.px1 - ax.px0:.1f}" height="{ax.py0 - ax.py1:.1f}" '
+             f'preserveAspectRatio="none" href="{_png_uri(rows)}"/>')
+    return {"w": w, "h": h, "body": "".join(e)}
+
+
 def hstack(figs, gap=12):
     w = sum(f["w"] for f in figs) + gap * (len(figs) - 1)
     h = max(f["h"] for f in figs)

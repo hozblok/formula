@@ -107,6 +107,8 @@ def main(argv=None):
 
     meta = {"format": rays.FORMAT, "geometry": rays.fingerprint(cfg),
             "budgets": budgets_q}
+    if cfg.lean_rays:
+        meta["lean"] = True
     dst_path = os.path.join(args.out, "rays.jsonl.gz")
     counts = {"free": 0, "lloyd": 0, "capillary": 0}
     gmode = -1

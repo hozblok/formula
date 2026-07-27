@@ -119,10 +119,6 @@ class SourceCfg:
             self.grid_step = Number(str(raw["grid_step"]), p)
             # lattice orientation about the axis, degrees (45 = diamond)
             self.grid_rot_deg = float(raw.get("grid_rot_deg", 0.0))
-            # draws (default) | deterministic: multiplicity ~ weight, no draw noise
-            self.grid_alloc = str(raw.get("grid_alloc", "draws"))
-            if self.grid_alloc not in ("draws", "deterministic"):
-                raise ValueError(f"unknown grid_alloc: {self.grid_alloc!r}")
 
     def budget(self, quick: int) -> tuple[int, int]:
         """(n_modes, n_rays) at reduction factor `quick`, with sampling floors."""

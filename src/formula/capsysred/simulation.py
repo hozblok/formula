@@ -910,6 +910,12 @@ class Simulation:
                 render.heatmap(maps["density"], extent, "rays per pixel",
                                "x, µm", "y, µm", "", "rays", w=430, equal=True)])
             self._save(out_dir, f"{tag}b-{scene}-jack-intensity.svg", fig)
+            if res.get("scatter"):
+                self._save(out_dir, f"{tag}d-{scene}-ray-scatter.svg",
+                           render.ray_scatter(res["scatter"].counts,
+                                              res["scatter"].extent_um(),
+                                              f"{scene}: ray locations on screen",
+                                              "x, µm", "y, µm", sub))
             if rms6 is not None:
                 diff = [[abs(a - b) for a, b in zip(ra, rb)]
                         for ra, rb in zip(maps["mu"], vs["maps"]["mu"])]
