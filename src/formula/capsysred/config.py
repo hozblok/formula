@@ -11,10 +11,10 @@ import warnings
 
 from .._roots import get_backend
 from ..formula import Number
-from ..xray import FUSED_SILICA, ZYSK_GLASS
+from ..xray import FUSED_SILICA, OE2012_GLASS
 from .spectrum import spectral_lines
 
-MATERIALS = {"fused_silica": FUSED_SILICA, "zysk": ZYSK_GLASS}
+MATERIALS = {"fused_silica": FUSED_SILICA, "glass_oe2012": OE2012_GLASS}
 
 DEFAULTS = {
     "precision": 32,
@@ -23,7 +23,7 @@ DEFAULTS = {
     "precision_target": None,
     "seed": 12345,
     "energy_kev": 8.0,
-    # wall glass n = 1 - delta - i*beta: fused_silica | zysk (Opt. Express 20, 3975)
+    # wall glass n = 1 - delta - i*beta: fused_silica | glass_oe2012 (Opt. Express 20, 3975)
     "material": "fused_silica",
     # monochromatic | gaussian {rel_fwhm, n_lines, n_sigma} | lines [{energy_kev, weight}]
     # | table {file}; per_line_fresnel: r(E_m) per line instead of frozen r(E0)

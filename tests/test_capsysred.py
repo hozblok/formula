@@ -48,9 +48,9 @@ def test_full_pipeline_files_and_point_source_coherence(tmp_path):
 
 
 def test_material_enum_selects_wall_glass():
-    # Zysk 2012 glass: eps = 1 - 9.115e-6 + i*1.145e-7 at 8 keV -> 2*delta, 2*beta
-    sim = Simulation.from_dict(dict(TINY, material="zysk"))
-    assert sim.cfg.material is xray.ZYSK_GLASS
+    # OE 20:3975 glass: eps = 1 - 9.115e-6 + i*1.145e-7 at 8 keV -> 2*delta, 2*beta
+    sim = Simulation.from_dict(dict(TINY, material="glass_oe2012"))
+    assert sim.cfg.material is xray.OE2012_GLASS
     assert abs(2.0 * float(sim.cfg.material.delta("8.0", precision=32))
                - 9.115e-6) < 1e-9
     assert abs(2.0 * float(sim.cfg.material.beta("8.0", precision=32))
@@ -256,26 +256,26 @@ def test_replay_matches_direct_gaussian(tmp_path):
 
 
 def test_material_change_keeps_rays_file_valid(tmp_path):
-    # rays are material-free: a zysk re-run reuses the silica trace and only
-    # the physics (Fresnel amplitudes -> intensity) changes
+    # rays are material-free: a glass_oe2012 re-run reuses the silica trace
+    # and only the physics (Fresnel amplitudes -> intensity) changes
     silica = Simulation.from_dict(TINY)
     silica.run(str(tmp_path), stages=[6])
-    zysk = Simulation.from_dict(dict(TINY, material="zysk"))
-    zysk.run(str(tmp_path), stages=[6])
-    assert zysk.results["capillary"]["rays_from"] == "file"
+    oe = Simulation.from_dict(dict(TINY, material="glass_oe2012"))
+    oe.run(str(tmp_path), stages=[6])
+    assert oe.results["capillary"]["rays_from"] == "file"
     a = silica.results["capillary"]["maps"]
-    b = zysk.results["capillary"]["maps"]
+    b = oe.results["capillary"]["maps"]
     assert a["density"] == b["density"]              # same geometry
     assert a["intensity"] != b["intensity"]          # different Fresnel
 
 
 def test_replay_with_other_material(tmp_path):
-    # same recorded rays, zysk wall on replay: ray bookkeeping identical,
+    # same recorded rays, glass_oe2012 wall on replay: ray bookkeeping identical,
     # reflected amplitudes differ
     sim = Simulation.from_dict(TINY)
     sim.run(str(tmp_path), stages=[4])
     direct = sim.results["lloyd"]
-    other = Simulation.from_dict(dict(TINY, material="zysk"))
+    other = Simulation.from_dict(dict(TINY, material="glass_oe2012"))
     other.replay(str(tmp_path / "rays.jsonl.gz"), str(tmp_path / "replay"))
     rep = other.results["lloyd"]
     assert rep["rays_from"] == "file"

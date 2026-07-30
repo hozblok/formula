@@ -7,7 +7,7 @@ from formula.capsysred.wall_cylinder import CylinderWall
 from formula.capsysred.wall_funnel import FunnelWall
 
 P = 32
-AG, BG = 1.0 / 0.03, -1.0 / (2 * 0.03 * 0.23)   # Zysk conditions, SI
+AG, BG = 1.0 / 0.03, -1.0 / (2 * 0.03 * 0.23)   # OE 20:3975 collimating conditions, SI
 
 
 def _n(v):
