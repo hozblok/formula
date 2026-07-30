@@ -8,9 +8,9 @@ precision: 32          # digits of arbitrary precision (Number/Solver)
                        # = precision − 2 − wall conditioning loss (torus/funnel bores)
 seed: 12345
 energy_kev: 8.0
-material: fused_silica # wall glass n = 1 − δ − i·β: fused_silica | zysk
+material: fused_silica # wall glass n = 1 − δ − i·β: fused_silica | glass_oe2012
                        # (ε = 1 − 9.115e-6 + i·1.145e-7 at 8 keV, i.e. δ = 4.56e-6 —
-                       # Opt. Express 20, 3975; note his ε carries 2δ, 2β)
+                       # Opt. Express 20, 3975; note the paper's ε carries 2δ, 2β)
 
 spectrum:
   mode: monochromatic  # monochromatic | gaussian | lines | table
