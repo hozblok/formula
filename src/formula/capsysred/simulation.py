@@ -1125,7 +1125,8 @@ class Simulation:
             report.append(f"- deposits skipped (beam blew up, Im G ⊁ 0): "
                           f"{maps['gamma_bad']:,}")
         lit_px = [i for i, v in enumerate(flat(maps["intensity"])) if v > 0.0]
-        errs = sorted(flat(maps["mu_err"])[i] for i in lit_px)
+        flat_err = flat(maps["mu_err"])
+        errs = sorted(flat_err[i] for i in lit_px)
         n_dub = int(sum(flat(maps["dubious"])))
         report.append(
             f"- σ_jack (delete-one-mode) on {len(lit_px)} lit px: median "

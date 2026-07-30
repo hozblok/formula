@@ -6,9 +6,9 @@ segments and bounces by tensor ABCD (gamma.py, Arnaud-Kogelnik general
 astigmatism — grazing bounces focus sagittally f_s = R/(2 sin) and, on
 curved walls, meridionally f_t = R sin/2; skew rays rotate the azimuth and
 couple the planes). On the screen the beamlet deposits an elliptic phase
-spot over the pixels within window_sigmas of the widest axis instead of one
-bin. Implicit bores carry no closed-form curvature: their bounces are flat
-(the scalar-q model of stage 11a).
+spot over the pixels inside the window_sigmas ellipse's bounding box
+instead of one bin. Implicit bores carry no closed-form curvature: their
+bounces are flat (the scalar-q model of stage 11a).
 
 The estimator is honest — no ray self-pair subtraction: the mode field is a
 true coherent sum of beamlet fields, mu = |W| / sqrt(I*I_ref) with
@@ -144,11 +144,14 @@ class BeamletField:
             pref = amps[m] * a_geo.conjugate() * cmath.exp(1j * km * opl)
             tx, ty = km * dxf, km * dyf
             hxx, hxy, hyy = (0.5 * km * v for v in gm)   # (k/2)·G, complex
-            r = self.ns * w_hi
-            ix_lo = max(0, int(math.floor((x - r - self.x0f) / self.dx)))
-            ix_hi = min(self.nx - 1, int(math.floor((x + r - self.x0f) / self.dx)))
-            iy_lo = max(0, int(math.floor((y - r - self.y0f) / self.dy)))
-            iy_hi = min(self.ny - 1, int(math.floor((y + r - self.y0f) / self.dy)))
+            # per-axis bounding box of the ns-sigma ellipse (det > 0 here)
+            det_gi = gi[0] * gi[2] - gi[1] * gi[1]
+            rx = self.ns * math.sqrt(-2.0 * gi[2] / (km * det_gi))
+            ry = self.ns * math.sqrt(-2.0 * gi[0] / (km * det_gi))
+            ix_lo = max(0, int(math.floor((x - rx - self.x0f) / self.dx)))
+            ix_hi = min(self.nx - 1, int(math.floor((x + rx - self.x0f) / self.dx)))
+            iy_lo = max(0, int(math.floor((y - ry - self.y0f) / self.dy)))
+            iy_hi = min(self.ny - 1, int(math.floor((y + ry - self.y0f) / self.dy)))
             if ix_lo > ix_hi or iy_lo > iy_hi:
                 continue
             g = self._g[m]
@@ -169,20 +172,25 @@ class BeamletField:
 
     def fold_mode(self):
         npix = self.nx * self.ny
+        if self.native is not None:
+            # the whole per-mode scan runs in C++; W/I totals stay there
+            w_bytes, i_bytes, i_ref = self.native.fold(self.wfs, self.ref)
+            w_row = array("f")
+            w_row.frombytes(w_bytes)
+            i_row = array("f")
+            i_row.frombytes(i_bytes)
+            self.Ws.append(w_row)
+            self.Is.append(i_row)
+            self.i_refs.append(i_ref)
+            return
         w_row = array("f", bytes(8 * npix))
         i_row = array("f", bytes(4 * npix))
         for m in range(self.nl):
             wf = self.wfs[m]
-            if self.native is not None:
-                items = self.native.items(m)
-                g_ref = self.native.at(m, self.ref)
-                ref_c = g_ref.conjugate() if g_ref != 0 else None
-            else:
-                g = self._g[m]
-                items = g.items()
-                g_ref = g.get(self.ref)
-                ref_c = g_ref.conjugate() if g_ref is not None else None
-            for pixel, value in items:
+            g = self._g[m]
+            g_ref = g.get(self.ref)
+            ref_c = g_ref.conjugate() if g_ref is not None else None
+            for pixel, value in g.items():
                 a2 = value.real * value.real + value.imag * value.imag
                 self.I[pixel] = self.I.get(pixel, 0.0) + wf * a2
                 i_row[pixel] += wf * a2
@@ -203,6 +211,18 @@ class BeamletField:
         flags are sigma > 1, pinned at the |mu| = 1 clamp with sigma = 0,
         or fewer than 2 usable leave-one-out modes."""
         n_modes = len(self.Ws)
+        if self.native is not None:
+            w_tot = array("d")
+            i_tot = array("d")
+            wb, ib = self.native.totals()
+            w_tot.frombytes(wb)
+            i_tot.frombytes(ib)
+            self.I = {p: v for p, v in enumerate(i_tot) if v != 0.0}
+            self.W = {}
+            for p in self.I:
+                w = complex(w_tot[2 * p], w_tot[2 * p + 1])
+                if w != 0j:
+                    self.W[p] = w
         W, I = self.W, self.I
         i_ref = I.get(self.ref, 0.0)
         zeros = lambda: [[0.0] * nx for _ in range(ny)]
@@ -214,6 +234,7 @@ class BeamletField:
         for pixel, count in self.density.items():
             iy, ix = divmod(pixel, nx)
             density[iy][ix] = float(count)
+        Ws, Is, i_refs = self.Ws, self.Is, self.i_refs
         if i_ref > 0.0:
             for pixel, w in W.items():
                 i_pix = I.get(pixel, 0.0)
@@ -221,14 +242,20 @@ class BeamletField:
                     continue
                 iy, ix = divmod(pixel, nx)
                 mu[iy][ix] = min(abs(w) / math.sqrt(i_pix * i_ref), 1.0)
-                loo = []   # a mode that solely lights the pixel is skipped
+                wr, wi = w.real, w.imag
+                # sole-mode pixels are skipped; the cut is relative — the
+                # float32 rows leave an O(1e-7) residue where exact 0 is due
+                eps_i, eps_r = 1e-6 * i_pix, 1e-6 * i_ref
+                loo = []
                 for s in range(n_modes):
-                    i_s = i_pix - self.Is[s][pixel]
-                    iref_s = i_ref - self.i_refs[s]
-                    if i_s > 0.0 and iref_s > 0.0:
-                        w_s = w - complex(self.Ws[s][2 * pixel],
-                                          self.Ws[s][2 * pixel + 1])
-                        loo.append(min(abs(w_s) / math.sqrt(i_s * iref_s), 1.0))
+                    i_s = i_pix - Is[s][pixel]
+                    iref_s = i_ref - i_refs[s]
+                    if i_s > eps_i and iref_s > eps_r:
+                        row_s = Ws[s]
+                        dr = wr - row_s[2 * pixel]
+                        di = wi - row_s[2 * pixel + 1]
+                        loo.append(min(math.hypot(dr, di)
+                                       / math.sqrt(i_s * iref_s), 1.0))
                 if len(loo) > 1:
                     mean = sum(loo) / len(loo)
                     err[iy][ix] = math.sqrt(

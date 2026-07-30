@@ -93,6 +93,13 @@ def scan(path):
     """(meta, {scene: rows} complete, no-partial-scenes flag)."""
     meta, counts, trailers = None, {}, {}
     for i, line in enumerate(_lines(path)):
+        if i and line.startswith('{"stage": "'):
+            # row fast path: the writer emits "stage" first, names are plain
+            end = line.find('"', 11)
+            if end > 0:
+                scene = line[11:end]
+                counts[scene] = counts.get(scene, 0) + 1
+                continue
         try:
             row = json.loads(line)
         except ValueError:
@@ -198,7 +205,11 @@ class RaysFile:
 def _file_records(path, scene):
     """Scene rows -> RayRecords. opl/sins stay strings (float() at use);
     point z is unknown-by-design (nan), direction dz rebuilt (unit, dz > 0)."""
+    # rows are written "stage"-first: skip foreign scenes without json.loads
+    prefix = '{"stage": ' + json.dumps(scene) + ","
     for line in _lines(path):
+        if not line.startswith(prefix):
+            continue
         row = json.loads(line)
         if row.get("stage") != scene:
             continue

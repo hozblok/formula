@@ -121,7 +121,7 @@ def make_beamlet_grid(nx, ny, x0, y0, ex, ey, kms, zrs, zrs_t, ns):
     when the .so predates BeamletGrid — the Python path is the reference and
     the fallback."""
     cls = getattr(_formula, "BeamletGrid", None)
-    if cls is None:
+    if cls is None or not hasattr(cls, "fold"):   # stale .so: pre-fold API
         return None
     try:
         return cls(nx, ny, x0, y0, ex, ey, kms, zrs, zrs_t, ns)

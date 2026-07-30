@@ -1782,3 +1782,280 @@ def test_grid_source_draws_weighted_nodes():
     assert math.isclose(math.hypot(min(xs), min(xs)), 6.4e-6, rel_tol=1e-3)
     # center outdraws the corner by the weight ratio exp(dr^2/2s^2) ~ 104
     assert counts[(0.0, 0.0)] > 20 * counts.get((min(xs), min(xs)), counts[(0.0, 0.0)] // 100 + 1)
+
+
+# ------------------------------------------------ stage-11 closed-form amp
+
+
+def _dense_amp_reference(zr, segs, lenses, n=100000):
+    """Brute-force branch tracking: n sub-steps per drift, principal sqrt
+    per step — the exact continuous branch up to float rounding."""
+    import cmath
+    from formula.capsysred.gamma import det2, reflect
+    zrt, zrs, psi = zr
+    c, sn = math.cos(psi), math.sin(psi)
+    q = (complex(0.0, zrt * c * c + zrs * sn * sn),
+         complex(0.0, (zrt - zrs) * c * sn),
+         complex(0.0, zrt * sn * sn + zrs * c * c))
+    amp = 1.0 + 0j
+    for j, seg in enumerate(segs):
+        step = seg / n
+        for _ in range(n):
+            pre = det2(q)
+            q = (q[0] + step, q[1], q[2] + step)
+            amp *= cmath.sqrt(pre / det2(q))
+        if j < len(lenses):
+            q = reflect(q, *lenses[j])
+    return q, amp
+
+
+def test_gamma_amp_closed_form_matches_dense_reference():
+    # closed-form drift amplitude vs brute-force branch tracking on an
+    # astigmatic chain with skew lenses and on a long free drift
+    from formula.capsysred.gamma import propagate
+    cases = [
+        ((0.2, 0.004, 0.6), [0.05, 0.03, 0.4],
+         [(0.3, 1.0 / 0.02, 1.0 / 0.008), (1.2, 0.0, 1.0 / 0.01)]),
+        ((0.5, 0.005, 0.3), [0.5], []),
+    ]
+    for zr, segs, lenses in cases:
+        q, amp = propagate(zr, segs, lenses)
+        q_ref, amp_ref = _dense_amp_reference(zr, segs, lenses)
+        assert abs(amp - amp_ref) <= 1e-9 * abs(amp_ref)
+        assert max(abs(a - b) for a, b in zip(q, q_ref)) <= 1e-9 * abs(q_ref[0])
+
+
+def test_gamma_amp_tight_focus_keeps_the_branch():
+    # seg/z_R ~ 5e4: the old 256-sub-step cap lost exactly pi through the
+    # lens focus (the whole beamlet flipped sign); the closed form must not
+    from formula.capsysred.gamma import propagate
+    zr, segs = (2.0e-4, 2.0e-4, 0.0), [0.01, 0.5]
+    lenses = [(0.7, 1.0 / 0.005, 1.0 / 0.005)]
+    _, amp = propagate(zr, segs, lenses)
+    _, amp_ref = _dense_amp_reference(zr, segs, lenses, n=200000)
+    assert abs(amp - amp_ref) <= 1e-6 * abs(amp_ref)
+
+
+def test_gamma_amp_segment_split_invariant():
+    # zero-curvature bounces split a drift: q and amp must not move, even
+    # when the split points straddle a focus
+    from formula.capsysred.gamma import propagate
+    zr = (0.3, 0.002, 0.9)
+    lens = (0.4, 1.0 / 0.05, 1.0 / 0.006)
+    none = (0.0, 0.0, 0.0)
+    q1, a1 = propagate(zr, [0.03, 0.5], [lens])
+    q2, a2 = propagate(zr, [0.03, 0.1, 0.15, 0.25], [lens, none, none])
+    assert abs(a1 - a2) <= 1e-12 * abs(a1)
+    assert max(abs(a - b) for a, b in zip(q1, q2)) <= 1e-12 * abs(q1[0])
+
+
+# ------------------------------------------------ stage-11 wall selection
+
+
+def test_bounce_lenses_tapered_bundle_picks_the_true_bore():
+    # two bores whose axes shrink as g(z): near the exit the outer bore's
+    # wall sits nearer the INNER bore's entrance center — selection must
+    # follow the axis at z, not the entrance
+    from formula.capsysred.gamma import bounce_lenses
+    g = [-12.0, 0.0]
+    cap = _cap_sim([{"center": [4.0e-5, 0.0], "radius": 2.0e-6,
+                     "funnel": {"g": g}},
+                    {"center": [1.6e-5, 0.0], "radius": 3.0e-6,
+                     "funnel": {"g": g}}]).cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    z, s = 0.049, 2.0e-3
+    gg = 1.0 - 12.0 * z
+    hit = (4.0e-5 * gg + 2.0e-6, 0.0, z)     # on the outer bore, phi = 0
+    [(phi, _, ifs)] = bounce_lenses(bundle, [hit], [s])
+    assert phi == pytest.approx(0.0)
+    # radius follows the taper (f defaults to g): r = r0*gg — and NOT the
+    # 3 um neighbour's 2s/(3e-6*gg) the entrance-center pick would give
+    assert ifs == pytest.approx(2.0 * s / (2.0e-6 * gg))
+
+
+def test_axis_dist2_measures_distance_to_the_bent_axis():
+    # torus: zero on the tube-center circle; offsets along the tube radius
+    # and along the bend normal come back squared
+    from types import SimpleNamespace
+    from formula.capsysred.gamma import _axis_dist2
+    wall = SimpleNamespace(kind="torus", _Cf=(0.03, 0.0, 0.02),
+                           _nf=(0.0, 1.0), _Rf=0.5)
+    a, b = math.cos(0.3), math.sin(0.3)
+    on = (0.03 + 0.5 * a, 0.0, 0.02 + 0.5 * b)
+    assert _axis_dist2(wall, *on) == pytest.approx(0.0, abs=1e-24)
+    off = (on[0] + 2.0e-6 * a, on[1], on[2] + 2.0e-6 * b)
+    assert _axis_dist2(wall, *off) == pytest.approx(4.0e-12)
+    side = (on[0], 5.0e-6, on[2])
+    assert _axis_dist2(wall, *side) == pytest.approx(2.5e-11)
+
+
+# ------------------------------------------- stage-11 estimator internals
+
+
+def test_beamlet_jackknife_skips_sole_mode_pixels():
+    # two modes lighting disjoint screen regions: on a pixel lit by one
+    # mode the delete-that-mode replicate is pure float32 residue and must
+    # be skipped — sigma exactly 0 plus the don't-trust flag, not noise
+    from types import SimpleNamespace
+    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.native import make_beamlet_grid
+    from formula.capsysred.screen import ScreenGrid
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=0.1, nx=401, ny=1, center=[0.0, 0.0],
+                                     edge_x=2.0e-4, edge_y=2.0e-6))
+    ref = scr.pixel((-6.0e-5, 0.0))
+    natives = [False] + ([True] if make_beamlet_grid(
+        1, 1, 0.0, 0.0, 1.0, 1.0, [1.0], [1.0], [1.0], 3.0) else [])
+    for use_native in natives:
+        field = BeamletField(lines, scr, ref, 2.5e-7, 3.0, None,
+                             use_native=use_native)
+        for x in (-6.0e-5, 6.0e-5):     # one mode per side, no overlap
+            field.new_mode()
+            field.deposit(x, 0.0, 0.0, 0.0, 0.1, 0.0, [0.1], [], [1.0 + 0j],
+                          scr.pixel((x, 0.0)))
+            field.fold_mode()
+        maps = field.finalize(scr.nx, scr.ny)
+        checked = 0
+        for ix in range(scr.nx):
+            if maps["intensity"][0][ix] <= 0.0 or scr.xs()[ix] > -1.0e-5:
+                continue
+            checked += 1
+            assert maps["mu"][0][ix] == pytest.approx(1.0)
+            assert maps["mu_err"][0][ix] == 0.0
+            assert maps["dubious"][0][ix] == 1.0
+        assert checked > 50
+
+
+def test_beamlet_window_is_the_ellipse_bounding_box():
+    # a skewed anisotropic spot: the windowed deposit must equal the
+    # full-frame one inside its support, and everything it drops must sit
+    # below the ns-sigma envelope cut
+    from types import SimpleNamespace
+    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.screen import ScreenGrid
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=0.1, nx=201, ny=101, center=[0.0, 0.0],
+                                     edge_x=2.0e-4, edge_y=1.0e-4))
+
+    def spot(ns):
+        field = BeamletField(lines, scr, 0, 2.5e-7, ns, None,
+                             use_native=False, w0_t=5.0e-6)
+        field.new_mode()
+        field.deposit(0.0, 0.0, 0.0, 0.0, 0.1, 0.7, [0.1], [], [1.0 + 0j], 0)
+        return field._g[0]
+
+    cut, full = spot(3.0), spot(24.0)
+    peak = max(abs(v) for v in full.values())
+    assert cut and len(cut) < len(full)
+    for pix, v in cut.items():
+        assert v == full[pix]
+    dropped = [abs(v) for pix, v in full.items() if pix not in cut]
+    assert dropped and max(dropped) <= 2.0e-3 * peak
+
+
+def test_beamlet_tail_ray_deposit_stays_finite():
+    # center far off-window (a tail ray): the C++ row recurrence must sweep
+    # outward from the envelope crest — an edge start overflows the ratio
+    # to inf and poisons the row with NaN; both paths must agree and stay
+    # finite across an e^-30 dynamic range
+    from types import SimpleNamespace
+    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.native import make_beamlet_grid
+    from formula.capsysred.screen import ScreenGrid
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=0.5, nx=101, ny=3, center=[0.0, 0.0],
+                                     edge_x=1.0e-4, edge_y=6.0e-6))
+    fields = {}
+    for use_native in (True, False):
+        if use_native and make_beamlet_grid(1, 1, 0.0, 0.0, 1.0, 1.0, [1.0],
+                                            [1.0], [1.0], 3.0) is None:
+            pytest.skip("BeamletGrid missing from the built .so")
+        field = BeamletField(lines, scr, 151, 5.0e-7, 3.0, None,
+                             use_native=use_native)
+        field.new_mode()
+        field.deposit(-1.8e-4, 0.0, 1.0e-4, 0.0, 0.5, 0.2, [0.5], [],
+                      [1.0 + 0j], None)
+        field.fold_mode()
+        fields[use_native] = field.finalize(scr.nx, scr.ny)
+    for maps in fields.values():
+        vals = [v for row in maps["intensity"] for v in row]
+        assert all(math.isfinite(v) and v >= 0.0 for v in vals)
+        assert max(vals) > 0.0          # the window clip did deposit
+    nat = [v for row in fields[True]["intensity"] for v in row]
+    ref = [v for row in fields[False]["intensity"] for v in row]
+    for a, b in zip(nat, ref):
+        assert a == pytest.approx(b, rel=1e-9, abs=1e-300)
+
+
+def test_beamlet_native_multimode_fold_matches_python():
+    # three modes through the C++ fold/totals path vs the pure-Python
+    # dicts: mu, sigma_jack, dubious, intensity, density must coincide
+    from types import SimpleNamespace
+    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.native import make_beamlet_grid
+    from formula.capsysred.screen import ScreenGrid
+    from formula.capsysred.types import RayRecord
+    if make_beamlet_grid(1, 1, 0.0, 0.0, 1.0, 1.0, [1.0], [1.0], [1.0],
+                         3.0) is None:
+        pytest.skip("BeamletGrid missing from the built .so")
+    lines = spectral_lines({"mode": "gaussian", "rel_fwhm": 1.0e-3,
+                            "n_lines": 3, "n_sigma": 2.0}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=0.06, nx=21, ny=5, center=[0.0, 0.0],
+                                     edge_x=1.2e-5, edge_y=6.0e-6))
+    modes = [
+        [(0.0, 0.0, 0.0, 0.0, 0.06, ()),
+         (2.0e-6, 1.0e-6, 5.0e-5, -3.0e-5, 0.0612, ((1.0e-6, 0.0, 0.03),))],
+        [(-3.0e-6, -2.0e-6, -1.0e-4, 2.0e-5, 0.0605,
+          ((2.0e-6, 1.0e-6, 0.02), (-1.0e-6, 5.0e-7, 0.045)))],
+        [(1.0e-6, -1.0e-6, 3.0e-5, 4.0e-5, 0.0608,
+          ((5.0e-7, -5.0e-7, 0.04),))],
+    ]
+    maps = []
+    for use_native in (True, False):
+        field = BeamletField(lines, scr, 52, 5.0e-7, 3.0, None,
+                             use_native=use_native)
+        for m, rays in enumerate(modes):
+            field.new_mode()
+            for i, (x, y, dx, dy, opl, refl) in enumerate(rays):
+                rec = RayRecord(m, i, "screen", scr.pixel((x, y)),
+                                (x, y, 0.06), (dx, dy, 1.0), opl,
+                                tuple(1.0e-3 * (j + 1)
+                                      for j in range(len(refl))), refl)
+                field.add_ray(rec, [1.0 + 0.5j, 0.8 - 0.1j, 0.9 + 0.2j])
+            field.fold_mode()
+        maps.append(field.finalize(21, 5))
+    nat, ref = maps
+    imax = max(max(r) for r in ref["intensity"])
+    for key, scale in (("mu", 1.0), ("mu_err", 1.0), ("intensity", imax)):
+        diff = max(abs(a - b) for ra, rb in zip(nat[key], ref[key])
+                   for a, b in zip(ra, rb))
+        assert diff <= 1e-9 * scale, key
+    assert nat["dubious"] == ref["dubious"]
+    assert nat["density"] == ref["density"]
+    assert nat["i_ref"] == pytest.approx(ref["i_ref"], rel=1e-12)
+
+
+def test_file_records_scene_name_prefix_no_cross_pickup(tmp_path):
+    # scene names sharing a prefix must not leak rows into each other
+    from formula.capsysred.rays import _file_records
+    path = str(tmp_path / "rays.jsonl")
+    rows = [
+        {"format": 2, "geometry": "x", "budgets": {}},
+        {"stage": "cap", "mode": 0, "ray": 0, "fate": "absorbed",
+         "pixel": None, "opl": "0.1", "sins": []},
+        {"stage": "capillary", "mode": 0, "ray": 1, "fate": "screen",
+         "pixel": 5, "opl": "0.2", "sins": ["1.0e-3"], "x": 1.0e-6,
+         "y": 0.0, "dx": 0.0, "dy": 0.0, "refl": [[0.0, 0.0, 0.01]]},
+        {"scene_end": "cap", "rows": 1},
+        {"scene_end": "capillary", "rows": 1},
+    ]
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        for row in rows:
+            fh.write(json.dumps(row) + "\n")
+    short = list(_file_records(path, "cap"))
+    assert [(r.mode, r.ray, r.fate) for r in short] == [(0, 0, "absorbed")]
+    full = list(_file_records(path, "capillary"))
+    assert [(r.ray, r.fate, r.pixel) for r in full] == [(1, "screen", 5)]
+    assert full[0].refl == ((0.0, 0.0, 0.01),)
+    assert list(_file_records(path, "lloyd")) == []
+
