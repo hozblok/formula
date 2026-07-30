@@ -1987,6 +1987,68 @@ def test_beamlet_tail_ray_deposit_stays_finite():
         assert a == pytest.approx(b, rel=1e-9, abs=1e-300)
 
 
+def test_beamlet_native_lensed_bounces_match_python():
+    # nonzero wall lenses through BOTH paths: cylinder (sagittal-only) and
+    # a parabolic funnel (meridional f_t too), skew azimuths couple the
+    # planes — the C++ reflect branch had no cross-check before
+    from types import SimpleNamespace
+    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.gamma import bounce_lenses
+    from formula.capsysred.native import make_beamlet_grid
+    from formula.capsysred.screen import ScreenGrid
+    from formula.capsysred.types import RayRecord
+    if make_beamlet_grid(1, 1, 0.0, 0.0, 1.0, 1.0, [1.0], [1.0], [1.0],
+                         3.0) is None:
+        pytest.skip("BeamletGrid missing from the built .so")
+    lines = spectral_lines({"mode": "gaussian", "rel_fwhm": 1.0e-3,
+                            "n_lines": 3, "n_sigma": 2.0}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=0.06, nx=21, ny=5, center=[0.0, 0.0],
+                                     edge_x=1.2e-5, edge_y=6.0e-6))
+    a = 3.0e-6
+    cyl = _cap_sim([{"center": [0.0, 0.0], "radius": a}]).cfg.capillary
+    fun = _cap_sim([{"center": [0.0, 0.0], "radius": 6.0e-6,
+                     "funnel": {"g": [0.0, 0.0],
+                                "f": [0.0, -2.0e2]}}]).cfg.capillary
+    r1 = 6.0e-6 * (1.0 - 2.0e2 * 0.01 * 0.01)
+    r2 = 6.0e-6 * (1.0 - 2.0e2 * 0.035 * 0.035)
+    cases = [
+        (CapillaryBundle(cyl.bores, cyl.z0, cyl.z1),
+         [((0.0, a, 0.01), (a * 0.6, -a * 0.8, 0.03)),
+          ((-a, 0.0, 0.02),)]),
+        (CapillaryBundle(fun.bores, fun.z0, fun.z1),
+         [((r1 * 0.28, r1 * 0.96, 0.01), (-r2 * 0.8, r2 * 0.6, 0.035)),
+          ((0.0, -r2, 0.035),)]),
+    ]
+    for bundle, mode_refls in cases:
+        # premise: these hits really produce nonzero lenses
+        lens = bounce_lenses(bundle, list(mode_refls[0]),
+                             [2.0e-3] * len(mode_refls[0]))
+        assert all(ifs != 0.0 for _, _, ifs in lens)
+        maps = []
+        for use_native in (True, False):
+            field = BeamletField(lines, scr, 52, 5.0e-7, 3.0, bundle,
+                                 use_native=use_native)
+            for m, refl in enumerate(mode_refls):
+                field.new_mode()
+                x, y = 1.0e-6 * (m + 1), -0.5e-6 * m
+                rec = RayRecord(m, 0, "screen", scr.pixel((x, y)),
+                                (x, y, 0.06), (5.0e-5, -3.0e-5, 1.0), 0.0612,
+                                tuple(2.0e-3 * (j + 1)
+                                      for j in range(len(refl))), refl)
+                field.add_ray(rec, [1.0 + 0.5j, 0.8 - 0.1j, 0.9 + 0.2j])
+                field.fold_mode()
+            maps.append(field.finalize(21, 5))
+        nat, ref = maps
+        imax = max(max(r) for r in ref["intensity"])
+        for key, scale in (("mu", 1.0), ("mu_err", 1.0),
+                           ("intensity", imax)):
+            diff = max(abs(p - q) for rp, rq in zip(nat[key], ref[key])
+                       for p, q in zip(rp, rq))
+            assert diff <= 1e-9 * scale, key
+        assert nat["dubious"] == ref["dubious"]
+        assert nat["density"] == ref["density"]
+
+
 def test_beamlet_native_multimode_fold_matches_python():
     # three modes through the C++ fold/totals path vs the pure-Python
     # dicts: mu, sigma_jack, dubious, intensity, density must coincide
@@ -2058,4 +2120,25 @@ def test_file_records_scene_name_prefix_no_cross_pickup(tmp_path):
     assert [(r.ray, r.fate, r.pixel) for r in full] == [(1, "screen", 5)]
     assert full[0].refl == ((0.0, 0.0, 0.01),)
     assert list(_file_records(path, "lloyd")) == []
+
+
+def test_scene_stream_refuses_thinned_recording(tmp_path):
+    # budgets meta promises 2x3 rows but the scene holds 5: replay must
+    # refuse loudly, and a partially consumed stream must count-check
+    from types import SimpleNamespace
+    from formula.capsysred.rays import RaysReader, _counted, scene_stream
+    path = str(tmp_path / "rays.jsonl")
+    rows = [{"format": 2, "geometry": "x", "budgets": {"free": [2, 3]}}]
+    rows += [{"stage": "free", "mode": 0, "ray": i, "fate": "lost",
+              "pixel": None, "opl": "0.1", "sins": []} for i in range(5)]
+    rows.append({"scene_end": "free", "rows": 5})
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        for row in rows:
+            fh.write(json.dumps(row) + "\n")
+    sim = SimpleNamespace(rays=RaysReader(path))
+    src = SimpleNamespace(budget=lambda quick: (2, 3))
+    with pytest.raises(ValueError, match="thinned"):
+        scene_stream(sim, "free", src, None, None, None, 0, 0)
+    with pytest.raises(ValueError, match="rewritten or truncated"):
+        list(_counted(iter([1, 2]), 3, "free", path))
 

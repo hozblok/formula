@@ -272,10 +272,24 @@ def _traced_records(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
         writer.finish_scene(scene)
 
 
+def _counted(records, expected: int, scene: str, path: str):
+    """Guard on full consumption: a rewritten file (foreign key order defeats
+    the prefix skip) or a thinned recording must fail loudly, not thin the
+    statistics silently."""
+    n = 0
+    for rec in records:
+        n += 1
+        yield rec
+    if n != expected:
+        raise ValueError(f"{path}: scene {scene!r} yielded {n} rows of "
+                         f"{expected} recorded — file rewritten or truncated")
+
+
 def scene_stream(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
                  seed_offset: int, quick: int):
     """(records, "file"|"trace"): the file when the run's rays file already
-    holds this scene at these budgets, else tracing (teeing into the file)."""
+    holds this scene, complete and at these budgets, else tracing (teeing
+    into the file)."""
     n_modes, n_rays = src_cfg.budget(quick)
     w = sim.rays
     if w is not None and w.readonly:   # --replay: the file is the only source
@@ -287,9 +301,16 @@ def scene_stream(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
                 f"--replay: scene {scene!r} budgets "
                 f"{w.meta['budgets'].get(scene)} != config {[n_modes, n_rays]}"
                 " — match n_modes/n_rays and --quick to the recording")
-        return _file_records(w.path, scene), "file"
+        if w.done[scene] != n_modes * n_rays:
+            raise ValueError(
+                f"--replay: scene {scene!r} holds {w.done[scene]} rows, "
+                f"budgets promise {n_modes * n_rays} — thinned recording")
+        return _counted(_file_records(w.path, scene), w.done[scene], scene,
+                        w.path), "file"
     if (w is not None and scene in w.done
-            and w.meta["budgets"].get(scene) == [n_modes, n_rays]):
-        return _file_records(w.path, scene), "file"
+            and w.meta["budgets"].get(scene) == [n_modes, n_rays]
+            and w.done[scene] == n_modes * n_rays):
+        return _counted(_file_records(w.path, scene), w.done[scene], scene,
+                        w.path), "file"
     return _traced_records(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
                            seed_offset, quick), "trace"

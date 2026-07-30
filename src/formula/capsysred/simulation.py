@@ -842,7 +842,8 @@ class Simulation:
         n_lit = sum(1 for d in flat(maps["density"]) if d > 0)
         solid = [i for i, v in enumerate(flat(maps["solid"])) if v > 0]
         n_dub = sum(1 for v in flat(maps["dubious"]) if v > 0)
-        errs = [flat(maps["mu_err"])[i] for i in solid]
+        flat_err = flat(maps["mu_err"])
+        errs = [flat_err[i] for i in solid]
         med_err = sorted(errs)[len(errs) // 2] if errs else 0.0
         limit = 1.0 / math.sqrt(res["n_modes"])
         rms6 = None

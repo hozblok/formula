@@ -313,10 +313,10 @@ class BeamletGrid {
     return py::make_tuple(w_spot, bad);
   }
 
-  // One mode's fold: W/I totals += wf*g*conj(g_ref) and wf*|g|^2 per line;
-  // returns the float32 delete-one-mode rows (interleaved re,im; intensity)
-  // and the float32-consistent ref intensity, as the Python path builds.
-  py::tuple fold(const std::vector<double> &wfs, long ref) {
+  // One mode's fold: W/I totals += wf*g*conj(g_ref) and wf*|g|^2 per line.
+  // The float32 delete-one rows stay inside (jackknife runs native too);
+  // returns the float32-consistent ref intensity of the mode.
+  double fold(const std::vector<double> &wfs, long ref) {
     const size_t npix = size_t(nx_) * ny_;
     std::vector<float> w_row(2 * npix, 0.0f);
     std::vector<float> i_row(npix, 0.0f);
@@ -343,12 +343,72 @@ class BeamletGrid {
         }
       }
     }
+    const double i_ref = i_row[size_t(ref)];
+    fw_.push_back(std::move(w_row));
+    fi_.push_back(std::move(i_row));
+    irefs_.push_back(i_ref);
+    return i_ref;
+  }
+
+  // Delete-one-mode jackknife over the fold rows, mirroring the Python
+  // fallback op-for-op: dense row-major (mu float64, sigma float64,
+  // don't-trust uint8) as bytes.
+  py::tuple jackknife(long ref, double eps_rel) const {
+    const size_t npix = size_t(nx_) * ny_;
+    std::vector<double> mu(npix, 0.0), err(npix, 0.0);
+    std::vector<unsigned char> dub(npix, 0);
+    const double i_ref = I_[size_t(ref)];
+    const size_t nf = fi_.size();
+    std::vector<double> loo;
+    loo.reserve(nf);
+    if (i_ref > 0.0) {
+      for (size_t p = 0; p < npix; ++p) {
+        const std::complex<double> w = W_[p];
+        if (w == std::complex<double>(0.0, 0.0)) {
+          continue;
+        }
+        const double i_pix = I_[p];
+        if (i_pix <= 0.0) {
+          continue;
+        }
+        mu[p] = std::min(std::abs(w) / std::sqrt(i_pix * i_ref), 1.0);
+        const double eps_i = eps_rel * i_pix, eps_r = eps_rel * i_ref;
+        loo.clear();
+        for (size_t s = 0; s < nf; ++s) {
+          const double i_s = i_pix - fi_[s][p];
+          const double iref_s = i_ref - irefs_[s];
+          if (i_s > eps_i && iref_s > eps_r) {
+            const double dr = w.real() - fw_[s][2 * p];
+            const double di = w.imag() - fw_[s][2 * p + 1];
+            loo.push_back(std::min(
+                std::hypot(dr, di) / std::sqrt(i_s * iref_s), 1.0));
+          }
+        }
+        if (loo.size() > 1) {
+          double mean = 0.0;
+          for (const double v : loo) {
+            mean += v;
+          }
+          mean /= double(loo.size());
+          double ss = 0.0;
+          for (const double v : loo) {
+            ss += (v - mean) * (v - mean);
+          }
+          err[p] = std::sqrt(ss * double(loo.size() - 1) /
+                             double(loo.size()));
+        }
+        if (err[p] > 1.0 || loo.size() < 2 ||
+            (mu[p] >= 1.0 && err[p] == 0.0)) {
+          dub[p] = 1;
+        }
+      }
+    }
     return py::make_tuple(
-        py::bytes(reinterpret_cast<const char *>(w_row.data()),
-                  w_row.size() * sizeof(float)),
-        py::bytes(reinterpret_cast<const char *>(i_row.data()),
-                  i_row.size() * sizeof(float)),
-        double(i_row[size_t(ref)]));
+        py::bytes(reinterpret_cast<const char *>(mu.data()),
+                  npix * sizeof(double)),
+        py::bytes(reinterpret_cast<const char *>(err.data()),
+                  npix * sizeof(double)),
+        py::bytes(reinterpret_cast<const char *>(dub.data()), npix));
   }
 
   // The run's W (complex128 interleaved) and I (float64) fold totals.
@@ -383,6 +443,8 @@ class BeamletGrid {
   std::vector<std::vector<std::complex<double>>> g_;
   std::vector<std::complex<double>> W_;
   std::vector<double> I_;
+  std::vector<std::vector<float>> fw_, fi_;   // per-fold delete-one rows
+  std::vector<double> irefs_;
 };
 
 }  // namespace
@@ -406,7 +468,11 @@ void register_trace(py::module_ &m) {
            py::arg("pref"), py::arg("tx"), py::arg("ty"), py::arg("hxx"),
            py::arg("hxy"), py::arg("hyy"), py::arg("rx"), py::arg("ry"))
       .def("fold", &BeamletGrid::fold, py::arg("wfs"), py::arg("ref"),
-           "Fold one mode into the W/I totals; returns the float32 rows.")
+           "Fold one mode into the W/I totals and delete-one rows; "
+           "returns the mode's float32 ref intensity.")
+      .def("jackknife", &BeamletGrid::jackknife, py::arg("ref"),
+           py::arg("eps_rel"),
+           "Dense (mu, sigma, dubious) bytes from the fold rows.")
       .def("totals", &BeamletGrid::totals,
            "W (complex128) and I (float64) fold totals as bytes.")
       .def("at", &BeamletGrid::at, "Cell value: (line, pixel) -> complex.")

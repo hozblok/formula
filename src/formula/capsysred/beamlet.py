@@ -50,6 +50,9 @@ class BeamletField:
                               for w in getattr(optic, "walls", ()))
         self.ref = ref_pixel
         self.grid = screen
+        # delete-one cut: float32 rows leave ~nl*2^-24 relative residue
+        # where exact 0 is due; x16 headroom, ~1e-6 at nl = 1
+        self.loo_eps = (16 + self.nl) * 2.0 ** -24
         self.nx, self.ny = screen.nx, screen.ny
         self.zf = float(screen.z)
         self.xs = screen.xs()
@@ -171,18 +174,11 @@ class BeamletField:
                     g[pix] = val if prev is None else prev + val
 
     def fold_mode(self):
-        npix = self.nx * self.ny
         if self.native is not None:
-            # the whole per-mode scan runs in C++; W/I totals stay there
-            w_bytes, i_bytes, i_ref = self.native.fold(self.wfs, self.ref)
-            w_row = array("f")
-            w_row.frombytes(w_bytes)
-            i_row = array("f")
-            i_row.frombytes(i_bytes)
-            self.Ws.append(w_row)
-            self.Is.append(i_row)
-            self.i_refs.append(i_ref)
+            # scan, totals AND the delete-one rows all stay in C++
+            self.native.fold(self.wfs, self.ref)
             return
+        npix = self.nx * self.ny
         w_row = array("f", bytes(8 * npix))
         i_row = array("f", bytes(4 * npix))
         for m in range(self.nl):
@@ -210,19 +206,9 @@ class BeamletField:
         is the mu denominator and every lit pixel is estimable; the trust
         flags are sigma > 1, pinned at the |mu| = 1 clamp with sigma = 0,
         or fewer than 2 usable leave-one-out modes."""
-        n_modes = len(self.Ws)
         if self.native is not None:
-            w_tot = array("d")
-            i_tot = array("d")
-            wb, ib = self.native.totals()
-            w_tot.frombytes(wb)
-            i_tot.frombytes(ib)
-            self.I = {p: v for p, v in enumerate(i_tot) if v != 0.0}
-            self.W = {}
-            for p in self.I:
-                w = complex(w_tot[2 * p], w_tot[2 * p + 1])
-                if w != 0j:
-                    self.W[p] = w
+            return self._finalize_native(nx, ny)
+        n_modes = len(self.Ws)
         W, I = self.W, self.I
         i_ref = I.get(self.ref, 0.0)
         zeros = lambda: [[0.0] * nx for _ in range(ny)]
@@ -243,9 +229,8 @@ class BeamletField:
                 iy, ix = divmod(pixel, nx)
                 mu[iy][ix] = min(abs(w) / math.sqrt(i_pix * i_ref), 1.0)
                 wr, wi = w.real, w.imag
-                # sole-mode pixels are skipped; the cut is relative — the
-                # float32 rows leave an O(1e-7) residue where exact 0 is due
-                eps_i, eps_r = 1e-6 * i_pix, 1e-6 * i_ref
+                # sole-mode pixels are skipped; the cut is loo_eps-relative
+                eps_i, eps_r = self.loo_eps * i_pix, self.loo_eps * i_ref
                 loo = []
                 for s in range(n_modes):
                     i_s = i_pix - Is[s][pixel]
@@ -269,6 +254,29 @@ class BeamletField:
                 "intensity": intensity, "density": density,
                 "ref_pixel": self.ref, "i_ref": i_ref, "w_mean": w_mean,
                 "gamma_bad": self.gamma_bad, "flat_walls": self.flat_walls}
+
+    def _finalize_native(self, nx: int, ny: int):
+        """Native-path finalize: totals and the delete-one scan live in
+        C++; here the dense results are only unpacked into row lists."""
+        i_tot = array("d")
+        i_tot.frombytes(self.native.totals()[1])
+        mu_b, err_b, dub_b = self.native.jackknife(self.ref, self.loo_eps)
+        mu_t = array("d")
+        mu_t.frombytes(mu_b)
+        err_t = array("d")
+        err_t.frombytes(err_b)
+        rows = lambda a: [list(a[iy * nx:(iy + 1) * nx]) for iy in range(ny)]
+        density = [[0.0] * nx for _ in range(ny)]
+        for pixel, count in self.density.items():
+            iy, ix = divmod(pixel, nx)
+            density[iy][ix] = float(count)
+        w_mean = self.w_sum / self.w_n if self.w_n else 0.0
+        return {"mu": rows(mu_t), "mu_err": rows(err_t),
+                "dubious": rows(array("d", (float(b) for b in dub_b))),
+                "intensity": rows(i_tot), "density": density,
+                "ref_pixel": self.ref, "i_ref": i_tot[self.ref],
+                "w_mean": w_mean, "gamma_bad": self.gamma_bad,
+                "flat_walls": self.flat_walls}
 
 
 def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
