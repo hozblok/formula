@@ -105,6 +105,12 @@ class JackknifeCoherence:
             iy, ix = divmod(pixel, nx)
             density[iy][ix] = float(count)
         ref_solid = self.ref in self.pairs
+        if not ref_solid:
+            # no reference pairs: nothing is estimable — flag every solid
+            # pixel instead of leaving a confident-looking zero map
+            for pixel in self.pairs:
+                iy, ix = divmod(pixel, nx)
+                dubious[iy][ix] = 1.0
         for pixel, ic in Ic.items():
             if pixel not in self.pairs or not ref_solid:   # Ic is a float residual
                 continue
@@ -112,7 +118,10 @@ class JackknifeCoherence:
             if ic <= 0.0 or ic_ref <= 0.0:   # shot-dominated pixel: mu stays 0
                 dubious[iy][ix] = 1.0
                 continue
-            w = W.get(pixel, 0j)
+            w = W.get(pixel)
+            if w is None:   # no mode ever co-lit P and ref: zero cross data
+                dubious[iy][ix] = 1.0
+                continue
             mu[iy][ix] = min(abs(w) / math.sqrt(ic * ic_ref), 1.0)
             loo = []   # leave-one-mode-out mu; pixels pinned at the clamp give err 0
             for s in range(n_modes):

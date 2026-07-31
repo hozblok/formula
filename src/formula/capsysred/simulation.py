@@ -870,7 +870,7 @@ class Simulation:
                                "x, µm", "y, µm", "", "σ_jack", w=430, equal=True),
                 render.heatmap(trust, extent, "trust: 1 ok · ½ don't · 0 none",
                                "x, µm", "y, µm",
-                               "½: σ_jack>1, pinned at |μ|=1, or no jackknife; 0: no pairs",
+                               "½: σ_jack>1, pinned at |μ|=1, or no usable data; 0: no pairs",
                                "trust", vmax=1.0, w=430, equal=True)])
             self._save(out_dir, f"{tag}-{scene}-jack-mu.svg", fig)
             # y ≈ 0 slice of the three maps: |μ| ± σ_jack, σ_jack, trust
@@ -1015,7 +1015,7 @@ class Simulation:
             f"- solid pixels (≥2 same-mode rays, |μ| estimable): {len(solid)} of {n_lit} lit; "
             "the rest are masked to μ = σ_jack = 0",
             f"- don't-trust estimates on solid px (σ_jack > 1, pinned at |μ| = 1 with σ_jack = 0, "
-            f"or no usable jackknife): {n_dub} of {len(solid)}",
+            f"or no usable jackknife/cross data): {n_dub} of {len(solid)}",
             f"- σ_jack on solid pixels: median {med_err:.4f}, max {max(errs, default=0.0):.4f}; "
             f"{below:.0f}% below the 1/√N limit ({limit:.3f})",
         ] + ([f"- RMS(|μ|_jack − |μ|_stage6) = {rms6:.2e} (same rays, solid pixels)"]

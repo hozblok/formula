@@ -2122,6 +2122,55 @@ def test_file_records_scene_name_prefix_no_cross_pickup(tmp_path):
     assert list(_file_records(path, "lloyd")) == []
 
 
+def _run_jack(modes, ref=3, npx=7):
+    from types import SimpleNamespace
+    from formula.capsysred.jackknife import JackknifeCoherence
+    from formula.capsysred.types import RayRecord
+    line = SimpleNamespace(k=4.05e10, weight=1.0)
+    jack = JackknifeCoherence([line], ref)
+    for rays in modes:
+        jack.new_mode()
+        for i, (pixel, opl) in enumerate(rays):
+            rec = RayRecord(0, i, "screen", pixel, (0.0, 0.0, 0.5),
+                            (0.0, 0.0, 1.0), opl, (), ())
+            jack.add_ray(rec, [1.0 + 0j])
+        jack.fold_mode()
+    return jack.finalize(npx, 1)
+
+
+def test_jackknife_trust_flags_cover_no_data_cases():
+    # C1: the ref never gets >= 2 same-mode rays -> the whole map is
+    # masked zeros; every solid pixel must carry the don't-trust flag
+    maps = _run_jack([[(3, 0.5 + 1e-7 * m)]
+                      + [(1, 0.5 + 1e-7 * m + 1e-9 * r) for r in range(4)]
+                      for m in range(5)])
+    assert maps["solid"][0][1] == 1.0 and maps["solid"][0][3] == 0.0
+    assert maps["mu"][0][1] == 0.0 and maps["mu_err"][0][1] == 0.0
+    assert maps["dubious"][0][1] == 1.0
+
+    # C2: pixel 1 lit only in modes where the ref was dark: mu = 0 with
+    # zero cross data must be flagged, not reported as confident
+    maps = _run_jack([[(3 if m < 3 else 1, 0.5 + 1e-7 * m)] * 4
+                      for m in range(6)])
+    assert maps["solid"][0][1] == 1.0
+    assert maps["mu"][0][1] == 0.0 and maps["dubious"][0][1] == 1.0
+    assert maps["mu"][0][3] == 1.0          # the ref itself stays exact
+
+    # single cross-mode: the delete-one loses its only usable replicate
+    maps = _run_jack([[(3, 0.5), (3, 0.5), (1, 0.5), (1, 0.5)],
+                      [(3, 0.5 + 1e-7), (3, 0.5 + 1e-7)]])
+    assert maps["solid"][0][1] == 1.0 and maps["dubious"][0][1] == 1.0
+
+    # control: modes co-lighting ref and pixel 5 with mode-varying
+    # relative phase stay unflagged: 0 < mu < 1, 0 < sigma <= 1
+    maps = _run_jack([[(3, 0.5 + 1e-7 * m)] * 2
+                      + [(5, 0.5 + 1e-7 * m + 3.9e-11 * m)] * 2
+                      for m in range(6)])
+    assert maps["solid"][0][5] == 1.0 and maps["dubious"][0][5] == 0.0
+    assert 0.0 < maps["mu"][0][5] < 1.0
+    assert 0.0 < maps["mu_err"][0][5] <= 1.0
+
+
 def test_scene_stream_refuses_thinned_recording(tmp_path):
     # budgets meta promises 2x3 rows but the scene holds 5: replay must
     # refuse loudly, and a partially consumed stream must count-check
