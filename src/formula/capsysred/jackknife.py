@@ -158,7 +158,8 @@ def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     jack = JackknifeCoherence(sim.lines, screen.ref_pixel(target.reference))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
                                       aim_factory, seed_offset, quick)
-    if screen_cfg is not None:
+    if screen_cfg is not None or getattr(sim.rays, "readonly", False):
+        # --replay records may carry pixel ids of a different grid — re-bin
         records = rescreen(records, float(scr_cfg.z), screen)
     stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
              "off_window": 0, "reflected_rays": 0, "reflections": 0,
