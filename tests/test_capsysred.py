@@ -1441,6 +1441,23 @@ def test_universal_replay_new_spectrum(tmp_path):
     assert max(max(r) for r in mu) <= 1.0 + 1e-9
 
 
+def test_replay_rebins_records_onto_the_config_grid(tmp_path):
+    # file pixel ids belong to the recording grid; a replay onto a config
+    # with another screen grid must re-bin them, not trust them
+    Simulation.from_dict(TINY).trace(str(tmp_path / "rec"))
+    other = dict(TINY, capillary=dict(TINY["capillary"],
+                                      screen={"nx": 5, "ny": 7}))
+    direct = Simulation.from_dict(other)
+    direct.run(str(tmp_path / "direct"), stages=[10])
+    rep = Simulation.from_dict(other)
+    rep.replay(str(tmp_path / "rec" / "rays.jsonl.gz"),
+               str(tmp_path / "rep"), stages=[10])
+    assert rep.results["jack:capillary"]["rays_from"] == "file"
+    a, b = (s.results["jack:capillary"]["maps"] for s in (direct, rep))
+    for key in ("mu", "intensity", "density", "solid"):
+        assert a[key] == b[key], key
+
+
 def test_gamma_anisotropic_launch():
     # isotropic triple == scalar for any psi; an elliptic launch drifts as
     # two independent scalar axes; psi = pi/2 swaps the axes
@@ -2120,6 +2137,127 @@ def test_file_records_scene_name_prefix_no_cross_pickup(tmp_path):
     assert [(r.ray, r.fate, r.pixel) for r in full] == [(1, "screen", 5)]
     assert full[0].refl == ((0.0, 0.0, 0.01),)
     assert list(_file_records(path, "lloyd")) == []
+
+
+# ---------------------------------------- tracer audit xfails (2026-07-31)
+
+
+@pytest.mark.xfail(strict=True, reason="audit 2026-07-31: a near-zero (not "
+                   "exactly zero) leading coefficient collapses the DK seed "
+                   "tier in _poly_first; the 48-point bisect grid cannot see "
+                   "the grazing pair — hit() returns None on a real crossing")
+def test_funnel_near_zero_lead_finds_grazing_chord():
+    # straight taper with a bf = 1e-20 residue; tangent chord dipping
+    # 1e-5*r0 (60 pm, grazing sine ~4.5 mrad — physical range) into the
+    # wall at z = 0.01. The exact-sign scan of the same polynomial gives
+    # the crossing pair [2.7398251603e-4, 3.2601316396e-4].
+    from formula.capsysred.nums import lift, vadd, vdot, vscale, vsub, vunit
+    from formula.capsysred.wall_funnel import FunnelWall
+
+    def N(v, p=96):
+        return lift(str(v), p)
+
+    r0, af, bf = N("6e-6"), N("-6.0"), N("1e-20")
+    zt, s_az, delta_rel, back = N("0.01"), N("1e-3"), N("1e-5"), N("3e-4")
+    one, zero = N(1), N(0)
+    f = one + zt * (af + zt * bf)
+    fp = af + 2 * bf * zt
+    rt = r0 * f
+    Pt = (rt, zero, zt)
+    nhat = vunit((rt, zero, zero - r0 * r0 * f * fp))
+    d0 = (zero, s_az, one)
+    dhat = vunit(vsub(d0, vscale(nhat, vdot(d0, nhat))))
+    O = vsub(vadd(Pt, vscale(nhat, zero - r0 * delta_rel)),
+             vscale(dhat, back))
+    n32 = lambda v: lift(str(v), 32)
+    wall = FunnelWall((n32(0), n32(0)), n32("6e-6"), (n32(0), n32(0)),
+                      (n32("-6.0"), n32("1e-20")), n32(0))
+    hit = wall.hit(tuple(n32(c) for c in O), tuple(n32(c) for c in dhat),
+                   n32("1e-3"))
+    assert hit is not None
+    assert abs(float(hit[0]) - 2.7398251603e-4) < 1e-9
+
+
+@pytest.mark.xfail(strict=True, reason="audit 2026-07-31: pinch in span is "
+                   "silently constructible; the exactly-axial ray tunnels "
+                   "through the closed throat (double root, no sign change) "
+                   "and reaches the screen with 0 bounces")
+def test_funnel_pinch_axial_ray_does_not_tunnel():
+    # taper radius r0*f crosses zero at z = 1/6 inside [0, 0.3]: a closed
+    # throat. The on-axis ray must not come out the other side.
+    sim = _cap_sim([{"center": [0.0, 0.0], "radius": 6.0e-6,
+                     "funnel": {"g": [0.0, 0.0], "f": [-6.0, 0.0]}}],
+                   z0=0.0, z1=0.3)
+    cap = sim.cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    p = cap.z0.precision
+    zero, one = Number("0", p), Number("1", p)
+    res = trace_ray((zero, zero, Number("-0.01", p)), (zero, zero, one),
+                    bundle, Number("0.4", p), 200)
+    assert res.fate == "absorbed"
+
+
+@pytest.mark.xfail(strict=True, reason="audit 2026-07-31: past the pinch "
+                   "f < 0 but r^2 > 0 — the mirror ghost cone counts as "
+                   "bore interior")
+def test_funnel_inside_stays_closed_past_pinch():
+    from formula.capsysred.nums import lift
+    from formula.capsysred.wall_funnel import FunnelWall
+    n32 = lambda v: lift(str(v), 32)
+    wall = FunnelWall((n32(0), n32(0)), n32("6e-6"), (n32(0), n32(0)),
+                      (n32("-6.0"), n32(0)), n32(0))
+    assert not wall.inside(1.0e-6, 0.0, 0.2)   # r(0.2) = -1.2e-6: ghost
+
+
+@pytest.mark.xfail(strict=True, reason="audit 2026-07-31: below ~2.4e-21*a "
+                   "chord depth both pair seeds stall in Newton and the "
+                   "bisect grid is ~10 orders too coarse — hit() returns "
+                   "the far outer-wall root or None instead of the pair")
+def test_torus_graze_pair_survives_seed_floor():
+    # in-plane grazing chord dipping 2.371e-21*a into the inner wall of a
+    # bent bore (R = 0.5, a = 6e-6): the exact quartic has the crossing
+    # pair at t ~ 2.4495e-3 (dense exact-sign scan); at delta = 1e-20*a
+    # hit() still returns it, one step below it tunnels.
+    from formula.capsysred.nums import lift, sqrt as nsqrt
+    from formula.capsysred.wall_torus import TorusWall
+    N = lambda v: lift(str(v), 32)
+    a, R = N("6e-6"), N("0.5")
+    wall = TorusWall((N(0), N(0)), a, R, (N(1), N(0)), N(0))
+    delta = N("2.371e-21") * a
+    dz = (R - a - delta) / R
+    dx = nsqrt(N(1) - dz * dz)
+    O, d = (N(0), N(0), N(0)), (dx, N(0), dz)
+    for cap in ("0.1", "4e-3"):
+        hit = wall.hit(O, d, N(cap))
+        assert hit is not None
+        assert abs(float(hit[0]) - 2.4494823940579796e-3) < 1e-8
+
+
+@pytest.mark.xfail(strict=True, reason="audit 2026-07-31: python filters "
+                   "roots with float(t) > 1e-12 (decimal eps), the C++ twin "
+                   "compares in mp against the binary double image — a root "
+                   "in the half-ulp gap picks different branches")
+def test_native_quartic_first_matches_python_at_eps_t_edge():
+    from formula import _formula
+    from formula.capsysred import wall_torus as wt
+    from formula.capsysred.nums import lift
+    if not hasattr(_formula, "trace_dbg_quartic_first"):
+        pytest.skip("debug binding missing from the built .so")
+    P = 32
+    r = lift("0.99999999999999999e-12", P)   # binary 1e-12 < r <= decimal
+    assert float(r) == 1e-12
+    roots = [r] + [lift(v, P) for v in ("0.002", "-0.001", "0.05")]
+    c = [Number("1", P)]
+    for rt in roots:
+        nc = [Number("0", P) for _ in range(len(c) + 1)]
+        for i, v in enumerate(c):
+            nc[i] = nc[i] + v
+            nc[i + 1] = nc[i + 1] - v * rt
+        c = nc
+    py = wt._quartic_first(tuple(c), 0.1)
+    nat = _formula.trace_dbg_quartic_first(tuple(v._value for v in c), 0.1)
+    assert (py is None) == (nat is None)
+    assert float(py) == float(Number._wrap(nat, P, False))
 
 
 def _run_jack(modes, ref=3, npx=7):

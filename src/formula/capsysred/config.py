@@ -119,6 +119,9 @@ class SourceCfg:
             self.grid_step = Number(str(raw["grid_step"]), p)
             # lattice orientation about the axis, degrees (45 = diamond)
             self.grid_rot_deg = float(raw.get("grid_rot_deg", 0.0))
+            # optional disc trim: keep nodes with r <= grid_r_max (m)
+            self.grid_r_max = (float(raw["grid_r_max"])
+                               if "grid_r_max" in raw else None)
 
     def budget(self, quick: int) -> tuple[int, int]:
         """(n_modes, n_rays) at reduction factor `quick`, with sampling floors."""

@@ -27,6 +27,10 @@ class Source:
             self._sites = [(x * c - y * q, x * q + y * c)
                            for i in range(n) for j in range(n)
                            for x, y in [((i - half) * s, (j - half) * s)]]
+            r_max = getattr(cfg, "grid_r_max", None)
+            if r_max is not None:
+                self._sites = [(x, y) for x, y in self._sites
+                               if math.hypot(x, y) <= r_max]
             two_sig2 = 2.0 * self._size_f * self._size_f
             self._weights = ([math.exp(-(x * x + y * y) / two_sig2)
                               for x, y in self._sites] if two_sig2 > 0.0
