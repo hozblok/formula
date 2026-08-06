@@ -30,11 +30,14 @@ from .screen import ScatterRaster, ScreenGrid
 class JackknifeCoherence:
     """Per-mode W/Ic rows; mu from the totals, sigma from delete-one-mode."""
 
-    def __init__(self, lines, ref_pixel: int):
+    def __init__(self, lines, ref_pixel: int, keep_modes: bool = True):
         self.kms = [float(l.k) for l in lines]
         self.wfs = [l.weight for l in lines]
         self.nl = len(self.kms)
         self.ref = ref_pixel
+        self.keep_modes = keep_modes   # False: totals only, no per-mode rows
+        self.n_folded = 0
+        self.W_tot, self.Ic_tot, self.ic_ref_tot = {}, {}, 0.0
         self.Ws = []       # [mode] {pixel: complex W_s}
         self.Ics = []      # [mode] {pixel: float Ic_s}
         self.ic_refs = []  # [mode] float Ic_s at ref
@@ -76,22 +79,33 @@ class JackknifeCoherence:
                     if pixel == self.ref:        # drop ray self-pairs
                         cross -= sq[pixel]
                     w_row[pixel] = w_row.get(pixel, 0j) + wf * cross
-        self.Ws.append(w_row)
-        self.Ics.append(ic_row)
-        self.ic_refs.append(ic_row.get(self.ref, 0.0))
+        self.n_folded += 1
+        if self.keep_modes:
+            self.Ws.append(w_row)
+            self.Ics.append(ic_row)
+            self.ic_refs.append(ic_row.get(self.ref, 0.0))
+        else:
+            for p, v in w_row.items():
+                self.W_tot[p] = self.W_tot.get(p, 0j) + v
+            for p, v in ic_row.items():
+                self.Ic_tot[p] = self.Ic_tot.get(p, 0.0) + v
+            self.ic_ref_tot += ic_row.get(self.ref, 0.0)
         self._g = self._sq = self._n = None
 
     def finalize(self, nx: int, ny: int):
         """Row-major [iy][ix] maps: mu, mu_err (jackknife), intensity, density."""
-        n_modes = len(self.Ws)
-        W, Ic = {}, {}
-        for w_row in self.Ws:
-            for pixel, w in w_row.items():
-                W[pixel] = W.get(pixel, 0j) + w
-        for ic_row in self.Ics:
-            for pixel, v in ic_row.items():
-                Ic[pixel] = Ic.get(pixel, 0.0) + v
-        ic_ref = sum(self.ic_refs)
+        n_modes = self.n_folded
+        if self.keep_modes:
+            W, Ic = {}, {}
+            for w_row in self.Ws:
+                for pixel, w in w_row.items():
+                    W[pixel] = W.get(pixel, 0j) + w
+            for ic_row in self.Ics:
+                for pixel, v in ic_row.items():
+                    Ic[pixel] = Ic.get(pixel, 0.0) + v
+            ic_ref = sum(self.ic_refs)
+        else:                              # totals-only: mu map, no sigma
+            W, Ic, ic_ref = self.W_tot, self.Ic_tot, self.ic_ref_tot
         zeros = lambda: [[0.0] * nx for _ in range(ny)]
         mu, err, intensity, density = zeros(), zeros(), zeros(), zeros()
         solid, dubious = zeros(), zeros()
@@ -123,6 +137,10 @@ class JackknifeCoherence:
                 dubious[iy][ix] = 1.0
                 continue
             mu[iy][ix] = min(abs(w) / math.sqrt(ic * ic_ref), 1.0)
+            if not self.keep_modes:        # no loo rows: clamp is the only flag
+                if mu[iy][ix] >= 1.0:
+                    dubious[iy][ix] = 1.0
+                continue
             loo = []   # leave-one-mode-out mu; pixels pinned at the clamp give err 0
             for s in range(n_modes):
                 w_s = w - self.Ws[s].get(pixel, 0j)
@@ -155,7 +173,8 @@ def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     scat = ScatterRaster(target)
     n_modes, n_rays = src_cfg.budget(quick)
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
-    jack = JackknifeCoherence(sim.lines, screen.ref_pixel(target.reference))
+    jack = JackknifeCoherence(sim.lines, screen.ref_pixel(target.reference),
+                              keep_modes=not getattr(sim, "no_jackknife", False))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
                                       aim_factory, seed_offset, quick)
     if screen_cfg is not None or getattr(sim.rays, "readonly", False):

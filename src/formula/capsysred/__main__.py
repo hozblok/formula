@@ -30,6 +30,9 @@ def main(argv=None) -> int:
                         help="re-evaluate recorded rays on the spectrum/material from "
                              "the config, without tracing; several files stream as one "
                              "recording (mode ids offset, config n_modes = their sum)")
+    parser.add_argument("--no-jackknife", action="store_true",
+                        help="stage 10 totals-only: |mu| map without per-mode rows "
+                             "(no sigma_jack/loo; O(pixels) memory for huge grids)")
     args = parser.parse_args(argv)
 
     stages = None
@@ -41,6 +44,7 @@ def main(argv=None) -> int:
 
     sim = (Simulation.from_yaml(args.config) if args.config
            else Simulation.from_dict({}))
+    sim.no_jackknife = args.no_jackknife   # read by run_jack_stage
     result = (sim.replay(args.replay, args.out, stages=stages,
                          quick=max(1, args.quick)) if args.replay
               else sim.trace(args.out, quick=max(1, args.quick)) if args.trace
