@@ -132,6 +132,50 @@ class RaysReader:
                 "shared-stream format — re-trace to record a v2 file)")
         self.path, self.meta, self.done = path, meta, done
 
+    def scene_records(self, scene):
+        return _file_records(self.path, scene)
+
+    def write(self, scene, rec):
+        pass
+
+    def finish_scene(self, scene):
+        pass
+
+    def close(self):
+        pass
+
+
+class MultiRaysReader:
+    """Union of read-only rays files for --replay: scenes stream file by
+    file with mode ids offset, so k recordings act as one. Per scene the
+    mode counts add up; n_rays must agree across files."""
+
+    readonly = True
+
+    def __init__(self, paths):
+        self.parts = [RaysReader(p) for p in paths]
+        self.path = " + ".join(p.path for p in self.parts)
+        self.meta = dict(self.parts[0].meta)
+        scenes = set(self.parts[0].done)
+        for part in self.parts[1:]:
+            scenes &= set(part.done)
+        budgets, done = {}, {}
+        for sc in scenes:
+            ms, rs = zip(*(p.meta["budgets"][sc] for p in self.parts))
+            if len(set(rs)) != 1:
+                raise ValueError(f"--replay union: scene {sc!r} n_rays differ "
+                                 f"across files: {sorted(set(rs))}")
+            budgets[sc] = [sum(ms), rs[0]]
+            done[sc] = sum(p.done[sc] for p in self.parts)
+        self.meta["budgets"], self.done = budgets, done
+
+    def scene_records(self, scene):
+        offset = 0
+        for part in self.parts:
+            for rec in _file_records(part.path, scene):
+                yield rec._replace(mode=rec.mode + offset) if offset else rec
+            offset += part.meta["budgets"][scene][0]
+
     def write(self, scene, rec):
         pass
 
@@ -305,7 +349,7 @@ def scene_stream(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
             raise ValueError(
                 f"--replay: scene {scene!r} holds {w.done[scene]} rows, "
                 f"budgets promise {n_modes * n_rays} — thinned recording")
-        return _counted(_file_records(w.path, scene), w.done[scene], scene,
+        return _counted(w.scene_records(scene), w.done[scene], scene,
                         w.path), "file"
     if (w is not None and scene in w.done
             and w.meta["budgets"].get(scene) == [n_modes, n_rays]

@@ -32,7 +32,7 @@ from .spectrum import spectral_lines, wavelength_m
 from .surfaces import CapillaryBundle, Mirror, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
-from .rays import (RaysFile, RaysReader, SceneSeed, require_full_rows,
+from .rays import (MultiRaysReader, RaysFile, RaysReader, SceneSeed, require_full_rows,
                    scene_stream)
 from .types import RayRecord
 from .units import (
@@ -1450,7 +1450,10 @@ class Simulation:
         spectrum and the material may differ from the recording — rays are
         energy-free; the geometry, seed, budgets and --quick must match it.
         """
-        reader = RaysReader(records_path)
+        paths = ([records_path] if isinstance(records_path, str)
+                 else list(records_path))
+        reader = (RaysReader(paths[0]) if len(paths) == 1
+                  else MultiRaysReader(paths))
         if stages is None:
             per_scene = {"free": 2, "lloyd": 4, "capillary": 6}
             stages = sorted(per_scene[sc] for sc in reader.done

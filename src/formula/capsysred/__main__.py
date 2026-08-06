@@ -26,8 +26,10 @@ def main(argv=None) -> int:
                              "exit; a later run with the same config, output "
                              "directory and --quick reuses it instead of tracing")
     parser.add_argument("--replay", metavar="RAYS_JSONL", default=None,
+                        nargs="+",
                         help="re-evaluate recorded rays on the spectrum/material from "
-                             "the config, without tracing")
+                             "the config, without tracing; several files stream as one "
+                             "recording (mode ids offset, config n_modes = their sum)")
     args = parser.parse_args(argv)
 
     stages = None
