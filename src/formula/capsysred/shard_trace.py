@@ -2,7 +2,7 @@
 merge the records into one canonical rays.jsonl.gz.
 
     python -m formula.capsysred.shard_trace config.yaml -o out/RUN \
-        --jobs 7 [--quick N] [--keep-shards]
+        --jobs 7 [--quick N] [--keep-shards] [--no-merge]
 
 Shard k traces its slice of the modes under seed+k into out/RUN/shard-k/
 (derived config and log sit next to the record); shards with a complete
@@ -17,7 +17,8 @@ Reproducibility: the seed set {seed .. seed+jobs-1} plus this command —
 not bit-equal to a sequential trace (modes are iid across seeds).
 Each tracer holds ~1-2 GB: pick --jobs for the RAM, not just the cores.
 Disk peak: all shard records + the growing merge; consumed shards are
-deleted unless --keep-shards.
+deleted unless --keep-shards. --no-merge stops after tracing: shard
+records stay put for a multi-file --replay (halves the disk peak).
 """
 import argparse
 import copy
@@ -71,6 +72,9 @@ def main(argv=None):
     ap.add_argument("--jobs", type=int, required=True)
     ap.add_argument("--quick", type=int, default=1)
     ap.add_argument("--keep-shards", action="store_true")
+    ap.add_argument("--no-merge", action="store_true",
+                    help="stop after tracing: leave shard records for a "
+                         "multi-file --replay instead of one rays.jsonl.gz")
     args = ap.parse_args(argv)
 
     raw = yaml.safe_load(open(args.config, encoding="utf-8"))
@@ -104,6 +108,12 @@ def main(argv=None):
     for k in range(args.jobs):
         if not _capillary_done(os.path.join(args.out, f"shard-{k}", "rays.jsonl.gz")):
             sys.exit(f"shard {k}: record incomplete")
+
+    if args.no_merge:
+        recs = " ".join(os.path.join(args.out, f"shard-{k}", "rays.jsonl.gz")
+                        for k in range(args.jobs))
+        print(f"shards complete, merge skipped; --replay {recs}", flush=True)
+        return
 
     meta = {"format": rays.FORMAT, "geometry": rays.fingerprint(cfg),
             "budgets": budgets_q}
