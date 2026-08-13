@@ -14,7 +14,8 @@ material: fused_silica # wall glass n = 1 − δ − i·β: fused_silica | glass
 
 spectrum:
   mode: monochromatic  # monochromatic | gaussian | lines | table
-  per_line_fresnel: true # r(E_m) at each line; false — frozen r(E₀)
+  # per_line_fresnel: true # multi-line modes only (error with monochromatic):
+                           # r(E_m) at each line; false — frozen r(E₀)
   # mode: gaussian     # temporal coherence: band of n_lines lines
   # rel_fwhm: 2.0e-4
   # n_lines: 7

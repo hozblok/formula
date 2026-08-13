@@ -583,6 +583,18 @@ def test_validate_rejects_nonpositive_ray_count(n_rays):
         load({"validate": {"n_rays": n_rays}})
 
 
+def test_per_line_fresnel_mono_rejected():
+    # explicit key with a single line is a config error; multi-line modes accept it
+    from formula.capsysred.config import load
+
+    with pytest.raises(ValueError, match="per_line_fresnel"):
+        load({"spectrum": {"mode": "monochromatic", "per_line_fresnel": True}})
+    with pytest.raises(ValueError, match="per_line_fresnel"):
+        load({"spectrum": {"per_line_fresnel": False}})  # default mode is mono
+    band = {"mode": "gaussian", "rel_fwhm": 2.0e-4, "n_lines": 3, "n_sigma": 3.0}
+    assert not load({"spectrum": {**band, "per_line_fresnel": False}}).per_line_fresnel
+
+
 def test_precision_target_config():
     # default p - 2 on straight bores; a torus bore subtracts the conditioning
     # loss ceil(2*log10(R/a) + log10(1/theta_c) + 2); explicit values above

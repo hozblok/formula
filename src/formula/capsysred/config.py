@@ -28,7 +28,8 @@ DEFAULTS = {
     # wall glass n = 1 - delta - i*beta: fused_silica | glass_oe2012 (Opt. Express 20, 3975)
     "material": "fused_silica",
     # monochromatic | gaussian {rel_fwhm, n_lines, n_sigma} | lines [{energy_kev, weight}]
-    # | table {file}; per_line_fresnel: r(E_m) per line instead of frozen r(E0)
+    # | table {file}; per_line_fresnel (multi-line modes only): r(E_m) per
+    # line instead of frozen r(E0)
     "spectrum": {"mode": "monochromatic", "rel_fwhm": 2.0e-4, "n_lines": 7,
                  "n_sigma": 3.0, "per_line_fresnel": True},
     # extended incoherent source: n_modes coherent point modes, n_rays per mode
@@ -337,6 +338,10 @@ class Config:
         self.lean_rays = bool(cfg["trace"]["lean_rays"])
         self.engine_method = HitMethod(str(cfg["trace"]["engine_method"]))
         get_backend(self.engine_method)  # fail fast on an unknown method name
+        if ("per_line_fresnel" in (raw or {}).get("spectrum", {})
+                and cfg["spectrum"]["mode"] == "monochromatic"):
+            raise ValueError("spectrum: per_line_fresnel has no effect in "
+                             "monochromatic mode; remove it")
         self.per_line_fresnel = bool(cfg["spectrum"]["per_line_fresnel"])
         self.schematic_rays = int(cfg["schematic"]["n_rays"])
         self.sketch_rank = int(cfg["sketch"]["rank"])
