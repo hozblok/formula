@@ -48,6 +48,36 @@ def test_full_pipeline_files_and_point_source_coherence(tmp_path):
     assert max(max(row) for row in maps["mu"]) <= 1.0 + 1e-9
 
 
+def test_stage3_uses_reference_row_for_mc_slice(tmp_path, monkeypatch):
+    # An off-centre reference defines the y-row whose MC profile must be
+    # compared with the analytic profile; the geometric middle row is unrelated.
+    cfg = dict(TINY, free={"screen": {
+        "nx": 3, "ny": 3, "reference": [0.0, -0.9e-6],
+    }})
+    sim = Simulation.from_dict(cfg)
+    from formula.capsysred.screen import ScreenGrid
+    screen = ScreenGrid(sim.cfg.free_screen)
+    ref = screen.ref_pixel(sim.cfg.free_screen.reference)
+    assert ref // screen.nx == 0 and screen.ny // 2 == 1
+    mu = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9]]
+    zeros = [[0.0] * screen.nx for _ in range(screen.ny)]
+    captured = {}
+
+    def capture(series, *_args, **_kwargs):
+        captured["series"] = series
+        return {"w": 1, "h": 1, "body": ""}
+
+    monkeypatch.setattr("formula.capsysred.simulation.render.line_chart", capture)
+    sim.files, sim.report = [], []
+    sim._stage3(str(tmp_path), {
+        "screen": screen,
+        "maps": {"ref_pixel": ref, "mu": mu, "mu_err": zeros,
+                 "dubious": zeros},
+        "src_cfg": sim.cfg.free_source,
+    })
+    assert captured["series"][0]["ys"] == mu[0]
+
+
 def test_material_enum_selects_wall_glass():
     # OE 20:3975 glass: eps = 1 - 9.115e-6 + i*1.145e-7 at 8 keV -> 2*delta, 2*beta
     sim = Simulation.from_dict(dict(TINY, material="glass_oe2012"))

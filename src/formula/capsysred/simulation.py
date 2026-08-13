@@ -301,7 +301,7 @@ class Simulation:
 
     def _stage3(self, out_dir, res_free):
         screen, maps = res_free["screen"], res_free["maps"]
-        row = screen.ny // 2
+        row = maps["ref_pixel"] // screen.nx
         xs = screen.xs()
         xs_um = [m_to_um(x) for x in xs]
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
