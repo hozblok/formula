@@ -791,7 +791,7 @@ class Simulation:
         self.report += [
             "## Stage 9 — hit-method cross-validation",
             f"- rays: {st['rays']:,}; wall hits {st['hits']:,}, passes {st['passes']:,}, "
-            f"skipped {st['skipped']:,} (entrance web / `surface:` bores)",
+            f"skipped {st['skipped']:,} (entrance web)",
             f"- {METHOD_LABELS.get(st['reference'], st['reference'])} "
             f"(reference): {st['ref_seconds']:.1f} s",
             f"- match tolerance: |Δt|/t ≤ 1e{tol_exp} "
@@ -800,8 +800,9 @@ class Simulation:
         if not res["native"]:
             self.report.append("- C++ twin: wall kind unsupported — engine method only")
         for m, s in per.items():
+            matched = f"{agree[m]:.2f}%" if m in agree else "n/a"
             self.report.append(
-                f"- {METHOD_LABELS.get(m, m)}: matched {agree.get(m, 0.0):.2f}%; "
+                f"- {METHOD_LABELS.get(m, m)}: matched {matched}; "
                 f"max |Δt|/t = {s['max_rel']:.1e}, rms = {s['rms']:.1e} "
                 f"on {s['n']:,} hits; missing/extra hits {s['missing']}/{s['extra']}; "
                 f"{s['seconds']:.1f} s")
