@@ -80,7 +80,7 @@ trace:
   engine_method: subdivision  # RaySurface root finder for `surface:` bores and the
                               # hit cross-checks: subdivision (grazing-safe, any F)
                               # | sturm (exact, polynomial F only) | chebyshev
-                              # | sampling | auto
+                              # | sampling
 
 # schematic:             # stage 1: to-scale traced scheme (01a-scheme-traced.svg)
 #   n_rays: 10           # rays drawn on it

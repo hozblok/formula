@@ -73,7 +73,7 @@ DEFAULTS = {
     # the per-line amplitudes are known.
     # engine_method: RaySurface root finder for `surface:` bores and the hit
     # cross-checks — subdivision (default: grazing-safe, any F) | sturm (exact,
-    # polynomial F only) | chebyshev | sampling | auto.
+    # polynomial F only) | chebyshev | sampling.
     # lean_rays: drop refl and write opl/sins as float64 in the rays file —
     # stage 10/rescreen read floats anyway (bit-identical); the file cannot
     # feed the Number-path replay (stages 2/4/6) or the beamlet stage.
@@ -86,7 +86,11 @@ DEFAULTS = {
     "sketch": {"rank": 96},
     # stage 9: rays for the hit-method cross-validation
     # (python / C++ / implicit subdivision)
-    "validate": {"n_rays": 5000},
+    "validate": {
+        "n_rays": 10000,
+        "reference": "python-closed-form",
+        "methods": ["cpp-closed-form", "subdivision"],
+    },
     # stage 11: beamlet launch waists [m] and deposit window radius in beam
     # widths. w0 is the sagittal (channel) waist; w0_t the tangential one:
     # null = isotropic (= w0), "auto" = the scene's Fresnel scale
@@ -335,21 +339,14 @@ class Config:
         self.schematic_rays = int(cfg["schematic"]["n_rays"])
         self.sketch_rank = int(cfg["sketch"]["rank"])
         self.validate_rays = int(cfg["validate"]["n_rays"])
-        # stage-9 method list: mandatory whenever the yaml has a validate block
-        if "validate" in (raw or {}):
-            vm = (raw["validate"] or {}).get("methods")
-            if (not isinstance(vm, list) or not vm
-                    or not all(isinstance(m, str) for m in vm)):
-                raise ValueError(
-                    "validate: requires methods, a non-empty list of method "
-                    f"names from {[m.value for m in HitMethod]}")
-            self.validate_methods = tuple(HitMethod(m) for m in vm)
-            vref = (raw["validate"] or {}).get("reference",
-                                               HitMethod.PYTHON_CLOSED_FORM)
-            self.validate_reference = HitMethod(str(vref))
-        else:
-            self.validate_methods = (HitMethod.CPP_CLOSED_FORM, HitMethod.SUBDIVISION)
-            self.validate_reference = HitMethod.PYTHON_CLOSED_FORM
+        vm = cfg["validate"].get("methods")
+        if (not isinstance(vm, list) or not vm
+                or not all(isinstance(m, str) for m in vm)):
+            raise ValueError(
+                "validate: requires methods, a non-empty list of method "
+                f"names from {[m.value for m in HitMethod]}")
+        self.validate_methods = tuple(HitMethod(m) for m in vm)
+        self.validate_reference = HitMethod(str(cfg["validate"]["reference"]))
         if self.validate_reference in self.validate_methods:
             raise ValueError("validate: reference must not be among methods")
         for m in (*self.validate_methods, self.validate_reference):

@@ -545,14 +545,27 @@ def test_engine_method_config_wiring():
     # ImplicitWall of a `surface:` bore through CapillaryBundle
     from formula.capsysred.config import load
     assert load({}).engine_method == "subdivision"
-    with pytest.raises(ValueError):
-        load({"trace": {"engine_method": "newton"}})
+    for unsupported in ("newton", "auto"):
+        with pytest.raises(ValueError):
+            load({"trace": {"engine_method": unsupported}})
     cfg = load({"trace": {"engine_method": "sturm"},
                 "capillary": {"bores": [{"surface": "x^2+y^2-36",
                                          "aim_radius": 6.0e-6}]}})
     bundle = CapillaryBundle(cfg.capillary.bores, cfg.capillary.z0,
                              cfg.capillary.z1, cfg.engine_method)
     assert bundle.walls[0].method == "sturm"
+
+
+def test_validate_partial_override_keeps_defaults():
+    from formula.capsysred.config import DEFAULTS, load
+
+    cfg = load({"validate": {"n_rays": 17}})
+    assert cfg.validate_rays == 17
+    assert cfg.validate_reference is HitMethod.PYTHON_CLOSED_FORM
+    assert cfg.validate_methods == (HitMethod.CPP_CLOSED_FORM,
+                                    HitMethod.SUBDIVISION)
+    assert load(DEFAULTS).validate_methods == cfg.validate_methods
+    assert load(load({}).raw).validate_methods == cfg.validate_methods
 
 
 def test_precision_target_config():
