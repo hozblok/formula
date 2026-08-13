@@ -660,6 +660,28 @@ def test_stage9_rejects_when_no_comparison_method_is_runnable():
         run_validate_stage(sim, 1)
 
 
+def test_stage9_mixed_bundle_disables_closed_forms_globally():
+    # Stage 9 compares one common method set across the whole bundle: one
+    # implicit wall therefore disables both closed-form methods everywhere.
+    from formula.capsysred.validate import run_validate_stage
+
+    sim = Simulation.from_dict({
+        "capillary": {"bores": [
+            {"center": [-6.0e-6, 0.0], "radius": 3.0e-6},
+            {"center": [6.0e-6, 0.0], "surface": "(x-6)^2+y^2-9",
+             "aim_radius": 3.0e-6},
+        ]},
+        "validate": {
+            "reference": "sturm",
+            "methods": ["python-closed-form", "cpp-closed-form",
+                        "subdivision"],
+        },
+    })
+    result = run_validate_stage(sim, 1)
+    assert not result["native"]
+    assert tuple(result["per"]) == (HitMethod.SUBDIVISION,)
+
+
 def test_stage11_beamlet_point_source_fully_coherent(tmp_path):
     # point source -> one coherent field, honest estimator must give mu = 1
     # on every pixel the beamlets light up; mu never exceeds 1
