@@ -15,6 +15,7 @@ import random
 from xml.sax.saxutils import escape
 
 from .nums import lift, vunit
+from .source import Source
 from .surfaces import CapillaryBundle, ImplicitWall, Mirror, entrance_disk
 from .trace import trace_ray
 from .units import m_to_mm, m_to_nm, m_to_um, rad_to_mrad
@@ -236,9 +237,14 @@ def trace_rays(G, p, n=N_RAYS, seed=7):
         mb = int(G["cfg"].max_bounces) if mode == "lloyd" else 4
     # rays fly on to the farthest screen so every plane is crossed on the scheme
     screen_z = lift(max([scr["z"]] + [s["z"] for s in G["scr_extra"]]), p)
+    grid_source = Source(G["cfg_src"], rng) if src["shape"] == "grid" else None
     rays = []
     for i in range(n):
-        if src["shape"] == "point" or src["size"] <= 0:
+        if grid_source is not None:
+            # The schematic is an x-z projection: sample the real weighted
+            # lattice, then project its two-dimensional origin onto x.
+            xo = float(grid_source.mode_origin()[0])
+        elif src["shape"] == "point" or src["size"] <= 0:
             xo = src["x"]
         elif src["shape"] == "gaussian":
             xo = src["x"] + rng.gauss(0, src["size"])
