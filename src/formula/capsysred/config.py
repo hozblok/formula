@@ -339,12 +339,16 @@ class Config:
         self.schematic_rays = int(cfg["schematic"]["n_rays"])
         self.sketch_rank = int(cfg["sketch"]["rank"])
         self.validate_rays = int(cfg["validate"]["n_rays"])
+        if self.validate_rays < 1:
+            raise ValueError("validate: n_rays must be at least 1")
         vm = cfg["validate"].get("methods")
         if (not isinstance(vm, list) or not vm
                 or not all(isinstance(m, str) for m in vm)):
             raise ValueError(
                 "validate: requires methods, a non-empty list of method "
                 f"names from {[m.value for m in HitMethod]}")
+        if len(set(vm)) != len(vm):
+            raise ValueError("validate: methods must not contain duplicates")
         self.validate_methods = tuple(HitMethod(m) for m in vm)
         self.validate_reference = HitMethod(str(cfg["validate"]["reference"]))
         if self.validate_reference in self.validate_methods:

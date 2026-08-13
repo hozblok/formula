@@ -568,6 +568,21 @@ def test_validate_partial_override_keeps_defaults():
     assert load(load({}).raw).validate_methods == cfg.validate_methods
 
 
+def test_validate_rejects_duplicate_methods():
+    from formula.capsysred.config import load
+
+    with pytest.raises(ValueError, match="methods must not contain duplicates"):
+        load({"validate": {"methods": ["sturm", "sturm"]}})
+
+
+@pytest.mark.parametrize("n_rays", [0, -1])
+def test_validate_rejects_nonpositive_ray_count(n_rays):
+    from formula.capsysred.config import load
+
+    with pytest.raises(ValueError, match="n_rays must be at least 1"):
+        load({"validate": {"n_rays": n_rays}})
+
+
 def test_precision_target_config():
     # default p - 2 on straight bores; a torus bore subtracts the conditioning
     # loss ceil(2*log10(R/a) + log10(1/theta_c) + 2); explicit values above
