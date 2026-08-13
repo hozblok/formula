@@ -106,7 +106,8 @@ def run_validate_stage(sim, n_rays: int):
         wall = bundle._locate(O, d)
         if wall is None or id(wall) not in engines:
             stats["skipped"] += 1   # entrance web
-            rows.append({"ray": i, "fate": "skipped"})
+            rows.append({"ray": i, "fate": "skipped",
+                         "reference_method": str(ref)})
             progress.step()
             continue
         t_exit = (cap.z1 - O[2]) / d[2]
@@ -137,6 +138,7 @@ def run_validate_stage(sim, n_rays: int):
             per[m]["seconds"] += time.time() - t0
             ts[m] = t_m
         row = {"ray": i, "fate": "hit" if t_ref is not None else "pass",
+               "reference_method": str(ref),
                "kind": wall.kind,
                "t_reference": None if t_ref is None else str(t_ref)}
         if ref is HitMethod.PYTHON_CLOSED_FORM:

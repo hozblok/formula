@@ -637,6 +637,8 @@ def test_stage9_hit_methods_agree_on_cylinder(tmp_path):
     with open(tmp_path / "hit-validation.jsonl") as fh:
         rows = [json.loads(line) for line in fh]
     assert len(rows) == 100          # one record per emitted ray
+    assert {row["reference_method"] for row in rows} == {
+        "python-closed-form"}
     res = sim.results["validate"]
     assert res["native"] and res["stats"]["hits"] > 0
     for name, s in res["per"].items():
