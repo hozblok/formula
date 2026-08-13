@@ -79,7 +79,7 @@ DEFAULTS = {
     # feed the Number-path replay (stages 2/4/6) or the beamlet stage.
     "trace": {"max_bounces": 200, "amplitude_min": 1.0e-6,
               "rays_jsonl": True, "lean_rays": False,
-              "engine_method": HitMethod.SUBDIVISION},
+              "engine_method": "subdivision"},
     # stage 1: rays traced onto the to-scale schematic (01a-scheme-traced.svg)
     "schematic": {"n_rays": 10},
     # stage 8: number of sketch probe vectors (r ~ n99 modes, see methods §8)

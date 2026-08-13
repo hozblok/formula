@@ -21,7 +21,7 @@ from .types import _EPS_T, _ONWALL_TOL, _TCAP_TOL, HitMethod
 from .units import m_to_um
 
 METHOD_LABELS = {
-    HitMethod.PYTHON_CLOSED_FORM: "Python closed form (reference)",
+    HitMethod.PYTHON_CLOSED_FORM: "Python closed form",
     HitMethod.CPP_CLOSED_FORM: "C++ closed form",
     HitMethod.STURM: "Sturm isolation",
     HitMethod.SUBDIVISION: "implicit subdivision",
