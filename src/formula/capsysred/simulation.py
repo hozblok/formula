@@ -743,7 +743,7 @@ class Simulation:
 
     def _stage9(self, out_dir, quick):
         """Hit-method cross-validation on the capillary scene: the first wall
-        hit of each ray by python (reference) / C++ / implicit subdivision."""
+        hit of each validate.methods entry against validate.reference."""
         p = self.cfg.precision
         n_rays = max(100, self.cfg.validate_rays // quick)
         res = run_validate_stage(self, n_rays)
@@ -774,13 +774,14 @@ class Simulation:
                 "xs": exps,
                 "ys": [100.0 * sum(1 for r in s["rels"] if r <= 10.0 ** e) / denom
                        for e in exps],
-                "label": f"{METHOD_LABELS[m]}: {agree[m]:.2f}% @1e{tol_exp}"})
+                "label": f"{METHOD_LABELS.get(m, m)}: {agree[m]:.2f}% @1e{tol_exp}"})
         if series:
             vlines = [(float(tol_exp), f"target = {target}")]
             if tol_exp != 2 - p:
                 vlines.append((float(2 - p), f"p − 2 = {p - 2}"))
             fig = render.line_chart(
-                series, "share of hits matching python analytics",
+                series,
+                f"share of hits matching the reference ({st['reference']})",
                 "log₁₀ of the |Δt|/t tolerance", "matched, %",
                 f"{st['hits']:,} wall hits of {st['rays']:,} rays; "
                 f"precision_target = {target} ({origin}) ⇒ tol = 1e{tol_exp}; "
@@ -791,7 +792,8 @@ class Simulation:
             "## Stage 9 — hit-method cross-validation",
             f"- rays: {st['rays']:,}; wall hits {st['hits']:,}, passes {st['passes']:,}, "
             f"skipped {st['skipped']:,} (entrance web / `surface:` bores)",
-            f"- python analytics (reference): {st['py_seconds']:.1f} s",
+            f"- {METHOD_LABELS.get(st['reference'], st['reference'])} "
+            f"(reference): {st['ref_seconds']:.1f} s",
             f"- match tolerance: |Δt|/t ≤ 1e{tol_exp} "
             f"(precision_target = {target}, {origin})",
         ]
@@ -799,7 +801,7 @@ class Simulation:
             self.report.append("- C++ twin: wall kind unsupported — engine method only")
         for m, s in per.items():
             self.report.append(
-                f"- {METHOD_LABELS[m]}: matched {agree.get(m, 0.0):.2f}%; "
+                f"- {METHOD_LABELS.get(m, m)}: matched {agree.get(m, 0.0):.2f}%; "
                 f"max |Δt|/t = {s['max_rel']:.1e}, rms = {s['rms']:.1e} "
                 f"on {s['n']:,} hits; missing/extra hits {s['missing']}/{s['extra']}; "
                 f"{s['seconds']:.1f} s")
@@ -1404,7 +1406,9 @@ class Simulation:
                 _log("Stage 8: streaming sketch of W — column + mode spectrum")
                 self._stage8(out_dir, quick)
             if 9 in wanted:
-                _log("Stage 9: hit-method cross-validation — python / C++ / subdivision")
+                _log("Stage 9: hit-method cross-validation — "
+                     f"{', '.join(self.cfg.validate_methods)} vs "
+                     f"{self.cfg.validate_reference} reference")
                 if cfg.capillary is None:
                     self._skip_cap("## Stage 9 — hit-method cross-validation")
                 else:

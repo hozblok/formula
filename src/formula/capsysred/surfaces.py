@@ -15,7 +15,8 @@ import math
 
 from ..formula import Number
 from .nums import lift, vadd, vscale
-from .types import _EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _TCAP_TOL
+from .types import (_EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _TCAP_TOL,
+                    HitMethod)
 from .units import m_to_um
 from .wall_cylinder import CylinderWall
 from .wall_funnel import FunnelWall
@@ -55,7 +56,7 @@ class ImplicitWall:
     for prototypes and small ray budgets, not overnight maps.
     """
 
-    def __init__(self, expr, center, aim_radius, method="subdivision"):
+    def __init__(self, expr, center, aim_radius, method=HitMethod.SUBDIVISION):
         from ..intersect import RaySurface
         self.kind = "implicit"
         self.center = center
@@ -108,7 +109,7 @@ def entrance_disk(bore: dict, z0f: float):
     return cxf, cyf, rf
 
 
-def _make_wall(bore: dict, z0, engine_method="subdivision"):
+def _make_wall(bore: dict, z0, engine_method=HitMethod.SUBDIVISION):
     """Bore spec -> wall object."""
     kind = bore.get("kind", "cylinder")
     center = bore["center"]
@@ -132,7 +133,7 @@ def _make_wall(bore: dict, z0, engine_method="subdivision"):
 class CapillaryBundle:
     """Parallel bores along z in [z0, z1]; rays reflect off per-bore walls."""
 
-    def __init__(self, bores, z0, z1, engine_method="subdivision"):
+    def __init__(self, bores, z0, z1, engine_method=HitMethod.SUBDIVISION):
         self.bores, self.z0, self.z1 = bores, z0, z1
         self._z0f, self._z1f = float(z0), float(z1)
         self._zero = Number("0", z0.precision)
@@ -172,7 +173,7 @@ class CapillaryBundle:
 
 
 def engine_hit_t(surface_expr_um: str, O, d, t_max_m: float,
-                 method="subdivision"):
+                 method=HitMethod.SUBDIVISION):
     """First hit via the RaySurface root-finding engine; returns t in metres.
 
     Coordinates are scaled to micrometres for backend conditioning; t scales back.

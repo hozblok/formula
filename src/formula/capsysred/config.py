@@ -13,6 +13,7 @@ from .._roots import get_backend
 from ..formula import Number
 from ..xray import FUSED_SILICA, OE2012_GLASS
 from .spectrum import spectral_lines
+from .types import HitMethod
 
 MATERIALS = {"fused_silica": FUSED_SILICA, "glass_oe2012": OE2012_GLASS}
 
@@ -78,7 +79,7 @@ DEFAULTS = {
     # feed the Number-path replay (stages 2/4/6) or the beamlet stage.
     "trace": {"max_bounces": 200, "amplitude_min": 1.0e-6,
               "rays_jsonl": True, "lean_rays": False,
-              "engine_method": "subdivision"},
+              "engine_method": HitMethod.SUBDIVISION},
     # stage 1: rays traced onto the to-scale schematic (01a-scheme-traced.svg)
     "schematic": {"n_rays": 10},
     # stage 8: number of sketch probe vectors (r ~ n99 modes, see methods §8)
@@ -328,12 +329,32 @@ class Config:
         self.amplitude_min = float(cfg["trace"]["amplitude_min"])
         self.rays_jsonl = bool(cfg["trace"]["rays_jsonl"])
         self.lean_rays = bool(cfg["trace"]["lean_rays"])
-        self.engine_method = str(cfg["trace"]["engine_method"])
+        self.engine_method = HitMethod(str(cfg["trace"]["engine_method"]))
         get_backend(self.engine_method)  # fail fast on an unknown method name
         self.per_line_fresnel = bool(cfg["spectrum"]["per_line_fresnel"])
         self.schematic_rays = int(cfg["schematic"]["n_rays"])
         self.sketch_rank = int(cfg["sketch"]["rank"])
         self.validate_rays = int(cfg["validate"]["n_rays"])
+        # stage-9 method list: mandatory whenever the yaml has a validate block
+        if "validate" in (raw or {}):
+            vm = (raw["validate"] or {}).get("methods")
+            if (not isinstance(vm, list) or not vm
+                    or not all(isinstance(m, str) for m in vm)):
+                raise ValueError(
+                    "validate: requires methods, a non-empty list of method "
+                    f"names from {[m.value for m in HitMethod]}")
+            self.validate_methods = tuple(HitMethod(m) for m in vm)
+            vref = (raw["validate"] or {}).get("reference",
+                                               HitMethod.PYTHON_CLOSED_FORM)
+            self.validate_reference = HitMethod(str(vref))
+        else:
+            self.validate_methods = (HitMethod.CPP_CLOSED_FORM, HitMethod.SUBDIVISION)
+            self.validate_reference = HitMethod.PYTHON_CLOSED_FORM
+        if self.validate_reference in self.validate_methods:
+            raise ValueError("validate: reference must not be among methods")
+        for m in (*self.validate_methods, self.validate_reference):
+            if m not in (HitMethod.CPP_CLOSED_FORM, HitMethod.PYTHON_CLOSED_FORM):
+                get_backend(m)  # backend registry stays authoritative
         self.beamlet_w0 = float(cfg["beamlet"]["w0"])
         w0t = cfg["beamlet"].get("w0_t")
         if not (w0t is None or w0t == "auto" or isinstance(w0t, (int, float))):

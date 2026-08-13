@@ -1,10 +1,21 @@
 """Shared geometry primitives for CAPSYSred."""
 
 from collections import namedtuple
+from enum import StrEnum
 
 from ..formula import Number
 
 Vec3 = tuple[Number, Number, Number]
+
+
+class HitMethod(StrEnum):
+    """Every ray-hit method: the closed forms plus the RaySurface backends."""
+    PYTHON_CLOSED_FORM = "python-closed-form"
+    CPP_CLOSED_FORM = "cpp-closed-form"
+    STURM = "sturm"
+    SUBDIVISION = "subdivision"
+    CHEBYSHEV = "chebyshev"   # @experimental
+    SAMPLING = "sampling"     # @experimental
 
 # One traced ray as every estimator consumes it (protocol: new_mode ->
 # add_ray(rec, amps) -> fold_mode -> finalize). Pure geometry — amplitudes
