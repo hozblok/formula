@@ -245,14 +245,14 @@ class Simulation:
             G = schematic.build_geometry(cfg, "free")
             self._save(out_dir, "01a-scheme-traced.svg", schematic.compose(G))
             return
-        src, scr = cfg.source, cfg.screen
+        src, scr = cap.source, cap.screen
         two_a = 2.0 * entrance_disk(cap.bores[0], float(cap.z0))[2]
         kinds = sorted({b.get("kind", "cylinder") for b in cap.bores})
         kind_note = "" if kinds == ["cylinder"] else f" [{', '.join(kinds)}]"
         d0 = float(cap.z0) - float(cap.source.position[2])
         d2 = float(cap.screen.z) - float(cap.z1)
         shape_ru = {"point": "point", "gaussian": "Gaussian",
-                    "disk": "disk"}[src.shape]
+                    "disk": "disk", "grid": "grid"}[src.shape]
         info = {
             "title": "Simulation layout: source → capillary(ies) → screen",
             "n_bores": len(cap.bores),
