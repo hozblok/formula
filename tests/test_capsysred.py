@@ -2375,22 +2375,8 @@ def test_scene_stream_refuses_thinned_recording(tmp_path):
     with pytest.raises(ValueError, match="rewritten or truncated"):
         list(_counted(iter([1, 2]), 3, "free", path))
 
-
-
-@pytest.mark.xfail(
-    reason="subdivision drops same-sign root pairs (ray 44218); fix pending",
-    strict=True)
-def test_stage9_subdivision_root_pair_hex_grazing():
-    """Pinned bug (2026-08-12): a grazing hex-bore ray loses its wall hit.
-
-    Ray 44218 of A-hex-fold-facet-scatter-100m stage 9: the physical hit and
-    an extended-plane crossing share one merged candidate region, g(t) keeps
-    one sign at both region ends, and the subdivision refine drops the pair.
-    Sturm isolates it. Constants come from replaying the stage-9 rng stream
-    (seed 12345) to ray 44218 and printing O/d/full_expr_um at p = 32.
-    """
+def _hex_grazing_case():
     from formula.capsysred.units import m_to_um
-    from formula.capsysred.validate import _engine_t
     from formula.intersect import RaySurface
 
     p = 32
@@ -2416,11 +2402,33 @@ def test_stage9_subdivision_root_pair_hex_grazing():
     t_ref = Number("0.0053382644074804444925814276487202", p)
     rs = RaySurface(expr, p)
     scale = lift(m_to_um(1), p)
+    return rs, scale, O, d, t_exit, t_ref
 
+
+def test_stage9_sturm_root_pair_hex_grazing():
+    from formula.capsysred.validate import _engine_t
+
+    rs, scale, O, d, t_exit, t_ref = _hex_grazing_case()
     t_sturm = _engine_t(rs, scale, O, d, t_exit, HitMethod.STURM)
     assert t_sturm is not None
     assert abs(float((t_sturm - t_ref) / t_ref)) < 1e-25
 
+
+@pytest.mark.xfail(
+    reason="subdivision drops same-sign root pairs (ray 44218); fix pending",
+    strict=True)
+def test_stage9_subdivision_root_pair_hex_grazing():
+    """Pinned bug (2026-08-12): a grazing hex-bore ray loses its wall hit.
+
+    Ray 44218 of A-hex-fold-facet-scatter-100m stage 9: the physical hit and
+    an extended-plane crossing share one merged candidate region, g(t) keeps
+    one sign at both region ends, and the subdivision refine drops the pair.
+    Sturm isolates it. Constants come from replaying the stage-9 rng stream
+    (seed 12345) to ray 44218 and printing O/d/full_expr_um at p = 32.
+    """
+    from formula.capsysred.validate import _engine_t
+
+    rs, scale, O, d, t_exit, t_ref = _hex_grazing_case()
     t_sub = _engine_t(rs, scale, O, d, t_exit, HitMethod.SUBDIVISION)
     assert t_sub is not None, "subdivision dropped the root pair (known bug)"
     assert abs(float((t_sub - t_ref) / t_ref)) < 1e-25
