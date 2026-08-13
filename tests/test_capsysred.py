@@ -653,6 +653,8 @@ def test_stage9_hit_methods_agree_on_cylinder(tmp_path):
             "n_rays": 100,
             "reference": "python-closed-form",
             "methods": ["cpp-closed-form", "subdivision", "sturm"],
+            "precision": 32,
+            "precision_target": 30,
         },
     }
     res = sim.results["validate"]

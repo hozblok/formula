@@ -765,6 +765,8 @@ class Simulation:
                 "n_rays": st["rays"],
                 "reference": st["reference"],
                 "methods": [str(method) for method in per],
+                "precision": self.cfg.precision,
+                "precision_target": self.cfg.precision_target,
             },
         }
         with open(os.path.join(validation_dir, "meta.json"),
