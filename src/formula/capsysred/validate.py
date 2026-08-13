@@ -54,6 +54,12 @@ def _engine_t(rs, scale, O, d, t_exit, method):
     return None if t_exit <= t else t
 
 
+def _validate_runnable_methods(methods: tuple[HitMethod, ...]) -> None:
+    """Require a reference and at least one runnable comparison method."""
+    if len(methods) < 2:
+        raise ValueError("validate: no runnable comparison methods")
+
+
 def run_validate_stage(sim, n_rays: int):
     """Emit n_rays into the capillary scene; compare every validate.methods
     first-hit t against the validate.reference one."""
@@ -85,6 +91,7 @@ def run_validate_stage(sim, n_rays: int):
                         or native is not None)
                     and (m is not HitMethod.PYTHON_CLOSED_FORM
                          or not has_implicit))
+    _validate_runnable_methods((ref, *methods))
     per = {m: {"n": 0, "missing": 0, "extra": 0, "max_rel": 0.0,
                "sum_sq": 0.0, "rels": [], "seconds": 0.0} for m in methods}
     stats = {"rays": n_rays, "skipped": 0, "hits": 0, "passes": 0,

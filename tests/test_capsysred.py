@@ -630,6 +630,21 @@ def test_stage9_hit_methods_agree_on_cylinder(tmp_path):
         assert s["max_rel"] < 1e-20, name
 
 
+def test_stage9_rejects_when_no_comparison_method_is_runnable():
+    from formula.capsysred.validate import run_validate_stage
+
+    sim = Simulation.from_dict({
+        "capillary": {"bores": [{"surface": "x^2+y^2-36",
+                                   "aim_radius": 6.0e-6}]},
+        "validate": {"n_rays": 1, "reference": "sturm",
+                     "methods": ["cpp-closed-form"]},
+    })
+    with pytest.raises(
+            ValueError,
+            match="no runnable comparison methods"):
+        run_validate_stage(sim, 1)
+
+
 def test_stage11_beamlet_point_source_fully_coherent(tmp_path):
     # point source -> one coherent field, honest estimator must give mu = 1
     # on every pixel the beamlets light up; mu never exceeds 1
