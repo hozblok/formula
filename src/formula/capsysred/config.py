@@ -7,6 +7,7 @@ Counts stay int, spectral weights stay float (not phase-critical).
 
 import copy
 import math
+import os
 import warnings
 
 from .._roots import get_backend
@@ -296,9 +297,10 @@ class CapillaryCfg:
 
 
 class Config:
-    def __init__(self, raw: dict):
+    def __init__(self, raw: dict, yaml_file: str | None = None):
         cfg = _merge(DEFAULTS, raw or {})
         self.raw = cfg
+        self.yaml_file = yaml_file
         p = int(cfg["precision"])
         self.precision = p
         self.seed = int(cfg["seed"])
@@ -369,5 +371,6 @@ def load(path_or_dict) -> Config:
     if isinstance(path_or_dict, dict):
         return Config(path_or_dict)
     import yaml
-    with open(path_or_dict, encoding="utf-8") as fh:
-        return Config(yaml.safe_load(fh) or {})
+    path = os.fspath(path_or_dict)
+    with open(path, encoding="utf-8") as fh:
+        return Config(yaml.safe_load(fh) or {}, yaml_file=os.path.basename(path))

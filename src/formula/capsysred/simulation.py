@@ -14,6 +14,7 @@ import os
 import sys
 import time
 
+from .. import __version__
 from ..formula import Number
 from .. import xray
 from . import analytic, render, schematic
@@ -749,12 +750,30 @@ class Simulation:
         res = run_validate_stage(self, n_rays)
         self.results["validate"] = res
         st, per = res["stats"], res["per"]
-        path = os.path.join(out_dir, "hit-validation.jsonl")
-        with open(path, "w", encoding="utf-8") as fh:
+        validation_dir = os.path.join(out_dir, "hit-validation")
+        os.makedirs(validation_dir, exist_ok=True)
+        rows_name = "hit-validation/hit-validation.jsonl"
+        with open(os.path.join(validation_dir, "hit-validation.jsonl"),
+                  "w", encoding="utf-8") as fh:
             for row in res["rows"]:
                 fh.write(json.dumps(row) + "\n")
-        self.files.append("hit-validation.jsonl")
-        _log("  → hit-validation.jsonl")
+        meta_name = "hit-validation/meta.json"
+        meta = {
+            "capsysred_version": __version__,
+            "yaml_file": self.cfg.yaml_file,
+            "validation": {
+                "n_rays": st["rays"],
+                "reference": st["reference"],
+                "methods": [str(method) for method in per],
+            },
+        }
+        with open(os.path.join(validation_dir, "meta.json"),
+                  "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, indent=2)
+            fh.write("\n")
+        self.files.extend((rows_name, meta_name))
+        _log(f"  → {rows_name}")
+        _log(f"  → {meta_name}")
         # match = same hit/pass call AND agreement to precision_target digits
         # (default: p - 2 guard - wall conditioning, config._conditioning_loss)
         target, loss = self.cfg.precision_target, self.cfg.precision_target_loss

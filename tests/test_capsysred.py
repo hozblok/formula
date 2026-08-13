@@ -629,16 +629,32 @@ def test_sturm_engine_matches_closed_form_hit():
 
 def test_stage9_hit_methods_agree_on_cylinder(tmp_path):
     # every method must reproduce the python hit t and its pass/reflect calls
-    sim = Simulation.from_dict({**TINY, "validate": {
+    raw = {**TINY, "validate": {
         "n_rays": 100, "methods": [HitMethod.CPP_CLOSED_FORM,
-                                   HitMethod.SUBDIVISION, HitMethod.STURM]}})
+                                   HitMethod.SUBDIVISION, HitMethod.STURM]}}
+    yaml_file = tmp_path / "stage9.yaml"
+    yaml_file.write_text(json.dumps(raw), encoding="utf-8")
+    sim = Simulation.from_yaml(yaml_file)
     result = sim.run(str(tmp_path), stages=[9])
-    assert "hit-validation.jsonl" in result["files"]
-    with open(tmp_path / "hit-validation.jsonl") as fh:
+    assert "hit-validation/hit-validation.jsonl" in result["files"]
+    assert "hit-validation/meta.json" in result["files"]
+    with open(tmp_path / "hit-validation" / "hit-validation.jsonl") as fh:
         rows = [json.loads(line) for line in fh]
     assert len(rows) == 100          # one record per emitted ray
     assert {row["reference_method"] for row in rows} == {
         "python-closed-form"}
+    with open(tmp_path / "hit-validation" / "meta.json") as fh:
+        meta = json.load(fh)
+    from formula import __version__
+    assert meta == {
+        "capsysred_version": __version__,
+        "yaml_file": "stage9.yaml",
+        "validation": {
+            "n_rays": 100,
+            "reference": "python-closed-form",
+            "methods": ["cpp-closed-form", "subdivision", "sturm"],
+        },
+    }
     res = sim.results["validate"]
     assert res["native"] and res["stats"]["hits"] > 0
     for name, s in res["per"].items():
