@@ -1,4 +1,5 @@
-# Example CAPSYSred config (all fields optional — these are the built-in defaults).
+# Example CAPSYSred config. Global fields have defaults; every configured scene
+# must provide its own complete source.
 # Run:  PYTHONPATH=src python3 -m formula.capsysred capsysred.example.yaml -o out/
 # Stages 1, 2, 3 and 6 run by default; 7-12 are opt-in via --stages.
 # Lengths in meters, angles in radians, energy in keV.
@@ -24,13 +25,6 @@ spectrum:
   # mode: table        # arbitrary spectrum from file: columns "E_keV weight"
   # file: spectrum.txt
 
-source:                # global source: incoherent point modes
-  shape: gaussian      # point | gaussian (size = sigma) | disk (size = radius)
-  size: 2.1e-6
-  position: [0.0, 0.0, -0.08]
-  n_modes: 100         # modes (source realizations)
-  n_rays: 800          # rays per mode
-
 screen:                # global screen
   z: 0.06
   center: [0.0, 0.0]
@@ -40,7 +34,15 @@ screen:                # global screen
   ny: 1                # ny=1 — strip along x (profiles); ny>1 — 2D maps
   reference: null      # reference point P_ref, [x, y]; null — window center
 
-free: {}               # stages 2-3 (and 7, 8, 11, 12): source/screen overrides
+free:                  # stages 2-3 (and 7, 8, 11, 12)
+  source:              # incoherent point modes; complete per scene
+    shape: gaussian    # point | gaussian (size = sigma) | disk (size = radius)
+                       # | grid (also requires grid_n and grid_step)
+    size: 2.1e-6
+    position: [0.0, 0.0, -0.08]
+    n_modes: 100       # modes (source realizations)
+    n_rays: 800        # rays per mode
+  # screen: {}         # optional overrides of the global screen
 
 capillary:             # stage 6 and the opt-in estimator stages 7, 8, 10, 11
   bores:               # parallel bores (polycapillary — several entries), each ONE of:
@@ -60,7 +62,12 @@ capillary:             # stage 6 and the opt-in estimator stages 7, 8, 10, 11
     #     RaySurface engine per bounce: exact but slow — small budgets only
   z0: 0.0
   z1: 0.05
-  source: {size: 3.0e-7, position: [0.0, 0.0, -0.01], n_modes: 80, n_rays: 1000}
+  source:              # complete; no values inherit from free.source
+    shape: gaussian
+    size: 3.0e-7
+    position: [0.0, 0.0, -0.01]
+    n_modes: 80
+    n_rays: 1000
   screen: {z: 0.051, edge_x: 1.6e-5, edge_y: 1.6e-5, nx: 41, ny: 41}
   # screens: [{z: 0.08}, {z: 0.12, edge_x: 3.2e-5}]
   #     extra stage-10 planes past the exit, re-binned from the same trace

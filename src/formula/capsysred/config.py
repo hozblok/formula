@@ -18,6 +18,21 @@ from .types import HitMethod
 
 MATERIALS = {"fused_silica": FUSED_SILICA, "glass_oe2012": OE2012_GLASS}
 
+_SOURCE_REQUIRED = frozenset({"shape", "size", "position", "n_modes", "n_rays"})
+_GRID_SOURCE_REQUIRED = frozenset({"grid_n", "grid_step"})
+
+FREE_DEFAULTS = {"screen": {}}
+
+# 6 um bore and a screen immediately after the optic. The source is omitted
+# deliberately: every configured scene must state its own complete source.
+CAPILLARY_DEFAULTS = {
+    "bores": [{"center": [0.0, 0.0], "radius": 6.0e-6}],
+    "z0": 0.0,
+    "z1": 0.05,
+    "screen": {"z": 0.051, "edge_x": 1.6e-5, "edge_y": 1.6e-5,
+               "nx": 41, "ny": 41},
+}
+
 DEFAULTS = {
     "precision": 32,
     # certified digits: the stage-9 match tolerance is 1e-precision_target;
@@ -32,16 +47,6 @@ DEFAULTS = {
     # line instead of frozen r(E0)
     "spectrum": {"mode": "monochromatic", "rel_fwhm": 2.0e-4, "n_lines": 7,
                  "n_sigma": 3.0, "per_line_fresnel": True},
-    # extended incoherent source: n_modes coherent point modes, n_rays per mode
-    "source": {
-        "shape": "gaussian",          # point | gaussian (size=sigma) | disk (size=radius)
-                                      # | grid (grid_n x grid_n nodes, step grid_step,
-                                      #   importance draws with weights exp(-r^2/2*size^2))
-        "size": 2.1e-6,
-        "position": [0.0, 0.0, -0.08],
-        "n_modes": 100,
-        "n_rays": 800,
-    },
     # ny=1 is a thin detector strip: edge_y must keep the intra-pixel phase
     # spread k*y^2/(2D) well below a radian, or ray shot noise floods |mu|.
     "screen": {
@@ -52,15 +57,6 @@ DEFAULTS = {
         "nx": 121,
         "ny": 1,
         "reference": None,            # [x, y] of the reference point; None -> window center
-    },
-    "free": {"source": {}, "screen": {}},
-    # 6 um bore, source sigma 0.3 um a centimetre before it.
-    "capillary": {
-        "bores": [{"center": [0.0, 0.0], "radius": 6.0e-6}],
-        "z0": 0.0,
-        "z1": 0.05,
-        "source": {"size": 3.0e-7, "position": [0.0, 0.0, -0.01], "n_modes": 80, "n_rays": 1000},
-        "screen": {"z": 0.051, "edge_x": 1.6e-5, "edge_y": 1.6e-5, "nx": 41, "ny": 41},
     },
     # rays_jsonl: full-precision per-ray records (rays.jsonl.gz, replay
     # input). Records/multi-line runs trace with the amplitude_min kill off
@@ -122,6 +118,20 @@ class SourceCfg:
     def budget(self, quick: int) -> tuple[int, int]:
         """(n_modes, n_rays) at reduction factor `quick`, with sampling floors."""
         return max(2, self.n_modes // quick), max(20, self.n_rays // quick)
+
+
+def _required_source(raw: object, scene: str, p: int) -> SourceCfg:
+    """Parse one explicit scene source; no values inherit across scenes."""
+    if not isinstance(raw, dict):
+        raise ValueError(f"{scene}.source must be a mapping")
+    missing = _SOURCE_REQUIRED - raw.keys()
+    if raw.get("shape") == "grid":
+        missing |= _GRID_SOURCE_REQUIRED - raw.keys()
+    if missing:
+        raise ValueError(
+            f"{scene}.source is missing required fields: {sorted(missing)}"
+        )
+    return SourceCfg(raw, p)
 
 
 class ScreenCfg:
@@ -270,11 +280,11 @@ def _precision_target(raw, p: int, bores, theta_c: float, z_span: float = 0.0):
 
 
 class CapillaryCfg:
-    def __init__(self, raw: dict, base_source: dict, base_screen: dict, p: int):
+    def __init__(self, raw: dict, base_screen: dict, p: int):
         self.z0 = Number(str(raw["z0"]), p)
         self.z1 = Number(str(raw["z1"]), p)
         self.bores = [_bore(b, p, i) for i, b in enumerate(raw["bores"])]
-        self.source = SourceCfg(_merge(base_source, raw.get("source", {})), p)
+        self.source = _required_source(raw.get("source"), "capillary", p)
         base = _merge(base_screen, raw.get("screen", {}))
         self.screen = ScreenCfg(base, p)
         # extra screens (stage 10): re-binned from the same trace, each merged
@@ -288,16 +298,30 @@ class CapillaryCfg:
 
 class Config:
     def __init__(self, raw: dict, yaml_file: str | None = None):
-        raw = raw or {}
+        if raw is None:
+            raw = {}
+        elif not isinstance(raw, dict):
+            raise ValueError("config must be a mapping")
         if "lloyd" in raw:
             raise ValueError("lloyd was removed together with stages 4 and 5")
+        if "source" in raw:
+            raise ValueError("configure free.source and/or capillary.source explicitly")
         trace = raw.get("trace")
         if isinstance(trace, dict) and "engine_method" in trace:
             raise ValueError(
                 "trace.engine_method was removed; set engine_method on each "
                 "`surface:` bore"
             )
-        cfg = _merge(DEFAULTS, raw)
+        base_raw = {k: v for k, v in raw.items()
+                    if k not in ("free", "capillary")}
+        cfg = _merge(DEFAULTS, base_raw)
+        for scene, defaults in (("free", FREE_DEFAULTS),
+                                ("capillary", CAPILLARY_DEFAULTS)):
+            if scene not in raw:
+                continue
+            if not isinstance(raw[scene], dict):
+                raise ValueError(f"{scene} must be a mapping")
+            cfg[scene] = _merge(defaults, raw[scene])
         self.raw = cfg
         self.yaml_file = yaml_file
         p = int(cfg["precision"])
@@ -310,14 +334,15 @@ class Config:
             raise ValueError(f"unknown material: {mat!r}; "
                              f"available {sorted(MATERIALS)}")
         self.material = MATERIALS[mat]
-        self.source = SourceCfg(cfg["source"], p)
         self.screen = ScreenCfg(cfg["screen"], p)
-        free = cfg["free"]
-        self.free_source = SourceCfg(_merge(cfg["source"], free.get("source", {})), p)
-        self.free_screen = ScreenCfg(_merge(cfg["screen"], free.get("screen", {})), p)
-        # capillary exists only when the config mentions it; empty config = full demo
-        self.capillary = (CapillaryCfg(cfg["capillary"], cfg["source"], cfg["screen"], p)
-                          if not raw or "capillary" in raw else None)
+        free = cfg.get("free")
+        self.free_source = (_required_source(free.get("source"), "free", p)
+                            if free is not None else None)
+        self.free_screen = (ScreenCfg(_merge(cfg["screen"], free.get("screen", {})), p)
+                            if free is not None else None)
+        capillary = cfg.get("capillary")
+        self.capillary = (CapillaryCfg(capillary, cfg["screen"], p)
+                          if capillary is not None else None)
         # theta_c of the hardest spectral line (theta_c ~ 1/E): the smallest
         # critical angle bounds the grazing term of the conditioning loss
         e_max = max((ln.e_kev for ln in spectral_lines(cfg["spectrum"], self.energy_kev)),

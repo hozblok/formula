@@ -1,4 +1,4 @@
-"""CLI: python3 -m formula.capsysred [config.yaml] -o out/ [--stages 1,10] [--quick N]
+"""CLI: python3 -m formula.capsysred config.yaml -o out/ [--stages 1,10] [--quick N]
 [--trace] [--replay rays.jsonl.gz]"""
 
 import argparse
@@ -12,13 +12,13 @@ def main(argv=None) -> int:
         prog="python3 -m formula.capsysred",
         description="Source → capillaries → screen → |μ| and I: "
                     "images, rays.jsonl.gz and a timestamped report-*.md into the output directory.")
-    parser.add_argument("config", nargs="?", default=None,
-                        help="YAML with parameters (built-in defaults when omitted)")
+    parser.add_argument("config", help="YAML with simulation parameters")
     parser.add_argument("-o", "--out", default="capsysred-out",
                         help="output directory (default ./capsysred-out)")
     parser.add_argument("--stages", default=None,
-                        help="which stages to run, e.g. 1,2,3 (default all; "
-                             "3 requires 2, which is added automatically)")
+                        help="which stages to run, e.g. 1,2,3 (default core "
+                             "stages of the configured scenes; 3 requires 2, "
+                             "which is added automatically)")
     parser.add_argument("--quick", type=int, default=1, metavar="N",
                         help="divisor for the mode/ray counts for a quick estimate")
     parser.add_argument("--trace", action="store_true",
@@ -39,8 +39,7 @@ def main(argv=None) -> int:
         if bad:
             parser.error(f"no such stages: {bad}; available {list(KNOWN_STAGES)}")
 
-    sim = (Simulation.from_yaml(args.config) if args.config
-           else Simulation.from_dict({}))
+    sim = Simulation.from_yaml(args.config)
     result = (sim.replay(args.replay, args.out, stages=stages,
                          quick=max(1, args.quick)) if args.replay
               else sim.trace(args.out, quick=max(1, args.quick)) if args.trace

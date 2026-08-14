@@ -639,13 +639,21 @@ def test_native_deterministic():
 
 TINY = {
     "precision": 26,
-    "source": {"n_modes": 2, "n_rays": 60, "size": 3e-7, "shape": "gaussian"},
     "screen": {"nx": 9, "ny": 1},
+    "free": {"source": {
+        "shape": "gaussian", "size": 3e-7,
+        "position": [0.0, 0.0, -0.08],
+        "n_modes": 2, "n_rays": 60,
+    }},
     "capillary": {
         "bores": [{"center": [0.0, 0.0], "radius": 6.0e-6},
                   {"center": [1.5e-5, 0.0], "radius": 6.0e-6,
                    "bend": {"radius": 0.5, "toward": [1.0, 0.0]}}],
-        "source": {"n_modes": 2, "n_rays": 24},
+        "source": {
+            "shape": "gaussian", "size": 3e-7,
+            "position": [0.0, 0.0, -0.01],
+            "n_modes": 2, "n_rays": 24,
+        },
         "screen": {"nx": 7, "ny": 7},
     },
 }

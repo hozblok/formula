@@ -24,11 +24,27 @@ from formula.capsysred.types import HitMethod
 from formula import xray
 from formula.formula import Number, Solver
 
+FREE_SOURCE = {
+    "shape": "point",
+    "size": 0.0,
+    "position": [0.0, 0.0, -0.08],
+    "n_modes": 4,
+    "n_rays": 240,
+}
+
+CAPILLARY_SOURCE = {
+    "shape": "point",
+    "size": 3.0e-7,
+    "position": [0.0, 0.0, -0.01],
+    "n_modes": 3,
+    "n_rays": 40,
+}
+
 TINY = {
-    "source": {"n_modes": 4, "n_rays": 240, "size": 0.0, "shape": "point"},
     "screen": {"nx": 21},
+    "free": {"source": FREE_SOURCE},
     "capillary": {
-        "source": {"n_modes": 3, "n_rays": 40},
+        "source": CAPILLARY_SOURCE,
         "screen": {"nx": 9, "ny": 9},
     },
 }
@@ -50,9 +66,12 @@ def test_full_pipeline_files_and_point_source_coherence(tmp_path):
 def test_stage3_uses_reference_row_for_mc_slice(tmp_path, monkeypatch):
     # An off-centre reference defines the y-row whose MC profile must be
     # compared with the analytic profile; the geometric middle row is unrelated.
-    cfg = dict(TINY, free={"screen": {
-        "nx": 3, "ny": 3, "reference": [0.0, -0.9e-6],
-    }})
+    cfg = dict(TINY, free={
+        "source": FREE_SOURCE,
+        "screen": {
+            "nx": 3, "ny": 3, "reference": [0.0, -0.9e-6],
+        },
+    })
     sim = Simulation.from_dict(cfg)
     from formula.capsysred.screen import ScreenGrid
     screen = ScreenGrid(sim.cfg.free_screen)
@@ -591,19 +610,28 @@ def test_implicit_engine_method_config_wiring():
         load({"trace": {"engine_method": "subdivision"}})
     for unsupported in ("newton", "auto"):
         with pytest.raises(ValueError):
-            load({"capillary": {"bores": [{"surface": "x^2+y^2-36",
-                                              "aim_radius": 6.0e-6,
-                                              "engine_method": unsupported}]}})
-    cfg = load({"capillary": {"bores": [{"surface": "x^2+y^2-36",
-                                            "aim_radius": 6.0e-6,
-                                            "engine_method": "sturm"}]}})
+            load({"capillary": {
+                "source": CAPILLARY_SOURCE,
+                "bores": [{"surface": "x^2+y^2-36",
+                           "aim_radius": 6.0e-6,
+                           "engine_method": unsupported}],
+            }})
+    cfg = load({"capillary": {
+        "source": CAPILLARY_SOURCE,
+        "bores": [{"surface": "x^2+y^2-36",
+                   "aim_radius": 6.0e-6,
+                   "engine_method": "sturm"}],
+    }})
     bundle = CapillaryBundle(cfg.capillary.bores, cfg.capillary.z0,
                              cfg.capillary.z1)
     assert bundle.walls[0].method == "sturm"
-    subdivision = load({"capillary": {"bores": [{
-        "surface": "x^2+y^2-36", "aim_radius": 6.0e-6,
-        "engine_method": "subdivision",
-    }]}})
+    subdivision = load({"capillary": {
+        "source": CAPILLARY_SOURCE,
+        "bores": [{
+            "surface": "x^2+y^2-36", "aim_radius": 6.0e-6,
+            "engine_method": "subdivision",
+        }],
+    }})
     assert geometry_metadata(cfg) != geometry_metadata(subdivision)
 
 
@@ -612,6 +640,122 @@ def test_removed_lloyd_config_is_rejected():
 
     with pytest.raises(ValueError, match="lloyd was removed.*stages 4 and 5"):
         load({"lloyd": {}})
+
+
+def test_top_level_source_is_rejected():
+    from formula.capsysred.config import load
+
+    with pytest.raises(ValueError, match="top-level source was removed"):
+        load({"source": FREE_SOURCE})
+
+
+@pytest.mark.parametrize("scene", ["free", "capillary"])
+def test_configured_scene_requires_source_mapping(scene):
+    from formula.capsysred.config import load
+
+    with pytest.raises(ValueError, match=rf"{scene}\.source must be a mapping"):
+        load({scene: {}})
+
+
+@pytest.mark.parametrize("scene", ["free", "capillary"])
+@pytest.mark.parametrize(
+    "missing", ["shape", "size", "position", "n_modes", "n_rays"]
+)
+def test_scene_source_common_fields_are_all_required(scene, missing):
+    from formula.capsysred.config import load
+
+    source = dict(FREE_SOURCE)
+    source.pop(missing)
+    with pytest.raises(
+            ValueError,
+            match=rf"{scene}\.source is missing required fields.*{missing}"):
+        load({scene: {"source": source}})
+
+
+@pytest.mark.parametrize("scene", ["free", "capillary"])
+@pytest.mark.parametrize("missing", ["grid_n", "grid_step"])
+def test_grid_source_requires_grid_fields(scene, missing):
+    from formula.capsysred.config import load
+
+    source = {
+        **FREE_SOURCE,
+        "shape": "grid",
+        "grid_n": 3,
+        "grid_step": 1.0e-6,
+    }
+    source.pop(missing)
+    with pytest.raises(
+            ValueError,
+            match=rf"{scene}\.source is missing required fields.*{missing}"):
+        load({scene: {"source": source}})
+
+
+@pytest.mark.parametrize(("raw", "scenes"), [
+    ({}, set()),
+    ({"free": {"source": FREE_SOURCE}}, {"free"}),
+    ({"capillary": {"source": CAPILLARY_SOURCE}}, {"capillary"}),
+    (TINY, {"free", "capillary"}),
+])
+def test_scene_sections_control_raw_geometry_and_budgets(raw, scenes):
+    from formula.capsysred.config import load
+    from formula.capsysred.rays import budgets, geometry_metadata
+
+    cfg = load(raw)
+    geometry = geometry_metadata(cfg)
+    assert "source" not in cfg.raw
+    assert "source" not in geometry
+    assert {s for s in ("free", "capillary") if s in cfg.raw} == scenes
+    assert {s for s in ("free", "capillary") if s in geometry} == scenes
+    assert set(budgets(cfg, 1)) == scenes
+    assert (cfg.free_source is not None) == ("free" in scenes)
+    assert (cfg.free_screen is not None) == ("free" in scenes)
+    assert (cfg.capillary is not None) == ("capillary" in scenes)
+    for scene in scenes:
+        assert geometry[scene]["source"] == cfg.raw[scene]["source"]
+
+
+@pytest.mark.parametrize("stage", [2, 3, 12])
+def test_free_stage_preflight_rejects_missing_free_scene(tmp_path, stage):
+    sim = Simulation.from_dict({
+        "capillary": {"source": CAPILLARY_SOURCE},
+    })
+    out = tmp_path / "out"
+    with pytest.raises(ValueError, match=r"configured free\.source"):
+        sim.run(str(out), stages=[stage])
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("stage", [6, 9, 10])
+def test_capillary_stage_preflight_rejects_missing_capillary_scene(
+        tmp_path, stage):
+    sim = Simulation.from_dict({"free": {"source": FREE_SOURCE}})
+    out = tmp_path / "out"
+    with pytest.raises(ValueError, match=r"configured capillary\.source"):
+        sim.run(str(out), stages=[stage])
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("stage", [1, 7, 8, 11])
+def test_scene_stage_preflight_rejects_empty_config(tmp_path, stage):
+    sim = Simulation.from_dict({})
+    out = tmp_path / "out"
+    with pytest.raises(
+            ValueError,
+            match=r"require(?:s)? a free or capillary scene"):
+        sim.run(str(out), stages=[stage])
+    assert not out.exists()
+
+
+def test_default_run_and_trace_preflight_reject_empty_config(tmp_path):
+    sim = Simulation.from_dict({})
+    run_out = tmp_path / "run"
+    trace_out = tmp_path / "trace"
+    with pytest.raises(ValueError, match="requires a free or capillary scene"):
+        sim.run(str(run_out))
+    with pytest.raises(ValueError, match="trace requires a configured"):
+        sim.trace(str(trace_out))
+    assert not run_out.exists()
+    assert not trace_out.exists()
 
 
 @pytest.mark.parametrize("stage", [4, 5])
@@ -672,9 +816,13 @@ def test_precision_target_config():
     import warnings
     from formula.capsysred.config import load
     assert load({}).precision_target == 30
-    bent = {"precision": 64, "capillary": {"bores": [
-        {"center": [0.0, 0.0], "radius": 6.0e-6,
-         "bend": {"radius": 8625.0, "toward": [1.0, 0.0]}}]}}
+    bent = {"precision": 64, "capillary": {
+        "source": CAPILLARY_SOURCE,
+        "bores": [
+            {"center": [0.0, 0.0], "radius": 6.0e-6,
+             "bend": {"radius": 8625.0, "toward": [1.0, 0.0]}},
+        ],
+    }}
     cfg = load(bent)
     assert cfg.precision_target_auto and cfg.precision_target_loss == 23
     assert cfg.precision_target == 39
@@ -751,9 +899,12 @@ def test_stage9_rejects_when_no_comparison_method_is_runnable():
     from formula.capsysred.validate import run_validate_stage
 
     sim = Simulation.from_dict({
-        "capillary": {"bores": [{"surface": "x^2+y^2-36",
-                                   "aim_radius": 6.0e-6,
-                                   "engine_method": "subdivision"}]},
+        "capillary": {
+            "source": CAPILLARY_SOURCE,
+            "bores": [{"surface": "x^2+y^2-36",
+                       "aim_radius": 6.0e-6,
+                       "engine_method": "subdivision"}],
+        },
         "validate": {"n_rays": 1, "reference": "sturm",
                      "methods": ["cpp-closed-form"]},
     })
@@ -769,11 +920,14 @@ def test_stage9_mixed_bundle_disables_closed_forms_globally():
     from formula.capsysred.validate import run_validate_stage
 
     sim = Simulation.from_dict({
-        "capillary": {"bores": [
-            {"center": [-6.0e-6, 0.0], "radius": 3.0e-6},
-            {"center": [6.0e-6, 0.0], "surface": "(x-6)^2+y^2-9",
-             "aim_radius": 3.0e-6, "engine_method": "subdivision"},
-        ]},
+        "capillary": {
+            "source": CAPILLARY_SOURCE,
+            "bores": [
+                {"center": [-6.0e-6, 0.0], "radius": 3.0e-6},
+                {"center": [6.0e-6, 0.0], "surface": "(x-6)^2+y^2-9",
+                 "aim_radius": 3.0e-6, "engine_method": "subdivision"},
+            ],
+        },
         "validate": {
             "reference": "sturm",
             "methods": ["python-closed-form", "cpp-closed-form",
@@ -809,10 +963,20 @@ def test_stage11_beamlet_gaussian_matches_vcz(tmp_path):
     # extended gaussian source: the beamlet |mu| row must track the vCZ curve
     from formula.capsysred.analytic import rms_diff
     sim = Simulation.from_dict({
-        "source": {"n_modes": 36, "n_rays": 200},
         "screen": {"nx": 41},
-        "capillary": {"source": {"n_modes": 2, "n_rays": 20},
-                      "screen": {"nx": 5, "ny": 5}},
+        "free": {"source": {
+            "shape": "gaussian", "size": 2.1e-6,
+            "position": [0.0, 0.0, -0.08],
+            "n_modes": 36, "n_rays": 200,
+        }},
+        "capillary": {
+            "source": {
+                "shape": "gaussian", "size": 3.0e-7,
+                "position": [0.0, 0.0, -0.01],
+                "n_modes": 2, "n_rays": 20,
+            },
+            "screen": {"nx": 5, "ny": 5},
+        },
     })
     sim.run(str(tmp_path), stages=[11])
     res = sim.results["beamlet:free"]
@@ -1002,7 +1166,7 @@ def test_rays_runtime_uses_sidecar_and_ignores_first_line(tmp_path):
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         for row in rows:
             fh.write(json.dumps(row) + "\n")
-    expected = sidecar_metadata(load({}), 1)
+    expected = sidecar_metadata(load({"free": {"source": FREE_SOURCE}}), 1)
     write_metadata(path, expected)
 
     meta, done, clean = scan(str(path), expected_meta=expected)
@@ -1048,7 +1212,10 @@ def test_rays_reader_refuses_partial_archive(tmp_path):
             "stage": "free", "mode": 0, "ray": 0, "fate": "lost",
             "pixel": None, "opl": "0", "sins": [],
         }) + "\n")
-    write_metadata(path, sidecar_metadata(load({}), 1))
+    write_metadata(
+        path,
+        sidecar_metadata(load({"free": {"source": FREE_SOURCE}}), 1),
+    )
 
     with pytest.raises(ValueError, match="incomplete"):
         RaysReader(str(path))
@@ -1080,7 +1247,7 @@ def test_clean_but_thinned_rays_file_is_never_appended(tmp_path):
             "pixel": None, "opl": "0", "sins": [],
         }) + "\n")
         fh.write(json.dumps({"scene_end": "free", "rows": 1}) + "\n")
-    cfg = load({})
+    cfg = load({"free": {"source": FREE_SOURCE}})
     write_metadata(path, sidecar_metadata(cfg, 1))
     before = path.read_bytes()
     before_sidecar = (tmp_path / "rays-fingerprint.yaml").read_bytes()
@@ -1100,7 +1267,13 @@ def test_clean_but_malformed_rays_file_is_never_appended(tmp_path, bad_row):
     from formula.capsysred.config import load
     from formula.capsysred.rays import RaysFile, sidecar_metadata, write_metadata
 
-    cfg = load({"source": {"n_modes": 2, "n_rays": 20}})
+    cfg = load({"free": {"source": {
+        "shape": "gaussian",
+        "size": 2.1e-6,
+        "position": [0.0, 0.0, -0.08],
+        "n_modes": 2,
+        "n_rays": 20,
+    }}})
     path = tmp_path / "rays.jsonl.gz"
     with gzip.open(path, "wt", encoding="utf-8", newline="\n") as fh:
         fh.write("{}\n")
@@ -1285,7 +1458,7 @@ def test_rays_sidecar_metadata_is_structured(tmp_path):
                                         read_metadata,
                                         sidecar_metadata, write_metadata)
 
-    cfg = load({})
+    cfg = load(TINY)
     geometry = geometry_metadata(cfg)
     sidecar = sidecar_metadata(cfg, 1)
     assert sidecar["geometry"] == geometry
@@ -1294,14 +1467,27 @@ def test_rays_sidecar_metadata_is_structured(tmp_path):
     assert metadata_equal(read_metadata(rays_path), sidecar)
     assert geometry["max_bounces"] == cfg.max_bounces
     assert geometry["screen"] == cfg.raw["screen"]
+    assert "source" not in geometry
+    assert geometry["free"]["source"] == cfg.raw["free"]["source"]
+    assert (geometry["capillary"]["source"]
+            == cfg.raw["capillary"]["source"])
     assert "lloyd" not in geometry
     assert "lloyd" not in sidecar["budgets"]
     assert "screens" not in geometry["capillary"]
 
-    with_extra_screen = load({"capillary": {"screens": [{"z": 0.052}]}})
+    with_extra_screen = load({
+        **TINY,
+        "capillary": {
+            **TINY["capillary"],
+            "screens": [{"z": 0.052}],
+        },
+    })
     assert geometry_metadata(with_extra_screen) == geometry
-    physics_change = load({"material": "glass_oe2012",
-                           "trace": {"lean_rays": True}})
+    physics_change = load({
+        **TINY,
+        "material": "glass_oe2012",
+        "trace": {"lean_rays": True},
+    })
     assert geometry_metadata(physics_change) == geometry
     assert sidecar_metadata(physics_change, 1)["lean"] is True
 
@@ -2833,7 +3019,9 @@ def test_scene_stream_refuses_thinned_recording(tmp_path):
             fh.write(json.dumps(row) + "\n")
     write_metadata(path, {
         "format": 2,
-        "geometry": geometry_metadata(load({})),
+        "geometry": geometry_metadata(
+            load({"free": {"source": FREE_SOURCE}})
+        ),
         "budgets": {"free": [2, 3]},
     })
     sim = SimpleNamespace(rays=RaysReader(str(path)))
@@ -2862,7 +3050,9 @@ def test_multi_rays_reader_propagates_lean_from_every_part(tmp_path):
             fh.write(json.dumps({"scene_end": "free", "rows": 1}) + "\n")
         meta = {
             "format": 2,
-            "geometry": geometry_metadata(load({})),
+            "geometry": geometry_metadata(
+                load({"free": {"source": FREE_SOURCE}})
+            ),
             "budgets": {"free": [1, 1]},
         }
         if lean:

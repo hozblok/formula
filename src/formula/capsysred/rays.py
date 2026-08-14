@@ -59,10 +59,14 @@ def geometry_metadata(cfg) -> dict:
     The JSON round-trip detaches the result from ``cfg.raw`` and normalizes
     string enums and other string-compatible values.
     """
-    geo = {k: cfg.raw[k] for k in ("seed", "precision", "source", "screen",
-                                   "free", "capillary")}
-    geo["capillary"] = {k: v for k, v in geo["capillary"].items()
-                        if k != "screens"}
+    geo = {k: cfg.raw[k] for k in ("seed", "precision", "screen")}
+    if "free" in cfg.raw:
+        geo["free"] = cfg.raw["free"]
+    if "capillary" in cfg.raw:
+        geo["capillary"] = {
+            k: v for k, v in cfg.raw["capillary"].items()
+            if k != "screens"
+        }
     geo["max_bounces"] = cfg.max_bounces
     return json.loads(json.dumps(geo, sort_keys=True, default=str))
 
@@ -71,7 +75,9 @@ def budgets(cfg, quick: int) -> dict:
     """Scene -> [n_modes, n_rays], the same clamps as the stage loops."""
     def per(src):
         return list(src.budget(quick))
-    out = {"free": per(cfg.free_source)}
+    out = {}
+    if cfg.free_source is not None:
+        out["free"] = per(cfg.free_source)
     if cfg.capillary is not None:
         out["capillary"] = per(cfg.capillary.source)
     return out

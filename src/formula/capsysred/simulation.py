@@ -257,11 +257,17 @@ class Simulation:
                 f"Wall material: {cfg.material.name};  δ = {self.delta_f:.3e},  β = {self.beta_f:.3e},  θ_c = {rad_to_mrad(self.theta_c):.2f} mrad.",
                 f"Source — a set of mutually incoherent point modes (van Cittert–Zernike method from a Monte-Carlo ensemble).",
                 f"Engine precision: {cfg.precision} digits (Number/Solver, no float64 in the physics path);  seed = {cfg.seed}.",
-                "Pipeline: |μ| on screen without optics (MC) + van Cittert–Zernike analytics;",
-                "|μ| and intensity behind the capillary.",
-                f"Free-field scene: source {_um(cfg.free_source.size)} at z = {_mm(cfg.free_source.position[2])}, screen z = {_mm(cfg.free_screen.z)}.",
+                "Pipeline: |μ| and intensity behind the capillary.",
             ],
         }
+        if cfg.free_source is not None:
+            info["description"].extend((
+                "Free-field pipeline: |μ| without optics (MC) + van "
+                "Cittert–Zernike analytics.",
+                f"Free-field scene: source {_um(cfg.free_source.size)} at "
+                f"z = {_mm(cfg.free_source.position[2])}, screen "
+                f"z = {_mm(cfg.free_screen.z)}.",
+            ))
         if cap.screens:
             info["screen_label"].append(
                 "+" + ", ".join(f"z = {_mm(s.z)}" for s in cap.screens))
@@ -385,11 +391,12 @@ class Simulation:
         """Alternative estimators (full W — axis C, Wigner — axis D) on the
         same ray streams as stages 2/6 (same seed offsets)."""
         cap = self.cfg.capillary
-        scenes = [("free", "7 alt free (MC)", self.cfg.free_source,
-                   self.cfg.free_screen, None, self._aim_free, SceneSeed.FREE)]
-        if cap is None:
-            self._skip_cap("## Stage 7 — alternative estimators [capillary]")
-        else:
+        scenes = []
+        if self.cfg.free_source is not None:
+            scenes.append(
+                ("free", "7 alt free (MC)", self.cfg.free_source,
+                 self.cfg.free_screen, None, self._aim_free, SceneSeed.FREE))
+        if cap is not None:
             scenes.append(
                 ("capillary", "7 alt capillary (MC)", cap.source, cap.screen,
                  CapillaryBundle(cap.bores, cap.z0, cap.z1),
@@ -475,11 +482,12 @@ class Simulation:
         """Streaming sketch of W (methods §3.10): pairwise reference column +
         Nystrom column + coherent-mode spectrum, 2D screens supported."""
         cap = self.cfg.capillary
-        scenes = [("free", "8 sketch free (MC)", self.cfg.free_source,
-                   self.cfg.free_screen, None, self._aim_free, SceneSeed.FREE)]
-        if cap is None:
-            self._skip_cap("## Stage 8 — sketch estimator [capillary]")
-        else:
+        scenes = []
+        if self.cfg.free_source is not None:
+            scenes.append(
+                ("free", "8 sketch free (MC)", self.cfg.free_source,
+                 self.cfg.free_screen, None, self._aim_free, SceneSeed.FREE))
+        if cap is not None:
             scenes.append(
                 ("capillary", "8 sketch capillary (MC)", cap.source, cap.screen,
                  CapillaryBundle(cap.bores, cap.z0, cap.z1),
@@ -880,33 +888,35 @@ class Simulation:
         capillary screens re-bin the same records onto each plane."""
         cap = self.cfg.capillary
         rows = []
-        res = run_beamlet_stage(self, "11 beamlet free (MC)", "free",
-                                self.cfg.free_source, self.cfg.free_screen,
-                                None, self._aim_free, SceneSeed.FREE, quick)
-        self.results["beamlet:free"] = res
-        maps, screen = res["maps"], res["screen"]
-        ref_xy = screen.pixel_xy(maps["ref_pixel"])
-        row = screen.ny // 2
-        xs_um = [m_to_um(x) for x in screen.xs()]
-        src = self.cfg.free_source
-        dist = float(screen.z) - float(src.position[2])
-        mu_th = [analytic.vcz_mu(x - ref_xy[0], src.shape, float(src.size),
-                                 float(self.lam), dist) for x in screen.xs()]
-        rms = analytic.rms_diff(maps["mu"][row], mu_th)
-        fig = render.line_chart(
-            [{"xs": xs_um, "ys": maps["mu"][row], "label": "beamlets |μ|"},
-             {"xs": xs_um, "ys": mu_th,
-              "label": "van Cittert–Zernike analytics", "dash": "6,4"}],
-            "beamlet |μ| vs vCZ analytics [free]",
-            "x, µm", "|μ|",
-            f"RMS(beamlets − vCZ) = {rms:.3f};  {self._beamlet_sub(res)}",
-            vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
-        self._save(out_dir, "11-free-beamlet-mu.svg", fig)
-        self._beamlet_outputs(out_dir, "free", res, rows,
-                              extra=[f"- RMS(|μ|_beamlet − |μ|_vCZ) = {rms:.4f}"])
-        if cap is None:
-            self._skip_cap("## Stage 11 — beamlet estimator [capillary]")
-        else:
+        if self.cfg.free_source is not None:
+            res = run_beamlet_stage(self, "11 beamlet free (MC)", "free",
+                                    self.cfg.free_source, self.cfg.free_screen,
+                                    None, self._aim_free, SceneSeed.FREE, quick)
+            self.results["beamlet:free"] = res
+            maps, screen = res["maps"], res["screen"]
+            ref_xy = screen.pixel_xy(maps["ref_pixel"])
+            row = screen.ny // 2
+            xs_um = [m_to_um(x) for x in screen.xs()]
+            src = self.cfg.free_source
+            dist = float(screen.z) - float(src.position[2])
+            mu_th = [analytic.vcz_mu(x - ref_xy[0], src.shape, float(src.size),
+                                     float(self.lam), dist)
+                     for x in screen.xs()]
+            rms = analytic.rms_diff(maps["mu"][row], mu_th)
+            fig = render.line_chart(
+                [{"xs": xs_um, "ys": maps["mu"][row],
+                  "label": "beamlets |μ|"},
+                 {"xs": xs_um, "ys": mu_th,
+                  "label": "van Cittert–Zernike analytics", "dash": "6,4"}],
+                "beamlet |μ| vs vCZ analytics [free]",
+                "x, µm", "|μ|",
+                f"RMS(beamlets − vCZ) = {rms:.3f};  {self._beamlet_sub(res)}",
+                vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
+            self._save(out_dir, "11-free-beamlet-mu.svg", fig)
+            self._beamlet_outputs(
+                out_dir, "free", res, rows,
+                extra=[f"- RMS(|μ|_beamlet − |μ|_vCZ) = {rms:.4f}"])
+        if cap is not None:
             bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
             # one pass over the records deposits the main and every extra
             # screen together (the shared prep feeds all planes)
@@ -1126,10 +1136,37 @@ class Simulation:
         return (f"RaySurface engine check (capillary wall, {wall.kind}): "
                 f"|Δt|/t = {rel:.1e}")
 
-    def _skip_cap(self, heading):
-        """Skip note for a capillary stage/scene when the config has none."""
-        _log(f"  {heading.lstrip('# ')}: skipped — no capillary in the config")
-        self.report += [heading, "- skipped: no capillary section in the config"]
+    def _default_stages(self) -> set[int]:
+        """Core stages for the scenes explicitly configured by the user."""
+        wanted = {1}
+        if self.cfg.free_source is not None:
+            wanted.update((2, 3))
+        if self.cfg.capillary is not None:
+            wanted.add(6)
+        return wanted
+
+    def _validate_stage_scenes(self, wanted: set[int]) -> None:
+        """Fail before creating output when a requested scene is absent."""
+        if 1 in wanted and (self.cfg.free_source is None
+                            and self.cfg.capillary is None):
+            raise ValueError("stage 1 requires a free or capillary scene")
+        free_stages = sorted(wanted & {2, 3, 12})
+        if free_stages and self.cfg.free_source is None:
+            raise ValueError(
+                f"stages {free_stages} require a configured free.source"
+            )
+        capillary_stages = sorted(wanted & {6, 9, 10})
+        if capillary_stages and self.cfg.capillary is None:
+            raise ValueError(
+                f"stages {capillary_stages} require a configured "
+                "capillary.source"
+            )
+        mixed_stages = sorted(wanted & {7, 8, 11})
+        if (mixed_stages and self.cfg.free_source is None
+                and self.cfg.capillary is None):
+            raise ValueError(
+                f"stages {mixed_stages} require a free or capillary scene"
+            )
 
     # ------------------------------------------------------------- trace
 
@@ -1139,6 +1176,19 @@ class Simulation:
         An incompatible or incomplete existing recording is never overwritten.
         """
         cfg = self.cfg
+        scenes = []
+        if cfg.free_source is not None:
+            scenes.append(("free", cfg.free_source, cfg.free_screen, None,
+                           self._aim_free, SceneSeed.FREE))
+        cap = cfg.capillary
+        if cap is not None:
+            scenes.append(("capillary", cap.source, cap.screen,
+                           CapillaryBundle(cap.bores, cap.z0, cap.z1),
+                           self._aim_capillary, SceneSeed.CAPILLARY))
+        if not scenes:
+            raise ValueError(
+                "trace requires a configured free.source or capillary.source"
+            )
         os.makedirs(out_dir, exist_ok=True)
         t0 = time.time()
         self.files = []
@@ -1146,13 +1196,6 @@ class Simulation:
         _log(f"CAPSYSred: trace only, output to {out_dir}"
              + (f", speedup ×{quick}" if quick > 1 else ""))
         self.rays = RaysFile(os.path.join(out_dir, rays_name), cfg, quick)
-        scenes = [("free", cfg.free_source, cfg.free_screen, None,
-                   self._aim_free, SceneSeed.FREE)]
-        cap = cfg.capillary
-        if cap is not None:
-            scenes.append(("capillary", cap.source, cap.screen,
-                           CapillaryBundle(cap.bores, cap.z0, cap.z1),
-                           self._aim_capillary, SceneSeed.CAPILLARY))
         try:
             for scene, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
                 records, rays_from = scene_stream(self, scene, src_cfg, scr_cfg,
@@ -1181,12 +1224,15 @@ class Simulation:
 
     def run(self, out_dir, stages=None, quick: int = 1, rays_src=None) -> dict:
         cfg = self.cfg
-        wanted = set(stages or ALL_STAGES)
+        wanted = self._default_stages() if stages is None else set(stages)
+        if not wanted:
+            raise ValueError("stages must not be empty")
         unknown = sorted(wanted - set(KNOWN_STAGES))
         if unknown:
             raise ValueError(f"unknown stages: {unknown}; available {list(KNOWN_STAGES)}")
         if 3 in wanted:
             wanted.add(2)
+        self._validate_stage_scenes(wanted)
         if rays_src is not None and 9 in wanted:
             raise ValueError("stage 9 validates the tracers themselves and "
                              "cannot run from a rays file")
@@ -1233,10 +1279,7 @@ class Simulation:
                 self._stage3(out_dir, res_free)
             if 6 in wanted:
                 _log("Stage 6: capillary (MC)")
-                if cfg.capillary is None:
-                    self._skip_cap("## Stage 6 — capillary (MC)")
-                else:
-                    self._stage6(out_dir, quick)
+                self._stage6(out_dir, quick)
             if 7 in wanted:
                 _log("Stage 7: alternative estimators — full W (axis C) + Wigner (axis D)")
                 self._stage7(out_dir, quick)
@@ -1247,16 +1290,10 @@ class Simulation:
                 _log("Stage 9: hit-method cross-validation — "
                      f"{', '.join(self.cfg.validate_methods)} vs "
                      f"{self.cfg.validate_reference} reference")
-                if cfg.capillary is None:
-                    self._skip_cap("## Stage 9 — hit-method cross-validation")
-                else:
-                    self._stage9(out_dir, quick)
+                self._stage9(out_dir, quick)
             if 10 in wanted:
                 _log("Stage 10: stage-6 estimator + delete-one-mode jackknife errors")
-                if cfg.capillary is None:
-                    self._skip_cap("## Stage 10 — jackknife estimator [capillary]")
-                else:
-                    self._stage10(out_dir, quick)
+                self._stage10(out_dir, quick)
             if 11 in wanted:
                 _log("Stage 11: beamlet estimator — elliptic phase spots (Γ tensor, general astigmatism)")
                 self._stage11(out_dir, quick)

@@ -7,8 +7,8 @@ merge the records into one canonical rays.jsonl.gz.
 Shard k traces its slice of the modes under seed+k into out/RUN/shard-k/
 (derived config and log sit next to the record); shards with a complete
 record are skipped on restart. The merge writes the canonical empty
-preamble, copies the free scene from shard 0 (seed+0 keeps its canonical
-stream), renumbers the capillary modes globally,
+preamble, copies an optional free scene from shard 0 (seed+0 keeps its
+canonical stream), renumbers the capillary modes globally,
 recomputes the trailers, scans the body, and publishes the structured
 metadata sidecar. Consumers then run the ORIGINAL config (with the same
 --quick) against out/RUN and reuse the file.
@@ -43,8 +43,9 @@ def _chunks(total, jobs):
 def _shard_raw(raw, budgets_q, k, cap_modes):
     shard = copy.deepcopy(raw)
     shard["seed"] = int(raw.get("seed", 12345)) + k
-    shard.setdefault("free", {}).setdefault("source", {})
-    shard["free"]["source"]["n_modes"], shard["free"]["source"]["n_rays"] = budgets_q["free"]
+    if "free" in budgets_q:
+        source = shard["free"]["source"]
+        source["n_modes"], source["n_rays"] = budgets_q["free"]
     cap = shard["capillary"]["source"]
     cap["n_modes"], cap["n_rays"] = cap_modes, budgets_q["capillary"][1]
     return shard
@@ -171,7 +172,7 @@ def main(argv=None):
         print(f"shards complete, merge skipped; --replay {recs}", flush=True)
         return
 
-    counts = {"free": 0, "capillary": 0}
+    counts = {scene: 0 for scene in merged_sidecar["budgets"]}
     gmode = -1
     # newline="\n": no \r\n translation on Windows text-mode writes
     with gzip.open(dst_path, "xt", encoding="utf-8", newline="\n") as dst:
@@ -187,7 +188,8 @@ def main(argv=None):
                         last = line[i:j]
                     dst.write(line[:i] + str(gmode) + line[j:])
                     counts["capillary"] += 1
-                elif k == 0 and '"stage": "free"' in line:
+                elif (k == 0 and "free" in counts
+                      and '"stage": "free"' in line):
                     dst.write(line)
                     counts["free"] += 1
             print(f"shard {k}: merged; modes {gmode + 1}, "
