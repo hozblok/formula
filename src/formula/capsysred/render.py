@@ -1,7 +1,7 @@
 """Pure-stdlib SVG rendering: line charts, PNG-backed heatmaps, setup schemes.
 
 No numpy/matplotlib: PNG via zlib+struct, everything else is SVG text. A figure
-is {"w", "h", "body"}; hstack/vstack compose figures, save() writes the file.
+is {"w", "h", "body"}; hstack composes figures, save() writes the file.
 """
 
 import base64
@@ -252,16 +252,6 @@ def hstack(figs, gap=12):
     return {"w": w, "h": h, "body": "".join(body)}
 
 
-def vstack(figs, gap=12):
-    w = max(f["w"] for f in figs)
-    h = sum(f["h"] for f in figs) + gap * (len(figs) - 1)
-    body, y = [], 0
-    for f in figs:
-        body.append(f'<g transform="translate(0,{y})">{f["body"]}</g>')
-        y += f["h"] + gap
-    return {"w": w, "h": h, "body": "".join(body)}
-
-
 def save(path, fig):
     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" '
            f'width="{fig["w"]}" height="{fig["h"]}" '
@@ -325,45 +315,4 @@ def scheme_setup(info):
     _arrow_h(e, xc0, xc1, ay + 84, info["len_label"])
     _arrow_h(e, xc1, xscr, ay + 84, info["d2_label"])
     _description(e, 90, ay + 140, info["description"])
-    return {"w": w, "h": h, "body": "".join(e)}
-
-
-def scheme_lloyd(info):
-    """Not-to-scale Lloyd mirror scheme: wall = the capillary surface case."""
-    w, h = 980, 480 + 18 * len(info["description"])
-    my = 250                      # mirror plane x=0 (x points up)
-    xs, xm0, xm1, xscr = 150, 340, 640, 840
-    sy = my - 70
-    e = [_text(90, 30, info["title"], 17, "start", "#111", 'font-weight="bold"'),
-         _text(880, 30, "not to scale", 11, "end", "#999"),
-         _line(90, my, 910, my, "#bbb", 1, "7,5"),
-         _text(96, my - 6, "x = 0", 10.5, "start", "#999")]
-    # mirror slab with hatching
-    e.append(_rect(xm0, my, xm1 - xm0, 34, "#cfd8dc", "#607d8b"))
-    for x in range(xm0, xm1, 22):
-        e.append(_line(x, my + 34, x + 12, my, "#90a4ae", 0.8))
-    e.append(_text((xm0 + xm1) / 2 + 90, my + 54, info["mirror_label"], 12, "middle", "#37474f"))
-    # rays: direct and reflected at the mirror midpoint
-    mx = (xm0 + xm1) / 2
-    e.append(_line(xs, sy, xscr, sy - 60, "#1f77b4", 1.6))
-    e.append(_line(xs, sy, mx, my, "#d62728", 1.6))
-    e.append(_line(mx, my, xscr, my - 78, "#d62728", 1.6))
-    e.append(_line(xs, my + 70, mx, my, "#d62728", 1, "5,4"))
-    e.append(_text(xscr - 190, sy - 48, "direct ray", 11, "start", "#1f77b4"))
-    e.append(_text(xscr - 190, my - 66, "reflected ray", 11, "start", "#d62728"))
-    # source and its mirror image
-    e.append(f'<circle cx="{xs}" cy="{sy}" r="7" fill="#e67e22"/>')
-    e.append(f'<circle cx="{xs}" cy="{my + 70}" r="7" fill="none" stroke="#e67e22" stroke-dasharray="4,3"/>')
-    e.append(_text(xs + 14, my + 74, info["image_label"], 11.5, "start", "#a06010"))
-    _description(e, xs - 55, sy - 46, info["source_label"])
-    _arrow_v(e, xs - 34, sy, my, info["height_label"], side=-1)
-    # screen
-    e.append(_rect(xscr, my - 170, 5, 200, "#444"))
-    _description(e, xscr - 30, my - 190, info["screen_label"])
-    _arrow_v(e, xscr + 26, my - 130, my, info["window_label"])
-    # distances
-    _arrow_h(e, xs, xm0, my + 124, info["d0_label"])
-    _arrow_h(e, xm0, xm1, my + 124, info["mirror_len_label"])
-    _arrow_h(e, xs, xscr, my + 162, info["total_label"])
-    _description(e, 90, my + 206, info["description"])
     return {"w": w, "h": h, "body": "".join(e)}

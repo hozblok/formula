@@ -1,6 +1,6 @@
 # Example CAPSYSred config (all fields optional — these are the built-in defaults).
 # Run:  PYTHONPATH=src python3 -m formula.capsysred capsysred.example.yaml -o out/
-# Stages 1-6 run by default; 7-12 are opt-in via --stages (see the report sections).
+# Stages 1, 2, 3 and 6 run by default; 7-12 are opt-in via --stages.
 # Lengths in meters, angles in radians, energy in keV.
 
 precision: 32          # digits of arbitrary precision (Number/Solver)
@@ -41,13 +41,6 @@ screen:                # global screen
   reference: null      # reference point P_ref, [x, y]; null — window center
 
 free: {}               # stages 2-3 (and 7, 8, 11, 12): source/screen overrides
-
-lloyd:                 # stages 4-5: single wall (Lloyd's mirror experiment)
-  height: 1.0e-5       # r0 — source height above the mirror plane x=0
-  z0: 0.0              # mirror extent in z
-  z1: 0.06
-  source: {size: 1.5e-7, n_modes: 80, n_rays: 900}
-  screen: {center: [6.0e-6, 0.0], edge_x: 1.2e-5, nx: 161}
 
 capillary:             # stage 6 and the opt-in estimator stages 7, 8, 10, 11
   bores:               # parallel bores (polycapillary — several entries), each ONE of:

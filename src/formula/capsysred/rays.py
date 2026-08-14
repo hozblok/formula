@@ -12,7 +12,7 @@ stored exclusively in the adjacent rays-fingerprint.yaml; the preamble's
 contents are never interpreted. Screen-fate
 rows add x, y, dx, dy and the refl bounce points in float64 (enough for the
 float estimators, stages 7/8/10/11); opl/sins stay full-precision strings for
-the Number path (--replay of stages 2/4/6). The file is gzipped
+the Number path (--replay of stages 2/10). The file is gzipped
 (rays.jsonl.gz).
 
 trace.lean_rays writes opl/sins as float64 json numbers and drops refl
@@ -47,7 +47,6 @@ class SceneSeed(enum.IntEnum):
     """Per-scene rng-stream tag added to cfg.seed*_SCENE_SEED_STRIDE; stages
     reusing a scene's rays pass its tag, stage 9 gets its own."""
     FREE = 2         # no-optics scene (stages 2, 7, 8, 11, 12)
-    LLOYD = 3        # Lloyd mirror (stage 4)
     CAPILLARY = 4    # capillary (stages 6, 7, 8, 10, 11)
     VALIDATE = 9     # stage 9 hit-method cross-check
 
@@ -61,7 +60,7 @@ def geometry_metadata(cfg) -> dict:
     string enums and other string-compatible values.
     """
     geo = {k: cfg.raw[k] for k in ("seed", "precision", "source", "screen",
-                                   "free", "lloyd", "capillary")}
+                                   "free", "capillary")}
     geo["capillary"] = {k: v for k, v in geo["capillary"].items()
                         if k != "screens"}
     geo["max_bounces"] = cfg.max_bounces
@@ -72,7 +71,7 @@ def budgets(cfg, quick: int) -> dict:
     """Scene -> [n_modes, n_rays], the same clamps as the stage loops."""
     def per(src):
         return list(src.budget(quick))
-    out = {"free": per(cfg.free_source), "lloyd": per(cfg.lloyd.source)}
+    out = {"free": per(cfg.free_source)}
     if cfg.capillary is not None:
         out["capillary"] = per(cfg.capillary.source)
     return out
@@ -287,6 +286,11 @@ def scan(path, expected_meta=None):
     if expected_meta is not None and not metadata_equal(meta, expected_meta):
         return meta, {}, False
     done, clean = _scan_rows(path)
+    # The sidecar defines the active scenes. This lets a structured metadata
+    # update retire a scene without rewriting a very large immutable archive;
+    # retired rows are still syntax/integrity checked by _scan_rows above.
+    done = {scene: rows for scene, rows in done.items()
+            if scene in meta["budgets"]}
     return meta, done, clean
 
 

@@ -1,9 +1,8 @@
 """Capillary X-ray coherence simulator on the Number/Solver engine (no numpy).
 
 One command runs the whole project (see plan-cap.ru.md): setup scheme, degree
-of coherence with no optics (MC + van Cittert-Zernike analytics), the Lloyd
-single-wall experiment (MC + two-path analytics, wall = capillary surface in
-the same tracer), and the capillary run — images, rays.jsonl, a timestamped report-*.md:
+of coherence with no optics (MC + van Cittert-Zernike analytics), and the
+capillary run — images, rays.jsonl, a timestamped report-*.md:
 
     python3 -m formula.capsysred config.yaml -o out/
 """

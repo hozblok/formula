@@ -7,7 +7,7 @@ import math
 import pytest
 
 from formula.capsysred import Simulation
-from formula.capsysred.analytic import lloyd_reference, vcz_mu
+from formula.capsysred.analytic import vcz_mu
 from formula.capsysred.nums import exp_i, lift, vunit
 from formula.capsysred.spectrum import spectral_lines, wavevector
 from formula.capsysred.surfaces import CapillaryBundle, Mirror, engine_hit_t
@@ -27,7 +27,6 @@ from formula.formula import Number, Solver
 TINY = {
     "source": {"n_modes": 4, "n_rays": 240, "size": 0.0, "shape": "point"},
     "screen": {"nx": 21},
-    "lloyd": {"source": {"n_modes": 3, "n_rays": 60}, "screen": {"nx": 31}},
     "capillary": {
         "source": {"n_modes": 3, "n_rays": 40},
         "screen": {"nx": 9, "ny": 9},
@@ -37,7 +36,7 @@ TINY = {
 
 def test_full_pipeline_files_and_point_source_coherence(tmp_path):
     sim = Simulation.from_dict(TINY)
-    result = sim.run(str(tmp_path), stages=[1, 2, 3, 4, 5, 6])
+    result = sim.run(str(tmp_path), stages=[1, 2, 3, 6])
     for name in result["files"]:
         assert (tmp_path / name).stat().st_size > 0
     # point source -> fully coherent: mu ~ 1 on well-lit pixels
@@ -116,15 +115,14 @@ def test_wall_hit_matches_raysurface_engine():
     assert abs(float(t_fast - t_engine)) / float(t_fast) < 1e-20
 
 
-def test_lloyd_mirror_reflection_physics():
+def test_flat_mirror_reflection_physics():
     sim = Simulation.from_dict(TINY)
-    lloyd = sim.cfg.lloyd
     p = sim.cfg.precision
-    mirror = Mirror(lloyd.z0, lloyd.z1)
-    origin = lloyd.source.position
-    slope = -float(lloyd.height) / (0.03 - float(origin[2]))
+    mirror = Mirror(lift(0.0, p), lift(0.06, p))
+    origin = (lift(1.0e-5, p), lift(0.0, p), lift(-0.08, p))
+    slope = -1.0e-5 / (0.03 - float(origin[2]))
     d = vunit((lift(slope, p), lift(0.0, p), lift(1.0, p)))
-    tr = trace_ray(origin, d, mirror, sim.cfg.lloyd.screen.z, 10)
+    tr = trace_ray(origin, d, mirror, lift(0.06, p), 10)
     assert tr.fate == "screen" and len(tr.reflections) == 1
     r = complex(sim.fresnel(tr.reflections[0][1]))
     assert abs(r) > 0.99                        # far below the critical angle
@@ -241,18 +239,18 @@ def test_rays_jsonl_records(tmp_path):
     from formula.capsysred.rays import read_metadata
 
     sim = Simulation.from_dict(TINY)
-    result = sim.run(str(tmp_path), stages=[4])
+    result = sim.run(str(tmp_path), stages=[6])
     assert "rays.jsonl.gz" in result["files"]
     assert "rays-fingerprint.yaml" in result["files"]
     sidecar = read_metadata(tmp_path / "rays.jsonl.gz")
     assert isinstance(sidecar["geometry"], dict)
-    assert sidecar["budgets"]["lloyd"] == [3, 60]
+    assert sidecar["budgets"]["capillary"] == [3, 40]
     with gzip.open(tmp_path / "rays.jsonl.gz", "rt") as fh:
         lines = [json.loads(line) for line in fh]
     assert lines[0] == {}                                # ignored preamble
-    assert lines[-1] == {"scene_end": "lloyd", "rows": len(lines) - 2}
+    assert lines[-1] == {"scene_end": "capillary", "rows": len(lines) - 2}
     rows = [row for row in lines if "stage" in row]
-    assert len(rows) == sim.results["lloyd"]["stats"]["emitted"]
+    assert len(rows) == sim.results["capillary"]["stats"]["emitted"]
     assert {"stage", "mode", "ray", "fate", "pixel", "opl", "sins"} <= set(rows[0])
     hit = next(row for row in rows if row["fate"] == "screen")
     assert {"x", "y", "dx", "dy"} <= set(hit)            # v2 float geometry
@@ -265,10 +263,10 @@ def test_rays_jsonl_records(tmp_path):
 
 def test_replay_matches_direct_mono(tmp_path):
     sim = Simulation.from_dict(TINY)
-    sim.run(str(tmp_path), stages=[4])
-    direct = sim.results["lloyd"]["maps"]
+    sim.run(str(tmp_path), stages=[6])
+    direct = sim.results["capillary"]["maps"]
     sim.replay(str(tmp_path / "rays.jsonl.gz"), str(tmp_path / "replay"))
-    rep = sim.results["lloyd"]["maps"]
+    rep = sim.results["capillary"]["maps"]
     for key in ("mu", "intensity"):
         scale = max(max(abs(v) for v in row) for row in direct[key]) or 1.0
         diff = max(abs(x - y) for ra, rb in zip(direct[key], rep[key])
@@ -281,10 +279,10 @@ def test_replay_matches_direct_gaussian(tmp_path):
                                "n_lines": 3, "n_sigma": 2.0})
     sim = Simulation.from_dict(cfg)
     assert sim.per_line
-    sim.run(str(tmp_path), stages=[4])
-    direct = sim.results["lloyd"]["maps"]
+    sim.run(str(tmp_path), stages=[6])
+    direct = sim.results["capillary"]["maps"]
     sim.replay(str(tmp_path / "rays.jsonl.gz"), str(tmp_path / "replay"))
-    rep = sim.results["lloyd"]["maps"]
+    rep = sim.results["capillary"]["maps"]
     for key in ("mu", "intensity"):
         scale = max(max(abs(v) for v in row) for row in direct[key]) or 1.0
         diff = max(abs(x - y) for ra, rb in zip(direct[key], rep[key])
@@ -310,11 +308,11 @@ def test_replay_with_other_material(tmp_path):
     # same recorded rays, glass_oe2012 wall on replay: ray bookkeeping identical,
     # reflected amplitudes differ
     sim = Simulation.from_dict(TINY)
-    sim.run(str(tmp_path), stages=[4])
-    direct = sim.results["lloyd"]
+    sim.run(str(tmp_path), stages=[6])
+    direct = sim.results["capillary"]
     other = Simulation.from_dict(dict(TINY, material="glass_oe2012"))
     other.replay(str(tmp_path / "rays.jsonl.gz"), str(tmp_path / "replay"))
-    rep = other.results["lloyd"]
+    rep = other.results["capillary"]
     assert rep["rays_from"] == "file"
     assert rep["stats"]["emitted"] == direct["stats"]["emitted"]
     assert rep["stats"]["screen"] == direct["stats"]["screen"]
@@ -521,15 +519,9 @@ def test_bore_config_validation():
             _cap_sim([good, bad])
 
 
-def test_analytic_references_sane():
+def test_vcz_reference_sane():
     assert vcz_mu(0.0, "gaussian", 2e-6, 1.55e-10, 0.14) == 1.0
     assert vcz_mu(5e-6, "gaussian", 2e-6, 1.55e-10, 0.14) < 0.1
-    ref = lloyd_reference([1e-6 * i for i in range(1, 12)], 5e-6, "point", 0.0,
-                          1e-5, -0.08, 0.0, 0.06, 0.06, 1.55e-10,
-                          7.1e-6, 1.6e-7)
-    assert max(ref["mu"]) <= 1.0 + 1e-9
-    v = ref["intensity"]
-    assert max(v) / (min(v) + 1e-12) > 5.0      # fringes present
 
 
 # --------------------------------------------- quartic solver & tolerance kit
@@ -613,6 +605,25 @@ def test_implicit_engine_method_config_wiring():
         "engine_method": "subdivision",
     }]}})
     assert geometry_metadata(cfg) != geometry_metadata(subdivision)
+
+
+def test_removed_lloyd_config_is_rejected():
+    from formula.capsysred.config import load
+
+    with pytest.raises(ValueError, match="lloyd was removed.*stages 4 and 5"):
+        load({"lloyd": {}})
+
+
+@pytest.mark.parametrize("stage", [4, 5])
+def test_removed_stages_are_rejected_by_api_and_cli(tmp_path, stage):
+    from formula.capsysred.__main__ import main
+
+    out = tmp_path / "out"
+    with pytest.raises(ValueError, match="unknown stages"):
+        Simulation.from_dict(TINY).run(str(out), stages=[stage])
+    assert not out.exists()
+    with pytest.raises(SystemExit):
+        main(["-o", str(out), "--stages", str(stage)])
 
 
 def test_validate_partial_override_keeps_defaults():
@@ -954,10 +965,10 @@ def test_trace_command_records_all_scenes(tmp_path):
     result = Simulation.from_dict(TINY).trace(str(tmp_path))
     assert result["files"] == ["rays.jsonl.gz", "rays-fingerprint.yaml"]
     meta, done, clean = scan(str(tmp_path / "rays.jsonl.gz"))
-    assert clean and set(done) == {"free", "lloyd", "capillary"}
+    assert clean and set(done) == {"free", "capillary"}
     sim = Simulation.from_dict(TINY)
-    sim.run(str(tmp_path), stages=[2, 4, 6])
-    for scene in ("free", "lloyd", "capillary"):
+    sim.run(str(tmp_path), stages=[2, 6])
+    for scene in ("free", "capillary"):
         assert sim.results[scene]["rays_from"] == "file", scene
     Simulation.from_dict(TINY).trace(str(tmp_path))
     assert scan(str(tmp_path / "rays.jsonl.gz"))[1] == done
@@ -969,8 +980,8 @@ def test_trace_then_replay(tmp_path):
     assert result["files"] == ["rays.jsonl.gz", "rays-fingerprint.yaml"]
     sim = Simulation.from_dict(TINY)
     sim.replay(str(tmp_path / "rays.jsonl.gz"), str(tmp_path / "replay"))
-    assert sim.results["lloyd"]["stats"]["emitted"] > 0
-    assert sim.results["lloyd"]["rays_from"] == "file"
+    assert sim.results["capillary"]["stats"]["emitted"] > 0
+    assert sim.results["capillary"]["rays_from"] == "file"
 
 
 def test_rays_runtime_uses_sidecar_and_ignores_first_line(tmp_path):
@@ -1002,6 +1013,27 @@ def test_rays_runtime_uses_sidecar_and_ignores_first_line(tmp_path):
     assert reader.meta == expected
     assert [(row.mode, row.ray)
             for row in reader.scene_records("free")] == [(0, 0)]
+
+
+def test_sidecar_can_retire_an_archived_scene_without_rewriting_rows(tmp_path):
+    from formula.capsysred.config import load
+    from formula.capsysred.rays import (RaysFile, scan, sidecar_metadata,
+                                        write_metadata)
+
+    path = tmp_path / "rays.jsonl.gz"
+    cfg = load(TINY)
+    with gzip.open(path, "wt", encoding="utf-8", newline="\n") as fh:
+        fh.write("{}\n")
+        fh.write(json.dumps({
+            "stage": "retired", "mode": 0, "ray": 0,
+            "fate": "absorbed", "pixel": None, "opl": "0", "sins": [],
+        }) + "\n")
+        fh.write(json.dumps({"scene_end": "retired", "rows": 1}) + "\n")
+    write_metadata(path, sidecar_metadata(cfg, 1))
+
+    _, done, clean = scan(str(path))
+    assert clean and done == {}
+    RaysFile(str(path), cfg, 1).close()
 
 
 def test_rays_reader_refuses_partial_archive(tmp_path):
@@ -1262,6 +1294,8 @@ def test_rays_sidecar_metadata_is_structured(tmp_path):
     assert metadata_equal(read_metadata(rays_path), sidecar)
     assert geometry["max_bounces"] == cfg.max_bounces
     assert geometry["screen"] == cfg.raw["screen"]
+    assert "lloyd" not in geometry
+    assert "lloyd" not in sidecar["budgets"]
     assert "screens" not in geometry["capillary"]
 
     with_extra_screen = load({"capillary": {"screens": [{"z": 0.052}]}})
@@ -1886,13 +1920,13 @@ def test_universal_replay_default_stages_and_guards(tmp_path):
     sim = Simulation.from_dict(TINY)
     sim.replay(path, str(tmp_path / "rep"))     # -> stage 6 by default
     assert sim.results["capillary"]["rays_from"] == "file"
-    assert "lloyd" not in sim.results
+    assert "free" not in sim.results
     with pytest.raises(ValueError, match="stage 9"):
         Simulation.from_dict(TINY).replay(path, str(tmp_path / "r9"),
                                           stages=[9])
-    with pytest.raises(ValueError, match="scene 'lloyd'"):
-        Simulation.from_dict(TINY).replay(path, str(tmp_path / "r4"),
-                                          stages=[4])
+    with pytest.raises(ValueError, match="scene 'free'"):
+        Simulation.from_dict(TINY).replay(path, str(tmp_path / "r2"),
+                                          stages=[2])
     with pytest.raises(ValueError, match="budgets"):
         Simulation.from_dict(TINY).replay(path, str(tmp_path / "rq"),
                                           stages=[6], quick=2)
@@ -2608,7 +2642,7 @@ def test_file_records_scene_name_prefix_no_cross_pickup(tmp_path):
     full = list(_file_records(path, "capillary"))
     assert [(r.ray, r.fate, r.pixel) for r in full] == [(1, "screen", 5)]
     assert full[0].refl == ((0.0, 0.0, 0.01),)
-    assert list(_file_records(path, "lloyd")) == []
+    assert list(_file_records(path, "missing")) == []
 
 
 # ---------------------------------------- tracer audit xfails (2026-07-31)

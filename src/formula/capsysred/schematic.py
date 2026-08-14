@@ -16,7 +16,7 @@ from xml.sax.saxutils import escape
 
 from .nums import lift, vunit
 from .source import Source
-from .surfaces import CapillaryBundle, ImplicitWall, Mirror, entrance_disk
+from .surfaces import CapillaryBundle, ImplicitWall, entrance_disk
 from .trace import trace_ray
 from .units import m_to_mm, m_to_nm, m_to_um, rad_to_mrad
 N_RAYS = 10
@@ -193,21 +193,18 @@ def build_geometry(cfg, mode: str, bores=None):
     bores overrides cfg.capillary.bores (typed twin of an implicit config)."""
     p = cfg.precision
     G = {"mode": mode, "cfg": cfg}
-    if mode == "lloyd":
-        o = cfg.lloyd
-        src, scr = o.source, o.screen
-        G.update(z0=float(o.z0), z1=float(o.z1), height=float(o.height),
-                 optic=Mirror(o.z0, o.z1), bores=None)
-    elif mode == "free":
+    if mode == "free":
         src, scr = cfg.free_source, cfg.free_screen
         G.update(z0=None, z1=None, optic=None, bores=None)
-    else:
+    elif mode == "capillary":
         o = cfg.capillary
         src, scr = o.source, o.screen
         bores = bores or o.bores
         G.update(z0=float(o.z0), z1=float(o.z1),
                  optic=CapillaryBundle(bores, o.z0, o.z1),
                  bores=bores)
+    else:
+        raise ValueError(f"unsupported schematic mode: {mode!r}")
     G["src"] = {"z": float(src.position[2]), "x": float(src.position[0]),
                 "size": float(src.size), "shape": src.shape}
     G["scr"] = {"z": float(scr.z), "cx": float(scr.center[0]),
@@ -234,12 +231,12 @@ def trace_rays(G, p, n=N_RAYS, seed=7):
                 [entrance_disk(b, z0f) for b in G["bores"]]
         mb = int(G["cfg"].max_bounces)
     else:
-        mb = int(G["cfg"].max_bounces) if mode == "lloyd" else 4
+        mb = 4
     # rays fly on to the farthest screen so every plane is crossed on the scheme
     screen_z = lift(max([scr["z"]] + [s["z"] for s in G["scr_extra"]]), p)
     grid_source = Source(G["cfg_src"], rng) if src["shape"] == "grid" else None
     rays = []
-    for i in range(n):
+    for _ in range(n):
         if grid_source is not None:
             # The schematic is an x-z projection: sample the real weighted
             # lattice, then project its two-dimensional origin onto x.
@@ -255,22 +252,6 @@ def trace_rays(G, p, n=N_RAYS, seed=7):
             cx, cy, a = disks[rng.randrange(len(disks))]
             tx = cx + a * (2 * rng.random() - 1)
             d = vunit((lift(tx - xo, p), lift(0.0, p), lift(G["z0"] - sz, p)))
-        elif mode == "lloyd":
-            # alternate: direct rays into the window / reflected rays into the
-            # window via the virtual source, mirror hit kept within [z0, z1]
-            D = scr["z"] - sz
-            x_lo, x_hi = scr["cx"] - scr["hx"], scr["cx"] + scr["hx"]
-            if i % 2 == 0:
-                tx = x_lo + (x_hi - x_lo) * rng.random()
-                m = (tx - xo) / D
-            else:
-                lo = max((x_lo + xo) / D, xo / (G["z1"] - sz))
-                hi = min((x_hi + xo) / D, xo / (G["z0"] - sz)) if G["z0"] > sz \
-                    else (x_hi + xo) / D
-                if lo >= hi:
-                    lo, hi = (x_lo + xo) / D, (x_hi + xo) / D
-                m = -(lo + (hi - lo) * rng.random())
-            d = vunit((lift(m, p), lift(0.0, p), lift(1.0, p)))
         else:
             tx = scr["cx"] + scr["hx"] * (2 * rng.random() - 1)
             d = vunit((lift(tx - xo, p), lift(0.0, p), lift(scr["z"] - sz, p)))
@@ -311,8 +292,6 @@ def side_view(G):
           scr["cx"] - scr["hx"], scr["cx"] + scr["hx"]]
     for s in G["scr_extra"]:
         xs += [s["cx"] - s["hx"], s["cx"] + s["hx"]]
-    if mode == "lloyd":
-        xs += [0.0, G["height"], -G["height"]]
     if mode == "capillary":
         for b in G["bores"]:
             cy = float(b["center"][1])
@@ -327,7 +306,7 @@ def side_view(G):
     W = 1080
     top, bot = 62, 352
     box = (96, top, W - 210, bot)
-    H = bot + (104 if mode == "lloyd" else 74)
+    H = bot + 74
     v = View(zr, xr, box)
     e = [RECT(box[0], box[1], box[2] - box[0], box[3] - box[1], "white", "#ccc")]
     ax_y = v.py(0.0)
@@ -356,15 +335,6 @@ def draw_optic(G, v, box):
     mode = G["mode"]
     e = []
     if mode == "free":
-        return e
-    if mode == "lloyd":
-        z0, z1 = G["z0"], G["z1"]
-        y0 = v.py(0.0)
-        e.append(L(v.px(z0), y0, v.px(z1), y0, "#37474f", 2.4))
-        for xx in range(int(v.px(z0)), int(v.px(z1)), 13):     # glass hatching below
-            e.append(L(xx, y0, xx + 9, min(box[3], y0 + 11), "#90a4ae", 0.7))
-        e.append(T((v.px(z0) + v.px(z1)) / 2, y0 + 26, "mirror (glass x<0)",
-                  11, "middle", "#37474f"))
         return e
     # capillary walls
     zs = [G["z0"] + (G["z1"] - G["z0"]) * k / 60 for k in range(61)]
@@ -419,12 +389,6 @@ def draw_source(G, v):
     if not point:
         tag = "σ = " if src["shape"] == "gaussian" else "r = "
         e.append(T(px + 9, py + 8, tag + eng(sz), 10.5, "start", "#186a18"))
-    if G["mode"] == "lloyd":                       # mirror image behind x=0
-        vx, vy = v.pt(z, -G["height"])
-        e.append(CIRC(vx, vy, 4.5, "none", "#186a18", 1.2))
-        e.append(f'<circle cx="{vx:.1f}" cy="{vy:.1f}" r="4.5" fill="none" '
-                 f'stroke="#186a18" stroke-dasharray="3,2"/>')
-        e.append(T(vx + 9, vy + 4, "virtual source", 10.5, "start", "#7a9a7a"))
     return e
 
 
@@ -461,17 +425,13 @@ def dimensions(G, v, box):
         else:
             e.extend(arrow_h(v.px(z0), v.px(z1), yb, label))
 
-    if mode in ("capillary", "lloyd"):
+    if mode == "capillary":
         zspan(src["z"], G["z0"], "d₀ = " + eng(G["z0"] - src["z"]))
         zspan(G["z0"], G["z1"], "L = " + eng(G["z1"] - G["z0"]))
         zspan(G["z1"], scr["z"], "d₂ = " + eng(scr["z"] - G["z1"]))
-    if mode == "lloyd":
-        e += arrow_h(v.px(src["z"]), v.px(scr["z"]), yb + 30, "D = " + eng(scr["z"] - src["z"]))
     if mode == "free":
         e += arrow_h(v.px(src["z"]), v.px(scr["z"]), yb, "D = " + eng(scr["z"] - src["z"]))
 
-    if mode == "lloyd":                            # source height above the mirror plane
-        e += arrow_v(v.px(src["z"]) + 12, v.py(0.0), v.py(G["height"]), "r₀ = " + eng(G["height"]))
     if mode == "capillary":                        # bore diameter, right margin
         b0 = G["bores"][0]
         r0, r1 = r_of_z(b0, G["z0"]), r_of_z(b0, G["z1"])
@@ -507,9 +467,9 @@ def scale_bars(G, v, box):
 def legend(G, box):
     items = [("source", GREEN), ("screen", BLUE)]
     if G["optic"] is not None:
-        items.append(("mirror" if G["mode"] == "lloyd" else "wall", WALL))
+        items.append(("wall", WALL))
     items.append(("rays", hsv(3, 10)))
-    y = box[3] + (92 if G["mode"] == "lloyd" else 60)      # below the z-dimensions
+    y = box[3] + 60                              # below the z-dimensions
     x = box[0]
     e = []
     for lab, col in items:

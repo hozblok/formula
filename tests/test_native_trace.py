@@ -641,7 +641,6 @@ TINY = {
     "precision": 26,
     "source": {"n_modes": 2, "n_rays": 60, "size": 3e-7, "shape": "gaussian"},
     "screen": {"nx": 9, "ny": 1},
-    "lloyd": {"source": {"n_modes": 2, "n_rays": 40}, "screen": {"nx": 11}},
     "capillary": {
         "bores": [{"center": [0.0, 0.0], "radius": 6.0e-6},
                   {"center": [1.5e-5, 0.0], "radius": 6.0e-6,
@@ -655,10 +654,10 @@ TINY = {
 def test_simulation_native_equals_python(tmp_path, monkeypatch):
     from formula.capsysred import Simulation
     sim_native = Simulation.from_dict(TINY)
-    sim_native.run(str(tmp_path / "native"), stages=[2, 4, 6])
+    sim_native.run(str(tmp_path / "native"), stages=[2, 6])
     monkeypatch.setenv("CAPSYSRED_PYTHON_TRACE", "1")
     sim_python = Simulation.from_dict(TINY)
-    sim_python.run(str(tmp_path / "python"), stages=[2, 4, 6])
+    sim_python.run(str(tmp_path / "python"), stages=[2, 6])
     p = TINY["precision"]
     def ray_rows(sub):  # skip the ignored preamble and scene trailers
         with gzip.open(tmp_path / sub / "rays.jsonl.gz", "rt") as fh:
@@ -673,7 +672,7 @@ def test_simulation_native_equals_python(tmp_path, monkeypatch):
         assert len(rn["sins"]) == len(rp["sins"])
         for sn, sp in zip(rn["sins"], rp["sins"]):
             assert_close(Number(sp, p), Number(sn, p), TRACE_TOL)
-    for stage in ("free", "lloyd", "capillary"):
+    for stage in ("free", "capillary"):
         rn, rp = sim_native.results[stage], sim_python.results[stage]
         assert rn["stats"] == rp["stats"]
         for name in ("mu", "intensity", "density"):

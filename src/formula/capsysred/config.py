@@ -54,13 +54,6 @@ DEFAULTS = {
         "reference": None,            # [x, y] of the reference point; None -> window center
     },
     "free": {"source": {}, "screen": {}},
-    "lloyd": {
-        "height": 1.0e-5,             # source axis above the mirror plane x=0
-        "z0": 0.0,                    # mirror extent along z
-        "z1": 0.06,
-        "source": {"size": 1.5e-7, "n_modes": 80, "n_rays": 900},
-        "screen": {"center": [6.0e-6, 0.0], "edge_x": 1.2e-5, "nx": 161},
-    },
     # 6 um bore, source sigma 0.3 um a centimetre before it.
     "capillary": {
         "bores": [{"center": [0.0, 0.0], "radius": 6.0e-6}],
@@ -75,7 +68,7 @@ DEFAULTS = {
     # the per-line amplitudes are known.
     # lean_rays: drop refl and write opl/sins as float64 in the rays file —
     # stage 10/rescreen read floats anyway (bit-identical); the file cannot
-    # feed the Number-path replay (stages 2/4/6) or the beamlet stage.
+    # feed the Number-path replay (stages 2/6) or the beamlet stage.
     "trace": {"max_bounces": 200, "amplitude_min": 1.0e-6,
               "rays_jsonl": True, "lean_rays": False},
     # stage 1: rays traced onto the to-scale schematic (01a-scheme-traced.svg)
@@ -141,18 +134,6 @@ class ScreenCfg:
         self.ny = int(raw["ny"])
         ref = raw.get("reference")
         self.reference = tuple(float(c) for c in ref) if ref else None
-
-
-class LloydCfg:
-    def __init__(self, raw: dict, base_source: dict, base_screen: dict, p: int):
-        self.height = Number(str(raw["height"]), p)
-        self.z0 = Number(str(raw["z0"]), p)
-        self.z1 = Number(str(raw["z1"]), p)
-        src = _merge(base_source, raw.get("source", {}))
-        if "position" not in (raw.get("source") or {}):
-            src["position"] = [raw["height"], 0.0, src["position"][2]]
-        self.source = SourceCfg(src, p)
-        self.screen = ScreenCfg(_merge(base_screen, raw.get("screen", {})), p)
 
 
 def _bore(raw: dict, p: int, idx: int) -> dict:
@@ -308,6 +289,8 @@ class CapillaryCfg:
 class Config:
     def __init__(self, raw: dict, yaml_file: str | None = None):
         raw = raw or {}
+        if "lloyd" in raw:
+            raise ValueError("lloyd was removed together with stages 4 and 5")
         trace = raw.get("trace")
         if isinstance(trace, dict) and "engine_method" in trace:
             raise ValueError(
@@ -332,7 +315,6 @@ class Config:
         free = cfg["free"]
         self.free_source = SourceCfg(_merge(cfg["source"], free.get("source", {})), p)
         self.free_screen = ScreenCfg(_merge(cfg["screen"], free.get("screen", {})), p)
-        self.lloyd = LloydCfg(cfg["lloyd"], cfg["source"], cfg["screen"], p)
         # capillary exists only when the config mentions it; empty config = full demo
         self.capillary = (CapillaryCfg(cfg["capillary"], cfg["source"], cfg["screen"], p)
                           if not raw or "capillary" in raw else None)

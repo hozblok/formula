@@ -1,6 +1,6 @@
 """The one multi-bounce tracer behind every stage.
 
-Free space, Lloyd wall and capillaries run through the same loop — the optic
+Free space and capillaries run through the same loop — the optic
 only supplies wall events. Pure geometry: exact Number positions, grazing
 sines per bounce, optical path length from the source point. Energy enters
 later — Fresnel amplitudes are computed from the recorded sines.

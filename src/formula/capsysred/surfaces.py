@@ -1,7 +1,7 @@
 """Reflecting optics as event generators over exact Number geometry.
 
-One event protocol for every optic (the Lloyd wall is literally a capillary-wall
-surface): ("reflect", t, point, normal) | ("pass", t) | ("absorb", t) |
+One event protocol for every optic (the flat mirror uses the same wall-event
+contract): ("reflect", t, point, normal) | ("pass", t) | ("absorb", t) |
 ("exit", None). The reference wall is ImplicitWall: an arbitrary implicit
 F(x,y,z)=0 traced by the RaySurface root-finding engine at full precision —
 exact but slow. The EXPERIMENTAL closed-form fast paths (cylinder/revolution
@@ -34,7 +34,7 @@ class Mirror:
         p = z0.precision
         self._normal = (Number("1", p), Number("0", p), Number("0", p))
 
-    expr_um = "x"  # surface F=0 for the engine cross-check (scale-free)
+    expr_um = "x"  # surface F=0 for engine cross-checks (scale-free)
 
     def next_event(self, O, d):
         if float(O[0]) <= 0.0 or float(d[0]) >= 0.0:

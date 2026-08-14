@@ -7,8 +7,8 @@ merge the records into one canonical rays.jsonl.gz.
 Shard k traces its slice of the modes under seed+k into out/RUN/shard-k/
 (derived config and log sit next to the record); shards with a complete
 record are skipped on restart. The merge writes the canonical empty
-preamble, copies the free and lloyd scenes from shard 0 (seed+0 keeps
-their canonical streams), renumbers the capillary modes globally,
+preamble, copies the free scene from shard 0 (seed+0 keeps its canonical
+stream), renumbers the capillary modes globally,
 recomputes the trailers, scans the body, and publishes the structured
 metadata sidecar. Consumers then run the ORIGINAL config (with the same
 --quick) against out/RUN and reuse the file.
@@ -45,8 +45,6 @@ def _shard_raw(raw, budgets_q, k, cap_modes):
     shard["seed"] = int(raw.get("seed", 12345)) + k
     shard.setdefault("free", {}).setdefault("source", {})
     shard["free"]["source"]["n_modes"], shard["free"]["source"]["n_rays"] = budgets_q["free"]
-    shard.setdefault("lloyd", {}).setdefault("source", {})
-    shard["lloyd"]["source"]["n_modes"], shard["lloyd"]["source"]["n_rays"] = budgets_q["lloyd"]
     cap = shard["capillary"]["source"]
     cap["n_modes"], cap["n_rays"] = cap_modes, budgets_q["capillary"][1]
     return shard
@@ -173,7 +171,7 @@ def main(argv=None):
         print(f"shards complete, merge skipped; --replay {recs}", flush=True)
         return
 
-    counts = {"free": 0, "lloyd": 0, "capillary": 0}
+    counts = {"free": 0, "capillary": 0}
     gmode = -1
     # newline="\n": no \r\n translation on Windows text-mode writes
     with gzip.open(dst_path, "xt", encoding="utf-8", newline="\n") as dst:
@@ -192,9 +190,6 @@ def main(argv=None):
                 elif k == 0 and '"stage": "free"' in line:
                     dst.write(line)
                     counts["free"] += 1
-                elif k == 0 and '"stage": "lloyd"' in line:
-                    dst.write(line)
-                    counts["lloyd"] += 1
             print(f"shard {k}: merged; modes {gmode + 1}, "
                   f"capillary rows {counts['capillary']:,}", flush=True)
         for scene, n in counts.items():

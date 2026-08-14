@@ -159,12 +159,12 @@ def _axis_dist2(wall, x, y, z):
 
 def bounce_lenses(optic, pts, sins):
     """(phi, 1/f_t, 1/f_s) per bounce from the wall shape at each hit point
-    (float triples). Mirror and unsupported kinds come out flat — the
-    beamlet falls back to the scalar-q (flat wall) model there."""
+    (float triples). Optics without a wall collection and unsupported kinds
+    use the scalar-q flat-wall fallback."""
     if not pts:
         return []
     walls = getattr(optic, "walls", None)
-    if walls is None:                      # Mirror: flat wall
+    if walls is None:                      # Generic flat-wall fallback
         return [(0.0, 0.0, 0.0)] * len(pts)
     out = []
     for (x, y, z), s in zip(pts, sins):

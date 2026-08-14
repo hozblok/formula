@@ -1,11 +1,10 @@
-"""Stages 1-6 of the capillary/coherence project on the Number engine.
+"""CAPSYSred stages on the Number engine.
 
-One shared Monte-Carlo driver runs stages 4 (Lloyd wall) and 6 (capillaries);
-stage 2 (free space) pushes the same ray stream through the stage-10 jackknife
-estimator (optic = None), stage 12 keeps its pairwise Number ancestor.
-Stages 3 and 5 are the deterministic references. Every optical stage cross-checks its analytic
-Number hit against the RaySurface root-finding engine and the Fresnel factor
-against xray.reflect_amplitude.
+Stage 2 (free space) pushes the same ray stream through the stage-10 jackknife
+estimator (optic = None), stage 12 keeps its pairwise Number ancestor, and
+stage 6 traces capillaries. Stage 3 is the deterministic free-space reference.
+Every optical stage cross-checks its analytic Number hit against the RaySurface
+root-finding engine and the Fresnel factor against xray.reflect_amplitude.
 """
 
 import json
@@ -30,7 +29,7 @@ from .progress import Progress
 from .screen import ScreenGrid
 from .source import aim_disk_direction, slope_direction
 from .spectrum import spectral_lines, wavelength_m
-from .surfaces import CapillaryBundle, Mirror, engine_hit_t, entrance_disk
+from .surfaces import CapillaryBundle, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
 from .rays import (METADATA_NAME, MultiRaysReader, RaysFile, RaysReader,
@@ -39,7 +38,7 @@ from .types import HitMethod, RayRecord
 from .units import (
     m_to_angstrom, m_to_mm, m_to_um, rad_to_mrad, rad_to_urad)
 
-ALL_STAGES = (1, 2, 3, 4, 5, 6)
+ALL_STAGES = (1, 2, 3, 6)
 KNOWN_STAGES = ALL_STAGES + (7, 8, 9, 10, 11, 12)  # 7 (alt), 8 (sketch), 9 (hit methods), 10 (jackknife), 11 (beamlets), 12 (pairwise free, ex-stage 2) — opt-in
 
 
@@ -204,20 +203,6 @@ class Simulation:
             return slope_direction(rng, mx, my, p)
         return aim
 
-    def _aim_lloyd(self, source, screen, rng):
-        p = self.cfg.precision
-        z0f = float(self.cfg.lloyd.z0)
-        zscr = float(screen.z)
-
-        def aim(origin):
-            oxf, oyf, ozf = (float(c) for c in origin)
-            dist = zscr - ozf
-            m_lo = 1.05 * (0.0 - oxf) / (z0f - ozf)   # a bit past the edge graze
-            m_hi = (screen.x0f + screen.exf - oxf) / dist
-            my = ((screen.y0f - oyf) / dist, (screen.y0f + screen.eyf - oyf) / dist)
-            return slope_direction(rng, (m_lo, m_hi), my, p)
-        return aim
-
     def _aim_capillary(self, source, screen, rng):
         cap = self.cfg.capillary
         z0f = float(cap.z0)
@@ -272,11 +257,9 @@ class Simulation:
                 f"Wall material: {cfg.material.name};  δ = {self.delta_f:.3e},  β = {self.beta_f:.3e},  θ_c = {rad_to_mrad(self.theta_c):.2f} mrad.",
                 f"Source — a set of mutually incoherent point modes (van Cittert–Zernike method from a Monte-Carlo ensemble).",
                 f"Engine precision: {cfg.precision} digits (Number/Solver, no float64 in the physics path);  seed = {cfg.seed}.",
-                "Pipeline: |μ| on screen without optics (MC) + van Cittert–Zernike analytics;  Lloyd's mirror scheme",
-                "(wall = capillary surface in the same tracer): |μ|, intensity, scheme + Lloyd analytics;",
+                "Pipeline: |μ| on screen without optics (MC) + van Cittert–Zernike analytics;",
                 "|μ| and intensity behind the capillary.",
                 f"Free-field scene: source {_um(cfg.free_source.size)} at z = {_mm(cfg.free_source.position[2])}, screen z = {_mm(cfg.free_screen.z)}.",
-                f"Lloyd: r₀ = {_um(cfg.lloyd.height)}, mirror z ∈ [{_mm(cfg.lloyd.z0)}, {_mm(cfg.lloyd.z1)}], source {_um(cfg.lloyd.source.size)}.",
             ],
         }
         if cap.screens:
@@ -292,7 +275,7 @@ class Simulation:
     def _stage2(self, out_dir, quick):
         """Free space through the stage-10 jackknife estimator: the same
         algorithm and outputs, optic = None."""
-        res = run_jack_stage(self, "2/6 without optics (MC)", "free",
+        res = run_jack_stage(self, "2 without optics (MC)", "free",
                              self.cfg.free_source, self.cfg.free_screen,
                              None, self._aim_free, SceneSeed.FREE, quick)
         self.results["free"] = res
@@ -338,167 +321,6 @@ class Simulation:
         self.report += [
             "## Stage 3 — van Cittert–Zernike analytics",
             f"- RMS(|μ|_MC − |μ|_vCZ) = {rms:.4f}" + (f", ξ = {m_to_um(xi):.3f} µm" if src.shape == "gaussian" else ""),
-        ]
-
-    # ------------------------------------------------------------- stage 4+5
-
-    def _stage4(self, out_dir, quick):
-        cfg = self.cfg
-        lloyd = cfg.lloyd
-        mirror = Mirror(lloyd.z0, lloyd.z1)
-        check = self._lloyd_engine_check(mirror)
-        res = self._mc_stage("lloyd", "4/6 Lloyd (MC)", lloyd.source, lloyd.screen,
-                             mirror, self._aim_lloyd, SceneSeed.LLOYD, quick)
-        self.results["lloyd"] = res
-        screen, maps = res["screen"], res["maps"]
-        xs_um = [m_to_um(x) for x in screen.xs()]
-        row = screen.ny // 2
-        ref_xy = screen.pixel_xy(maps["ref_pixel"])
-        d_total = float(screen.z) - float(lloyd.source.position[2])
-        dx_fringe = float(self.lam) * d_total / (2.0 * float(lloyd.height))
-        x_ov = (float(lloyd.height) * d_total
-                / (float(lloyd.z0) - float(lloyd.source.position[2]))
-                - float(lloyd.height))
-        st = res["stats"]
-        sub = (f"{res['n_modes']} modes × {res['n_rays']} rays; reflected rays "
-               f"{st['reflected_rays']:,}; x_ref = {m_to_um(ref_xy[0]):.2f} µm")
-        vl = [(m_to_um(ref_xy[0]), "ref"), (m_to_um(x_ov), "overlap edge")]
-        limit = 1.0 / math.sqrt(res["n_modes"])
-        mu_fig = render.line_chart(
-            [{"xs": xs_um, "ys": maps["mu"][row], "label": "MC |μ(x, x_ref)|"},
-             {"xs": xs_um, "ys": [limit] * len(xs_um), "color": "#999",
-              "dash": "2,4", "width": 1.0,
-              "label": f"statistical limit 1/√N modes ≈ {limit:.2f}"}],
-            "Lloyd's mirror scheme: degree of coherence (MC, wall = capillary surface)",
-            "x on screen, µm", "|μ|", sub, vlines=vl, w=680)
-        self._save(out_dir, "04-lloyd-mc-coherence.svg", mu_fig)
-
-        imax = max(maps["intensity"][row]) or 1.0
-        dmax = max(max(r) for r in maps["density"]) or 1.0
-        int_fig = render.line_chart(
-            [{"xs": xs_um, "ys": [v / imax for v in maps["intensity"][row]],
-              "label": "intensity (MC)"},
-             {"xs": xs_um, "ys": [v / dmax for v in maps["density"][row]],
-              "label": "ray density", "dash": "4,3"}],
-            "Lloyd's mirror scheme: intensity on screen (MC)",
-            "x on screen, µm", "I, arb. units",
-            f"fringes Δx = λD/(2r₀) = {m_to_um(dx_fringe):.3f} µm; {sub}",
-            vlines=vl, w=680)
-        self._save(out_dir, "04a-lloyd-mc-intensity.svg", int_fig)
-
-        src = lloyd.source
-        info = {
-            "title": "Lloyd's mirror scheme: wall instead of the capillary",
-            "mirror_label": (f"mirror (glass, x<0), z ∈ [{_mm(lloyd.z0)}, {_mm(lloyd.z1)}] — "
-                             "the same wall surface as the capillary"),
-            "image_label": "virtual source (−r₀)",
-            "source_label": ["source", f"Gaussian σ = {_um(src.size)}",
-                             f"z = {_mm(src.position[2])}"],
-            "height_label": f"r₀ = {_um(lloyd.height)}",
-            "screen_label": ["screen", f"{screen.nx} px"],
-            "window_label": f"window {_um(lloyd.screen.edge_x)}",
-            "d0_label": f"d₀ = {_mm(float(lloyd.z0) - float(src.position[2]))}",
-            "mirror_len_label": f"L = {_mm(float(lloyd.z1) - float(lloyd.z0))}",
-            "total_label": f"D = {_mm(d_total)}",
-            "description": [
-                f"The direct and reflected rays interfere: Δx = λD/(2r₀) = {m_to_um(dx_fringe):.3f} µm,",
-                f"overlap zone x ∈ [0, {m_to_um(x_ov):.2f} µm];  grazing angles "
-                f"{rad_to_mrad(float(lloyd.height) / (float(lloyd.z1) - float(src.position[2]))):.3f}…"
-                f"{rad_to_mrad(float(lloyd.height) / (float(lloyd.z0) - float(src.position[2]))):.3f} mrad ≪ θ_c = {rad_to_mrad(self.theta_c):.2f} mrad.",
-                "arg r ≈ π below θ_c: a dark fringe at the mirror edge. Reflection is computed by the same tracer",
-                "as the capillary (wall = capillary surface), with the complex Fresnel r.",
-                check,
-            ],
-        }
-        self._save(out_dir, "04b-lloyd-scheme.svg", render.scheme_lloyd(info))
-        bh = ", ".join(f"{k}×: {v:,}" for k, v in sorted(st["bounce_hist"].items()))
-        self.report += [
-            "## Stage 4 — Lloyd's mirror scheme (MC)",
-            f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen {st['screen']:,}; absorbed {st['absorbed']:,}",
-            f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
-            f"- reflections per ray: {bh or 'none'}",
-            f"- Δx (formula) = {m_to_um(dx_fringe):.3f} µm; overlap zone up to {m_to_um(x_ov):.2f} µm",
-            f"- {check}",
-            f"- time: {res['seconds']:.1f} s",
-        ]
-        return res
-
-    def _lloyd_engine_check(self, mirror) -> str:
-        lloyd = self.cfg.lloyd
-        p = self.cfg.precision
-        origin = lloyd.source.position
-        z_mid = (float(lloyd.z0) + float(lloyd.z1)) / 2.0
-        slope = -float(lloyd.height) / (z_mid - float(origin[2]))
-        d = vunit((lift(slope, p), lift(0.0, p), lift(1.0, p)))
-        event = mirror.next_event(origin, d)
-        t_fast = event[1]
-        t_engine = engine_hit_t(mirror.expr_um, origin, d,
-                                1.2 * (float(lloyd.z1) - float(origin[2])),
-                                method=HitMethod.SUBDIVISION)
-        if t_engine is None:
-            return "RaySurface engine check (mirror): no root found"
-        rel = abs(float(t_fast - t_engine)) / float(t_fast)
-        return (f"RaySurface engine check (mirror): |Δt|/t = {rel:.1e} "
-                f"(analytics vs root finding)")
-
-    def _stage5(self, out_dir, res_lloyd):
-        cfg = self.cfg
-        lloyd = cfg.lloyd
-        screen, maps = res_lloyd["screen"], res_lloyd["maps"]
-        row = screen.ny // 2
-        xs = screen.xs()
-        xs_um = [m_to_um(x) for x in xs]
-        ref_xy = screen.pixel_xy(maps["ref_pixel"])
-        src = res_lloyd["src_cfg"]
-        ref = analytic.lloyd_reference(
-            xs, ref_xy[0], src.shape, float(src.size), float(lloyd.height),
-            float(src.position[2]), float(lloyd.z0), float(lloyd.z1),
-            float(screen.z), float(self.lam), self.delta_f, self.beta_f)
-        mu_mc = maps["mu"][row]
-        rms_mu = analytic.rms_diff(mu_mc, ref["mu"])
-        i_mc = maps["intensity"][row]
-        sm = [i_mc[max(0, i - 1)] * 0.25 + i_mc[i] * 0.5
-              + i_mc[min(len(i_mc) - 1, i + 1)] * 0.25 for i in range(len(i_mc))]
-        dx_mc = analytic.fringe_spacing(xs, sm)
-        imax_mc = max(i_mc) or 1.0
-        imax_th = max(ref["intensity"]) or 1.0
-        x_ov = ref["x_overlap"]
-
-        vis_win = [i for i, x in enumerate(xs) if 0.15 * x_ov < x < 0.85 * x_ov]
-
-        def vis(curve):
-            vals = [curve[i] for i in vis_win]
-            return ((max(vals) - min(vals)) / (max(vals) + min(vals))
-                    if vals and max(vals) + min(vals) > 0 else 0.0)
-
-        corr = analytic.pearson(i_mc, ref["intensity"])
-        sub_i = (f"Δx: analytics {m_to_um(ref['fringe_dx']):.3f} µm"
-                 + (f", MC {m_to_um(dx_mc):.3f} µm" if dx_mc else "")
-                 + f";  I correlation: {corr:.3f};  visibility: MC {vis(sm):.2f}, "
-                 f"analytics {vis(ref['intensity']):.2f}")
-        int_fig = render.line_chart(
-            [{"xs": xs_um, "ys": [v / imax_mc for v in i_mc], "label": "MC"},
-             {"xs": xs_um, "ys": [v / imax_th for v in ref["intensity"]],
-              "label": "analytics (2 paths, virtual source)", "dash": "6,4"}],
-            "Lloyd: intensity — analytics vs MC",
-            "x on screen, µm", "I, arb. units", sub_i, w=760)
-        mu_fig = render.line_chart(
-            [{"xs": xs_um, "ys": mu_mc, "label": "MC"},
-             {"xs": xs_um, "ys": ref["mu"], "label": "analytics", "dash": "6,4"}],
-            "Lloyd: degree of coherence — analytics vs MC",
-            "x on screen, µm", "|μ|",
-            f"RMS(MC − analytics) = {rms_mu:.3f};  x_ref = {m_to_um(ref_xy[0]):.2f} µm",
-            vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
-        self._save(out_dir, "05-lloyd-analytic-vs-mc.svg",
-                   render.vstack([int_fig, mu_fig]))
-        self.report += [
-            "## Stage 5 — Lloyd analytics vs MC",
-            f"- Δx: formula λD/(2r₀) = {m_to_um(ref['fringe_dx']):.4f} µm"
-            + (f", from MC peaks = {m_to_um(dx_mc):.4f} µm" if dx_mc else " (no MC peaks found)"),
-            f"- Pearson correlation I_MC ↔ I_analytics: {corr:.3f}",
-            f"- fringe visibility (0.15…0.85 of the overlap zone): MC {vis(sm):.3f}, analytics {vis(ref['intensity']):.3f} "
-            "(MC minima are filled by shot noise; grows with the ray count)",
-            f"- RMS(|μ|_MC − |μ|_analytics) = {rms_mu:.4f}",
         ]
 
     # ------------------------------------------------------------- stage 6
@@ -1325,10 +1147,7 @@ class Simulation:
              + (f", speedup ×{quick}" if quick > 1 else ""))
         self.rays = RaysFile(os.path.join(out_dir, rays_name), cfg, quick)
         scenes = [("free", cfg.free_source, cfg.free_screen, None,
-                   self._aim_free, SceneSeed.FREE),
-                  ("lloyd", cfg.lloyd.source, cfg.lloyd.screen,
-                   Mirror(cfg.lloyd.z0, cfg.lloyd.z1), self._aim_lloyd,
-                   SceneSeed.LLOYD)]
+                   self._aim_free, SceneSeed.FREE)]
         cap = cfg.capillary
         if cap is not None:
             scenes.append(("capillary", cap.source, cap.screen,
@@ -1363,10 +1182,11 @@ class Simulation:
     def run(self, out_dir, stages=None, quick: int = 1, rays_src=None) -> dict:
         cfg = self.cfg
         wanted = set(stages or ALL_STAGES)
+        unknown = sorted(wanted - set(KNOWN_STAGES))
+        if unknown:
+            raise ValueError(f"unknown stages: {unknown}; available {list(KNOWN_STAGES)}")
         if 3 in wanted:
             wanted.add(2)
-        if 5 in wanted:
-            wanted.add(4)
         if rays_src is not None and 9 in wanted:
             raise ValueError("stage 9 validates the tracers themselves and "
                              "cannot run from a rays file")
@@ -1398,28 +1218,21 @@ class Simulation:
             self.rays = rays_src
         else:
             self.rays = (RaysFile(os.path.join(out_dir, rays_name), cfg, quick)
-                         if cfg.rays_jsonl and wanted & {2, 4, 6, 7, 8, 10, 11, 12}
+                         if cfg.rays_jsonl and wanted & {2, 6, 7, 8, 10, 11, 12}
                          else None)
         try:
             if 1 in wanted:
-                _log("Stage 1/6: simulation layout")
+                _log("Stage 1: simulation layout")
                 self._stage1(out_dir)
             res_free = None
             if 2 in wanted:
-                _log("Stage 2/6: |μ| without optics (jackknife estimator, same tracer)")
+                _log("Stage 2: |μ| without optics (jackknife estimator, same tracer)")
                 res_free = self._stage2(out_dir, quick)
             if 3 in wanted:
-                _log("Stage 3/6: van Cittert–Zernike analytics")
+                _log("Stage 3: van Cittert–Zernike analytics")
                 self._stage3(out_dir, res_free)
-            res_lloyd = None
-            if 4 in wanted:
-                _log("Stage 4/6: Lloyd's mirror scheme — wall instead of the capillary (MC)")
-                res_lloyd = self._stage4(out_dir, quick)
-            if 5 in wanted:
-                _log("Stage 5/6: Lloyd analytics vs MC")
-                self._stage5(out_dir, res_lloyd)
             if 6 in wanted:
-                _log("Stage 6/6: capillary (MC)")
+                _log("Stage 6: capillary (MC)")
                 if cfg.capillary is None:
                     self._skip_cap("## Stage 6 — capillary (MC)")
                 else:
@@ -1476,9 +1289,9 @@ class Simulation:
                quick: int = 1) -> dict:
         """Run stages from a recorded rays file — no tracing at all.
 
-        Any streaming stage replays (2-8, 10-12, plus analytics 3/5; stage 9
-        validates live tracers and is refused); default = the Number stages
-        of the scenes present (free -> 2, lloyd -> 4, capillary -> 6). The
+        Any streaming stage replays (2, 6-8 and 10-12, plus analytics 3; stage
+        9 validates live tracers and is refused); default = the Number stages
+        of the scenes present (free -> 2, capillary -> 6). The
         spectrum and the material may differ from the recording — rays are
         energy-free; the geometry, seed, budgets and --quick must match it.
         """
@@ -1487,7 +1300,7 @@ class Simulation:
         reader = (RaysReader(paths[0]) if len(paths) == 1
                   else MultiRaysReader(paths))
         if stages is None:
-            per_scene = {"free": 2, "lloyd": 4, "capillary": 6}
+            per_scene = {"free": 2, "capillary": 6}
             stages = sorted(per_scene[sc] for sc in reader.done
                             if sc in per_scene)
             if not stages:

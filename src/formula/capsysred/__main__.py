@@ -1,4 +1,4 @@
-"""CLI: python3 -m formula.capsysred [config.yaml] -o out/ [--stages 4,5] [--quick N]
+"""CLI: python3 -m formula.capsysred [config.yaml] -o out/ [--stages 1,10] [--quick N]
 [--trace] [--replay rays.jsonl.gz]"""
 
 import argparse
@@ -10,7 +10,7 @@ from .simulation import KNOWN_STAGES, Simulation
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="python3 -m formula.capsysred",
-        description="Source → (Lloyd mirror wall | capillaries) → screen → |μ| and I: "
+        description="Source → capillaries → screen → |μ| and I: "
                     "images, rays.jsonl.gz and a timestamped report-*.md into the output directory.")
     parser.add_argument("config", nargs="?", default=None,
                         help="YAML with parameters (built-in defaults when omitted)")
@@ -18,7 +18,7 @@ def main(argv=None) -> int:
                         help="output directory (default ./capsysred-out)")
     parser.add_argument("--stages", default=None,
                         help="which stages to run, e.g. 1,2,3 (default all; "
-                             "3 requires 2, 5 requires 4 — added automatically)")
+                             "3 requires 2, which is added automatically)")
     parser.add_argument("--quick", type=int, default=1, metavar="N",
                         help="divisor for the mode/ray counts for a quick estimate")
     parser.add_argument("--trace", action="store_true",
