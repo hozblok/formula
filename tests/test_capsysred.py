@@ -592,7 +592,7 @@ def test_on_wall_point_counts_inside():
 def test_implicit_engine_method_config_wiring():
     # Each implicit bore owns its root finder; typed walls reject that option.
     from formula.capsysred.config import load
-    from formula.capsysred.rays import fingerprint
+    from formula.capsysred.rays import geometry_metadata
     assert "engine_method" not in load({}).raw["trace"]
     with pytest.raises(ValueError, match="trace.engine_method was removed"):
         load({"trace": {"engine_method": "subdivision"}})
@@ -611,7 +611,7 @@ def test_implicit_engine_method_config_wiring():
         "surface": "x^2+y^2-36", "aim_radius": 6.0e-6,
         "engine_method": "subdivision",
     }]}})
-    assert fingerprint(cfg) != fingerprint(subdivision)
+    assert geometry_metadata(cfg) != geometry_metadata(subdivision)
 
 
 def test_validate_partial_override_keeps_defaults():
@@ -927,13 +927,13 @@ def test_rays_file_reused_across_runs(tmp_path):
     assert clean and set(done) == {"capillary", "free"}
 
 
-def test_rays_file_reuses_migrated_archive_with_legacy_preamble(tmp_path):
+def test_rays_file_ignores_existing_preamble(tmp_path):
     path = tmp_path / "rays.jsonl.gz"
     Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
     with gzip.open(path, "rt", encoding="utf-8") as fh:
         lines = list(fh)
-    # A migrated archive keeps its historical first line.  Even a row-shaped
-    # preamble is non-semantic once rays-fingerprint.yaml exists.
+    # Even a row-shaped preamble is non-semantic once rays-fingerprint.yaml
+    # exists.
     lines[0] = json.dumps({
         "stage": "capillary", "mode": 999, "ray": 999, "fate": "lost",
         "pixel": None, "opl": "999", "sins": [],
@@ -1229,13 +1229,12 @@ def test_rays_metadata_sidecar_helpers(tmp_path):
 
 def test_rays_sidecar_metadata_is_structured(tmp_path):
     from formula.capsysred.config import load
-    from formula.capsysred.rays import (fingerprint, geometry_metadata,
-                                        metadata_equal, read_metadata,
+    from formula.capsysred.rays import (geometry_metadata, metadata_equal,
+                                        read_metadata,
                                         sidecar_metadata, write_metadata)
 
     cfg = load({})
     geometry = geometry_metadata(cfg)
-    assert fingerprint(cfg) == "2e143c50b32fbec4"
     sidecar = sidecar_metadata(cfg, 1)
     assert sidecar["geometry"] == geometry
     rays_path = tmp_path / "rays.jsonl.gz"

@@ -8,8 +8,8 @@ fate — amplitude_min is physics and every consumer applies its own.
 
 Layout: one ignored preamble line (new files write {}), one row per ray, and
 a {"scene_end": scene, "rows": n} trailer per completed scene. Metadata is
-stored exclusively in the adjacent rays-fingerprint.yaml; legacy archives
-may retain their old metadata object in the ignored preamble. Screen-fate
+stored exclusively in the adjacent rays-fingerprint.yaml; the preamble's
+contents are never interpreted. Screen-fate
 rows add x, y, dx, dy and the refl bounce points in float64 (enough for the
 float estimators, stages 7/8/10/11); opl/sins stay full-precision strings for
 the Number path (--replay of stages 2/4/6). The file is gzipped
@@ -23,7 +23,6 @@ the Number path and the beamlet stage refuse such a file (require_full_rows).
 
 import enum
 import gzip
-import hashlib
 import json
 import math
 import os
@@ -69,12 +68,6 @@ def geometry_metadata(cfg) -> dict:
     return json.loads(json.dumps(geo, sort_keys=True, default=str))
 
 
-def fingerprint(cfg) -> str:
-    """Compact digest of :func:`geometry_metadata` for legacy headers."""
-    raw = json.dumps(geometry_metadata(cfg), sort_keys=True).encode()
-    return hashlib.sha256(raw).hexdigest()[:16]
-
-
 def budgets(cfg, quick: int) -> dict:
     """Scene -> [n_modes, n_rays], the same clamps as the stage loops."""
     def per(src):
@@ -83,15 +76,6 @@ def budgets(cfg, quick: int) -> dict:
     if cfg.capillary is not None:
         out["capillary"] = per(cfg.capillary.source)
     return out
-
-
-def metadata(cfg, quick: int) -> dict:
-    """Historical first-line metadata retained for the migration tool."""
-    meta = {"format": FORMAT, "geometry": fingerprint(cfg),
-            "budgets": budgets(cfg, quick)}
-    if cfg.lean_rays:
-        meta["lean"] = True
-    return meta
 
 
 def sidecar_metadata(cfg, quick: int) -> dict:
@@ -197,10 +181,9 @@ def _lines(path):
 def _body(path):
     """Return ``(has_preamble, lines)`` after skipping exactly one line.
 
-    The preamble's contents are intentionally never parsed: old recordings
-    retain their metadata object there, while new recordings write ``{}``.
-    Only a complete line counts as a preamble, because :func:`_lines` omits an
-    unterminated live tail.
+    The preamble's contents are intentionally never parsed. New recordings
+    write ``{}``. Only a complete line counts as a preamble, because
+    :func:`_lines` omits an unterminated live tail.
     """
     lines = _lines(path)
     try:
