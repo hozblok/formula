@@ -73,14 +73,11 @@ DEFAULTS = {
     # input). Records/multi-line runs trace with the amplitude_min kill off
     # (E0-truncation would bias other energies) and apply the threshold after
     # the per-line amplitudes are known.
-    # engine_method: RaySurface root finder for analytic-wall hit cross-checks;
-    # `surface:` bores own their engine_method individually.
     # lean_rays: drop refl and write opl/sins as float64 in the rays file —
     # stage 10/rescreen read floats anyway (bit-identical); the file cannot
     # feed the Number-path replay (stages 2/4/6) or the beamlet stage.
     "trace": {"max_bounces": 200, "amplitude_min": 1.0e-6,
-              "rays_jsonl": True, "lean_rays": False,
-              "engine_method": "subdivision"},
+              "rays_jsonl": True, "lean_rays": False},
     # stage 1: rays traced onto the to-scale schematic (01a-scheme-traced.svg)
     "schematic": {"n_rays": 10},
     # stage 8: number of sketch probe vectors (r ~ n99 modes, see methods §8)
@@ -310,7 +307,14 @@ class CapillaryCfg:
 
 class Config:
     def __init__(self, raw: dict, yaml_file: str | None = None):
-        cfg = _merge(DEFAULTS, raw or {})
+        raw = raw or {}
+        trace = raw.get("trace")
+        if isinstance(trace, dict) and "engine_method" in trace:
+            raise ValueError(
+                "trace.engine_method was removed; set engine_method on each "
+                "`surface:` bore"
+            )
+        cfg = _merge(DEFAULTS, raw)
         self.raw = cfg
         self.yaml_file = yaml_file
         p = int(cfg["precision"])
@@ -347,8 +351,6 @@ class Config:
         self.amplitude_min = float(cfg["trace"]["amplitude_min"])
         self.rays_jsonl = bool(cfg["trace"]["rays_jsonl"])
         self.lean_rays = bool(cfg["trace"]["lean_rays"])
-        self.engine_method = HitMethod(str(cfg["trace"]["engine_method"]))
-        get_backend(self.engine_method)  # fail fast on an unknown method name
         if ("per_line_fresnel" in (raw or {}).get("spectrum", {})
                 and cfg["spectrum"]["mode"] == "monochromatic"):
             raise ValueError("spectrum: per_line_fresnel has no effect in "

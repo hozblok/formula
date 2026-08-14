@@ -79,8 +79,6 @@ trace:
                           # recording/multi-E the threshold applies after tracing
                           # (a ray is killed only if dead at every line)
   rays_jsonl: true        # full-precision ray records (rays.jsonl.gz), replay input
-  engine_method: subdivision  # analytic-vs-RaySurface hit cross-check method;
-                              # each `surface:` bore sets its own method
 
 # schematic:             # stage 1: to-scale traced scheme (01a-scheme-traced.svg)
 #   n_rays: 10           # rays drawn on it

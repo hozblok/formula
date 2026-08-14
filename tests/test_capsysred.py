@@ -577,6 +577,10 @@ def test_on_wall_point_counts_inside():
 def test_implicit_engine_method_config_wiring():
     # Each implicit bore owns its root finder; typed walls reject that option.
     from formula.capsysred.config import load
+    from formula.capsysred.rays import fingerprint
+    assert "engine_method" not in load({}).raw["trace"]
+    with pytest.raises(ValueError, match="trace.engine_method was removed"):
+        load({"trace": {"engine_method": "subdivision"}})
     for unsupported in ("newton", "auto"):
         with pytest.raises(ValueError):
             load({"capillary": {"bores": [{"surface": "x^2+y^2-36",
@@ -588,6 +592,11 @@ def test_implicit_engine_method_config_wiring():
     bundle = CapillaryBundle(cfg.capillary.bores, cfg.capillary.z0,
                              cfg.capillary.z1)
     assert bundle.walls[0].method == "sturm"
+    subdivision = load({"capillary": {"bores": [{
+        "surface": "x^2+y^2-36", "aim_radius": 6.0e-6,
+        "engine_method": "subdivision",
+    }]}})
+    assert fingerprint(cfg) != fingerprint(subdivision)
 
 
 def test_validate_partial_override_keeps_defaults():

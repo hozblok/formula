@@ -56,7 +56,6 @@ def fingerprint(cfg) -> str:
     geo["capillary"] = {k: v for k, v in geo["capillary"].items()
                         if k != "screens"}
     geo["max_bounces"] = cfg.max_bounces
-    geo["engine_method"] = cfg.engine_method
     raw = json.dumps(geo, sort_keys=True, default=str).encode()
     return hashlib.sha256(raw).hexdigest()[:16]
 
