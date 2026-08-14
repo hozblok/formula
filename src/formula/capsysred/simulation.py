@@ -33,8 +33,8 @@ from .spectrum import spectral_lines, wavelength_m
 from .surfaces import CapillaryBundle, Mirror, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
-from .rays import (MultiRaysReader, RaysFile, RaysReader, SceneSeed, require_full_rows,
-                   scene_stream)
+from .rays import (METADATA_NAME, MultiRaysReader, RaysFile, RaysReader,
+                   SceneSeed, require_full_rows, scene_stream)
 from .types import HitMethod, RayRecord
 from .units import (
     m_to_angstrom, m_to_mm, m_to_um, rad_to_mrad, rad_to_urad)
@@ -1351,6 +1351,9 @@ class Simulation:
             self.rays.close()
         self.files.append(rays_name)
         _log(f"  → {rays_name}")
+        if self.rays.has_sidecar:
+            self.files.append(METADATA_NAME)
+            _log(f"  → {METADATA_NAME}")
         _log(f"Done in {time.time() - t0:.0f} s.")
         return {"out_dir": out_dir, "files": list(self.files)}
 
@@ -1454,6 +1457,9 @@ class Simulation:
         if self.rays is not None and rays_src is None:
             self.files.append(rays_name)
             _log(f"  → {rays_name}")
+            if self.rays.has_sidecar:
+                self.files.append(METADATA_NAME)
+                _log(f"  → {METADATA_NAME}")
         report_name = _report_name(out_dir, "report")
         self.report += ["", "## Files", ""]
         self.report += [f"- {name}" for name in self.files + [report_name]]

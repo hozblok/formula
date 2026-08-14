@@ -131,11 +131,19 @@ def write_metadata(rays_path: str | os.PathLike, meta: dict,
     if not isinstance(meta, dict):
         raise TypeError("rays metadata must be a mapping")
     path = metadata_path(rays_path)
-    if os.path.exists(path) and not force:
-        if metadata_equal(read_metadata(rays_path), meta):
-            return path
-        raise ValueError(f"{path}: metadata already exists and differs; "
-                         "refusing to overwrite it (pass --force to replace it)")
+    if os.path.exists(path):
+        try:
+            existing = read_metadata(rays_path)
+        except (OSError, ValueError) as exc:
+            if not force:
+                raise ValueError(f"{path}: existing metadata is unreadable; "
+                                 "remove it manually before retrying") from exc
+        else:
+            if metadata_equal(existing, meta):
+                return path
+        if not force:
+            raise ValueError(f"{path}: metadata already exists and differs; "
+                             "remove it manually before retrying")
 
     directory = os.path.dirname(os.path.abspath(path))
     os.makedirs(directory, exist_ok=True)
@@ -289,6 +297,7 @@ class RaysFile:
 
     def __init__(self, path, cfg, quick, force: bool = False):
         self.path = path
+        self.sidecar_path = metadata_path(path)
         self.lean = bool(getattr(cfg, "lean_rays", False))
         self.meta = metadata(cfg, quick)
         self.done = {}
@@ -314,9 +323,12 @@ class RaysFile:
                     "does not match this run; refusing to overwrite it "
                     "(pass --force to replace it)"
                 )
+        if mode in {"w", "x"} or os.path.exists(self.sidecar_path):
+            write_metadata(path, sidecar_metadata(cfg, quick), force=force)
         self._fh = _open(path, mode)
         if mode in {"w", "x"}:
             self._fh.write(json.dumps(self.meta) + "\n")
+        self.has_sidecar = os.path.exists(self.sidecar_path)
         self._scene, self._count = None, 0
 
     def write(self, scene: str, rec: RayRecord):

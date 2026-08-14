@@ -238,12 +238,19 @@ def test_line_amplitudes_energy_dependence():
 
 
 def test_rays_jsonl_records(tmp_path):
+    from formula.capsysred.rays import read_metadata
+
     sim = Simulation.from_dict(TINY)
     result = sim.run(str(tmp_path), stages=[4])
     assert "rays.jsonl.gz" in result["files"]
+    assert "rays-fingerprint.yaml" in result["files"]
+    sidecar = read_metadata(tmp_path / "rays.jsonl.gz")
+    assert isinstance(sidecar["geometry"], dict)
+    assert sidecar["budgets"]["lloyd"] == [3, 60]
     with gzip.open(tmp_path / "rays.jsonl.gz", "rt") as fh:
         lines = [json.loads(line) for line in fh]
     assert lines[0]["format"] == 2                       # v2 meta line
+    assert isinstance(lines[0]["geometry"], str)         # legacy until reader switch
     assert lines[-1] == {"scene_end": "lloyd", "rows": len(lines) - 2}
     rows = [row for row in lines if "stage" in row]
     assert len(rows) == sim.results["lloyd"]["stats"]["emitted"]
@@ -925,7 +932,7 @@ def test_trace_command_records_all_scenes(tmp_path):
     # dir consumes the file, a second trace skips everything
     from formula.capsysred.rays import scan
     result = Simulation.from_dict(TINY).trace(str(tmp_path))
-    assert result["files"] == ["rays.jsonl.gz"]
+    assert result["files"] == ["rays.jsonl.gz", "rays-fingerprint.yaml"]
     meta, done, clean = scan(str(tmp_path / "rays.jsonl.gz"))
     assert clean and set(done) == {"free", "lloyd", "capillary"}
     sim = Simulation.from_dict(TINY)
@@ -939,7 +946,7 @@ def test_trace_command_records_all_scenes(tmp_path):
 def test_trace_then_replay(tmp_path):
     # trace records rays.jsonl.gz; replay reads it back with no tracing
     result = Simulation.from_dict(TINY).trace(str(tmp_path))
-    assert result["files"] == ["rays.jsonl.gz"]
+    assert result["files"] == ["rays.jsonl.gz", "rays-fingerprint.yaml"]
     sim = Simulation.from_dict(TINY)
     sim.replay(str(tmp_path / "rays.jsonl.gz"), str(tmp_path / "replay"))
     assert sim.results["lloyd"]["stats"]["emitted"] > 0
@@ -947,19 +954,25 @@ def test_trace_then_replay(tmp_path):
 
 
 def test_rays_file_geometry_change_requires_force(tmp_path):
+    from formula.capsysred.rays import read_metadata
+
     # A stale record must survive a mismatched run byte-for-byte.  Replacing
     # it is destructive and therefore requires an explicit --force decision.
     Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
     path = tmp_path / "rays.jsonl.gz"
     original = path.read_bytes()
+    sidecar_path = tmp_path / "rays-fingerprint.yaml"
+    original_sidecar = sidecar_path.read_bytes()
     changed = dict(TINY, capillary=dict(TINY["capillary"], z1=0.06))
     with pytest.raises(ValueError, match="--force"):
         Simulation.from_dict(changed).run(str(tmp_path), stages=[11])
     assert path.read_bytes() == original
+    assert sidecar_path.read_bytes() == original_sidecar
 
     sim = Simulation.from_dict(changed)
     sim.run(str(tmp_path), stages=[11], force=True)
     assert sim.results["beamlet:capillary"]["rays_from"] == "trace"
+    assert read_metadata(path)["geometry"]["capillary"]["z1"] == 0.06
 
 
 def test_unreadable_rays_file_requires_force(tmp_path):
@@ -973,6 +986,64 @@ def test_unreadable_rays_file_requires_force(tmp_path):
     sim = Simulation.from_dict(TINY)
     sim.run(str(tmp_path), stages=[6], force=True)
     assert sim.results["capillary"]["rays_from"] == "trace"
+    assert (tmp_path / "rays-fingerprint.yaml").exists()
+
+
+def test_conflicting_sidecar_does_not_create_rays_file(tmp_path):
+    from formula.capsysred.rays import write_metadata
+
+    path = tmp_path / "rays.jsonl.gz"
+    write_metadata(path, {"format": 2, "geometry": {"stale": True},
+                          "budgets": {}})
+    with pytest.raises(ValueError, match="remove it manually"):
+        Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+    assert not path.exists()
+
+
+def test_compatible_rays_rejects_conflicting_sidecar(tmp_path):
+    from formula.capsysred.rays import (read_metadata, sidecar_metadata,
+                                        write_metadata)
+
+    path = tmp_path / "rays.jsonl.gz"
+    Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+    wrong = read_metadata(path)
+    wrong["geometry"]["seed"] += 1
+    write_metadata(path, wrong, force=True)
+
+    with pytest.raises(ValueError, match="remove it manually"):
+        Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+
+    sim = Simulation.from_dict(TINY)
+    sim.run(str(tmp_path), stages=[6], force=True)
+    assert sim.results["capillary"]["rays_from"] == "file"
+    assert read_metadata(path) == sidecar_metadata(sim.cfg, 1)
+
+
+def test_shard_merge_writes_sidecar_then_removes_shard_pairs(tmp_path):
+    import copy
+    import yaml
+    from formula.capsysred.config import load
+    from formula.capsysred.rays import (metadata_equal, read_metadata,
+                                        sidecar_metadata)
+    from formula.capsysred.shard_trace import main as shard_main
+
+    raw = copy.deepcopy(TINY)
+    raw["capillary"]["source"]["n_modes"] = 4
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    out = tmp_path / "out"
+    with pytest.raises(SystemExit) as finished:
+        shard_main([str(config_path), "-o", str(out), "--jobs", "2"])
+    assert finished.value.code == 0
+
+    merged = out / "rays.jsonl.gz"
+    assert metadata_equal(read_metadata(merged), sidecar_metadata(load(raw), 1))
+    with gzip.open(merged, "rt", encoding="utf-8") as fh:
+        assert isinstance(json.loads(next(fh))["geometry"], str)
+    for k in range(2):
+        shard_dir = out / f"shard-{k}"
+        assert not (shard_dir / "rays.jsonl.gz").exists()
+        assert not (shard_dir / "rays-fingerprint.yaml").exists()
 
 
 def test_rays_metadata_sidecar_helpers(tmp_path):
@@ -988,7 +1059,7 @@ def test_rays_metadata_sidecar_helpers(tmp_path):
     write_metadata(rays_path, first)  # Writing identical metadata is idempotent.
 
     second = dict(first, geometry="def")
-    with pytest.raises(ValueError, match="--force"):
+    with pytest.raises(ValueError, match="remove it manually"):
         write_metadata(rays_path, second)
     assert read_metadata(rays_path) == first
     write_metadata(rays_path, second, force=True)

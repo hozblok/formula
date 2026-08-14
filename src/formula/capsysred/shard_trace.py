@@ -94,7 +94,20 @@ def main(argv=None):
     cfg = Config(raw)
     if cfg.capillary is None:
         sys.exit("config has no capillary scene")
-    budgets_q = rays.budgets(cfg, max(1, args.quick))
+    quick = max(1, args.quick)
+    budgets_q = rays.budgets(cfg, quick)
+    merged_sidecar = rays.sidecar_metadata(cfg, quick)
+    dst_sidecar = rays.metadata_path(dst_path)
+    if (not args.no_merge and not args.force
+            and os.path.exists(dst_sidecar)):
+        try:
+            existing = rays.read_metadata(dst_path)
+        except (OSError, ValueError) as exc:
+            ap.error(f"{dst_sidecar} is unreadable; remove it manually "
+                     f"before retrying ({exc})")
+        if not rays.metadata_equal(existing, merged_sidecar):
+            ap.error(f"{dst_sidecar} does not match this run; remove it "
+                     "manually before retrying")
     chunks = _chunks(budgets_q["capillary"][0], args.jobs)
     os.makedirs(args.out, exist_ok=True)
 
@@ -146,7 +159,7 @@ def main(argv=None):
         print(f"shards complete, merge skipped; --replay {recs}", flush=True)
         return
 
-    meta = rays.metadata(cfg, max(1, args.quick))
+    meta = rays.metadata(cfg, quick)
     counts = {"free": 0, "lloyd": 0, "capillary": 0}
     gmode = -1
     # newline="\n": no \r\n translation on Windows text-mode writes
@@ -173,14 +186,23 @@ def main(argv=None):
                         counts["lloyd"] += 1
             print(f"shard {k}: merged; modes {gmode + 1}, "
                   f"capillary rows {counts['capillary']:,}", flush=True)
-            if not args.keep_shards:
-                os.remove(rec)
         for scene, n in counts.items():
             if n:
                 dst.write(json.dumps({"scene_end": scene, "rows": n}) + "\n")
 
     _, done, clean = rays.scan(dst_path)
     ok = clean and gmode + 1 == budgets_q["capillary"][0]
+    if ok:
+        rays.write_metadata(dst_path,
+                            merged_sidecar,
+                            force=args.force)
+        if not args.keep_shards:
+            for k in range(args.jobs):
+                rec = os.path.join(args.out, f"shard-{k}", "rays.jsonl.gz")
+                os.remove(rec)
+                sidecar = rays.metadata_path(rec)
+                if os.path.exists(sidecar):
+                    os.remove(sidecar)
     print(f"merged {dst_path}: modes {gmode + 1}/{budgets_q['capillary'][0]}, "
           f"scenes {done}, scan {'clean' if clean else 'DIRTY'}")
     sys.exit(0 if ok else 1)
