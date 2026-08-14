@@ -104,7 +104,16 @@ def main(argv=None):
     quick = max(1, args.quick)
     budgets_q = rays.budgets(cfg, quick)
     merged_sidecar = rays.sidecar_metadata(cfg, quick)
-    chunks = _chunks(budgets_q["capillary"][0], args.jobs)
+    cap_modes = budgets_q["capillary"][0]
+    if args.jobs < 1:
+        ap.error("--jobs must be at least 1")
+    max_jobs = cap_modes // 2
+    if args.jobs > max_jobs:
+        ap.error(
+            f"--jobs {args.jobs} would create shards with fewer than 2 "
+            f"modes; use at most {max_jobs} for {cap_modes} capillary modes"
+        )
+    chunks = _chunks(cap_modes, args.jobs)
     os.makedirs(args.out, exist_ok=True)
 
     shards = []

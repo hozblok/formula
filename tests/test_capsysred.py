@@ -1203,6 +1203,25 @@ def test_shard_rejects_complete_but_thinned_recording(tmp_path):
     assert not _capillary_done(str(path), expected)
 
 
+@pytest.mark.parametrize("jobs", [0, 2])
+def test_shard_rejects_subtwo_mode_chunks_before_creating_output(
+        tmp_path, jobs):
+    import yaml
+    from formula.capsysred.shard_trace import main as shard_main
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(TINY), encoding="utf-8")
+    out = tmp_path / "out"
+
+    # TINY has three capillary modes: only one shard can retain the sampling
+    # invariant of at least two modes; zero jobs is invalid independently.
+    with pytest.raises(SystemExit) as exc:
+        shard_main([str(config_path), "-o", str(out), "--jobs", str(jobs)])
+
+    assert exc.value.code == 2
+    assert not out.exists()
+
+
 def test_rays_metadata_sidecar_helpers(tmp_path):
     from formula.capsysred.rays import (metadata_equal, metadata_path,
                                         read_metadata, write_metadata)
