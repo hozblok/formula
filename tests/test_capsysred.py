@@ -976,8 +976,8 @@ def test_unreadable_rays_file_requires_force(tmp_path):
 
 
 def test_rays_metadata_sidecar_helpers(tmp_path):
-    from formula.capsysred.rays import (metadata_path, read_metadata,
-                                        write_metadata)
+    from formula.capsysred.rays import (metadata_equal, metadata_path,
+                                        read_metadata, write_metadata)
 
     rays_path = tmp_path / "rays.jsonl.gz"
     first = {"format": 2, "geometry": "abc", "budgets": {"free": [2, 3]}}
@@ -994,6 +994,38 @@ def test_rays_metadata_sidecar_helpers(tmp_path):
     write_metadata(rays_path, second, force=True)
     assert read_metadata(rays_path) == second
     assert not list(tmp_path.glob(".*.tmp"))
+    assert not metadata_equal({"value": 1}, {"value": 1.0})
+    assert not metadata_equal({"value": True}, {"value": 1})
+
+
+def test_rays_sidecar_metadata_is_structured_and_header_stays_legacy(tmp_path):
+    from formula.capsysred.config import load
+    from formula.capsysred.rays import (fingerprint, geometry_metadata,
+                                        metadata, metadata_equal, read_metadata,
+                                        sidecar_metadata, write_metadata)
+
+    cfg = load({})
+    geometry = geometry_metadata(cfg)
+    assert fingerprint(cfg) == "2e143c50b32fbec4"
+    assert isinstance(metadata(cfg, 1)["geometry"], str)
+    sidecar = sidecar_metadata(cfg, 1)
+    assert sidecar["geometry"] == geometry
+    rays_path = tmp_path / "rays.jsonl.gz"
+    write_metadata(rays_path, sidecar)
+    assert metadata_equal(read_metadata(rays_path), sidecar)
+    assert geometry["max_bounces"] == cfg.max_bounces
+    assert geometry["screen"] == cfg.raw["screen"]
+    assert "screens" not in geometry["capillary"]
+
+    with_extra_screen = load({"capillary": {"screens": [{"z": 0.052}]}})
+    assert geometry_metadata(with_extra_screen) == geometry
+    physics_change = load({"material": "glass_oe2012",
+                           "trace": {"lean_rays": True}})
+    assert geometry_metadata(physics_change) == geometry
+    assert sidecar_metadata(physics_change, 1)["lean"] is True
+
+    geometry["screen"]["z"] = -1
+    assert cfg.raw["screen"]["z"] != -1  # The sidecar owns a detached copy.
 
 
 def test_rays_file_reused_within_run(tmp_path):

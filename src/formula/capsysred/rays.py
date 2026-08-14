@@ -51,16 +51,25 @@ class SceneSeed(enum.IntEnum):
     VALIDATE = 9     # stage 9 hit-method cross-check
 
 
-def fingerprint(cfg) -> str:
-    """Geometry-only config fingerprint: spectrum/material changes keep the
-    file valid (rays are energy-free), geometry/seed changes invalidate it.
-    Extra capillary screens are re-binned post-trace, so they don't count."""
+def geometry_metadata(cfg) -> dict:
+    """YAML-native inputs that completely identify a traced ray stream.
+
+    Spectrum and material are absent because rays are energy-free.  Extra
+    capillary screens are re-binned post-trace and therefore do not count.
+    The JSON round-trip detaches the result from ``cfg.raw`` and normalizes
+    string enums and other string-compatible values.
+    """
     geo = {k: cfg.raw[k] for k in ("seed", "precision", "source", "screen",
                                    "free", "lloyd", "capillary")}
     geo["capillary"] = {k: v for k, v in geo["capillary"].items()
                         if k != "screens"}
     geo["max_bounces"] = cfg.max_bounces
-    raw = json.dumps(geo, sort_keys=True, default=str).encode()
+    return json.loads(json.dumps(geo, sort_keys=True, default=str))
+
+
+def fingerprint(cfg) -> str:
+    """Compact digest of :func:`geometry_metadata` for legacy headers."""
+    raw = json.dumps(geometry_metadata(cfg), sort_keys=True).encode()
     return hashlib.sha256(raw).hexdigest()[:16]
 
 
@@ -75,12 +84,27 @@ def budgets(cfg, quick: int) -> dict:
 
 
 def metadata(cfg, quick: int) -> dict:
-    """Canonical metadata describing a rays recording."""
+    """Legacy first-line metadata describing a rays recording."""
     meta = {"format": FORMAT, "geometry": fingerprint(cfg),
             "budgets": budgets(cfg, quick)}
     if cfg.lean_rays:
         meta["lean"] = True
     return meta
+
+
+def sidecar_metadata(cfg, quick: int) -> dict:
+    """Structured metadata for ``rays-fingerprint.yaml``."""
+    meta = metadata(cfg, quick)
+    meta["geometry"] = geometry_metadata(cfg)
+    return meta
+
+
+def metadata_equal(left: dict, right: dict) -> bool:
+    """Strict, order-independent comparison preserving JSON scalar types."""
+    def canonical(value):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"),
+                          ensure_ascii=False, default=str)
+    return canonical(left) == canonical(right)
 
 
 def metadata_path(rays_path: str | os.PathLike) -> str:
@@ -108,7 +132,7 @@ def write_metadata(rays_path: str | os.PathLike, meta: dict,
         raise TypeError("rays metadata must be a mapping")
     path = metadata_path(rays_path)
     if os.path.exists(path) and not force:
-        if read_metadata(rays_path) == meta:
+        if metadata_equal(read_metadata(rays_path), meta):
             return path
         raise ValueError(f"{path}: metadata already exists and differs; "
                          "refusing to overwrite it (pass --force to replace it)")
