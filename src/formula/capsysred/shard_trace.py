@@ -63,14 +63,6 @@ def _capillary_done(path, expected_meta=None):
             and (expected_meta is None or meta == expected_meta))
 
 
-def _expected_meta(cfg, quick):
-    meta = {"format": rays.FORMAT, "geometry": rays.fingerprint(cfg),
-            "budgets": rays.budgets(cfg, quick)}
-    if cfg.lean_rays:
-        meta["lean"] = True
-    return meta
-
-
 def _mode_span(line):
     i = line.find('"mode": ') + 8
     return i, line.index(",", i)
@@ -112,7 +104,7 @@ def main(argv=None):
         sdir = os.path.join(args.out, f"shard-{k}")
         shard_raw = _shard_raw(raw, budgets_q, k, n)
         shard_cfg = Config(shard_raw)
-        expected[k] = _expected_meta(shard_cfg, 1)
+        expected[k] = rays.metadata(shard_cfg, 1)
         shard_path = os.path.join(sdir, "rays.jsonl.gz")
         complete = _capillary_done(shard_path, expected[k])
         if os.path.exists(shard_path) and not complete and not args.force:
@@ -154,7 +146,7 @@ def main(argv=None):
         print(f"shards complete, merge skipped; --replay {recs}", flush=True)
         return
 
-    meta = _expected_meta(cfg, max(1, args.quick))
+    meta = rays.metadata(cfg, max(1, args.quick))
     counts = {"free": 0, "lloyd": 0, "capillary": 0}
     gmode = -1
     # newline="\n": no \r\n translation on Windows text-mode writes

@@ -70,6 +70,15 @@ def budgets(cfg, quick: int) -> dict:
     return out
 
 
+def metadata(cfg, quick: int) -> dict:
+    """Canonical metadata describing a rays recording."""
+    meta = {"format": FORMAT, "geometry": fingerprint(cfg),
+            "budgets": budgets(cfg, quick)}
+    if cfg.lean_rays:
+        meta["lean"] = True
+    return meta
+
+
 def _open(path, mode):
     # newline="\n": no \r\n translation on Windows text-mode writes
     return (gzip.open(path, mode + "t", encoding="utf-8", newline="\n")
@@ -204,10 +213,7 @@ class RaysFile:
     def __init__(self, path, cfg, quick, force: bool = False):
         self.path = path
         self.lean = bool(getattr(cfg, "lean_rays", False))
-        self.meta = {"format": FORMAT, "geometry": fingerprint(cfg),
-                     "budgets": budgets(cfg, quick)}
-        if self.lean:
-            self.meta["lean"] = True
+        self.meta = metadata(cfg, quick)
         self.done = {}
         # Exclusive creation closes the check/open race when force is absent.
         mode = "w" if force else "x"
