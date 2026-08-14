@@ -35,7 +35,7 @@ from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
 from .rays import (MultiRaysReader, RaysFile, RaysReader, SceneSeed, require_full_rows,
                    scene_stream)
-from .types import RayRecord
+from .types import HitMethod, RayRecord
 from .units import (
     m_to_angstrom, m_to_mm, m_to_um, rad_to_mrad, rad_to_urad)
 
@@ -434,7 +434,7 @@ class Simulation:
         t_fast = event[1]
         t_engine = engine_hit_t(mirror.expr_um, origin, d,
                                 1.2 * (float(lloyd.z1) - float(origin[2])),
-                                method=self.cfg.engine_method)
+                                method=HitMethod.SUBDIVISION)
         if t_engine is None:
             return "RaySurface engine check (mirror): no root found"
         rel = abs(float(t_fast - t_engine)) / float(t_fast)
@@ -1297,7 +1297,7 @@ class Simulation:
         t_fast = event[1]
         t_engine = engine_hit_t(wall.expr_um, origin, d,
                                 1.2 * (float(cap.z1) - float(cap.z0)),
-                                method=self.cfg.engine_method)
+                                method=HitMethod.SUBDIVISION)
         if t_engine is None:
             return "RaySurface engine check (capillary): no root found"
         rel = abs(float(t_fast - t_engine)) / float(t_fast)
