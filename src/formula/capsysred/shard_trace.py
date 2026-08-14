@@ -2,7 +2,7 @@
 merge the records into one canonical rays.jsonl.gz.
 
     python -m formula.capsysred.shard_trace config.yaml -o out/RUN \
-        --jobs 7 [--quick N] [--keep-shards] [--no-merge]
+        --jobs 7 [--quick N] [--keep-shards] [--no-merge] [--force]
 
 Shard k traces its slice of the modes under seed+k into out/RUN/shard-k/
 (derived config and log sit next to the record); shards with a complete
@@ -51,11 +51,24 @@ def _shard_raw(raw, budgets_q, k, cap_modes):
     return shard
 
 
-def _capillary_done(path):
+def _capillary_done(path, expected_meta=None):
     if not os.path.exists(path):
         return False
-    meta, done, clean = rays.scan(path)
-    return meta is not None and clean and "capillary" in done
+    try:
+        meta, done, clean = rays.scan(path, expected_meta=expected_meta)
+    except (OSError, UnicodeError, ValueError, KeyError, IndexError,
+            AttributeError, TypeError):
+        return False
+    return (meta is not None and clean and "capillary" in done
+            and (expected_meta is None or meta == expected_meta))
+
+
+def _expected_meta(cfg, quick):
+    meta = {"format": rays.FORMAT, "geometry": rays.fingerprint(cfg),
+            "budgets": rays.budgets(cfg, quick)}
+    if cfg.lean_rays:
+        meta["lean"] = True
+    return meta
 
 
 def _mode_span(line):
@@ -72,10 +85,18 @@ def main(argv=None):
     ap.add_argument("--jobs", type=int, required=True)
     ap.add_argument("--quick", type=int, default=1)
     ap.add_argument("--keep-shards", action="store_true")
+    ap.add_argument("--force", action="store_true",
+                    help="allow replacing incompatible or incomplete shard "
+                         "records and an existing merged rays.jsonl.gz")
     ap.add_argument("--no-merge", action="store_true",
                     help="stop after tracing: leave shard records for a "
                          "multi-file --replay instead of one rays.jsonl.gz")
     args = ap.parse_args(argv)
+
+    dst_path = os.path.join(args.out, "rays.jsonl.gz")
+    if not args.no_merge and os.path.exists(dst_path) and not args.force:
+        ap.error(f"{dst_path} already exists; refusing to overwrite it "
+                 "(pass --force to replace it)")
 
     raw = yaml.safe_load(open(args.config, encoding="utf-8"))
     cfg = Config(raw)
@@ -85,20 +106,36 @@ def main(argv=None):
     chunks = _chunks(budgets_q["capillary"][0], args.jobs)
     os.makedirs(args.out, exist_ok=True)
 
-    procs = {}
+    shards = []
+    expected = {}
     for k, n in enumerate(chunks):
         sdir = os.path.join(args.out, f"shard-{k}")
-        if _capillary_done(os.path.join(sdir, "rays.jsonl.gz")):
+        shard_raw = _shard_raw(raw, budgets_q, k, n)
+        shard_cfg = Config(shard_raw)
+        expected[k] = _expected_meta(shard_cfg, 1)
+        shard_path = os.path.join(sdir, "rays.jsonl.gz")
+        complete = _capillary_done(shard_path, expected[k])
+        if os.path.exists(shard_path) and not complete and not args.force:
+            sys.exit(f"shard {k}: {shard_path} is incompatible or incomplete; "
+                     "refusing to overwrite it (pass --force to replace it)")
+        shards.append((k, n, sdir, shard_raw, complete))
+
+    procs = {}
+    for k, n, sdir, shard_raw, complete in shards:
+        if complete:
             print(f"shard {k}: complete, skipping", flush=True)
             continue
         os.makedirs(sdir, exist_ok=True)
         scfg = os.path.join(sdir, "config.yaml")
         with open(scfg, "w") as fh:
-            yaml.safe_dump(_shard_raw(raw, budgets_q, k, n), fh, sort_keys=False)
+            yaml.safe_dump(shard_raw, fh, sort_keys=False)
         log = open(os.path.join(sdir, "trace.log"), "w")
+        cmd = [sys.executable, "-m", "formula.capsysred", scfg,
+               "-o", sdir, "--trace"]
+        if args.force:
+            cmd.append("--force")
         procs[k] = subprocess.Popen(
-            [sys.executable, "-m", "formula.capsysred", scfg, "-o", sdir, "--trace"],
-            stdout=log, stderr=subprocess.STDOUT)
+            cmd, stdout=log, stderr=subprocess.STDOUT)
         print(f"shard {k}: tracing {n} modes under seed {raw.get('seed', 12345) + k} "
               f"(pid {procs[k].pid})", flush=True)
 
@@ -106,7 +143,9 @@ def main(argv=None):
     if fails:
         sys.exit(f"shards failed: {fails} (see shard-*/trace.log)")
     for k in range(args.jobs):
-        if not _capillary_done(os.path.join(args.out, f"shard-{k}", "rays.jsonl.gz")):
+        if not _capillary_done(
+                os.path.join(args.out, f"shard-{k}", "rays.jsonl.gz"),
+                expected[k]):
             sys.exit(f"shard {k}: record incomplete")
 
     if args.no_merge:
@@ -115,15 +154,12 @@ def main(argv=None):
         print(f"shards complete, merge skipped; --replay {recs}", flush=True)
         return
 
-    meta = {"format": rays.FORMAT, "geometry": rays.fingerprint(cfg),
-            "budgets": budgets_q}
-    if cfg.lean_rays:
-        meta["lean"] = True
-    dst_path = os.path.join(args.out, "rays.jsonl.gz")
+    meta = _expected_meta(cfg, max(1, args.quick))
     counts = {"free": 0, "lloyd": 0, "capillary": 0}
     gmode = -1
     # newline="\n": no \r\n translation on Windows text-mode writes
-    with gzip.open(dst_path, "wt", encoding="utf-8", newline="\n") as dst:
+    merge_mode = "wt" if args.force else "xt"
+    with gzip.open(dst_path, merge_mode, encoding="utf-8", newline="\n") as dst:
         dst.write(json.dumps(meta) + "\n")
         for k in range(args.jobs):
             rec = os.path.join(args.out, f"shard-{k}", "rays.jsonl.gz")

@@ -1,5 +1,5 @@
 """CLI: python3 -m formula.capsysred [config.yaml] -o out/ [--stages 4,5] [--quick N]
-[--trace] [--replay rays.jsonl.gz]"""
+[--trace] [--replay rays.jsonl.gz] [--force]"""
 
 import argparse
 import sys
@@ -25,6 +25,10 @@ def main(argv=None) -> int:
                         help="trace-only: record every scene into the rays file and "
                              "exit; a later run with the same config, output "
                              "directory and --quick reuses it instead of tracing")
+    parser.add_argument("--force", action="store_true",
+                        help="allow replacing an existing incompatible, incomplete, "
+                             "or unreadable rays.jsonl.gz (without this flag it is "
+                             "never overwritten)")
     parser.add_argument("--replay", metavar="RAYS_JSONL", default=None,
                         nargs="+",
                         help="re-evaluate recorded rays on the spectrum/material from "
@@ -34,6 +38,10 @@ def main(argv=None) -> int:
                         help="stage 10 totals-only: |mu| map without per-mode rows "
                              "(no sigma_jack/loo; O(pixels) memory for huge grids)")
     args = parser.parse_args(argv)
+
+    if args.force and args.replay:
+        parser.error("--force cannot be used with --replay "
+                     "(replay never writes the rays file)")
 
     stages = None
     if args.stages:
@@ -47,8 +55,10 @@ def main(argv=None) -> int:
     sim.no_jackknife = args.no_jackknife   # read by run_jack_stage
     result = (sim.replay(args.replay, args.out, stages=stages,
                          quick=max(1, args.quick)) if args.replay
-              else sim.trace(args.out, quick=max(1, args.quick)) if args.trace
-              else sim.run(args.out, stages=stages, quick=max(1, args.quick)))
+              else sim.trace(args.out, quick=max(1, args.quick),
+                             force=args.force) if args.trace
+              else sim.run(args.out, stages=stages, quick=max(1, args.quick),
+                           force=args.force))
     print(f"{result['out_dir']}: " + ", ".join(result["files"]))
     return 0
 

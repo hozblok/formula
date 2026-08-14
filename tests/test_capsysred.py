@@ -327,6 +327,14 @@ def test_cli_trace_then_stages_reuse(tmp_path):
     reports = list(out.glob("report-*.md"))
     assert any("reused from the rays file" in r.read_text() for r in reports)
 
+    original = (out / "rays.jsonl.gz").read_bytes()
+    changed = dict(TINY, capillary=dict(TINY["capillary"], z1=0.06))
+    cfg.write_text(yaml.safe_dump(changed))
+    with pytest.raises(ValueError, match="--force"):
+        main([str(cfg), "-o", str(out), "--trace"])
+    assert (out / "rays.jsonl.gz").read_bytes() == original
+    assert main([str(cfg), "-o", str(out), "--trace", "--force"]) == 0
+
 
 def _cap_sim(bores, z0=0.0, z1=0.05, **cap):
     over = dict(TINY)
@@ -938,14 +946,33 @@ def test_trace_then_replay(tmp_path):
     assert sim.results["lloyd"]["rays_from"] == "file"
 
 
-def test_rays_file_rejected_on_geometry_change(tmp_path):
-    # a bore-length change flips the geometry fingerprint: the stale file is
-    # rejected and rewritten, the stage traces
+def test_rays_file_geometry_change_requires_force(tmp_path):
+    # A stale record must survive a mismatched run byte-for-byte.  Replacing
+    # it is destructive and therefore requires an explicit --force decision.
     Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+    path = tmp_path / "rays.jsonl.gz"
+    original = path.read_bytes()
     changed = dict(TINY, capillary=dict(TINY["capillary"], z1=0.06))
+    with pytest.raises(ValueError, match="--force"):
+        Simulation.from_dict(changed).run(str(tmp_path), stages=[11])
+    assert path.read_bytes() == original
+
     sim = Simulation.from_dict(changed)
-    sim.run(str(tmp_path), stages=[11])
+    sim.run(str(tmp_path), stages=[11], force=True)
     assert sim.results["beamlet:capillary"]["rays_from"] == "trace"
+
+
+def test_unreadable_rays_file_requires_force(tmp_path):
+    path = tmp_path / "rays.jsonl.gz"
+    original = b"not a gzip stream"
+    path.write_bytes(original)
+    with pytest.raises(ValueError, match="--force"):
+        Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+    assert path.read_bytes() == original
+
+    sim = Simulation.from_dict(TINY)
+    sim.run(str(tmp_path), stages=[6], force=True)
+    assert sim.results["capillary"]["rays_from"] == "trace"
 
 
 def test_rays_file_reused_within_run(tmp_path):

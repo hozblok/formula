@@ -88,8 +88,12 @@ def _lines(path):
             return
 
 
-def scan(path):
-    """(meta, {scene: rows} complete, no-partial-scenes flag)."""
+def scan(path, expected_meta=None):
+    """(meta, {scene: rows} complete, no-partial-scenes flag).
+
+    ``expected_meta`` lets a writer reject a mismatched recording after its
+    first line, without scanning a potentially very large ray stream.
+    """
     meta, counts, trailers = None, {}, {}
     for i, line in enumerate(_lines(path)):
         if i and line.startswith('{"stage": "'):
@@ -107,6 +111,8 @@ def scan(path):
             if row.get("format") != FORMAT:
                 return None, {}, False
             meta = row
+            if expected_meta is not None and meta != expected_meta:
+                return meta, {}, False
         elif "scene_end" in row:
             trailers[row["scene_end"]] = row["rows"]
         elif "stage" in row:
@@ -186,12 +192,16 @@ class MultiRaysReader:
 
 
 class RaysFile:
-    """The run's rays file: appends to a matching existing file, else starts
-    fresh; `done` scenes are complete and readable back mid-run."""
+    """The run's rays file: append to a matching existing file or create one.
+
+    An incompatible, incomplete, or unreadable existing file is never
+    replaced unless ``force`` explicitly permits it.  ``done`` scenes are
+    complete and readable back mid-run.
+    """
 
     readonly = False
 
-    def __init__(self, path, cfg, quick):
+    def __init__(self, path, cfg, quick, force: bool = False):
         self.path = path
         self.lean = bool(getattr(cfg, "lean_rays", False))
         self.meta = {"format": FORMAT, "geometry": fingerprint(cfg),
@@ -199,14 +209,30 @@ class RaysFile:
         if self.lean:
             self.meta["lean"] = True
         self.done = {}
-        mode = "w"
+        # Exclusive creation closes the check/open race when force is absent.
+        mode = "w" if force else "x"
         if os.path.exists(path):
-            meta, done, clean = scan(path)
-            if meta is not None and clean and all(
-                    meta.get(k) == v for k, v in self.meta.items()):
+            try:
+                meta, done, clean = scan(path, expected_meta=self.meta)
+            except (OSError, UnicodeError, ValueError, KeyError, IndexError,
+                    AttributeError, TypeError) as exc:
+                if not force:
+                    raise ValueError(
+                        f"{path}: existing rays file is unreadable; refusing "
+                        "to overwrite it (pass --force to replace it)"
+                    ) from exc
+                meta, done, clean = None, {}, False
+            compatible = (meta == self.meta and clean)
+            if compatible:
                 mode, self.done = "a", done
+            elif not force:
+                raise ValueError(
+                    f"{path}: existing rays file is incomplete or its metadata "
+                    "does not match this run; refusing to overwrite it "
+                    "(pass --force to replace it)"
+                )
         self._fh = _open(path, mode)
-        if mode == "w":
+        if mode in {"w", "x"}:
             self._fh.write(json.dumps(self.meta) + "\n")
         self._scene, self._count = None, 0
 
