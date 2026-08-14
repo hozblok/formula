@@ -1311,9 +1311,11 @@ class Simulation:
 
     # ------------------------------------------------------------- trace
 
-    def trace(self, out_dir, quick: int = 1, force: bool = False) -> dict:
+    def trace(self, out_dir, quick: int = 1) -> dict:
         """Trace-only run: record every scene's geometry (no physics) into the
-        rays file; a later run with the same config/out_dir/--quick reuses it."""
+        rays file; a later run with the same config/out_dir/--quick reuses it.
+        An incompatible or incomplete existing recording is never overwritten.
+        """
         cfg = self.cfg
         os.makedirs(out_dir, exist_ok=True)
         t0 = time.time()
@@ -1321,8 +1323,7 @@ class Simulation:
         rays_name = "rays.jsonl.gz"
         _log(f"CAPSYSred: trace only, output to {out_dir}"
              + (f", speedup ×{quick}" if quick > 1 else ""))
-        self.rays = RaysFile(os.path.join(out_dir, rays_name), cfg, quick,
-                             force=force)
+        self.rays = RaysFile(os.path.join(out_dir, rays_name), cfg, quick)
         scenes = [("free", cfg.free_source, cfg.free_screen, None,
                    self._aim_free, SceneSeed.FREE),
                   ("lloyd", cfg.lloyd.source, cfg.lloyd.screen,
@@ -1359,8 +1360,7 @@ class Simulation:
 
     # ------------------------------------------------------------- run
 
-    def run(self, out_dir, stages=None, quick: int = 1, rays_src=None,
-            force: bool = False) -> dict:
+    def run(self, out_dir, stages=None, quick: int = 1, rays_src=None) -> dict:
         cfg = self.cfg
         wanted = set(stages or ALL_STAGES)
         if 3 in wanted:
@@ -1397,8 +1397,7 @@ class Simulation:
                                    "(no tracing)")
             self.rays = rays_src
         else:
-            self.rays = (RaysFile(os.path.join(out_dir, rays_name), cfg, quick,
-                                  force=force)
+            self.rays = (RaysFile(os.path.join(out_dir, rays_name), cfg, quick)
                          if cfg.rays_jsonl and wanted & {2, 4, 6, 7, 8, 10, 11, 12}
                          else None)
         try:

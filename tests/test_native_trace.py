@@ -660,7 +660,7 @@ def test_simulation_native_equals_python(tmp_path, monkeypatch):
     sim_python = Simulation.from_dict(TINY)
     sim_python.run(str(tmp_path / "python"), stages=[2, 4, 6])
     p = TINY["precision"]
-    def ray_rows(sub):  # skip the v2 meta line and scene trailers
+    def ray_rows(sub):  # skip the ignored preamble and scene trailers
         with gzip.open(tmp_path / sub / "rays.jsonl.gz", "rt") as fh:
             return [row for row in map(json.loads, fh) if "stage" in row]
 

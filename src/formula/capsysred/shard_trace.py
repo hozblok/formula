@@ -2,16 +2,16 @@
 merge the records into one canonical rays.jsonl.gz.
 
     python -m formula.capsysred.shard_trace config.yaml -o out/RUN \
-        --jobs 7 [--quick N] [--keep-shards] [--no-merge] [--force]
+        --jobs 7 [--quick N] [--keep-shards] [--no-merge]
 
 Shard k traces its slice of the modes under seed+k into out/RUN/shard-k/
 (derived config and log sit next to the record); shards with a complete
-record are skipped on restart. The merge writes the canonical header
-(fingerprint of the untouched config, its budgets at --quick), copies the
-free and lloyd scenes from shard 0 (seed+0 keeps their canonical
-streams), renumbers the capillary modes globally, recomputes the
-trailers, and engine-scans the result. Consumers then run the ORIGINAL
-config (with the same --quick) against out/RUN and reuse the file.
+record are skipped on restart. The merge writes the canonical empty
+preamble, copies the free and lloyd scenes from shard 0 (seed+0 keeps
+their canonical streams), renumbers the capillary modes globally,
+recomputes the trailers, scans the body, and publishes the structured
+metadata sidecar. Consumers then run the ORIGINAL config (with the same
+--quick) against out/RUN and reuse the file.
 
 Reproducibility: the seed set {seed .. seed+jobs-1} plus this command —
 not bit-equal to a sequential trace (modes are iid across seeds).
@@ -27,6 +27,7 @@ import json
 import os
 import subprocess
 import sys
+import zlib
 
 import yaml
 
@@ -51,16 +52,21 @@ def _shard_raw(raw, budgets_q, k, cap_modes):
     return shard
 
 
-def _capillary_done(path, expected_meta=None):
+def _capillary_done(path, expected_meta):
     if not os.path.exists(path):
         return False
     try:
         meta, done, clean = rays.scan(path, expected_meta=expected_meta)
-    except (OSError, UnicodeError, ValueError, KeyError, IndexError,
-            AttributeError, TypeError):
+    except (OSError, EOFError, zlib.error, UnicodeError, ValueError, KeyError,
+            IndexError, AttributeError, TypeError):
         return False
-    return (meta is not None and clean and "capillary" in done
-            and (expected_meta is None or meta == expected_meta))
+    expected_counts = {
+        scene: budget[0] * budget[1]
+        for scene, budget in expected_meta["budgets"].items()
+    }
+    return (meta is not None and clean
+            and rays.metadata_equal(meta, expected_meta)
+            and done == expected_counts)
 
 
 def _mode_span(line):
@@ -77,18 +83,19 @@ def main(argv=None):
     ap.add_argument("--jobs", type=int, required=True)
     ap.add_argument("--quick", type=int, default=1)
     ap.add_argument("--keep-shards", action="store_true")
-    ap.add_argument("--force", action="store_true",
-                    help="allow replacing incompatible or incomplete shard "
-                         "records and an existing merged rays.jsonl.gz")
     ap.add_argument("--no-merge", action="store_true",
                     help="stop after tracing: leave shard records for a "
                          "multi-file --replay instead of one rays.jsonl.gz")
     args = ap.parse_args(argv)
 
     dst_path = os.path.join(args.out, "rays.jsonl.gz")
-    if not args.no_merge and os.path.exists(dst_path) and not args.force:
+    dst_sidecar = rays.metadata_path(dst_path)
+    if not args.no_merge and os.path.lexists(dst_path):
         ap.error(f"{dst_path} already exists; refusing to overwrite it "
-                 "(pass --force to replace it)")
+                 "(remove it manually or choose another --out)")
+    if not args.no_merge and os.path.lexists(dst_sidecar):
+        ap.error(f"{dst_sidecar} already exists; refusing to overwrite it "
+                 "(remove it manually or choose another --out)")
 
     raw = yaml.safe_load(open(args.config, encoding="utf-8"))
     cfg = Config(raw)
@@ -97,17 +104,6 @@ def main(argv=None):
     quick = max(1, args.quick)
     budgets_q = rays.budgets(cfg, quick)
     merged_sidecar = rays.sidecar_metadata(cfg, quick)
-    dst_sidecar = rays.metadata_path(dst_path)
-    if (not args.no_merge and not args.force
-            and os.path.exists(dst_sidecar)):
-        try:
-            existing = rays.read_metadata(dst_path)
-        except (OSError, ValueError) as exc:
-            ap.error(f"{dst_sidecar} is unreadable; remove it manually "
-                     f"before retrying ({exc})")
-        if not rays.metadata_equal(existing, merged_sidecar):
-            ap.error(f"{dst_sidecar} does not match this run; remove it "
-                     "manually before retrying")
     chunks = _chunks(budgets_q["capillary"][0], args.jobs)
     os.makedirs(args.out, exist_ok=True)
 
@@ -117,12 +113,23 @@ def main(argv=None):
         sdir = os.path.join(args.out, f"shard-{k}")
         shard_raw = _shard_raw(raw, budgets_q, k, n)
         shard_cfg = Config(shard_raw)
-        expected[k] = rays.metadata(shard_cfg, 1)
+        expected[k] = rays.sidecar_metadata(shard_cfg, 1)
         shard_path = os.path.join(sdir, "rays.jsonl.gz")
         complete = _capillary_done(shard_path, expected[k])
-        if os.path.exists(shard_path) and not complete and not args.force:
+        shard_sidecar = rays.metadata_path(shard_path)
+        if ((os.path.lexists(shard_path) or os.path.lexists(shard_sidecar))
+                and not complete):
             sys.exit(f"shard {k}: {shard_path} is incompatible or incomplete; "
-                     "refusing to overwrite it (pass --force to replace it)")
+                     "remove it and its sidecar manually before retrying")
+        if not complete:
+            conflicts = [
+                os.path.join(sdir, name) for name in ("config.yaml", "trace.log")
+                if os.path.lexists(os.path.join(sdir, name))
+            ]
+            if conflicts:
+                sys.exit(f"shard {k}: auxiliary files already exist: "
+                         f"{conflicts}; remove them manually or choose another "
+                         "--out")
         shards.append((k, n, sdir, shard_raw, complete))
 
     procs = {}
@@ -132,13 +139,11 @@ def main(argv=None):
             continue
         os.makedirs(sdir, exist_ok=True)
         scfg = os.path.join(sdir, "config.yaml")
-        with open(scfg, "w") as fh:
+        with open(scfg, "x") as fh:
             yaml.safe_dump(shard_raw, fh, sort_keys=False)
-        log = open(os.path.join(sdir, "trace.log"), "w")
+        log = open(os.path.join(sdir, "trace.log"), "x")
         cmd = [sys.executable, "-m", "formula.capsysred", scfg,
                "-o", sdir, "--trace"]
-        if args.force:
-            cmd.append("--force")
         procs[k] = subprocess.Popen(
             cmd, stdout=log, stderr=subprocess.STDOUT)
         print(f"shard {k}: tracing {n} modes under seed {raw.get('seed', 12345) + k} "
@@ -159,43 +164,43 @@ def main(argv=None):
         print(f"shards complete, merge skipped; --replay {recs}", flush=True)
         return
 
-    meta = rays.metadata(cfg, quick)
     counts = {"free": 0, "lloyd": 0, "capillary": 0}
     gmode = -1
     # newline="\n": no \r\n translation on Windows text-mode writes
-    merge_mode = "wt" if args.force else "xt"
-    with gzip.open(dst_path, merge_mode, encoding="utf-8", newline="\n") as dst:
-        dst.write(json.dumps(meta) + "\n")
+    with gzip.open(dst_path, "xt", encoding="utf-8", newline="\n") as dst:
+        dst.write("{}\n")
         for k in range(args.jobs):
             rec = os.path.join(args.out, f"shard-{k}", "rays.jsonl.gz")
             last = None
-            with gzip.open(rec, "rt", encoding="utf-8") as fh:
-                for line in fh:
-                    if '"stage": "capillary"' in line:
-                        i, j = _mode_span(line)
-                        if line[i:j] != last:
-                            gmode += 1
-                            last = line[i:j]
-                        dst.write(line[:i] + str(gmode) + line[j:])
-                        counts["capillary"] += 1
-                    elif k == 0 and '"stage": "free"' in line:
-                        dst.write(line)
-                        counts["free"] += 1
-                    elif k == 0 and '"stage": "lloyd"' in line:
-                        dst.write(line)
-                        counts["lloyd"] += 1
+            for line in rays._body_lines(rec):
+                if '"stage": "capillary"' in line:
+                    i, j = _mode_span(line)
+                    if line[i:j] != last:
+                        gmode += 1
+                        last = line[i:j]
+                    dst.write(line[:i] + str(gmode) + line[j:])
+                    counts["capillary"] += 1
+                elif k == 0 and '"stage": "free"' in line:
+                    dst.write(line)
+                    counts["free"] += 1
+                elif k == 0 and '"stage": "lloyd"' in line:
+                    dst.write(line)
+                    counts["lloyd"] += 1
             print(f"shard {k}: merged; modes {gmode + 1}, "
                   f"capillary rows {counts['capillary']:,}", flush=True)
         for scene, n in counts.items():
             if n:
                 dst.write(json.dumps({"scene_end": scene, "rows": n}) + "\n")
 
-    _, done, clean = rays.scan(dst_path)
-    ok = clean and gmode + 1 == budgets_q["capillary"][0]
+    done, clean = rays._scan_rows(dst_path)
+    expected_counts = {
+        scene: budget[0] * budget[1]
+        for scene, budget in merged_sidecar["budgets"].items()
+    }
+    ok = (clean and counts == expected_counts and done == expected_counts
+          and gmode + 1 == budgets_q["capillary"][0])
     if ok:
-        rays.write_metadata(dst_path,
-                            merged_sidecar,
-                            force=args.force)
+        rays.write_metadata(dst_path, merged_sidecar)
         if not args.keep_shards:
             for k in range(args.jobs):
                 rec = os.path.join(args.out, f"shard-{k}", "rays.jsonl.gz")

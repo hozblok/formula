@@ -6,11 +6,13 @@ and the per-scene budgets match; otherwise it traces and tees the records
 into the run's writer. Rows carry the PRE-threshold
 fate — amplitude_min is physics and every consumer applies its own.
 
-Layout: meta line {"format": 2, ...}, one row per ray, and a
-{"scene_end": scene, "rows": n} trailer per completed scene. Screen-fate
+Layout: one ignored preamble line (new files write {}), one row per ray, and
+a {"scene_end": scene, "rows": n} trailer per completed scene. Metadata is
+stored exclusively in the adjacent rays-fingerprint.yaml; legacy archives
+may retain their old metadata object in the ignored preamble. Screen-fate
 rows add x, y, dx, dy and the refl bounce points in float64 (enough for the
-float estimators, stages 7/8/10/11); opl/sins stay full-precision strings
-for the Number path (--replay of stages 2/4/6). The file is gzipped
+float estimators, stages 7/8/10/11); opl/sins stay full-precision strings for
+the Number path (--replay of stages 2/4/6). The file is gzipped
 (rays.jsonl.gz).
 
 trace.lean_rays writes opl/sins as float64 json numbers and drops refl
@@ -26,7 +28,7 @@ import json
 import math
 import os
 import random
-import tempfile
+import zlib
 
 import yaml
 
@@ -84,7 +86,7 @@ def budgets(cfg, quick: int) -> dict:
 
 
 def metadata(cfg, quick: int) -> dict:
-    """Legacy first-line metadata describing a rays recording."""
+    """Historical first-line metadata retained for the migration tool."""
     meta = {"format": FORMAT, "geometry": fingerprint(cfg),
             "budgets": budgets(cfg, quick)}
     if cfg.lean_rays:
@@ -94,8 +96,10 @@ def metadata(cfg, quick: int) -> dict:
 
 def sidecar_metadata(cfg, quick: int) -> dict:
     """Structured metadata for ``rays-fingerprint.yaml``."""
-    meta = metadata(cfg, quick)
-    meta["geometry"] = geometry_metadata(cfg)
+    meta = {"format": FORMAT, "geometry": geometry_metadata(cfg),
+            "budgets": budgets(cfg, quick)}
+    if cfg.lean_rays:
+        meta["lean"] = True
     return meta
 
 
@@ -125,41 +129,49 @@ def read_metadata(rays_path: str | os.PathLike) -> dict:
     return meta
 
 
-def write_metadata(rays_path: str | os.PathLike, meta: dict,
-                   force: bool = False) -> str:
-    """Atomically write a sidecar, refusing a conflicting one by default."""
+def write_metadata(rays_path: str | os.PathLike, meta: dict) -> str:
+    """Create a sidecar without clobbering any existing metadata."""
     if not isinstance(meta, dict):
         raise TypeError("rays metadata must be a mapping")
     path = metadata_path(rays_path)
-    if os.path.exists(path):
+    if os.path.lexists(path):
         try:
             existing = read_metadata(rays_path)
         except (OSError, ValueError) as exc:
-            if not force:
-                raise ValueError(f"{path}: existing metadata is unreadable; "
-                                 "remove it manually before retrying") from exc
+            raise ValueError(
+                f"{path}: existing metadata is unreadable; remove it "
+                "manually or choose another output directory"
+            ) from exc
         else:
             if metadata_equal(existing, meta):
                 return path
-        if not force:
-            raise ValueError(f"{path}: metadata already exists and differs; "
-                             "remove it manually before retrying")
+        raise ValueError(
+            f"{path}: metadata already exists and differs; remove it "
+            "manually or choose another output directory"
+        )
 
-    directory = os.path.dirname(os.path.abspath(path))
-    os.makedirs(directory, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=f".{METADATA_NAME}.", suffix=".tmp",
-                               dir=directory, text=True)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    created = False
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+        # Exclusive creation is the no-lock, no-clobber publication rule.
+        # A concurrent writer wins or this call fails; neither overwrites the
+        # other's metadata.
+        with open(path, "x", encoding="utf-8", newline="\n") as fh:
+            created = True
             yaml.safe_dump(meta, fh, sort_keys=False, allow_unicode=True)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp, path)
+    except FileExistsError as exc:
+        raise ValueError(
+            f"{path}: metadata appeared concurrently; remove it manually "
+            "or choose another output directory"
+        ) from exc
     except BaseException:
-        try:
-            os.remove(tmp)
-        except FileNotFoundError:
-            pass
+        if created:
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
         raise
     return path
 
@@ -182,37 +194,116 @@ def _lines(path):
             return
 
 
+def _body(path):
+    """Return ``(has_preamble, lines)`` after skipping exactly one line.
+
+    The preamble's contents are intentionally never parsed: old recordings
+    retain their metadata object there, while new recordings write ``{}``.
+    Only a complete line counts as a preamble, because :func:`_lines` omits an
+    unterminated live tail.
+    """
+    lines = _lines(path)
+    try:
+        next(lines)
+    except StopIteration:
+        return False, ()
+    return True, lines
+
+
+def _body_lines(path):
+    """Iterate archive body lines after the ignored preamble."""
+    _, lines = _body(path)
+    yield from lines
+
+
+def _validate_stream_metadata(meta, path):
+    """Validate the sidecar fields needed by every rays consumer."""
+    sidecar = metadata_path(path)
+    if type(meta.get("format")) is not int or meta["format"] != FORMAT:
+        raise ValueError(f"{sidecar}: rays metadata format must be {FORMAT}")
+    if not isinstance(meta.get("geometry"), dict):
+        raise ValueError(f"{sidecar}: rays geometry metadata must be a mapping")
+    scene_budgets = meta.get("budgets")
+    if not isinstance(scene_budgets, dict):
+        raise ValueError(f"{sidecar}: rays budgets must be a mapping")
+    for scene, budget in scene_budgets.items():
+        if (not isinstance(scene, str) or not isinstance(budget, list)
+                or len(budget) != 2
+                or any(type(value) is not int or value < 1
+                       for value in budget)):
+            raise ValueError(f"{sidecar}: invalid rays budget for {scene!r}")
+    if "lean" in meta and meta["lean"] is not True:
+        raise ValueError(f"{sidecar}: lean must be true when present")
+
+
+def _scan_rows(path):
+    """Strictly scan a closed archive and return ``(done, clean)``.
+
+    Unlike the live-read helpers, this consumes the underlying stream
+    directly: an unterminated text line is dirty, and gzip EOF/checksum
+    failures propagate to the caller.
+    """
+    counts, trailers, validated_scenes = {}, {}, set()
+    with _open(path, "r") as fh:
+        preamble = next(fh, None)
+        if preamble is None or not preamble.endswith("\n"):
+            return {}, False
+        for line in fh:
+            if not line.endswith("\n"):
+                return {}, False
+            if line.startswith('{"stage": "'):
+                # Row fast path: the writer emits "stage" first, names are
+                # plain strings and the required keys in a fixed order.
+                # Rewritten/non-canonical rows fall through to JSON parsing.
+                end = line.find('"', 11)
+                pos = end
+                for marker in (', "mode": ', ', "ray": ', ', "fate": ',
+                               ', "pixel": ', ', "opl": ', ', "sins": '):
+                    pos = line.find(marker, pos + 1)
+                    if pos < 0:
+                        break
+                if end > 0 and pos >= 0 and line.endswith("}\n"):
+                    scene = line[11:end]
+                    if scene in validated_scenes:
+                        counts[scene] = counts.get(scene, 0) + 1
+                        continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                return {}, False
+            if not isinstance(row, dict):
+                return {}, False
+            if "scene_end" in row:
+                trailers[row["scene_end"]] = row["rows"]
+            elif "stage" in row:
+                required = {"stage", "mode", "ray", "fate", "pixel", "opl",
+                            "sins"}
+                if (not required <= set(row)
+                        or not isinstance(row["stage"], str)):
+                    return {}, False
+                if (row["fate"] == "screen"
+                        and not {"x", "y", "dx", "dy"} <= set(row)):
+                    return {}, False
+                counts[row["stage"]] = counts.get(row["stage"], 0) + 1
+                validated_scenes.add(row["stage"])
+    done = {scene: rows for scene, rows in trailers.items()
+            if counts.get(scene, 0) == rows}
+    clean = set(counts) == set(trailers) and len(done) == len(trailers)
+    return done, clean
+
+
 def scan(path, expected_meta=None):
     """(meta, {scene: rows} complete, no-partial-scenes flag).
 
-    ``expected_meta`` lets a writer reject a mismatched recording after its
-    first line, without scanning a potentially very large ray stream.
+    Metadata comes exclusively from the adjacent sidecar. ``expected_meta``
+    lets a writer reject a mismatch before scanning a potentially very large
+    ray stream. The archive's first complete line is an ignored preamble.
     """
-    meta, counts, trailers = None, {}, {}
-    for i, line in enumerate(_lines(path)):
-        if i and line.startswith('{"stage": "'):
-            # row fast path: the writer emits "stage" first, names are plain
-            end = line.find('"', 11)
-            if end > 0:
-                scene = line[11:end]
-                counts[scene] = counts.get(scene, 0) + 1
-                continue
-        try:
-            row = json.loads(line)
-        except ValueError:
-            return None, {}, False
-        if i == 0:
-            if row.get("format") != FORMAT:
-                return None, {}, False
-            meta = row
-            if expected_meta is not None and meta != expected_meta:
-                return meta, {}, False
-        elif "scene_end" in row:
-            trailers[row["scene_end"]] = row["rows"]
-        elif "stage" in row:
-            counts[row["stage"]] = counts.get(row["stage"], 0) + 1
-    done = {s: n for s, n in trailers.items() if counts.get(s, 0) == n}
-    clean = set(counts) == set(trailers) and len(done) == len(trailers)
+    meta = read_metadata(path)
+    _validate_stream_metadata(meta, path)
+    if expected_meta is not None and not metadata_equal(meta, expected_meta):
+        return meta, {}, False
+    done, clean = _scan_rows(path)
     return meta, done, clean
 
 
@@ -224,11 +315,12 @@ class RaysReader:
     readonly = True
 
     def __init__(self, path):
-        meta, done, _ = scan(path)
-        if meta is None:
+        meta, done, clean = scan(path)
+        if not clean:
             raise ValueError(
-                f"{path}: not a rays.jsonl v2 file (v1 records predate the "
-                "shared-stream format — re-trace to record a v2 file)")
+                f"{path}: rays archive is incomplete or corrupt; remove it "
+                "manually or choose another recording"
+            )
         self.path, self.meta, self.done = path, meta, done
 
     def scene_records(self, scene):
@@ -255,6 +347,10 @@ class MultiRaysReader:
         self.parts = [RaysReader(p) for p in paths]
         self.path = " + ".join(p.path for p in self.parts)
         self.meta = dict(self.parts[0].meta)
+        if any(part.meta.get("lean") for part in self.parts):
+            self.meta["lean"] = True
+        else:
+            self.meta.pop("lean", None)
         scenes = set(self.parts[0].done)
         for part in self.parts[1:]:
             scenes &= set(part.done)
@@ -289,46 +385,77 @@ class RaysFile:
     """The run's rays file: append to a matching existing file or create one.
 
     An incompatible, incomplete, or unreadable existing file is never
-    replaced unless ``force`` explicitly permits it.  ``done`` scenes are
-    complete and readable back mid-run.
+    replaced. ``done`` scenes are complete and readable back mid-run. Only
+    one writer may use an output directory at a time; concurrent appenders are
+    intentionally unsupported without a lock protocol.
     """
 
     readonly = False
 
-    def __init__(self, path, cfg, quick, force: bool = False):
+    def __init__(self, path, cfg, quick):
         self.path = path
         self.sidecar_path = metadata_path(path)
         self.lean = bool(getattr(cfg, "lean_rays", False))
-        self.meta = metadata(cfg, quick)
+        self.meta = sidecar_metadata(cfg, quick)
         self.done = {}
-        # Exclusive creation closes the check/open race when force is absent.
-        mode = "w" if force else "x"
-        if os.path.exists(path):
+        if os.path.lexists(path):
             try:
                 meta, done, clean = scan(path, expected_meta=self.meta)
             except (OSError, UnicodeError, ValueError, KeyError, IndexError,
-                    AttributeError, TypeError) as exc:
-                if not force:
-                    raise ValueError(
-                        f"{path}: existing rays file is unreadable; refusing "
-                        "to overwrite it (pass --force to replace it)"
-                    ) from exc
-                meta, done, clean = None, {}, False
-            compatible = (meta == self.meta and clean)
+                    AttributeError, TypeError, EOFError, zlib.error) as exc:
+                raise ValueError(
+                    f"{path}: existing rays file or metadata sidecar "
+                    f"{self.sidecar_path} is missing, corrupt, or unreadable; "
+                    "remove the existing result manually or choose another "
+                    "output directory"
+                ) from exc
+            complete_rows_match_budgets = all(
+                scene in meta["budgets"]
+                and rows == math.prod(meta["budgets"][scene])
+                for scene, rows in done.items()
+            )
+            compatible = (meta is not None
+                          and metadata_equal(meta, self.meta) and clean
+                          and complete_rows_match_budgets)
             if compatible:
-                mode, self.done = "a", done
-            elif not force:
+                self.done = done
+                self._fh = _open(path, "a")
+            else:
                 raise ValueError(
                     f"{path}: existing rays file is incomplete or its metadata "
-                    "does not match this run; refusing to overwrite it "
-                    "(pass --force to replace it)"
+                    "does not match this run; remove the existing result "
+                    "manually or choose another output directory"
                 )
-        if mode in {"w", "x"} or os.path.exists(self.sidecar_path):
-            write_metadata(path, sidecar_metadata(cfg, quick), force=force)
-        self._fh = _open(path, mode)
-        if mode in {"w", "x"}:
-            self._fh.write(json.dumps(self.meta) + "\n")
-        self.has_sidecar = os.path.exists(self.sidecar_path)
+        else:
+            if os.path.lexists(self.sidecar_path):
+                raise ValueError(
+                    f"{self.sidecar_path}: metadata exists without {path}; "
+                    "remove it manually or choose another output directory"
+                )
+            fh = None
+            created = False
+            try:
+                # Exclusive creation closes the check/open race. Publish the
+                # sidecar only after the archive has a complete preamble.
+                fh = _open(path, "x")
+                created = True
+                fh.write("{}\n")
+                fh.flush()
+                write_metadata(path, self.meta)
+            except BaseException:
+                if fh is not None:
+                    try:
+                        fh.close()
+                    except BaseException:
+                        pass
+                if created:
+                    try:
+                        os.remove(path)
+                    except FileNotFoundError:
+                        pass
+                raise
+            self._fh = fh
+        self.has_sidecar = True
         self._scene, self._count = None, 0
 
     def write(self, scene: str, rec: RayRecord):
@@ -371,7 +498,7 @@ def _file_records(path, scene):
     point z is unknown-by-design (nan), direction dz rebuilt (unit, dz > 0)."""
     # rows are written "stage"-first: skip foreign scenes without json.loads
     prefix = '{"stage": ' + json.dumps(scene) + ","
-    for line in _lines(path):
+    for line in _body_lines(path):
         if not line.startswith(prefix):
             continue
         row = json.loads(line)
