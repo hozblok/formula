@@ -975,6 +975,27 @@ def test_unreadable_rays_file_requires_force(tmp_path):
     assert sim.results["capillary"]["rays_from"] == "trace"
 
 
+def test_rays_metadata_sidecar_helpers(tmp_path):
+    from formula.capsysred.rays import (metadata_path, read_metadata,
+                                        write_metadata)
+
+    rays_path = tmp_path / "rays.jsonl.gz"
+    first = {"format": 2, "geometry": "abc", "budgets": {"free": [2, 3]}}
+    sidecar = tmp_path / "rays-fingerprint.yaml"
+    assert metadata_path(rays_path) == str(sidecar)
+    assert write_metadata(rays_path, first) == str(sidecar)
+    assert read_metadata(rays_path) == first
+    write_metadata(rays_path, first)  # Writing identical metadata is idempotent.
+
+    second = dict(first, geometry="def")
+    with pytest.raises(ValueError, match="--force"):
+        write_metadata(rays_path, second)
+    assert read_metadata(rays_path) == first
+    write_metadata(rays_path, second, force=True)
+    assert read_metadata(rays_path) == second
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
 def test_rays_file_reused_within_run(tmp_path):
     # the run's own record is reused by stage 10 after stage 6
     sim = Simulation.from_dict(TINY)

@@ -26,6 +26,9 @@ import json
 import math
 import os
 import random
+import tempfile
+
+import yaml
 
 from .native import make_tracer
 from .screen import ScreenGrid
@@ -33,6 +36,7 @@ from .source import Source
 from .types import RayRecord, ray_record
 
 FORMAT = 2
+METADATA_NAME = "rays-fingerprint.yaml"
 
 # Mixes cfg.seed with a per-scene offset into an independent rng stream.
 _SCENE_SEED_STRIDE = 1000003
@@ -77,6 +81,55 @@ def metadata(cfg, quick: int) -> dict:
     if cfg.lean_rays:
         meta["lean"] = True
     return meta
+
+
+def metadata_path(rays_path: str | os.PathLike) -> str:
+    """Return the metadata sidecar beside a canonical rays recording."""
+    return os.path.join(os.path.dirname(os.fspath(rays_path)), METADATA_NAME)
+
+
+def read_metadata(rays_path: str | os.PathLike) -> dict:
+    """Read and validate a rays metadata sidecar."""
+    path = metadata_path(rays_path)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            meta = yaml.safe_load(fh)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{path}: invalid rays metadata YAML") from exc
+    if not isinstance(meta, dict):
+        raise ValueError(f"{path}: rays metadata must be a mapping")
+    return meta
+
+
+def write_metadata(rays_path: str | os.PathLike, meta: dict,
+                   force: bool = False) -> str:
+    """Atomically write a sidecar, refusing a conflicting one by default."""
+    if not isinstance(meta, dict):
+        raise TypeError("rays metadata must be a mapping")
+    path = metadata_path(rays_path)
+    if os.path.exists(path) and not force:
+        if read_metadata(rays_path) == meta:
+            return path
+        raise ValueError(f"{path}: metadata already exists and differs; "
+                         "refusing to overwrite it (pass --force to replace it)")
+
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f".{METADATA_NAME}.", suffix=".tmp",
+                               dir=directory, text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            yaml.safe_dump(meta, fh, sort_keys=False, allow_unicode=True)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except FileNotFoundError:
+            pass
+        raise
+    return path
 
 
 def _open(path, mode):
