@@ -339,8 +339,9 @@ def test_cli_trace_then_stages_reuse(tmp_path):
     with pytest.raises(ValueError, match="remove"):
         main([str(cfg), "-o", str(out), "--trace"])
     assert (out / "rays.jsonl.gz").read_bytes() == original
-    with pytest.raises(SystemExit):
-        main([str(cfg), "-o", str(out), "--trace", "--force"])
+    for removed_option in ("--force", "--no-jackknife"):
+        with pytest.raises(SystemExit):
+            main([str(cfg), "-o", str(out), "--trace", removed_option])
 
 
 def _cap_sim(bores, z0=0.0, z1=0.05, **cap):
