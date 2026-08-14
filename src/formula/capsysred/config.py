@@ -73,9 +73,8 @@ DEFAULTS = {
     # input). Records/multi-line runs trace with the amplitude_min kill off
     # (E0-truncation would bias other energies) and apply the threshold after
     # the per-line amplitudes are known.
-    # engine_method: RaySurface root finder for `surface:` bores and the hit
-    # cross-checks — subdivision (default: grazing-safe, any F) | sturm (exact,
-    # polynomial F only) | chebyshev | sampling.
+    # engine_method: RaySurface root finder for analytic-wall hit cross-checks;
+    # `surface:` bores own their engine_method individually.
     # lean_rays: drop refl and write opl/sins as float64 in the rays file —
     # stage 10/rescreen read floats anyway (bit-identical); the file cannot
     # feed the Number-path replay (stages 2/4/6) or the beamlet stage.
@@ -165,7 +164,7 @@ def _bore(raw: dict, p: int, idx: int) -> dict:
     Exactly one geometry: radius (cylinder), radius+bend (torus arc),
     radius+sides (regular polygon, radius = apothem), r2_poly (surface of
     revolution x'^2+y'^2 = c0+c1*z+c2*z^2), surface (implicit F(x,y,z)=0 in µm,
-    F<0 inside; needs aim_radius for source aiming).
+    F<0 inside; needs aim_radius for source aiming and engine_method for hits).
     """
     mods = [k for k in ("surface", "r2_poly", "bend", "sides", "funnel")
             if raw.get(k) is not None]
@@ -177,9 +176,21 @@ def _bore(raw: dict, p: int, idx: int) -> dict:
             raise ValueError(f"bore {idx}: surface bore takes aim_radius, not radius")
         if raw.get("aim_radius") is None:
             raise ValueError(f"bore {idx}: surface bore needs aim_radius")
+        if raw.get("engine_method") is None:
+            raise ValueError(f"bore {idx}: surface bore needs engine_method")
+        try:
+            engine_method = HitMethod(str(raw["engine_method"]))
+            get_backend(engine_method)
+        except ValueError as exc:
+            raise ValueError(
+                f"bore {idx}: invalid engine_method {raw['engine_method']!r}"
+            ) from exc
         out.update(kind="implicit", surface=str(raw["surface"]),
-                   aim_radius=Number(str(raw["aim_radius"]), p))
+                   aim_radius=Number(str(raw["aim_radius"]), p),
+                   engine_method=engine_method)
         return out
+    if "engine_method" in raw:
+        raise ValueError(f"bore {idx}: engine_method is only valid with surface")
     if raw.get("r2_poly") is not None:
         if raw.get("radius") is not None:
             raise ValueError(f"bore {idx}: r2_poly replaces radius")

@@ -430,7 +430,8 @@ def test_implicit_hex_product_matches_polygon():
     bundle_t = CapillaryBundle(cap_t.bores, cap_t.z0, cap_t.z1)
     fac = [f"((x)*({mx})+(y)*({my})-(3))" for mx, my in bundle_t.walls[0].faces]
     sim_i = _cap_sim([{"center": [0.0, 0.0], "surface": "(0-1)*" + "*".join(fac),
-                       "aim_radius": 3.4641016151377543e-06}])
+                       "aim_radius": 3.4641016151377543e-06,
+                       "engine_method": "subdivision"}])
     cap_i = sim_i.cfg.capillary
     bundle_i = CapillaryBundle(cap_i.bores, cap_i.z0, cap_i.z1)
     p = sim_t.cfg.precision
@@ -447,7 +448,8 @@ def test_implicit_surface_matches_cylinder():
     a_um = 3.0
     sim_c = _cap_sim([{"center": [0.0, 0.0], "radius": 3.0e-6}])
     sim_i = _cap_sim([{"center": [0.0, 0.0], "surface": f"x^2+y^2-({a_um})^2",
-                       "aim_radius": 3.0e-6}])
+                       "aim_radius": 3.0e-6,
+                       "engine_method": "subdivision"}])
     p = sim_c.cfg.precision
     d = vunit((lift(1.0e-3, p), lift(2.0e-4, p), lift(1.0, p)))
     events = []
@@ -492,7 +494,9 @@ def test_bore_config_validation():
     for bad in (
         {"center": [0.0, 0.0]},                                   # no geometry
         {"radius": 1e-6, "r2_poly": [1e-12]},                     # conflict
-        {"surface": "x^2+y^2-1"},                                 # no aim_radius
+        {"surface": "x^2+y^2-1", "engine_method": "subdivision"},  # no aim_radius
+        {"surface": "x^2+y^2-1", "aim_radius": 1e-6},            # no engine_method
+        {"radius": 1e-6, "engine_method": "subdivision"},         # only for surface
         {"radius": 1e-6, "sides": 2},                             # sides < 3
         {"radius": 1e-6, "bend": {"radius": 1.0}},                # bend w/o toward
         {"radius": 1e-6, "bend": {"radius": 1.0, "toward": [1, 0]}, "sides": 6},
@@ -570,19 +574,19 @@ def test_on_wall_point_counts_inside():
         assert not wall.inside(a * (1 + 1e-6), 0.0, 0.0)
 
 
-def test_engine_method_config_wiring():
-    # trace.engine_method: validated at the config boundary, reaches the
-    # ImplicitWall of a `surface:` bore through CapillaryBundle
+def test_implicit_engine_method_config_wiring():
+    # Each implicit bore owns its root finder; typed walls reject that option.
     from formula.capsysred.config import load
-    assert load({}).engine_method == "subdivision"
     for unsupported in ("newton", "auto"):
         with pytest.raises(ValueError):
-            load({"trace": {"engine_method": unsupported}})
-    cfg = load({"trace": {"engine_method": "sturm"},
-                "capillary": {"bores": [{"surface": "x^2+y^2-36",
-                                         "aim_radius": 6.0e-6}]}})
+            load({"capillary": {"bores": [{"surface": "x^2+y^2-36",
+                                              "aim_radius": 6.0e-6,
+                                              "engine_method": unsupported}]}})
+    cfg = load({"capillary": {"bores": [{"surface": "x^2+y^2-36",
+                                            "aim_radius": 6.0e-6,
+                                            "engine_method": "sturm"}]}})
     bundle = CapillaryBundle(cfg.capillary.bores, cfg.capillary.z0,
-                             cfg.capillary.z1, cfg.engine_method)
+                             cfg.capillary.z1)
     assert bundle.walls[0].method == "sturm"
 
 
@@ -712,7 +716,8 @@ def test_stage9_rejects_when_no_comparison_method_is_runnable():
 
     sim = Simulation.from_dict({
         "capillary": {"bores": [{"surface": "x^2+y^2-36",
-                                   "aim_radius": 6.0e-6}]},
+                                   "aim_radius": 6.0e-6,
+                                   "engine_method": "subdivision"}]},
         "validate": {"n_rays": 1, "reference": "sturm",
                      "methods": ["cpp-closed-form"]},
     })
@@ -731,7 +736,7 @@ def test_stage9_mixed_bundle_disables_closed_forms_globally():
         "capillary": {"bores": [
             {"center": [-6.0e-6, 0.0], "radius": 3.0e-6},
             {"center": [6.0e-6, 0.0], "surface": "(x-6)^2+y^2-9",
-             "aim_radius": 3.0e-6},
+             "aim_radius": 3.0e-6, "engine_method": "subdivision"},
         ]},
         "validate": {
             "reference": "sturm",
@@ -1119,9 +1124,10 @@ def test_bounce_lenses_unknown_kind_falls_flat():
 
 
 _IMPLICIT_PAIR = [
-    {"center": [0.0, 0.0], "surface": "x^2+y^2-9", "aim_radius": 3.0e-6},
+    {"center": [0.0, 0.0], "surface": "x^2+y^2-9", "aim_radius": 3.0e-6,
+     "engine_method": "subdivision"},
     {"center": [1.2e-5, 0.0], "surface": "(x-12)^2+y^2-9",
-     "aim_radius": 3.0e-6},
+     "aim_radius": 3.0e-6, "engine_method": "subdivision"},
 ]
 
 

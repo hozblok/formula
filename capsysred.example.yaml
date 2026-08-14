@@ -61,7 +61,8 @@ capillary:             # stage 6 and the opt-in estimator stages 7, 8, 10, 11
     #     g = 1 + ag·(z−z0) + bg·(z−z0)² (per m, m²); f defaults to g
     # - {center: [...], r2_poly: [c0, c1, c2]}
     #     surface of revolution x'²+y'² = c0+c1·z+c2·z² (cone/ellipsoid/paraboloid)
-    # - {center: [...], surface: "x^2+y^2-36", aim_radius: 6.0e-6}
+    # - {center: [...], surface: "x^2+y^2-36", aim_radius: 6.0e-6,
+    #    engine_method: subdivision}
     #     arbitrary implicit wall F(x,y,z)=0 (µm units, F<0 inside) traced by the
     #     RaySurface engine per bounce: exact but slow — small budgets only
   z0: 0.0
@@ -78,10 +79,8 @@ trace:
                           # recording/multi-E the threshold applies after tracing
                           # (a ray is killed only if dead at every line)
   rays_jsonl: true        # full-precision ray records (rays.jsonl.gz), replay input
-  engine_method: subdivision  # RaySurface root finder for `surface:` bores and the
-                              # hit cross-checks: subdivision (grazing-safe, any F)
-                              # | sturm (exact, polynomial F only) | chebyshev
-                              # | sampling
+  engine_method: subdivision  # analytic-vs-RaySurface hit cross-check method;
+                              # each `surface:` bore sets its own method
 
 # schematic:             # stage 1: to-scale traced scheme (01a-scheme-traced.svg)
 #   n_rays: 10           # rays drawn on it

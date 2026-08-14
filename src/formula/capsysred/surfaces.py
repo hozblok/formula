@@ -109,13 +109,13 @@ def entrance_disk(bore: dict, z0f: float):
     return cxf, cyf, rf
 
 
-def _make_wall(bore: dict, z0, engine_method=HitMethod.SUBDIVISION):
+def _make_wall(bore: dict, z0):
     """Bore spec -> wall object."""
     kind = bore.get("kind", "cylinder")
     center = bore["center"]
     if kind == "implicit":
         return ImplicitWall(bore["surface"], center, bore["aim_radius"],
-                            method=engine_method)
+                            method=bore["engine_method"])
     if kind == "cylinder":
         return CylinderWall(center, bore["radius"])
     if kind == "revolution":
@@ -133,13 +133,13 @@ def _make_wall(bore: dict, z0, engine_method=HitMethod.SUBDIVISION):
 class CapillaryBundle:
     """Parallel bores along z in [z0, z1]; rays reflect off per-bore walls."""
 
-    def __init__(self, bores, z0, z1, engine_method=HitMethod.SUBDIVISION):
+    def __init__(self, bores, z0, z1):
         self.bores, self.z0, self.z1 = bores, z0, z1
         self._z0f, self._z1f = float(z0), float(z1)
         self._zero = Number("0", z0.precision)
         self.walls = []
         for bore in bores:
-            wall = _make_wall(bore, z0, engine_method)
+            wall = _make_wall(bore, z0)
             wall.aim = entrance_disk(bore, self._z0f)
             self.walls.append(wall)
 

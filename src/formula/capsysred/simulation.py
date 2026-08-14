@@ -505,7 +505,7 @@ class Simulation:
 
     def _stage6(self, out_dir, quick):
         cap = self.cfg.capillary
-        bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1, self.cfg.engine_method)
+        bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
         check = self._capillary_engine_check(bundle)
         res = self._mc_stage("capillary", "6/6 capillary (MC)", cap.source,
                              cap.screen, bundle, self._aim_capillary, SceneSeed.CAPILLARY,
@@ -570,7 +570,7 @@ class Simulation:
         else:
             scenes.append(
                 ("capillary", "7 alt capillary (MC)", cap.source, cap.screen,
-                 CapillaryBundle(cap.bores, cap.z0, cap.z1, self.cfg.engine_method),
+                 CapillaryBundle(cap.bores, cap.z0, cap.z1),
                  self._aim_capillary, SceneSeed.CAPILLARY))
         rows = []
         for stage, label, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
@@ -660,7 +660,7 @@ class Simulation:
         else:
             scenes.append(
                 ("capillary", "8 sketch capillary (MC)", cap.source, cap.screen,
-                 CapillaryBundle(cap.bores, cap.z0, cap.z1, self.cfg.engine_method),
+                 CapillaryBundle(cap.bores, cap.z0, cap.z1),
                  self._aim_capillary, SceneSeed.CAPILLARY))
         rows = []
         for stage, label, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
@@ -836,7 +836,7 @@ class Simulation:
         """Stage-6 alternative (doc/mu28_legacy_fixed3_renamed.py, running-sum
         form): same capillary rays, |mu| plus a delete-one-mode jackknife map."""
         cap = self.cfg.capillary
-        bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1, self.cfg.engine_method)
+        bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
         res = run_jack_stage(self, "10 jackknife capillary (MC)", "capillary",
                              cap.source, cap.screen, bundle,
                              self._aim_capillary, SceneSeed.CAPILLARY, quick)
@@ -1085,8 +1085,7 @@ class Simulation:
         if cap is None:
             self._skip_cap("## Stage 11 — beamlet estimator [capillary]")
         else:
-            bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1,
-                                     self.cfg.engine_method)
+            bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
             # one pass over the records deposits the main and every extra
             # screen together (the shared prep feeds all planes)
             res = run_beamlet_stage(self, "11 beamlet capillary (MC)",
@@ -1331,8 +1330,7 @@ class Simulation:
         cap = cfg.capillary
         if cap is not None:
             scenes.append(("capillary", cap.source, cap.screen,
-                           CapillaryBundle(cap.bores, cap.z0, cap.z1,
-                                           cfg.engine_method),
+                           CapillaryBundle(cap.bores, cap.z0, cap.z1),
                            self._aim_capillary, SceneSeed.CAPILLARY))
         try:
             for scene, src_cfg, scr_cfg, optic, aim_factory, off in scenes:

@@ -66,7 +66,7 @@ def run_validate_stage(sim, n_rays: int):
     cfg = sim.cfg
     cap = cfg.capillary
     p = cfg.precision
-    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1, cfg.engine_method)
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
     native = compile_optic(bundle)
     scale = lift(m_to_um(1), p)
     engines = {id(w): w.rs if w.kind == "implicit"

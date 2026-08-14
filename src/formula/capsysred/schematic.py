@@ -206,7 +206,7 @@ def build_geometry(cfg, mode: str, bores=None):
         src, scr = o.source, o.screen
         bores = bores or o.bores
         G.update(z0=float(o.z0), z1=float(o.z1),
-                 optic=CapillaryBundle(bores, o.z0, o.z1, cfg.engine_method),
+                 optic=CapillaryBundle(bores, o.z0, o.z1),
                  bores=bores)
     G["src"] = {"z": float(src.position[2]), "x": float(src.position[0]),
                 "size": float(src.size), "shape": src.shape}
