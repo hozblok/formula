@@ -46,7 +46,7 @@ DEFAULTS = {
     # | table {file}; per_line_fresnel (multi-line modes only): r(E_m) per
     # line instead of frozen r(E0)
     "spectrum": {"mode": "monochromatic", "rel_fwhm": 2.0e-4, "n_lines": 7,
-                 "n_sigma": 3.0, "per_line_fresnel": True},
+                 "n_sigma": 3.0},
     # ny=1 is a thin detector strip: edge_y must keep the intra-pixel phase
     # spread k*y^2/(2D) well below a radian, or ray shot noise floods |mu|.
     "screen": {
@@ -365,7 +365,11 @@ class Config:
                 and cfg["spectrum"]["mode"] == "monochromatic"):
             raise ValueError("spectrum: per_line_fresnel has no effect in "
                              "monochromatic mode; remove it")
-        self.per_line_fresnel = bool(cfg["spectrum"]["per_line_fresnel"])
+        # The option only applies to multi-line spectra. Keeping its default
+        # implicit lets a fully merged config be loaded again without looking
+        # like the user explicitly enabled it for monochromatic mode.
+        self.per_line_fresnel = bool(
+            cfg["spectrum"].get("per_line_fresnel", True))
         self.schematic_rays = int(cfg["schematic"]["n_rays"])
         self.sketch_rank = int(cfg["sketch"]["rank"])
         self.validate_rays = int(cfg["validate"]["n_rays"])

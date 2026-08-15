@@ -818,6 +818,7 @@ def test_per_line_fresnel_mono_rejected():
     with pytest.raises(ValueError, match="per_line_fresnel"):
         load({"spectrum": {"per_line_fresnel": False}})  # default mode is mono
     band = {"mode": "gaussian", "rel_fwhm": 2.0e-4, "n_lines": 3, "n_sigma": 3.0}
+    assert load({"spectrum": band}).per_line_fresnel
     assert not load({"spectrum": {**band, "per_line_fresnel": False}}).per_line_fresnel
 
 
