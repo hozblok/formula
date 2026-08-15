@@ -649,6 +649,16 @@ def test_top_level_source_is_rejected():
         load({"source": FREE_SOURCE})
 
 
+@pytest.mark.parametrize("text", ["false", "0", "[]", "''"])
+def test_yaml_config_must_be_a_mapping(tmp_path, text):
+    from formula.capsysred.config import load
+
+    path = tmp_path / "config.yaml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match="config must be a mapping"):
+        load(path)
+
+
 @pytest.mark.parametrize("scene", ["free", "capillary"])
 def test_configured_scene_requires_source_mapping(scene):
     from formula.capsysred.config import load
@@ -766,8 +776,10 @@ def test_removed_stages_are_rejected_by_api_and_cli(tmp_path, stage):
     with pytest.raises(ValueError, match="unknown stages"):
         Simulation.from_dict(TINY).run(str(out), stages=[stage])
     assert not out.exists()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(json.dumps(TINY), encoding="utf-8")
     with pytest.raises(SystemExit):
-        main(["-o", str(out), "--stages", str(stage)])
+        main([str(config_path), "-o", str(out), "--stages", str(stage)])
 
 
 def test_validate_partial_override_keeps_defaults():
@@ -2116,6 +2128,19 @@ def test_universal_replay_default_stages_and_guards(tmp_path):
     with pytest.raises(ValueError, match="budgets"):
         Simulation.from_dict(TINY).replay(path, str(tmp_path / "rq"),
                                           stages=[6], quick=2)
+
+
+def test_replay_defaults_intersect_recorded_and_configured_scenes(tmp_path):
+    recorded = tmp_path / "recorded"
+    Simulation.from_dict(TINY).trace(str(recorded))
+    capillary_only = {
+        "screen": TINY["screen"],
+        "capillary": TINY["capillary"],
+    }
+    sim = Simulation.from_dict(capillary_only)
+    sim.replay(str(recorded / "rays.jsonl.gz"), str(tmp_path / "replay"))
+    assert sim.results["capillary"]["rays_from"] == "file"
+    assert "free" not in sim.results
 
 
 def test_universal_replay_new_spectrum(tmp_path):

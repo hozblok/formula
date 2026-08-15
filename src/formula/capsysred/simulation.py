@@ -1338,9 +1338,16 @@ class Simulation:
                   else MultiRaysReader(paths))
         if stages is None:
             per_scene = {"free": 2, "capillary": 6}
+            configured = set()
+            if self.cfg.free_source is not None:
+                configured.add("free")
+            if self.cfg.capillary is not None:
+                configured.add("capillary")
             stages = sorted(per_scene[sc] for sc in reader.done
-                            if sc in per_scene)
+                            if sc in per_scene and sc in configured)
             if not stages:
-                raise ValueError(f"no replayable scenes in {records_path!r}")
+                raise ValueError(
+                    f"no replayable configured scenes in {records_path!r}"
+                )
         return self.run(out_dir, stages=stages, quick=quick, rays_src=reader)
 

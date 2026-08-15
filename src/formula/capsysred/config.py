@@ -305,7 +305,10 @@ class Config:
         if "lloyd" in raw:
             raise ValueError("lloyd was removed together with stages 4 and 5")
         if "source" in raw:
-            raise ValueError("configure free.source and/or capillary.source explicitly")
+            raise ValueError(
+                "top-level source was removed; configure free.source and/or "
+                "capillary.source explicitly"
+            )
         trace = raw.get("trace")
         if isinstance(trace, dict) and "engine_method" in trace:
             raise ValueError(
@@ -398,4 +401,6 @@ def load(path_or_dict) -> Config:
     import yaml
     path = os.fspath(path_or_dict)
     with open(path, encoding="utf-8") as fh:
-        return Config(yaml.safe_load(fh) or {}, yaml_file=os.path.basename(path))
+        raw = yaml.safe_load(fh)
+    return Config({} if raw is None else raw,
+                  yaml_file=os.path.basename(path))
