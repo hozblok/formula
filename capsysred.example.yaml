@@ -93,8 +93,18 @@ trace:
 #   w0: 5.0e-7           # launch waist [m]
 #   window_sigmas: 3.0   # deposit window radius in beam widths
 
+# stage14:               # stage 14 (opt-in): exact disk-backed jackknife
+#   flag_thresholds:
+#     z: 3
+#     z_ref: 3
+#     z_w: 3
+#     f_min: 0.05
+
 # Trace only (record every scene, no stages); later runs with the same config,
 # output directory and --quick reuse the file instead of tracing:
 #   python3 -m formula.capsysred config.yaml -o out --trace
 # Re-evaluate recorded rays with a different spectrum/material without tracing:
 #   python3 -m formula.capsysred other.yaml -o out2 --replay out/rays.jsonl.gz
+# Exact Stage-14 run (fresh trace or one/many immutable recordings):
+#   python3 -m formula.capsysred config.yaml -o out14 --stages 14
+#   python3 -m formula.capsysred union.yaml -o union14 --stages 14 --replay part-a/rays.jsonl.gz part-b/rays.jsonl.gz

@@ -13,6 +13,21 @@ from xml.sax.saxutils import escape
 FONT = 'font-family="DejaVu Sans, Arial, sans-serif"'
 PALETTE = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e", "#8c564b"]
 
+# Normative Stage-14 Okabe-Ito taxonomy palette.  ``None`` is deliberately
+# absent: an inapplicable classifier is rendered as a grey checkerboard, not
+# as a tenth scientific class.
+FLAG_COLORS = {
+    "trusted": "#d9d9d9",
+    "solo-rays-only": "#009E73",
+    "negative-Ic": "#0072B2",
+    "null-Ic": "#56B4E9",
+    "noisy-Ic": "#E69F00",
+    "no-ref-realizations": "#F0E442",
+    "noisy-mu": "#CC79A7",
+    "over-mu": "#000000",
+    "no-rays": "#ffffff",
+}
+
 _VIRIDIS = [(68, 1, 84), (72, 40, 120), (62, 74, 137), (49, 104, 142),
             (38, 130, 142), (31, 158, 137), (53, 183, 121), (109, 205, 89),
             (253, 231, 37)]
@@ -131,6 +146,9 @@ def _ranges(series, y_zero: bool):
     ys += [v for s in series for key in ("lo", "hi") for v in (s.get(key) or ())]
     xa, xb = min(xs), max(xs)
     ya, yb = min(ys), max(ys)
+    if xb <= xa:
+        pad_x = abs(xa) * 0.05 or 1.0
+        xa, xb = xa - pad_x, xb + pad_x
     if y_zero:
         ya = min(0.0, ya)
     pad = (yb - ya) * 0.06 or 1.0
@@ -183,13 +201,18 @@ def heatmap(grid, extent, title, xlabel, ylabel, subtitle="", cbar_label="",
     """grid: row-major [iy][ix], iy=0 at the bottom edge; extent=(x0,x1,y0,y1).
     equal=True: pick h so one data unit spans equal px on both axes."""
     ny, nx = len(grid), len(grid[0])
-    vmax = vmax or max((v for row in grid for v in row), default=1.0) or 1.0
+    finite = [float(v) for row in grid for v in row
+              if v is not None and math.isfinite(float(v))]
+    vmax = vmax or max(finite, default=1.0) or 1.0
     scale = max(1, int(360 / max(nx, ny)))
     rows = []
     for iy in range(ny - 1, -1, -1):
         row = []
         for ix in range(nx):
-            row.extend([viridis(grid[iy][ix] / vmax)] * scale)
+            value = grid[iy][ix]
+            color = (((224, 224, 224) if (ix + iy) % 2 else (184, 184, 184))
+                     if value is None else viridis(float(value) / vmax))
+            row.extend([color] * scale)
         rows.extend([row] * scale)
     ax = _Axes(w, h, (extent[0], extent[1]), (extent[2], extent[3]), right=74)
     if equal:
@@ -315,4 +338,102 @@ def scheme_setup(info):
     _arrow_h(e, xc0, xc1, ay + 84, info["len_label"])
     _arrow_h(e, xc1, xscr, ay + 84, info["d2_label"])
     _description(e, 90, ay + 140, info["description"])
+    return {"w": w, "h": h, "body": "".join(e)}
+
+
+def _hex_rgb(value):
+    value = value.lstrip("#")
+    return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def category_map(grid, extent, title, xlabel, ylabel, subtitle="", mark=None,
+                 counts=None, lit_counts=None, lit_total=None,
+                 w=620, h=460, equal=False):
+    """Categorical Stage-14 flag map.
+
+    ``grid`` contains normative flag strings or ``None``.  Null is rendered
+    with a checkerboard and listed separately; legend counts are normally
+    supplied by the classifier so its denominator can remain ``n_rays > 0``.
+    """
+    ny, nx = len(grid), len(grid[0])
+    scale = max(1, int(360 / max(nx, ny)))
+    rows = []
+    null_a, null_b = (238, 238, 238), (184, 184, 184)
+    for iy in range(ny - 1, -1, -1):
+        row = []
+        for ix in range(nx):
+            flag = grid[iy][ix]
+            color = (_hex_rgb(FLAG_COLORS[flag]) if flag is not None
+                     else (null_a if (ix + iy) % 2 == 0 else null_b))
+            row.extend([color] * scale)
+        rows.extend([row] * scale)
+    ax = _Axes(w, h, (extent[0], extent[1]), (extent[2], extent[3]), right=190)
+    if equal:
+        span = (ax.px1 - ax.px0) * (extent[3] - extent[2]) / (extent[1] - extent[0])
+        h = round(h - (ax.py0 - ax.py1) + span)
+        ax = _Axes(w, h, (extent[0], extent[1]), (extent[2], extent[3]), right=190)
+    e = ax.frame(xlabel, ylabel, title, subtitle)
+    e.append(f'<image x="{ax.px0:.1f}" y="{ax.py1:.1f}" '
+             f'width="{ax.px1 - ax.px0:.1f}" height="{ax.py0 - ax.py1:.1f}" '
+             f'preserveAspectRatio="none" image-rendering="pixelated" '
+             f'href="{_png_uri(rows)}"/>')
+    if mark:
+        e.append(f'<circle cx="{ax.x(mark[0]):.1f}" cy="{ax.y(mark[1]):.1f}" r="5" '
+                 f'fill="none" stroke="#d62728" stroke-width="1.8"/>')
+    observed = counts or {}
+    lit_observed = observed if lit_counts is None else lit_counts
+    total = (lit_total if lit_total is not None else
+             sum(observed.get(name, 0) for name in FLAG_COLORS
+                 if name != "no-rays") + observed.get(None, 0))
+    lx, ly = ax.px1 + 16, ax.py1 + 4
+    order = tuple(FLAG_COLORS) + (None,)
+    for name in order:
+        n = observed.get(name, 0)
+        fill = FLAG_COLORS.get(name, "#b8b8b8")
+        label = "unclassified" if name is None else name
+        pct_n = lit_observed.get(name, 0)
+        pct = 100.0 * pct_n / total if total and name != "no-rays" else 0.0
+        e.append(_rect(lx, ly, 12, 12, fill, "#777"))
+        suffix = f" {n:,}" + (f" ({pct:.1f}%)" if pct else "")
+        e.append(_text(lx + 18, ly + 11, label + suffix, 10.5, "start", "#333"))
+        ly += 18
+    return {"w": w, "h": h, "body": "".join(e)}
+
+
+def overlay_map(mu_grid, flag_grid, extent, title, xlabel, ylabel,
+                subtitle="", mark=None, w=620, h=460, equal=False):
+    """Viridis raw-mu display with every classified non-trusted target pink."""
+    ny, nx = len(mu_grid), len(mu_grid[0])
+    scale = max(1, int(360 / max(nx, ny)))
+    rows, bad = [], 0
+    for iy in range(ny - 1, -1, -1):
+        row = []
+        for ix in range(nx):
+            flag, value = flag_grid[iy][ix], mu_grid[iy][ix]
+            if flag not in (None, "trusted", "no-rays"):
+                color, bad = _hex_rgb("#CC79A7"), bad + 1
+            elif flag == "no-rays":
+                color = (255, 255, 255)
+            elif value is None:
+                color = (224, 224, 224) if (ix + iy) % 2 else (184, 184, 184)
+            else:
+                color = viridis(min(float(value), 1.0))
+            row.extend([color] * scale)
+        rows.extend([row] * scale)
+    ax = _Axes(w, h, (extent[0], extent[1]), (extent[2], extent[3]), right=26)
+    if equal:
+        span = (ax.px1 - ax.px0) * (extent[3] - extent[2]) / (extent[1] - extent[0])
+        h = round(h - (ax.py0 - ax.py1) + span)
+        ax = _Axes(w, h, (extent[0], extent[1]), (extent[2], extent[3]), right=26)
+    e = ax.frame(xlabel, ylabel, title, subtitle)
+    e.append(f'<image x="{ax.px0:.1f}" y="{ax.py1:.1f}" '
+             f'width="{ax.px1 - ax.px0:.1f}" height="{ax.py0 - ax.py1:.1f}" '
+             f'preserveAspectRatio="none" image-rendering="pixelated" '
+             f'href="{_png_uri(rows)}"/>')
+    if mark:
+        e.append(f'<circle cx="{ax.x(mark[0]):.1f}" cy="{ax.y(mark[1]):.1f}" r="5" '
+                 f'fill="none" stroke="#d62728" stroke-width="1.8"/>')
+    e.append(_rect(ax.px0 + 8, ax.py0 - 25, 12, 12, "#CC79A7", "#555"))
+    e.append(_text(ax.px0 + 26, ax.py0 - 14,
+                   f"classified but not trusted ({bad:,})", 10.5))
     return {"w": w, "h": h, "body": "".join(e)}

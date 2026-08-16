@@ -83,6 +83,10 @@ DEFAULTS = {
     # null = isotropic (= w0), "auto" = the scene's Fresnel scale
     # sqrt(lam*L/pi) of the source->screen flight, or an explicit number.
     "beamlet": {"w0": 5.0e-7, "w0_t": None, "window_sigmas": 3.0},
+    # stage 14: exact disk-backed delete-one-mode jackknife taxonomy.
+    "stage14": {"flag_thresholds": {
+        "z": 3.0, "z_ref": 3.0, "z_w": 3.0, "f_min": 0.05,
+    }},
 }
 
 
@@ -309,6 +313,11 @@ class Config:
                 "top-level source was removed; configure free.source and/or "
                 "capillary.source explicitly"
             )
+        if "flag_thresholds" in raw:
+            raise ValueError(
+                "top-level flag_thresholds is not supported; use "
+                "stage14.flag_thresholds"
+            )
         trace = raw.get("trace")
         if isinstance(trace, dict) and "engine_method" in trace:
             raise ValueError(
@@ -396,6 +405,49 @@ class Config:
             raise ValueError(f"beamlet w0_t: null, \"auto\" or a number, got {w0t!r}")
         self.beamlet_w0_t = float(w0t) if isinstance(w0t, (int, float)) else w0t
         self.beamlet_ns = float(cfg["beamlet"]["window_sigmas"])
+        stage14 = cfg.get("stage14")
+        if not isinstance(stage14, dict):
+            raise ValueError("stage14 must be a mapping")
+        stage14_unknown = stage14.keys() - {"flag_thresholds"}
+        if stage14_unknown:
+            raise ValueError(
+                f"stage14 has unknown keys {sorted(stage14_unknown)}"
+            )
+        thresholds = stage14.get("flag_thresholds")
+        if not isinstance(thresholds, dict):
+            raise ValueError("stage14.flag_thresholds must be a mapping")
+        required = {"z", "z_ref", "z_w", "f_min"}
+        missing = required - thresholds.keys()
+        unknown = thresholds.keys() - required
+        if missing or unknown:
+            detail = []
+            if missing:
+                detail.append(f"missing {sorted(missing)}")
+            if unknown:
+                detail.append(f"unknown {sorted(unknown)}")
+            raise ValueError("stage14.flag_thresholds: " + "; ".join(detail))
+        for key in ("z", "z_ref", "z_w", "f_min"):
+            value = thresholds[key]
+            if (not isinstance(value, (int, float))
+                    or isinstance(value, bool)):
+                raise ValueError(
+                    f"stage14.flag_thresholds.{key} must be a number"
+                )
+        self.stage14_flag_thresholds = {
+            key: float(thresholds[key])
+            for key in ("z", "z_ref", "z_w", "f_min")
+        }
+        for key in ("z", "z_ref", "z_w"):
+            value = self.stage14_flag_thresholds[key]
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(
+                    f"stage14.flag_thresholds.{key} must be finite and > 0"
+                )
+        f_min = self.stage14_flag_thresholds["f_min"]
+        if not math.isfinite(f_min) or not 0.0 < f_min <= 1.0:
+            raise ValueError(
+                "stage14.flag_thresholds.f_min must be finite and in (0, 1]"
+            )
 
 
 def load(path_or_dict) -> Config:

@@ -211,7 +211,7 @@ case for case insensitive expressions.");
     is_complex_ = std::regex_search(expression_, regexp_check_complex_numbers);
   }
 
-  if (is_complex_ && (expression_.find("<") != std::string::npos or
+  if (is_complex_ && (expression_.find("<") != std::string::npos ||
       expression_.find(">") != std::string::npos)) {
     throw std::invalid_argument(
         "The given formula expression with complex numbers contains wrong \

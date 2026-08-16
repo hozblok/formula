@@ -1,4 +1,4 @@
-"""CLI: python3 -m formula.capsysred config.yaml -o out/ [--stages 1,10] [--quick N]
+"""CLI: python3 -m formula.capsysred config.yaml -o out/ [--stages 1,14] [--quick N]
 [--trace] [--replay rays.jsonl.gz]"""
 
 import argparse
@@ -18,7 +18,8 @@ def main(argv=None) -> int:
     parser.add_argument("--stages", default=None,
                         help="which stages to run, e.g. 1,2,3 (default core "
                              "stages of the configured scenes; 3 requires 2, "
-                             "which is added automatically)")
+                             "which is added automatically; 10 and 14 are "
+                             "separate opt-in jackknife estimators)")
     parser.add_argument("--quick", type=int, default=1, metavar="N",
                         help="divisor for the mode/ray counts for a quick estimate")
     parser.add_argument("--trace", action="store_true",
@@ -29,7 +30,8 @@ def main(argv=None) -> int:
                         nargs="+",
                         help="re-evaluate recorded rays on the spectrum/material from "
                              "the config, without tracing; several files stream as one "
-                             "recording (mode ids offset, config n_modes = their sum)")
+                             "recording (Stage 14 builds/reuses one disk cache per "
+                             "file; config n_modes = their sum)")
     args = parser.parse_args(argv)
 
     stages = None

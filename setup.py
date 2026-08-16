@@ -71,6 +71,7 @@ EXT_MODULES = [
             "src/cpp/bindings_mp_real.cpp",
             "src/cpp/bindings_mp_complex.cpp",
             "src/cpp/bindings_trace.cpp",
+            "src/cpp/bindings_stage14.cpp",
         ],
         include_dirs=[
             BOOST_HEADERS,
@@ -80,6 +81,7 @@ EXT_MODULES = [
         extra_compile_args=EXTRA_COMPILE_ARGS,
         extra_link_args=EXTRA_LINK_ARGS,
         language="c++",
+        cxx_std=17,
     )
 ]
 

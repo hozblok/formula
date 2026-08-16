@@ -22,6 +22,7 @@ from .beamlet import run_beamlet_stage
 from .coherence import CoherenceAccumulator
 from .jackknife import run_jack_stage
 from .sketch import run_sketch_stage
+from .stage14 import preflight_stage14_output, run_stage14
 from .validate import METHOD_LABELS, run_validate_stage
 from .config import Config, load
 from .nums import lift, solver, vunit
@@ -33,13 +34,14 @@ from .surfaces import CapillaryBundle, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
 from .rays import (METADATA_NAME, MultiRaysReader, RaysFile, RaysReader,
-                   SceneSeed, require_full_rows, scene_stream)
+                   SceneSeed, metadata_equal, read_metadata,
+                   require_full_rows, scene_stream, sidecar_metadata)
 from .types import HitMethod, RayRecord
 from .units import (
     m_to_angstrom, m_to_mm, m_to_um, rad_to_mrad, rad_to_urad)
 
 ALL_STAGES = (1, 2, 3, 6)
-KNOWN_STAGES = ALL_STAGES + (7, 8, 9, 10, 11, 12)  # 7 (alt), 8 (sketch), 9 (hit methods), 10 (jackknife), 11 (beamlets), 12 (pairwise free, ex-stage 2) — opt-in
+KNOWN_STAGES = ALL_STAGES + (7, 8, 9, 10, 11, 12, 14)  # opt-in estimators/validation
 
 
 def _log(msg: str):
@@ -1155,7 +1157,7 @@ class Simulation:
             raise ValueError(
                 f"stages {free_stages} require a configured free.source"
             )
-        capillary_stages = sorted(wanted & {6, 9, 10})
+        capillary_stages = sorted(wanted & {6, 9, 10, 14})
         if capillary_stages and self.cfg.capillary is None:
             raise ValueError(
                 f"stages {capillary_stages} require a configured "
@@ -1169,6 +1171,57 @@ class Simulation:
             )
 
     # ------------------------------------------------------------- trace
+
+    def _ensure_stage14_rays(self, path: str, quick: int) -> bool:
+        """Create and close the canonical capillary recording if absent.
+
+        Existing archives are intentionally not scanned here: the Stage-14
+        cache builder is their single strict pass.  Returns true when this
+        call performed the trace.
+        """
+        if os.path.lexists(path):
+            try:
+                actual = read_metadata(path)
+            except (OSError, UnicodeError, ValueError, TypeError) as exc:
+                raise ValueError(
+                    f"{path}: existing local Stage-14 rays metadata is "
+                    "missing or invalid; remove the result manually or "
+                    "choose another output directory"
+                ) from exc
+            expected = sidecar_metadata(self.cfg, quick)
+            if not metadata_equal(actual, expected):
+                raise ValueError(
+                    f"{path}: existing local rays metadata does not match "
+                    "this Stage-14 run; use explicit --replay, remove the "
+                    "result manually, or choose another output directory"
+                )
+            return False
+        if not self.cfg.rays_jsonl:
+            raise ValueError(
+                "stage 14 requires trace.rays_jsonl: true so its persistent "
+                "cache has a canonical provenance source"
+            )
+        cap = self.cfg.capillary
+        writer = RaysFile(path, self.cfg, quick)
+        self.rays = writer
+        n_modes, n_rays = cap.source.budget(quick)
+        progress = Progress("trace capillary for stage 14", n_modes * n_rays)
+        on_screen = 0
+        try:
+            records, rays_from = scene_stream(
+                self, "capillary", cap.source, cap.screen,
+                CapillaryBundle(cap.bores, cap.z0, cap.z1),
+                self._aim_capillary, SceneSeed.CAPILLARY, quick)
+            if rays_from != "trace":
+                raise RuntimeError("new Stage-14 rays archive unexpectedly reused")
+            for rec in records:
+                on_screen += rec.fate == "screen"
+                progress.step()
+            progress.finish(f"on screen {on_screen:,}")
+        finally:
+            writer.close()
+            self.rays = None
+        return True
 
     def trace(self, out_dir, quick: int = 1) -> dict:
         """Trace-only run: record every scene's geometry (no physics) into the
@@ -1222,8 +1275,11 @@ class Simulation:
 
     # ------------------------------------------------------------- run
 
-    def run(self, out_dir, stages=None, quick: int = 1, rays_src=None) -> dict:
+    def run(self, out_dir, stages=None, quick: int = 1, rays_src=None,
+            stage14_paths=None) -> dict:
         cfg = self.cfg
+        if stage14_paths is not None:
+            stage14_paths = [os.fspath(path) for path in stage14_paths]
         wanted = self._default_stages() if stages is None else set(stages)
         if not wanted:
             raise ValueError("stages must not be empty")
@@ -1233,14 +1289,19 @@ class Simulation:
         if 3 in wanted:
             wanted.add(2)
         self._validate_stage_scenes(wanted)
-        if rays_src is not None and 9 in wanted:
+        if (rays_src is not None or stage14_paths is not None) and 9 in wanted:
             raise ValueError("stage 9 validates the tracers themselves and "
                              "cannot run from a rays file")
         os.makedirs(out_dir, exist_ok=True)
+        if 14 in wanted:
+            # Fail before a fresh trace or a many-hour cache build.
+            preflight_stage14_output(out_dir)
         t0 = time.time()
         _log(f"CAPSYSred: stages {sorted(wanted)}, output to {out_dir}"
              + (f", speedup ×{quick}" if quick > 1 else "")
-             + (f", rays from {rays_src.path}" if rays_src is not None else ""))
+             + (f", rays from {rays_src.path}" if rays_src is not None else
+                f", rays from {' + '.join(stage14_paths)}"
+                if stage14_paths is not None else ""))
         fres_check = self._fresnel_check()
         _log("  " + fres_check)
         self.report = [
@@ -1262,7 +1323,18 @@ class Simulation:
             self.report.insert(-1, f"- replay: rays from {rays_src.path} "
                                    "(no tracing)")
             self.rays = rays_src
+        elif stage14_paths is not None:
+            self.report.insert(-1, "- replay: rays from "
+                               + " + ".join(stage14_paths) + " (no tracing)")
+            self.rays = None
         else:
+            if 14 in wanted:
+                local_path = os.path.join(out_dir, rays_name)
+                traced14 = self._ensure_stage14_rays(local_path, quick)
+                stage14_paths = [local_path]
+                if traced14:
+                    self.report.insert(-1,
+                                       "- stage 14: canonical capillary rays traced before cache build")
             self.rays = (RaysFile(os.path.join(out_dir, rays_name), cfg, quick)
                          if cfg.rays_jsonl and wanted & {2, 6, 7, 8, 10, 11, 12}
                          else None)
@@ -1303,12 +1375,81 @@ class Simulation:
         finally:
             if self.rays is not None:
                 self.rays.close()
+        if 14 in wanted:
+            _log("Stage 14: exact disk-backed delete-one-mode jackknife")
+            res14 = run_stage14(self, out_dir, stage14_paths, quick, log=_log)
+            self.results["stage14:capillary"] = res14
+            for name in res14["files"]:
+                self.files.append(name)
+                _log(f"  → {name}")
+            counts = res14["flag_counts"]
+            lit = sum(row["n_rays"] > 0 for row in res14["rows"])
+            flag_names = ("trusted", "noisy-mu", "over-mu", "noisy-Ic",
+                          "null-Ic", "negative-Ic", "solo-rays-only",
+                          "no-ref-realizations", "no-rays")
+            flag_line = ", ".join(
+                f"{name}={counts.get(name, 0):,}"
+                + (f" ({100.0 * counts.get(name, 0) / lit:.2f}% lit)"
+                   if lit and name != "no-rays" else "")
+                for name in flag_names)
+            unclassified = counts.get(None, 0)
+            unclassified_lit = sum(
+                row["n_rays"] > 0 and row["flag"] is None
+                for row in res14["rows"]
+            )
+            unclassified_note = (f"{unclassified:,} "
+                                 f"({100.0 * unclassified_lit / lit:.2f}% lit)"
+                                 if lit else f"{unclassified:,}")
+            stats14 = res14["stats"]
+            perf14 = res14["result_meta"]["performance"]
+            remediation = ", ".join(
+                f"{name}={value:,}"
+                for name, value in res14["remediation_counts"].items())
+            w_census = ", ".join(
+                f"{name}={value:,}"
+                for name, value in res14["w_signal_census"].items())
+            self.report += [
+                "## Stage 14 — exact disk-backed jackknife [capillary]",
+                f"- {res14['n_modes']} modes × {res14['n_rays']} rays; "
+                f"cache hits {res14['cache_hits']} of {len(res14['cache_parts'])}",
+                f"- reference status: {res14['ref_status']}; warnings: "
+                f"{', '.join(res14['ref_warnings']) or 'none'}",
+                f"- reference diagnostics: {res14['ref_diagnostics']}",
+                f"- flags: {flag_line}; unclassified={unclassified_note}",
+                f"- over-mu with incomplete LOO: "
+                f"{res14['over_mu_partial_loo']:,}; negative-Ic self-test: "
+                f"{counts.get('negative-Ic', 0):,}",
+                f"- remediation groups: {remediation}",
+                f"- W significance channel: {w_census}",
+                f"- stream: emitted={stats14['emitted']:,}, "
+                f"screen={stats14['screen']:,}, off-window={stats14['off_window']:,}, "
+                f"absorbed={stats14['absorbed']:,}, lost={stats14['lost']:,}, "
+                f"reflected rays={stats14['reflected_rays']:,}, "
+                f"reflections={stats14['reflections']:,}",
+                f"- thresholds: {self.cfg.stage14_flag_thresholds}",
+                f"- I/O: rays read {perf14['ray_archive_bytes_read']:,} B; "
+                f"cache written {perf14['cache_bytes_written']:,} B; "
+                f"mode rows read {perf14['mode_rows_bytes_read']:,} B",
+                f"- time: {res14['seconds']:.1f} s "
+                f"(payload passes {perf14['pass1_seconds']:.3f} + "
+                f"{perf14['pass2_seconds']:.3f} s); estimated peak RSS "
+                f"{perf14['estimated_peak_rss_bytes'] / (1024 ** 3):.2f} GiB",
+            ]
         if self.rays is not None and rays_src is None:
             self.files.append(rays_name)
             _log(f"  → {rays_name}")
             if self.rays.has_sidecar:
                 self.files.append(METADATA_NAME)
                 _log(f"  → {METADATA_NAME}")
+        elif 14 in wanted and rays_src is None and stage14_paths is not None:
+            # Stage14-only fresh runs close their archive before the strict
+            # cache pass, so there is no live RaysFile object to report here.
+            local_path = os.path.abspath(os.path.join(out_dir, rays_name))
+            if len(stage14_paths) == 1 and os.path.abspath(stage14_paths[0]) == local_path:
+                for name in (rays_name, METADATA_NAME):
+                    if name not in self.files:
+                        self.files.append(name)
+                        _log(f"  → {name}")
         report_name = _report_name(out_dir, "report")
         self.report += ["", "## Files", ""]
         self.report += [f"- {name}" for name in self.files + [report_name]]
@@ -1326,7 +1467,7 @@ class Simulation:
                quick: int = 1) -> dict:
         """Run stages from a recorded rays file — no tracing at all.
 
-        Any streaming stage replays (2, 6-8 and 10-12, plus analytics 3; stage
+        Any streaming stage replays (2, 6-8, 10-12 and 14, plus analytics 3; stage
         9 validates live tracers and is refused); default = the Number stages
         of the scenes present (free -> 2, capillary -> 6). The
         spectrum and the material may differ from the recording — rays are
@@ -1334,9 +1475,9 @@ class Simulation:
         """
         paths = ([records_path] if isinstance(records_path, str)
                  else list(records_path))
-        reader = (RaysReader(paths[0]) if len(paths) == 1
-                  else MultiRaysReader(paths))
         if stages is None:
+            reader = (RaysReader(paths[0]) if len(paths) == 1
+                      else MultiRaysReader(paths))
             per_scene = {"free": 2, "capillary": 6}
             configured = set()
             if self.cfg.free_source is not None:
@@ -1349,5 +1490,16 @@ class Simulation:
                 raise ValueError(
                     f"no replayable configured scenes in {records_path!r}"
                 )
-        return self.run(out_dir, stages=stages, quick=quick, rays_src=reader)
+            return self.run(out_dir, stages=stages, quick=quick, rays_src=reader)
+        wanted = set(stages)
+        if 14 in wanted and wanted == {14}:
+            # No RaysReader: its constructor scans the whole gzip.  The
+            # Stage-14 builder validates/deposits in one strict pass, while a
+            # cache hit does not open the ray archive at all.
+            return self.run(out_dir, stages=stages, quick=quick,
+                            stage14_paths=paths)
+        reader = (RaysReader(paths[0]) if len(paths) == 1
+                  else MultiRaysReader(paths))
+        return self.run(out_dir, stages=stages, quick=quick, rays_src=reader,
+                        stage14_paths=paths if 14 in wanted else None)
 
