@@ -1,7 +1,7 @@
 # Example CAPSYSred config. Global fields have defaults; every configured scene
 # must provide its own complete source.
 # Run:  PYTHONPATH=src python3 -m formula.capsysred capsysred.example.yaml -o out/
-# Stages 1, 2, 3 and 6 run by default; 7-12 are opt-in via --stages.
+# Stages 1, 2, 3 and 6 run by default; 7-12 and 14 are opt-in via --stages.
 # Lengths in meters, angles in radians, energy in keV.
 
 precision: 32          # digits of arbitrary precision (Number/Solver)
@@ -44,7 +44,7 @@ free:                  # stages 2-3 (and 7, 8, 11, 12)
     n_rays: 800        # rays per mode
   # screen: {}         # optional overrides of the global screen
 
-capillary:             # stage 6 and the opt-in estimator stages 7, 8, 10, 11
+capillary:             # stage 6 and the opt-in estimator stages 7, 8, 10, 11, 14
   bores:               # parallel bores (polycapillary — several entries), each ONE of:
     - {center: [0.0, 0.0], radius: 6.0e-6}   # cylinder
     # - {center: [...], radius: a, bend: {radius: R, toward: [1.0, 0.0]}}
@@ -70,8 +70,10 @@ capillary:             # stage 6 and the opt-in estimator stages 7, 8, 10, 11
     n_rays: 1000
   screen: {z: 0.051, edge_x: 1.6e-5, edge_y: 1.6e-5, nx: 41, ny: 41}
   # screens: [{z: 0.08}, {z: 0.12, edge_x: 3.2e-5}]
-  #     extra stage-10 planes past the exit, re-binned from the same trace
-  #     (no re-tracing); each merges onto `screen`, own figures/report section
+  #     extra stage-10/14 planes past the exit, re-binned from the same trace
+  #     (no re-tracing); each merges onto `screen`, own figures/report section.
+  #     Stage 14 decodes the ray stream and evaluates amplitudes once, then
+  #     fans each ray out to the main and all extra screens; caches stay separate.
 
 trace:
   max_bounces: 200

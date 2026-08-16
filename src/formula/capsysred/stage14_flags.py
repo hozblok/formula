@@ -583,8 +583,15 @@ def validate_pixel_row(
 
     if row["stage_id"] != 14 or not _is_integer(row["stage_id"]):
         raise Stage14InvariantError("stage_id must be integer 14")
-    if row["screen"] != "capillary":
-        raise Stage14InvariantError("screen must be 'capillary' in schema v1")
+    screen = row["screen"]
+    if (not isinstance(screen, str)
+            or not (screen == "capillary"
+                    or (screen.startswith("capillary-s")
+                        and screen[11:].isdigit()
+                        and int(screen[11:]) > 0))):
+        raise Stage14InvariantError(
+            "screen must be 'capillary' or 'capillary-sN' in schema v1"
+        )
     _require_integer("pixel", row["pixel"], minimum=0)
     _require_finite("x_um", row["x_um"])
     _require_finite("y_um", row["y_um"])
@@ -645,6 +652,7 @@ def serialize_pixel(
     ref_status: RefStatus,
     n_jackknife_units: int,
     thresholds: FlagThresholds,
+    screen: str = "capillary",
 ) -> dict[str, object]:
     """Build and validate one schema-v1 JSON object.
 
@@ -662,7 +670,7 @@ def serialize_pixel(
     counters = stats.counters
     row: dict[str, object] = {
         "stage_id": 14,
-        "screen": "capillary",
+        "screen": screen,
         "pixel": pixel,
         "is_reference": is_reference,
         "ref_status": ref_status,

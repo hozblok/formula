@@ -51,6 +51,14 @@ AGG_MAGIC = b"CPS14AGG"
 AGG_FORMAT = 1
 STREAM_COUNTERS = ("emitted", "screen", "absorbed", "lost", "off_window",
                    "reflected_rays", "reflections")
+RESULT_PAYLOAD_NAMES = (
+    "mu-jack.jsonl",
+    "14-capillary-jack-mu.svg",
+    "14a-capillary-jack-slice.svg",
+    "14b-capillary-jack-intensity.svg",
+    "14c-capillary-jack-overlay.svg",
+    "14d-capillary-ray-scatter.svg",
+)
 def _canonical(value) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=False, allow_nan=False)
@@ -83,7 +91,7 @@ def _stat_contract(value) -> dict:
 
 
 def _publish_directory(partial: str, final: str, names: list[str]) -> None:
-    """Publish regular files into an exclusively reserved directory.
+    """Publish files or child trees into an exclusively reserved directory.
 
     The metadata marker is supplied last by callers.  A crash can therefore
     leave an unmistakably incomplete directory, but can never replace a
@@ -103,6 +111,26 @@ def _publish_directory(partial: str, final: str, names: list[str]) -> None:
         # Keep both paths as loud, fail-closed evidence.  The final directory
         # has no valid metadata until the last move succeeds.
         raise
+
+
+def _publish_result_tree(partial: str, final: str,
+                         fallback_names: list[str]) -> None:
+    """Publish a complete result tree atomically where the OS permits it.
+
+    Windows ``rename`` is an atomic no-replace directory move, which is the
+    production platform for the large archives.  On platforms where rename
+    may replace an empty destination, retain the older exclusive-directory,
+    metadata-last fallback rather than weakening no-clobber semantics.
+    """
+    if os.name == "nt":
+        try:
+            os.rename(partial, final)
+        except FileExistsError as exc:
+            raise ValueError(
+                f"{final}: publication conflict; remove it manually"
+            ) from exc
+        return
+    _publish_directory(partial, final, fallback_names)
 
 
 def _read_json(path: str):
@@ -180,7 +208,7 @@ def _trace_core(geometry: dict) -> dict:
     }
 
 
-def _screen_contract(cap, grid: ScreenGrid, ref: int) -> dict:
+def _screen_contract(grid: ScreenGrid, ref: int) -> dict:
     return {
         "z": float(grid.z), "center": [grid.cxf, grid.cyf],
         "edge_x": grid.exf, "edge_y": grid.eyf,
@@ -190,8 +218,8 @@ def _screen_contract(cap, grid: ScreenGrid, ref: int) -> dict:
     }
 
 
-def _reference_pixel(cap, grid: ScreenGrid) -> int:
-    xy = cap.screen.reference
+def _reference_pixel(screen_cfg, grid: ScreenGrid) -> int:
+    xy = screen_cfg.reference
     xf, yf = xy if xy is not None else (grid.cxf, grid.cyf)
     if not (math.isfinite(xf) and math.isfinite(yf)
             and grid.x0f <= xf < grid.x0f + grid.exf
@@ -254,6 +282,40 @@ class CachePart:
     rows_path: str
     aggregates_path: str
     cache_hit: bool
+
+
+@dataclass
+class ScreenTarget:
+    """One independently fingerprinted Stage-14 target screen."""
+
+    label: str
+    index: int
+    cfg: object
+    grid: ScreenGrid
+    ref: int
+    contract: dict
+    signature: dict
+    parts: list[InputPart]
+    caches: list[CachePart | None]
+    scatter: ScatterRaster
+
+    @property
+    def output_subdir(self) -> str:
+        return "" if self.index == 0 else f"screen-{self.index}"
+
+
+@dataclass
+class CacheBuild:
+    """A missing cache prepared for one screen and one input archive."""
+
+    target: ScreenTarget
+    part: InputPart
+    partial: str
+    rows_path: str
+    aggregate_path: str
+    store: object
+    scatter: ScatterRaster
+    started_at: float
 
 
 def _prepare_inputs(sim, paths, quick: int, signature: dict) -> list[InputPart]:
@@ -328,6 +390,25 @@ def _prepare_inputs(sim, paths, quick: int, signature: dict) -> list[InputPart]:
     return parts
 
 
+def _screen_targets(sim, paths, quick: int) -> list[ScreenTarget]:
+    """Bind main and configured extra screens to independent cache IDs."""
+    cap = sim.cfg.capillary
+    configs = [cap.screen, *cap.screens]
+    targets = []
+    for index, screen_cfg in enumerate(configs):
+        label = "capillary" if index == 0 else f"capillary-s{index}"
+        grid = ScreenGrid(screen_cfg)
+        ref = _reference_pixel(screen_cfg, grid)
+        contract = _screen_contract(grid, ref)
+        signature = _analysis_signature(sim, contract)
+        parts = _prepare_inputs(sim, paths, quick, signature)
+        targets.append(ScreenTarget(
+            label, index, screen_cfg, grid, ref, contract, signature,
+            parts, [None] * len(parts), ScatterRaster(screen_cfg),
+        ))
+    return targets
+
+
 def _native_store(path, n_modes, n_pixels, ref, kms, weights):
     cls = getattr(_formula, "Stage14Store", None)
     if cls is None:
@@ -374,7 +455,7 @@ def _amplitudes_factory(sim):
     return frozen
 
 
-def _project_row(row: dict, source_z: float, grid: ScreenGrid):
+def _project_coordinates(row: dict, source_z: float, target_z: float):
     try:
         x, y = float(row["x"]), float(row["y"])
         dx, dy = float(row["dx"]), float(row["dy"])
@@ -385,12 +466,18 @@ def _project_row(row: dict, source_z: float, grid: ScreenGrid):
         raise ValueError("screen ray has non-finite x/y/direction/opl")
     dz = math.sqrt(max(1.0 - dx * dx - dy * dy, 0.0))
     if dz <= 0.0:
-        return x, y, None, opl
-    step = (float(grid.z) - source_z) / dz
+        return x, y, opl, False
+    step = (target_z - source_z) / dz
     x, y, opl = x + dx * step, y + dy * step, opl + step
     if not all(map(math.isfinite, (x, y, opl))):
         raise ValueError("re-projected screen ray is non-finite")
-    return x, y, grid.pixel((x, y)), opl
+    return x, y, opl, True
+
+
+def _project_row(row: dict, source_z: float, grid: ScreenGrid):
+    x, y, opl, reachable = _project_coordinates(
+        row, source_z, float(grid.z))
+    return x, y, grid.pixel((x, y)) if reachable else None, opl
 
 
 def _row_ids(row: dict, path: str):
@@ -401,14 +488,26 @@ def _row_ids(row: dict, path: str):
     return mode, ray
 
 
-def _build_stream(sim, part: InputPart, grid: ScreenGrid, store,
-                  scatter: ScatterRaster, log) -> tuple[dict, list[int]]:
-    """Strict one-pass archive validation and target-scene deposit."""
+def _build_stream_fanout(sim, part: InputPart, builds: list[CacheBuild],
+                         log) -> tuple[list[dict], list[int]]:
+    """Strictly decode one archive into every missing screen cache."""
+    if not builds:
+        raise ValueError("Stage-14 fan-out needs at least one cache build")
+    for build in builds:
+        other = build.part
+        if (os.path.abspath(other.path) != os.path.abspath(part.path)
+                or other.n_modes != part.n_modes
+                or other.n_rays != part.n_rays
+                or other.source_z != part.source_z
+                or other.input_id != part.input_id):
+            raise ValueError("Stage-14 fan-out inputs do not describe one archive")
     amps_of = _amplitudes_factory(sim)
     expected = part.n_modes * part.n_rays
-    progress = Progress("14 cache capillary", expected)
+    suffix = "s" if len(builds) != 1 else ""
+    progress = Progress(
+        f"14 cache capillary fan-out ({len(builds)} screen{suffix})", expected)
     counts, trailers, known_seen = {}, {}, set()
-    stats = {name: 0 for name in STREAM_COUNTERS}
+    stats_rows = [dict.fromkeys(STREAM_COUNTERS, 0) for _ in builds]
     bounce_hist = [0] * (sim.cfg.max_bounces + 1)
     current_mode = None
     target_rows = 0
@@ -503,18 +602,22 @@ def _build_stream(sim, part: InputPart, grid: ScreenGrid, store,
                     )
                 if mode != current_mode:
                     if current_mode is not None:
-                        store.fold_mode()
-                    store.begin_mode(mode)
+                        for build in builds:
+                            build.store.fold_mode()
+                    for build in builds:
+                        build.store.begin_mode(mode)
                     current_mode = mode
                 target_rows += 1
-                stats["emitted"] += 1
+                for stats in stats_rows:
+                    stats["emitted"] += 1
                 nb = len(sins)
                 if nb > sim.cfg.max_bounces:
                     raise ValueError(f"{part.path}:{line_no}: too many reflections")
                 bounce_hist[nb] += 1
                 if nb:
-                    stats["reflected_rays"] += 1
-                    stats["reflections"] += nb
+                    for stats in stats_rows:
+                        stats["reflected_rays"] += 1
+                        stats["reflections"] += nb
                 amps = None
                 if fate == "screen":
                     amps = amps_of(sins)
@@ -522,22 +625,36 @@ def _build_stream(sim, part: InputPart, grid: ScreenGrid, store,
                             and max(abs(a) for a in amps) < sim.cfg.amplitude_min):
                         fate = "absorbed"
                 if fate == "screen":
-                    x, y, pixel, opl = _project_row(row, part.source_z, grid)
-                    scatter.add((x, y))
-                    if pixel is None:
-                        stats["off_window"] += 1
-                    else:
-                        store.add_ray(pixel, opl, amps)
-                        stats["screen"] += 1
+                    projected = {}
+                    for index, build in enumerate(builds):
+                        z = float(build.target.grid.z)
+                        coords = projected.get(z)
+                        if coords is None:
+                            coords = projected[z] = _project_coordinates(
+                                row, part.source_z, z)
+                        x, y, opl, reachable = coords
+                        build.scatter.add((x, y))
+                        pixel = (build.target.grid.pixel((x, y))
+                                 if reachable else None)
+                        if pixel is None:
+                            stats_rows[index]["off_window"] += 1
+                        else:
+                            build.store.add_ray(pixel, opl, amps)
+                            stats_rows[index]["screen"] += 1
                 else:
-                    stats[fate] += 1
+                    for stats in stats_rows:
+                        stats[fate] += 1
                 progress.step()
         if current_mode is not None:
-            store.fold_mode()
+            for build in builds:
+                build.store.fold_mode()
     except BaseException:
         progress.finish("failed")
         raise
-    progress.finish(f"on screen {stats['screen']:,}")
+    progress.finish(
+        "on screens " + ", ".join(
+            f"{build.target.label}={stats['screen']:,}"
+            for build, stats in zip(builds, stats_rows)))
     if target_rows != expected:
         raise ValueError(
             f"{part.path}: capillary holds {target_rows} rows, expected {expected}"
@@ -552,11 +669,15 @@ def _build_stream(sim, part: InputPart, grid: ScreenGrid, store,
             raise ValueError(f"{part.path}: scene {scene!r} contradicts its budget")
     if set(trailers) != set(counts):
         raise ValueError(f"{part.path}: orphan scene trailer or partial scene")
-    if stats["emitted"] != sum(stats[name] for name in
-                                ("screen", "off_window", "absorbed", "lost")):
-        raise ValueError(f"{part.path}: inconsistent Stage-14 stream counters")
+    for build, stats in zip(builds, stats_rows):
+        if stats["emitted"] != sum(
+                stats[name] for name in
+                ("screen", "off_window", "absorbed", "lost")):
+            raise ValueError(
+                f"{part.path}: inconsistent Stage-14 counters for "
+                f"{build.target.label}")
     log(f"  stage 14 cache input validated: {part.n_modes} modes × {part.n_rays} rays")
-    return stats, bounce_hist
+    return stats_rows, bounce_hist
 
 
 def _expected_aggregate_size(npix: int, max_bounces: int,
@@ -576,6 +697,23 @@ def _estimated_peak_rss(npix: int, n_lines: int, scatter_cells: int) -> int:
     native_build = npix * (24 * n_lines + 128)
     python_finalize = 512 * 1024 * 1024 + npix * 4096 + scatter_cells * 40
     return max(native_build, python_finalize)
+
+
+def _estimated_fanout_peak_rss(targets: list[ScreenTarget], n_lines: int) -> int:
+    """Conservative peak for simultaneous stores and retained screen results."""
+    unique_builds = {}
+    for target in targets:
+        key = _canonical(target.signature)
+        unique_builds.setdefault(key, target)
+    native_build = 512 * 1024 * 1024 + sum(
+        target.grid.nx * target.grid.ny * (24 * n_lines + 128)
+        + target.scatter.nx * target.scatter.ny * 40
+        for target in unique_builds.values())
+    retained_results = 512 * 1024 * 1024 + sum(
+        target.grid.nx * target.grid.ny * 4096
+        + target.scatter.nx * target.scatter.ny * 40
+        for target in targets)
+    return max(native_build, retained_results)
 
 
 def _write_aggregates(path: str, native: dict, npix: int, stats: dict,
@@ -692,25 +830,12 @@ def _load_cache(part: InputPart, signature: dict, npix: int,
     return cache
 
 
-def _build_cache(sim, part: InputPart, signature: dict, grid: ScreenGrid,
-                 ref: int, log) -> CachePart:
-    npix = grid.nx * grid.ny
-    scatter = ScatterRaster(sim.cfg.capillary.screen)
+def _prepare_cache_build(sim, target: ScreenTarget,
+                         part: InputPart) -> CacheBuild:
+    """Exclusively reserve one missing cache and construct its native store."""
     cache_root = os.path.dirname(part.cache_dir)
     os.makedirs(cache_root, exist_ok=True)
     partial = part.cache_dir + ".partial"
-    required = part.n_modes * npix * 24 + _expected_aggregate_size(
-        npix, sim.cfg.max_bounces, scatter.nx * scatter.ny)
-    rss_estimate = _estimated_peak_rss(
-        npix, len(sim.lines), scatter.nx * scatter.ny)
-    free = shutil.disk_usage(cache_root).free
-    log(f"  stage 14 cache: {required / (1024 ** 3):.3f} GiB required; "
-        f"{free / (1024 ** 3):.1f} GiB free; "
-        f"estimated peak RSS {rss_estimate / (1024 ** 3):.2f} GiB")
-    if free < required + 64 * 1024 * 1024:
-        raise ValueError(
-            f"{cache_root}: insufficient free space for Stage-14 cache"
-        )
     try:
         os.mkdir(partial)
     except FileExistsError as exc:
@@ -721,96 +846,169 @@ def _build_cache(sim, part: InputPart, signature: dict, grid: ScreenGrid,
     aggregate_path = os.path.join(partial, AGGREGATES_NAME)
     kms = [float(line.k) for line in sim.lines]
     weights = [float(line.weight) for line in sim.lines]
-    store = _native_store(rows_path, part.n_modes, npix, ref, kms, weights)
-    t0 = time.time()
-    try:
-        stats, bounce_hist = _build_stream(
-            sim, part, grid, store, scatter, log)
-        native = store.finish()
-        rows_size = int(native["payload_bytes"])
-        rows_sha = str(native["payload_sha256"])
-        expected_rows = part.n_modes * npix * 24
-        if rows_size != expected_rows or os.path.getsize(rows_path) != expected_rows:
-            raise ValueError("native Stage-14 store wrote the wrong payload size")
-        if sum(_typed_array("Q", native["n_rays"])) != stats["screen"]:
-            raise ValueError("Stage-14 density total differs from screen counter")
-        agg_size, agg_sha = _write_aggregates(
-            aggregate_path, native, npix, stats, bounce_hist, scatter)
-        for path in (rows_path, aggregate_path):
-            with open(path, "rb+") as fh:
-                os.fsync(fh.fileno())
-        build_seconds = time.time() - t0
-        meta = {
-            "cache_schema": CACHE_SCHEMA,
-            "estimator_version": ESTIMATOR_VERSION,
-            "analysis_id": part.analysis_id,
-            "analysis_signature": signature,
-            "identity": part.identity,
-            "stage_id": STAGE_ID,
-            "screen": "capillary",
-            "input_id": part.input_id,
-            "input_path": part.path,
-            "source_screen_z": part.source_z,
-            "n_modes": part.n_modes,
-            "n_rays_per_mode": part.n_rays,
-            "n_pixels": npix,
-            "reference_pixel": ref,
-            "max_bounces": sim.cfg.max_bounces,
-            "scatter": {
-                "nx": scatter.nx, "ny": scatter.ny,
-                "x0": scatter.x0f, "y0": scatter.y0f,
-                "edge_x": scatter.exf, "edge_y": scatter.eyf,
-                "convention": "row-major-iy-ix-half-open-v1",
-            },
-            "files": {
-                ROWS_NAME: {"bytes": rows_size, "sha256": rows_sha},
-                AGGREGATES_NAME: {"bytes": agg_size, "sha256": agg_sha},
-            },
-            "build": {"seconds": build_seconds,
-                      "ray_archive_bytes": os.path.getsize(part.path),
-                      "yaml_file": sim.cfg.yaml_file},
-            "capsysred_version": __version__,
-        }
-        _write_json(os.path.join(partial, META_NAME), meta)
-        _publish_directory(
-            partial, part.cache_dir,
-            [ROWS_NAME, AGGREGATES_NAME, META_NAME],
-        )
-    except BaseException:
-        # The exclusive .partial directory is deliberately retained as an
-        # unmistakable failed build; no valid-looking meta exists at final.
-        raise
-    return CachePart(part, meta, os.path.join(part.cache_dir, ROWS_NAME),
-                     os.path.join(part.cache_dir, AGGREGATES_NAME), False)
+    npix = target.grid.nx * target.grid.ny
+    store = _native_store(
+        rows_path, part.n_modes, npix, target.ref, kms, weights)
+    return CacheBuild(
+        target, part, partial, rows_path, aggregate_path, store,
+        ScatterRaster(target.cfg), time.time(),
+    )
 
 
-def _preflight_cache_builds(parts: list[InputPart], cached_parts,
-                            npix: int, max_bounces: int,
-                            scatter_cells: int, log) -> None:
-    """Check the total missing-cache footprint per physical filesystem."""
-    aggregate_bytes = _expected_aggregate_size(
-        npix, max_bounces, scatter_cells)
+def _finish_cache_build(sim, build: CacheBuild, stats: dict,
+                        bounce_hist: list[int]) -> CachePart:
+    """Validate, serialize and publish one fan-out store after stream EOF."""
+    target, part = build.target, build.part
+    grid, scatter = target.grid, build.scatter
+    npix = grid.nx * grid.ny
+    native = build.store.finish()
+    rows_size = int(native["payload_bytes"])
+    rows_sha = str(native["payload_sha256"])
+    expected_rows = part.n_modes * npix * 24
+    if (rows_size != expected_rows
+            or os.path.getsize(build.rows_path) != expected_rows):
+        raise ValueError("native Stage-14 store wrote the wrong payload size")
+    if sum(_typed_array("Q", native["n_rays"])) != stats["screen"]:
+        raise ValueError(
+            f"Stage-14 density differs from {target.label} screen counter")
+    agg_size, agg_sha = _write_aggregates(
+        build.aggregate_path, native, npix, stats, bounce_hist, scatter)
+    for path in (build.rows_path, build.aggregate_path):
+        with open(path, "rb+") as fh:
+            os.fsync(fh.fileno())
+    meta = {
+        "cache_schema": CACHE_SCHEMA,
+        "estimator_version": ESTIMATOR_VERSION,
+        "analysis_id": part.analysis_id,
+        "analysis_signature": target.signature,
+        "identity": part.identity,
+        "stage_id": STAGE_ID,
+        "screen": target.label,
+        "input_id": part.input_id,
+        "input_path": part.path,
+        "source_screen_z": part.source_z,
+        "n_modes": part.n_modes,
+        "n_rays_per_mode": part.n_rays,
+        "n_pixels": npix,
+        "reference_pixel": target.ref,
+        "max_bounces": sim.cfg.max_bounces,
+        "scatter": {
+            "nx": scatter.nx, "ny": scatter.ny,
+            "x0": scatter.x0f, "y0": scatter.y0f,
+            "edge_x": scatter.exf, "edge_y": scatter.eyf,
+            "convention": "row-major-iy-ix-half-open-v1",
+        },
+        "files": {
+            ROWS_NAME: {"bytes": rows_size, "sha256": rows_sha},
+            AGGREGATES_NAME: {"bytes": agg_size, "sha256": agg_sha},
+        },
+        "build": {
+            "seconds": time.time() - build.started_at,
+            "ray_archive_bytes": os.path.getsize(part.path),
+            "yaml_file": sim.cfg.yaml_file,
+        },
+        "capsysred_version": __version__,
+    }
+    _write_json(os.path.join(build.partial, META_NAME), meta)
+    _publish_directory(
+        build.partial, part.cache_dir,
+        [ROWS_NAME, AGGREGATES_NAME, META_NAME],
+    )
+    return CachePart(
+        part, meta, os.path.join(part.cache_dir, ROWS_NAME),
+        os.path.join(part.cache_dir, AGGREGATES_NAME), False)
+
+
+def _missing_cache_specs(targets: list[ScreenTarget]):
+    """Unique missing cache directories; identical screens share content."""
+    unique = {}
+    for target in targets:
+        for part, cached in zip(target.parts, target.caches):
+            if cached is None:
+                unique.setdefault(os.path.normcase(part.cache_dir),
+                                  (target, part))
+    return list(unique.values())
+
+
+def _preflight_fanout_builds(missing, max_bounces: int, log) -> None:
+    """Check the summed footprint of every screen x input cache miss."""
     groups = {}
-    for part, cached in zip(parts, cached_parts):
-        if cached is not None:
-            continue
+    for target, part in missing:
+        npix = target.grid.nx * target.grid.ny
+        scatter_cells = target.scatter.nx * target.scatter.ny
+        required = part.n_modes * npix * 24 + _expected_aggregate_size(
+            npix, max_bounces, scatter_cells)
         probe = os.path.dirname(os.path.dirname(part.cache_dir))
         stat = os.stat(probe)
         group = groups.setdefault(
-            stat.st_dev, {"probe": probe, "bytes": 0, "parts": 0})
-        group["bytes"] += part.n_modes * npix * 24 + aggregate_bytes
-        group["parts"] += 1
+            stat.st_dev, {"probe": probe, "bytes": 0, "caches": 0,
+                          "screens": set()})
+        group["bytes"] += required
+        group["caches"] += 1
+        group["screens"].add(target.label)
     for group in groups.values():
         free = shutil.disk_usage(group["probe"]).free
         required = group["bytes"]
-        log(f"  Stage 14 disk preflight: {group['parts']} cache part(s), "
+        log(f"  Stage 14 fan-out disk preflight: {group['caches']} cache(s), "
+            f"{len(group['screens'])} screen(s), "
             f"{required / (1024 ** 3):.3f} GiB required; "
             f"{free / (1024 ** 3):.1f} GiB free")
         if free < required + 64 * 1024 * 1024:
             raise ValueError(
                 f"{group['probe']}: insufficient free space for all missing "
-                "Stage-14 cache parts"
-            )
+                "Stage-14 screen caches")
+
+
+def _load_or_build_screen_caches(sim, targets: list[ScreenTarget], log) -> set[str]:
+    """Resolve every target cache and decode each missing archive only once.
+
+    The return value is the set of input IDs whose gzip streams were opened.
+    It is physical I/O provenance for the whole fan-out invocation; individual
+    screen results still report their own hit/miss state.
+    """
+    cache_by_dir = {}
+    for target in targets:
+        npix = target.grid.nx * target.grid.ny
+        for index, part in enumerate(target.parts):
+            cache = _load_cache(
+                part, target.signature, npix, sim.cfg.max_bounces,
+                target.scatter)
+            target.caches[index] = cache
+            if cache is not None:
+                cache_by_dir[os.path.normcase(part.cache_dir)] = cache
+
+    missing = _missing_cache_specs(targets)
+    _preflight_fanout_builds(missing, sim.cfg.max_bounces, log)
+    by_input = {}
+    for target, part in missing:
+        by_input.setdefault(part.input_id, []).append((target, part))
+
+    archives_read = set()
+    for specs in by_input.values():
+        labels = ", ".join(target.label for target, _ in specs)
+        part = specs[0][1]
+        log(f"  Stage 14 cache miss fan-out: {part.path} -> {labels}")
+        builds = [_prepare_cache_build(sim, target, screen_part)
+                  for target, screen_part in specs]
+        stats_rows, bounce_hist = _build_stream_fanout(
+            sim, part, builds, log)
+        archives_read.add(part.input_id)
+        for build, stats in zip(builds, stats_rows):
+            cache = _finish_cache_build(sim, build, stats, bounce_hist)
+            cache_by_dir[os.path.normcase(build.part.cache_dir)] = cache
+
+    for target in targets:
+        for index, part in enumerate(target.parts):
+            key = os.path.normcase(part.cache_dir)
+            cache = cache_by_dir.get(key)
+            if cache is None:
+                raise ValueError(
+                    f"{part.cache_dir}: Stage-14 cache was not resolved")
+            target.caches[index] = cache
+        hits = sum(cache.cache_hit for cache in target.caches)
+        log(f"  Stage 14 {target.label}: cache hits {hits} of "
+            f"{len(target.caches)}")
+    return archives_read
 
 
 def _combine_aggregates(caches: list[CachePart], npix: int, max_bounces: int,
@@ -915,7 +1113,8 @@ def _grid(values, nx, ny):
 
 
 def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
-                     ref: int, flag_counts: Counter, n_modes: int):
+                     ref: int, flag_counts: Counter, n_modes: int,
+                     screen_label: str = "capillary"):
     nx, ny, npix = grid.nx, grid.ny, grid.nx * grid.ny
     mu = [row["mu_raw"] for row in rows]
     err = [row["mu_raw_err"] for row in rows]
@@ -932,7 +1131,8 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
               m_to_um(grid.y0f), m_to_um(grid.y0f + grid.eyf))
     ref_xy = grid.pixel_xy(ref)
     mark = (m_to_um(ref_xy[0]), m_to_um(ref_xy[1]))
-    sub = f"{n_modes} exact delete-one-mode units; raw μ, display clipped at 1"
+    sub = (f"{screen_label}; {n_modes} exact delete-one-mode units; "
+           "raw μ, display clipped at 1")
     main = render.hstack([
         render.heatmap(mu_grid, extent, "|μ_raw(P,P_ref)|", "x, µm", "y, µm",
                        sub, "|μ|", vmax=1.0, mark=mark, w=430, equal=True),
@@ -1010,7 +1210,7 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
                       m_to_um(scatter_meta["y0"] + scatter_meta["edge_y"]))
     render.save(os.path.join(result_dir, "14d-capillary-ray-scatter.svg"),
                 render.ray_scatter(scatter_grid, scatter_extent,
-                                   "capillary: ray locations on target screen",
+                                   f"{screen_label}: ray locations on target screen",
                                    "x, µm", "y, µm", sub))
     return {
         "mu_raw": mu_grid, "mu_raw_err": err_grid, "flag": flag_grid,
@@ -1029,46 +1229,23 @@ def preflight_stage14_output(out_dir: str) -> None:
         )
 
 
-def run_stage14(sim, out_dir: str, rays_paths, quick: int, log=print) -> dict:
-    """Build/reuse per-input caches, finalize their logical union and publish."""
-    t0 = time.time()
-    result_dir = os.path.join(out_dir, RESULT_DIR)
-    partial = result_dir + ".partial"
-    preflight_stage14_output(out_dir)
-    cap = sim.cfg.capillary
-    if cap is None:
-        raise ValueError("stage 14 requires a configured capillary.source")
-    grid = ScreenGrid(cap.screen)
-    ref = _reference_pixel(cap, grid)
+def _finalize_screen(sim, target: ScreenTarget, output_dir: str,
+                     fanout_metrics: dict,
+                     *, write_meta: bool = True) -> dict:
+    """Finalize and serialize one screen from its resolved cache parts."""
+    screen_started = time.time()
+    grid, ref = target.grid, target.ref
     npix = grid.nx * grid.ny
-    screen_contract = _screen_contract(cap, grid, ref)
-    signature = _analysis_signature(sim, screen_contract)
-    parts = _prepare_inputs(sim, rays_paths, quick, signature)
-    # Preflight every part before starting a potentially multi-hour cache
-    # build.  A conflict in part 5 must not be discovered only after parts
-    # 1--4 have already consumed their archives.
-    cache_parts = []
-    scatter_contract = ScatterRaster(cap.screen)
-    for part in parts:
-        cache_parts.append(_load_cache(
-            part, signature, npix, sim.cfg.max_bounces,
-            scatter_contract))
-    _preflight_cache_builds(
-        parts, cache_parts, npix, sim.cfg.max_bounces,
-        scatter_contract.nx * scatter_contract.ny, log)
-    for index, (part, cached) in enumerate(zip(parts, cache_parts)):
-        if cached is None:
-            log(f"  Stage 14 cache miss: {part.path}")
-            cached = _build_cache(sim, part, signature, grid, ref, log)
-        else:
-            log(f"  Stage 14 cache hit: {cached.input.cache_dir}")
-        cache_parts[index] = cached
+    parts = target.parts
+    cache_parts = list(target.caches)
+    if not cache_parts or any(cache is None for cache in cache_parts):
+        raise ValueError(f"Stage-14 {target.label} caches are unresolved")
     scatter_meta = cache_parts[0].meta["scatter"]
     for cache in cache_parts[1:]:
-        if (not metadata_equal(cache.meta["analysis_signature"],
-                               cache_parts[0].meta["analysis_signature"])
+        if (not metadata_equal(cache.meta["analysis_signature"], target.signature)
                 or not metadata_equal(cache.meta["scatter"], scatter_meta)):
-            raise ValueError("Stage-14 union cache parts are incompatible")
+            raise ValueError(
+                f"Stage-14 {target.label} union cache parts are incompatible")
     aggregate = _combine_aggregates(
         cache_parts, npix, sim.cfg.max_bounces,
         scatter_meta["nx"] * scatter_meta["ny"])
@@ -1153,7 +1330,8 @@ def run_stage14(sim, out_dir: str, rays_paths, quick: int, log=print) -> dict:
         rows.append(serialize_pixel(
             stats, pixel=pixel, x_um=m_to_um(x), y_um=m_to_um(y),
             is_reference=is_ref, ref_status=ref_status,
-            n_jackknife_units=n_modes, thresholds=thresholds))
+            n_jackknife_units=n_modes, thresholds=thresholds,
+            screen=target.label))
     flag_counts = Counter(row["flag"] for row in rows)
     ref_warnings, ref_diagnostics = _ref_warnings(rows, grid, ref, n_modes)
     w_census = (Counter(
@@ -1198,41 +1376,47 @@ def run_stage14(sim, out_dir: str, rays_paths, quick: int, log=print) -> dict:
     cache_bytes_written = sum(
         sum(entry["bytes"] for entry in cache.meta["files"].values())
         for cache in cache_parts if not cache.cache_hit)
-    ray_bytes_read = sum(
-        os.path.getsize(cache.input.path)
-        for cache in cache_parts if not cache.cache_hit)
+    target_miss_ray_bytes = sum(
+        os.path.getsize(part.path)
+        for part, cache in zip(parts, cache_parts) if not cache.cache_hit)
     result_final = {
         "scatter": scatter_meta,
         "pass1_seconds": float(native.get("pass1_seconds", 0.0)),
         "pass2_seconds": float(native.get("pass2_seconds", 0.0)),
         "mode_rows_bytes_read": int(native.get("bytes_read", 0)),
-        "ray_archive_bytes_read": ray_bytes_read,
+        # Physical gzip I/O is shared by fan-out and belongs to the root run,
+        # not independently to every screen report.
+        "ray_archive_bytes_read": (
+            fanout_metrics["physical_ray_archive_bytes_read"]
+            if target.index == 0 else 0),
+        "fanout_physical_ray_archive_bytes_read":
+            fanout_metrics["physical_ray_archive_bytes_read"],
+        "target_cache_miss_ray_archive_bytes": target_miss_ray_bytes,
         "cache_bytes_written": cache_bytes_written,
     }
-    # Repeat the exclusive preflight after the potentially long finalize to
-    # catch a concurrent publisher without overwriting it.
-    preflight_stage14_output(out_dir)
-    os.mkdir(partial)
-    jsonl_path = os.path.join(partial, "mu-jack.jsonl")
+    if target.output_subdir:
+        os.mkdir(output_dir)
+    jsonl_path = os.path.join(output_dir, "mu-jack.jsonl")
     with open(jsonl_path, "x", encoding="utf-8", newline="\n") as fh:
         for row in rows:
             fh.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
         fh.flush()
         os.fsync(fh.fileno())
-    maps = _stage14_figures(partial, rows, aggregate, result_final, grid, ref,
-                            flag_counts, n_modes)
-    total_seconds = time.time() - t0
+    maps = _stage14_figures(
+        output_dir, rows, aggregate, result_final, grid, ref,
+        flag_counts, n_modes, target.label)
+    screen_seconds = time.time() - screen_started
     result_meta = {
-        "stage_id": STAGE_ID, "screen": "capillary",
+        "stage_id": STAGE_ID, "screen": target.label,
         "schema": 1, "capsysred_version": __version__,
         "yaml_file": sim.cfg.yaml_file,
-        "analysis_signature": signature,
+        "analysis_signature": target.signature,
         "input_cache_ids": [part.analysis_id for part in parts],
         "input_ids": [part.input_id for part in parts],
         "input_paths": [part.path for part in parts],
         "part_order": list(range(len(parts))),
         "parts": part_provenance,
-        "screen_geometry": screen_contract,
+        "screen_geometry": target.contract,
         "flag_thresholds": sim.cfg.stage14_flag_thresholds,
         "jackknife_computed": True,
         "n_jackknife_units": n_modes,
@@ -1256,20 +1440,17 @@ def run_stage14(sim, out_dir: str, rays_paths, quick: int, log=print) -> dict:
         },
         "performance": {
             **result_final,
-            "total_seconds": total_seconds,
+            "total_seconds": screen_seconds,
+            "screen_finalize_seconds": screen_seconds,
             "estimated_peak_rss_bytes": estimated_peak_rss,
         },
     }
-    _write_json(os.path.join(partial, META_NAME), result_meta)
-    _publish_directory(
-        partial, result_dir,
-        ["mu-jack.jsonl", "14-capillary-jack-mu.svg",
-         "14a-capillary-jack-slice.svg", "14b-capillary-jack-intensity.svg",
-         "14c-capillary-jack-overlay.svg", "14d-capillary-ray-scatter.svg",
-         META_NAME],
-    )
+    if write_meta:
+        _write_json(os.path.join(output_dir, META_NAME), result_meta)
+    prefix = os.path.join(RESULT_DIR, target.output_subdir)
     return {
         "maps": maps, "rows": rows, "screen": grid,
+        "screen_name": target.label,
         "stats": aggregate["stats"], "bounce_hist": aggregate["bounce_hist"],
         "n_modes": n_modes, "n_rays": parts[0].n_rays,
         "ref_pixel": ref, "ref_status": ref_status,
@@ -1278,12 +1459,108 @@ def run_stage14(sim, out_dir: str, rays_paths, quick: int, log=print) -> dict:
         "remediation_counts": remediation,
         "over_mu_partial_loo": over_mu_partial_loo,
         "cache_parts": cache_parts, "cache_hits": result_meta["cache"]["hits"],
-        "seconds": total_seconds, "result_meta": result_meta,
-        "files": [os.path.join(RESULT_DIR, name) for name in (
-            META_NAME, "mu-jack.jsonl", "14-capillary-jack-mu.svg",
-            "14a-capillary-jack-slice.svg", "14b-capillary-jack-intensity.svg",
-            "14c-capillary-jack-overlay.svg", "14d-capillary-ray-scatter.svg")],
+        "seconds": screen_seconds, "result_meta": result_meta,
+        "files": [os.path.join(prefix, name)
+                  for name in (META_NAME, *RESULT_PAYLOAD_NAMES)],
     }
+
+
+def run_stage14(sim, out_dir: str, rays_paths, quick: int, log=print) -> dict:
+    """Build all configured screen caches in one pass per input and publish."""
+    run_started = time.time()
+    result_dir = os.path.join(out_dir, RESULT_DIR)
+    partial = result_dir + ".partial"
+    preflight_stage14_output(out_dir)
+    if sim.cfg.capillary is None:
+        raise ValueError("stage 14 requires a configured capillary.source")
+
+    targets = _screen_targets(sim, rays_paths, quick)
+    fanout_peak_rss = _estimated_fanout_peak_rss(targets, len(sim.lines))
+    log("  Stage 14 screens: " + ", ".join(
+        f"{target.label}={target.grid.nx}×{target.grid.ny}"
+        for target in targets))
+    log(f"  Stage 14 fan-out estimated peak RSS: "
+        f"{fanout_peak_rss / (1024 ** 3):.2f} GiB")
+    archives_read = _load_or_build_screen_caches(sim, targets, log)
+    representative_parts = {
+        part.input_id: part for part in targets[0].parts
+    }
+    physical_ray_bytes = sum(
+        os.path.getsize(representative_parts[input_id].path)
+        for input_id in archives_read)
+    written_caches = {}
+    for target in targets:
+        for cache in target.caches:
+            if not cache.cache_hit:
+                written_caches.setdefault(
+                    os.path.normcase(cache.input.cache_dir), cache)
+    physical_cache_bytes = sum(
+        sum(entry["bytes"] for entry in cache.meta["files"].values())
+        for cache in written_caches.values())
+    fanout_metrics = {
+        "physical_ray_archive_bytes_read": physical_ray_bytes,
+        "physical_cache_bytes_written": physical_cache_bytes,
+        "estimated_peak_rss_bytes": fanout_peak_rss,
+    }
+
+    # Cache construction may take hours.  Re-check the result namespace before
+    # creating the one atomic publication tree; existing output is never
+    # augmented or overwritten screen-by-screen.
+    preflight_stage14_output(out_dir)
+    os.mkdir(partial)
+    results = []
+    for target in targets:
+        output_dir = (partial if not target.output_subdir else
+                      os.path.join(partial, target.output_subdir))
+        log(f"  Stage 14 finalize: {target.label}")
+        results.append(_finalize_screen(
+            sim, target, output_dir, fanout_metrics,
+            write_meta=target.index != 0))
+
+    global_seconds = time.time() - run_started
+    aliases = {}
+    for target in targets:
+        for part in target.parts:
+            aliases.setdefault(os.path.normcase(part.cache_dir), []).append(
+                target.label)
+    children = [{
+        "screen": target.label,
+        "output": target.output_subdir or ".",
+        "screen_geometry": target.contract,
+        "analysis_signature": target.signature,
+        "input_cache_ids": [part.analysis_id for part in target.parts],
+        "cache_directories": [part.cache_dir for part in target.parts],
+    } for target in targets]
+    fanout_manifest = {
+        "schema": 1,
+        "screens": children,
+        "cache_aliases": [
+            {"cache_directory": directory, "screens": labels}
+            for directory, labels in aliases.items() if len(labels) > 1
+        ],
+        **fanout_metrics,
+        "global_seconds": global_seconds,
+    }
+    primary = results[0]
+    primary["seconds"] = global_seconds
+    primary["result_meta"]["performance"].update({
+        "total_seconds": global_seconds,
+        "estimated_peak_rss_bytes": fanout_peak_rss,
+    })
+    primary["result_meta"]["fanout"] = fanout_manifest
+    _write_json(os.path.join(partial, META_NAME), primary["result_meta"])
+
+    # Child screen directories are moved as whole trees.  The main metadata is
+    # deliberately last and therefore remains the validity marker for the
+    # complete multi-screen result.
+    publish_names = list(RESULT_PAYLOAD_NAMES)
+    publish_names.extend(target.output_subdir for target in targets[1:])
+    publish_names.append(META_NAME)
+    _publish_result_tree(partial, result_dir, publish_names)
+
+    primary["extra_results"] = results[1:]
+    primary["fanout"] = fanout_manifest
+    return primary
 
 
 __all__ = ["preflight_stage14_output", "run_stage14"]

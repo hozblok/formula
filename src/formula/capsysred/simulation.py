@@ -124,6 +124,68 @@ class Simulation:
         return (f"Fresnel r(θ=0.1 mrad): |r_CAPSYSred − r_xray| = {diff:.1e}; "
                 f"|r_symbolic_template − r_xray| = {diff_sym:.1e}")
 
+    def _record_stage14_result(self, result: dict) -> None:
+        """Register one independently cached Stage-14 screen."""
+        label = result["screen_name"]
+        self.results[f"stage14:{label}"] = result
+        for name in result["files"]:
+            self.files.append(name)
+            _log(f"  → {name}")
+        counts = result["flag_counts"]
+        lit = sum(row["n_rays"] > 0 for row in result["rows"])
+        flag_names = ("trusted", "noisy-mu", "over-mu", "noisy-Ic",
+                      "null-Ic", "negative-Ic", "solo-rays-only",
+                      "no-ref-realizations", "no-rays")
+        flag_line = ", ".join(
+            f"{name}={counts.get(name, 0):,}"
+            + (f" ({100.0 * counts.get(name, 0) / lit:.2f}% lit)"
+               if lit and name != "no-rays" else "")
+            for name in flag_names)
+        unclassified = counts.get(None, 0)
+        unclassified_lit = sum(
+            row["n_rays"] > 0 and row["flag"] is None
+            for row in result["rows"])
+        unclassified_note = (
+            f"{unclassified:,} ({100.0 * unclassified_lit / lit:.2f}% lit)"
+            if lit else f"{unclassified:,}")
+        stats = result["stats"]
+        perf = result["result_meta"]["performance"]
+        remediation = ", ".join(
+            f"{name}={value:,}"
+            for name, value in result["remediation_counts"].items())
+        w_census = ", ".join(
+            f"{name}={value:,}"
+            for name, value in result["w_signal_census"].items())
+        self.report += [
+            f"## Stage 14 — exact disk-backed jackknife [{label}]",
+            f"- {result['n_modes']} modes × {result['n_rays']} rays; "
+            f"cache hits {result['cache_hits']} of {len(result['cache_parts'])}",
+            f"- reference status: {result['ref_status']}; warnings: "
+            f"{', '.join(result['ref_warnings']) or 'none'}",
+            f"- reference diagnostics: {result['ref_diagnostics']}",
+            f"- flags: {flag_line}; unclassified={unclassified_note}",
+            f"- over-mu with incomplete LOO: "
+            f"{result['over_mu_partial_loo']:,}; negative-Ic self-test: "
+            f"{counts.get('negative-Ic', 0):,}",
+            f"- remediation groups: {remediation}",
+            f"- W significance channel: {w_census}",
+            f"- stream: emitted={stats['emitted']:,}, "
+            f"screen={stats['screen']:,}, off-window={stats['off_window']:,}, "
+            f"absorbed={stats['absorbed']:,}, lost={stats['lost']:,}, "
+            f"reflected rays={stats['reflected_rays']:,}, "
+            f"reflections={stats['reflections']:,}",
+            f"- thresholds: {self.cfg.stage14_flag_thresholds}",
+            f"- I/O: target miss inputs "
+            f"{perf['target_cache_miss_ray_archive_bytes']:,} B; shared fan-out "
+            f"read {perf['fanout_physical_ray_archive_bytes_read']:,} B; "
+            f"target cache written {perf['cache_bytes_written']:,} B; "
+            f"mode rows read {perf['mode_rows_bytes_read']:,} B",
+            f"- time: {result['seconds']:.1f} s "
+            f"(payload passes {perf['pass1_seconds']:.3f} + "
+            f"{perf['pass2_seconds']:.3f} s); estimated peak RSS "
+            f"{perf['estimated_peak_rss_bytes'] / (1024 ** 3):.2f} GiB",
+        ]
+
     # ------------------------------------------------------------- MC driver
 
     def _mc_stage(self, stage: str, label: str, src_cfg, scr_cfg, optic,
@@ -1427,14 +1489,17 @@ class Simulation:
                 f"reflected rays={stats14['reflected_rays']:,}, "
                 f"reflections={stats14['reflections']:,}",
                 f"- thresholds: {self.cfg.stage14_flag_thresholds}",
-                f"- I/O: rays read {perf14['ray_archive_bytes_read']:,} B; "
-                f"cache written {perf14['cache_bytes_written']:,} B; "
+                f"- I/O: physical fan-out rays read "
+                f"{perf14['ray_archive_bytes_read']:,} B; cache written "
+                f"{res14['fanout']['physical_cache_bytes_written']:,} B; "
                 f"mode rows read {perf14['mode_rows_bytes_read']:,} B",
                 f"- time: {res14['seconds']:.1f} s "
                 f"(payload passes {perf14['pass1_seconds']:.3f} + "
                 f"{perf14['pass2_seconds']:.3f} s); estimated peak RSS "
                 f"{perf14['estimated_peak_rss_bytes'] / (1024 ** 3):.2f} GiB",
             ]
+            for extra_result in res14.get("extra_results", []):
+                self._record_stage14_result(extra_result)
         if self.rays is not None and rays_src is None:
             self.files.append(rays_name)
             _log(f"  → {rays_name}")
