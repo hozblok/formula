@@ -1,7 +1,7 @@
 """Trace the capillary scene straight into a v3 archive, or top it up.
 
     python -m formula.capsysred.trace_v3 config.yaml --archive ARCHIVE_DIR
-        [--rays R1] [--jobs J] [--quick N] [--level 6]
+        [--rays R1] [--jobs J] [--level 6]
 
 No archive yet: it is created (fingerprint from the yaml, ``rng:
 lattice-v1``) and every mode traces rays 0..R1-1 into its own section, one
@@ -52,13 +52,13 @@ def tail_rng(seed: int, mode: int) -> random.Random:
 _W = {}
 
 
-def _init_worker(config_path, quick):
+def _init_worker(config_path):
     from .simulation import Simulation
     sim = Simulation.from_yaml(config_path)
     cap = sim.cfg.capillary
     optic = CapillaryBundle(cap.bores, cap.z0, cap.z1)
     _W.update(sim=sim, cap=cap, screen=ScreenGrid(cap.screen), optic=optic,
-              tracer=make_tracer(optic), quick=quick)
+              tracer=make_tracer(optic))
 
 
 def _trace_tail(archive, mode, r0, r1, origin_str, lean, level, lattice):
@@ -119,7 +119,7 @@ def _new_archive(cfg, archive: str) -> dict:
     return meta
 
 
-def trace(config_path: str, archive: str, r1: int | None, jobs: int, quick: int,
+def trace(config_path: str, archive: str, r1: int | None, jobs: int,
           level: int, log=_log) -> dict:
     from .simulation import Simulation
     from .stage14 import _trace_core
@@ -127,7 +127,7 @@ def trace(config_path: str, archive: str, r1: int | None, jobs: int, quick: int,
     cfg = sim.cfg
     if cfg.capillary is None:
         raise ValueError("trace_v3 requires a configured capillary.source")
-    n_modes, budget_rays = cfg.capillary.source.budget(quick)
+    n_modes, budget_rays = cfg.capillary.source.budget()
     if r1 is None:
         r1 = budget_rays
     fresh = not os.path.lexists(rays_v3.index_path(archive))
@@ -142,7 +142,7 @@ def trace(config_path: str, archive: str, r1: int | None, jobs: int, quick: int,
             raise ValueError(f"{archive}: no capillary scene to top up")
         n_modes_recorded, n0 = index.budgets["capillary"]
         if n_modes_recorded != n_modes:
-            raise ValueError(f"{archive} holds {n_modes_recorded} modes, config/--quick "
+            raise ValueError(f"{archive} holds {n_modes_recorded} modes, config "
                              f"gives {n_modes}")
         if r1 <= n0:
             raise ValueError(f"--rays {r1} must exceed the current {n0} rays per mode")
@@ -152,9 +152,9 @@ def trace(config_path: str, archive: str, r1: int | None, jobs: int, quick: int,
         raise ValueError("config trace geometry differs from the archive")
     if int(meta["geometry"].get("seed")) != cfg.seed:
         raise ValueError("config seed differs from the archive seed")
-    if cfg.capillary.source.budget(quick) != (n_modes, r1):
+    if cfg.capillary.source.budget() != (n_modes, r1):
         raise ValueError(
-            f"config/--quick budget {cfg.capillary.source.budget(quick)} must equal "
+            f"config budget {cfg.capillary.source.budget()} must equal "
             f"[{n_modes}, {r1}] (archive modes, target rays)")
     lean = bool(meta.get("lean"))
     if lean != bool(cfg.lean_rays):
@@ -178,7 +178,7 @@ def trace(config_path: str, archive: str, r1: int | None, jobs: int, quick: int,
     reused = 0
     with concurrent.futures.ProcessPoolExecutor(
             max_workers=jobs, initializer=_init_worker,
-            initargs=(config_path, quick)) as pool:
+            initargs=(config_path,)) as pool:
         futures = {pool.submit(_trace_tail, archive, mode, n0, r1, origins[mode],
                                lean, level, lattice): mode for mode in range(n_modes)}
         done = 0
@@ -203,13 +203,12 @@ def main(argv=None):
     ap.add_argument("--rays", type=int, default=None,
                     help="target rays per mode (default: the yaml budget)")
     ap.add_argument("--jobs", type=int, default=4)
-    ap.add_argument("--quick", type=int, default=1)
     ap.add_argument("--level", type=int, default=rays_v3.DEFAULT_LEVEL)
     args = ap.parse_args(argv)
     if args.jobs < 1 or args.jobs > 8:
         ap.error("--jobs must be within 1..8")
     trace(os.path.abspath(args.config), os.path.abspath(args.archive), args.rays,
-          args.jobs, max(1, args.quick), args.level)
+          args.jobs, args.level)
     return 0
 
 

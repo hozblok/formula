@@ -322,7 +322,7 @@ class CacheBuild:
     started_at: float
 
 
-def _prepare_inputs(sim, paths, quick: int, signature: dict) -> list[InputPart]:
+def _prepare_inputs(sim, paths, signature: dict) -> list[InputPart]:
     if not paths:
         raise ValueError("stage 14 requires at least one rays archive")
     expected_core = _trace_core(geometry_metadata(sim.cfg))
@@ -396,18 +396,18 @@ def _prepare_inputs(sim, paths, quick: int, signature: dict) -> list[InputPart]:
                                identity["source_screen_z"], input_id, seed,
                                analysis_id, cache_dir, identity,
                                archive_bytes, v3_index))
-    configured_modes, configured_rays = sim.cfg.capillary.source.budget(quick)
+    configured_modes, configured_rays = sim.cfg.capillary.source.budget()
     total_modes = sum(part.n_modes for part in parts)
     if (total_modes, expected_rays) != (configured_modes, configured_rays):
         raise ValueError(
-            "stage 14 replay budgets differ from config/--quick: "
+            "stage 14 replay budgets differ from config: "
             f"recorded union {[total_modes, expected_rays]} != "
             f"configured {[configured_modes, configured_rays]}"
         )
     return parts
 
 
-def _screen_targets(sim, paths, quick: int) -> list[ScreenTarget]:
+def _screen_targets(sim, paths) -> list[ScreenTarget]:
     """Bind main and configured extra screens to independent cache IDs."""
     cap = sim.cfg.capillary
     configs = [cap.screen, *cap.screens]
@@ -418,7 +418,7 @@ def _screen_targets(sim, paths, quick: int) -> list[ScreenTarget]:
         ref = _reference_pixel(screen_cfg, grid)
         contract = _screen_contract(grid, ref)
         signature = _analysis_signature(sim, contract)
-        parts = _prepare_inputs(sim, paths, quick, signature)
+        parts = _prepare_inputs(sim, paths, signature)
         targets.append(ScreenTarget(
             label, index, screen_cfg, grid, ref, contract, signature,
             parts, [None] * len(parts), ScatterRaster(screen_cfg),
@@ -1566,7 +1566,7 @@ def _finalize_screen(sim, target: ScreenTarget, output_dir: str,
     }
 
 
-def run_stage14(sim, out_dir: str, rays_paths, quick: int, log=print) -> dict:
+def run_stage14(sim, out_dir: str, rays_paths, log=print) -> dict:
     """Build all configured screen caches in one pass per input and publish."""
     run_started = time.time()
     result_dir = os.path.join(out_dir, RESULT_DIR)
@@ -1575,7 +1575,7 @@ def run_stage14(sim, out_dir: str, rays_paths, quick: int, log=print) -> dict:
     if sim.cfg.capillary is None:
         raise ValueError("stage 14 requires a configured capillary.source")
 
-    targets = _screen_targets(sim, rays_paths, quick)
+    targets = _screen_targets(sim, rays_paths)
     fanout_peak_rss = _estimated_fanout_peak_rss(targets, len(sim.lines))
     log("  Stage 14 screens: " + ", ".join(
         f"{target.label}={target.grid.nx}×{target.grid.ny}"

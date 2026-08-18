@@ -104,7 +104,7 @@ def test_lattice_convert_and_origins_independent_of_rays(tmp_path):
     assert rays_v3.read_fingerprint(archive)["rng"]["scheme"] == "lattice-v1"
     # trace_v3 with two processes writes the same rows as the sequential v2 trace
     direct = str(tmp_path / "direct")
-    trace_v3(_write_yaml(tmp_path / "cfg.yaml", raw), direct, None, jobs=2, quick=1,
+    trace_v3(_write_yaml(tmp_path / "cfg.yaml", raw), direct, None, jobs=2,
              level=6, log=lambda m: None)
     idx_a, idx_b = rays_v3.load_index(archive), rays_v3.load_index(direct)
     assert (list(rays_v3.scene_lines(archive, idx_a, "capillary"))
@@ -128,7 +128,7 @@ def _legacy_trace(raw, out_dir):
     cfg = sim.cfg
     cap = cfg.capillary
     os.makedirs(out_dir)
-    writer = RaysFile(os.path.join(out_dir, "rays.jsonl.gz"), cfg, 1)
+    writer = RaysFile(os.path.join(out_dir, "rays.jsonl.gz"), cfg)
     rng = random.Random(cfg.seed * _SCENE_SEED_STRIDE + SceneSeed.CAPILLARY)
     source = Source(cap.source, rng)
     screen = ScreenGrid(cap.screen)
@@ -174,7 +174,7 @@ def test_topup_lattice_equals_single_piece(tmp_path):
     raw100 = json.loads(json.dumps(raw))
     raw100["capillary"]["source"]["n_rays"] = 100
     topup(_write_yaml(tmp_path / "cfg-100.yaml", raw100), archive, 100,
-          jobs=1, quick=1, level=6, log=lambda m: None)
+          jobs=1, level=6, log=lambda m: None)
     full = tmp_path / "full"
     Simulation.from_dict(raw100).trace(str(full))
     index = rays_v3.load_index(archive)
@@ -199,9 +199,9 @@ def test_topup_chunk_invariance_and_merge_oracle(tmp_path):
 
     raw120, cfg120 = cfg_for(120)
     _, cfg90 = cfg_for(90)
-    topup(cfg120, one, 120, jobs=1, quick=1, level=6, log=lambda m: None)
-    topup(cfg90, two, 90, jobs=1, quick=1, level=6, log=lambda m: None)
-    topup(cfg120, two, 120, jobs=1, quick=1, level=6, log=lambda m: None)
+    topup(cfg120, one, 120, jobs=1, level=6, log=lambda m: None)
+    topup(cfg90, two, 90, jobs=1, level=6, log=lambda m: None)
+    topup(cfg120, two, 120, jobs=1, level=6, log=lambda m: None)
     ia, ib = rays_v3.load_index(one), rays_v3.load_index(two)
     assert ia.budgets == ib.budgets == {"capillary": [6, 120]}
     for m in range(6):
@@ -235,7 +235,7 @@ def test_topup_chunk_invariance_and_merge_oracle(tmp_path):
     with pytest.raises(ValueError, match="replay budgets differ"):
         _stage14(raw, two, tmp_path / "s14-wrong-budget")
     with pytest.raises(ValueError, match="must equal"):
-        topup(cfg90, two, 150, jobs=1, quick=1, level=6, log=lambda m: None)
+        topup(cfg90, two, 150, jobs=1, level=6, log=lambda m: None)
 
 
 def test_verify_and_stage14_detect_corruption(tmp_path):
@@ -286,10 +286,10 @@ def test_trace_v3_fresh_equals_v2_and_two_steps(tmp_path):
     cfg100 = _write_yaml(tmp_path / "cfg-100.yaml", raw100)
 
     one = str(tmp_path / "one")
-    trace_v3(cfg100, one, None, jobs=2, quick=1, level=6, log=lambda m: None)
+    trace_v3(cfg100, one, None, jobs=2, level=6, log=lambda m: None)
     two = str(tmp_path / "two")
-    trace_v3(cfg40, two, None, jobs=1, quick=1, level=6, log=lambda m: None)
-    trace_v3(cfg100, two, 100, jobs=2, quick=1, level=6, log=lambda m: None)
+    trace_v3(cfg40, two, None, jobs=1, level=6, log=lambda m: None)
+    trace_v3(cfg100, two, 100, jobs=2, level=6, log=lambda m: None)
     v2 = tmp_path / "v2"
     Simulation.from_dict(raw100).trace(str(v2))
 
@@ -306,4 +306,4 @@ def test_trace_v3_fresh_equals_v2_and_two_steps(tmp_path):
     result = _stage14(raw100, one, tmp_path / "s14")
     assert result["stats"]["emitted"] == 500 and result["cache_hits"] == 0
     with pytest.raises(ValueError, match="must exceed"):
-        trace_v3(cfg100, one, 100, jobs=1, quick=1, level=6, log=lambda m: None)
+        trace_v3(cfg100, one, 100, jobs=1, level=6, log=lambda m: None)

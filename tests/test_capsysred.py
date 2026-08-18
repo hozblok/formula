@@ -716,7 +716,7 @@ def test_scene_sections_control_raw_geometry_and_budgets(raw, scenes):
     assert "source" not in geometry
     assert {s for s in ("free", "capillary") if s in cfg.raw} == scenes
     assert {s for s in ("free", "capillary") if s in geometry} == scenes
-    assert set(budgets(cfg, 1)) == scenes
+    assert set(budgets(cfg)) == scenes
     assert (cfg.free_source is not None) == ("free" in scenes)
     assert (cfg.free_screen is not None) == ("free" in scenes)
     assert (cfg.capillary is not None) == ("capillary" in scenes)
@@ -1179,7 +1179,7 @@ def test_rays_runtime_uses_sidecar_and_ignores_first_line(tmp_path):
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         for row in rows:
             fh.write(json.dumps(row) + "\n")
-    expected = sidecar_metadata(load({"free": {"source": FREE_SOURCE}}), 1)
+    expected = sidecar_metadata(load({"free": {"source": FREE_SOURCE}}))
     write_metadata(path, expected)
 
     meta, done, clean = scan(str(path), expected_meta=expected)
@@ -1206,11 +1206,11 @@ def test_sidecar_can_retire_an_archived_scene_without_rewriting_rows(tmp_path):
             "fate": "absorbed", "pixel": None, "opl": "0", "sins": [],
         }) + "\n")
         fh.write(json.dumps({"scene_end": "retired", "rows": 1}) + "\n")
-    write_metadata(path, sidecar_metadata(cfg, 1))
+    write_metadata(path, sidecar_metadata(cfg))
 
     _, done, clean = scan(str(path))
     assert clean and done == {}
-    RaysFile(str(path), cfg, 1).close()
+    RaysFile(str(path), cfg).close()
 
 
 def test_rays_reader_refuses_partial_archive(tmp_path):
@@ -1227,7 +1227,7 @@ def test_rays_reader_refuses_partial_archive(tmp_path):
         }) + "\n")
     write_metadata(
         path,
-        sidecar_metadata(load({"free": {"source": FREE_SOURCE}}), 1),
+        sidecar_metadata(load({"free": {"source": FREE_SOURCE}})),
     )
 
     with pytest.raises(ValueError, match="incomplete"):
@@ -1261,12 +1261,12 @@ def test_clean_but_thinned_rays_file_is_never_appended(tmp_path):
         }) + "\n")
         fh.write(json.dumps({"scene_end": "free", "rows": 1}) + "\n")
     cfg = load({"free": {"source": FREE_SOURCE}})
-    write_metadata(path, sidecar_metadata(cfg, 1))
+    write_metadata(path, sidecar_metadata(cfg))
     before = path.read_bytes()
     before_sidecar = (tmp_path / "rays-fingerprint.yaml").read_bytes()
 
     with pytest.raises(ValueError, match="remove"):
-        RaysFile(str(path), cfg, 1)
+        RaysFile(str(path), cfg)
 
     assert path.read_bytes() == before
     assert (tmp_path / "rays-fingerprint.yaml").read_bytes() == before_sidecar
@@ -1292,11 +1292,11 @@ def test_clean_but_malformed_rays_file_is_never_appended(tmp_path, bad_row):
         fh.write("{}\n")
         fh.writelines([bad_row] * 40)
         fh.write(json.dumps({"scene_end": "free", "rows": 40}) + "\n")
-    write_metadata(path, sidecar_metadata(cfg, 1))
+    write_metadata(path, sidecar_metadata(cfg))
     before = path.read_bytes()
 
     with pytest.raises(ValueError, match="remove"):
-        RaysFile(str(path), cfg, 1)
+        RaysFile(str(path), cfg)
 
     assert path.read_bytes() == before
 
@@ -1403,7 +1403,7 @@ def test_rays_sidecar_metadata_is_structured(tmp_path):
 
     cfg = load(TINY)
     geometry = geometry_metadata(cfg)
-    sidecar = sidecar_metadata(cfg, 1)
+    sidecar = sidecar_metadata(cfg)
     assert sidecar["geometry"] == geometry
     rays_path = tmp_path / "rays.jsonl.gz"
     write_metadata(rays_path, sidecar)
@@ -1432,7 +1432,7 @@ def test_rays_sidecar_metadata_is_structured(tmp_path):
         "trace": {"lean_rays": True},
     })
     assert geometry_metadata(physics_change) == geometry
-    assert sidecar_metadata(physics_change, 1)["lean"] is True
+    assert sidecar_metadata(physics_change)["lean"] is True
 
     geometry["screen"]["z"] = -1
     assert cfg.raw["screen"]["z"] != -1  # The sidecar owns a detached copy.
@@ -2056,9 +2056,6 @@ def test_universal_replay_default_stages_and_guards(tmp_path):
     with pytest.raises(ValueError, match="scene 'free'"):
         Simulation.from_dict(TINY).replay(path, str(tmp_path / "r2"),
                                           stages=[2])
-    with pytest.raises(ValueError, match="budgets"):
-        Simulation.from_dict(TINY).replay(path, str(tmp_path / "rq"),
-                                          stages=[6], quick=2)
 
 
 def test_replay_defaults_intersect_recorded_and_configured_scenes(tmp_path):
@@ -2981,9 +2978,9 @@ def test_scene_stream_refuses_thinned_recording(tmp_path):
         "budgets": {"free": [2, 3]},
     })
     sim = SimpleNamespace(rays=RaysReader(str(path)))
-    src = SimpleNamespace(budget=lambda quick: (2, 3))
+    src = SimpleNamespace(budget=lambda: (2, 3))
     with pytest.raises(ValueError, match="thinned"):
-        scene_stream(sim, "free", src, None, None, None, 0, 0)
+        scene_stream(sim, "free", src, None, None, None, 0)
     with pytest.raises(ValueError, match="rewritten or truncated"):
         list(_counted(iter([1, 2]), 3, "free", str(path)))
 

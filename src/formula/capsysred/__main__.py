@@ -1,4 +1,4 @@
-"""CLI: python3 -m formula.capsysred config.yaml -o out/ [--stages 1,14] [--quick N]
+"""CLI: python3 -m formula.capsysred config.yaml -o out/ [--stages 1,14]
 [--trace] [--replay rays.jsonl.gz]"""
 
 import argparse
@@ -20,12 +20,10 @@ def main(argv=None) -> int:
                              "stages of the configured scenes; 3 requires 2, "
                              "which is added automatically; 10 and 14 are "
                              "separate opt-in jackknife estimators)")
-    parser.add_argument("--quick", type=int, default=1, metavar="N",
-                        help="divisor for the mode/ray counts for a quick estimate")
     parser.add_argument("--trace", action="store_true",
                         help="trace-only: record every scene into the rays file and "
                              "exit; a later run with the same config, output "
-                             "directory and --quick reuses it instead of tracing")
+                             "directory reuses it instead of tracing")
     parser.add_argument("--replay", metavar="RAYS_JSONL", default=None,
                         nargs="+",
                         help="re-evaluate recorded rays on the spectrum/material from "
@@ -43,10 +41,9 @@ def main(argv=None) -> int:
             parser.error(f"no such stages: {bad}; available {list(KNOWN_STAGES)}")
 
     sim = Simulation.from_yaml(args.config)
-    result = (sim.replay(args.replay, args.out, stages=stages,
-                         quick=max(1, args.quick)) if args.replay
-              else sim.trace(args.out, quick=max(1, args.quick)) if args.trace
-              else sim.run(args.out, stages=stages, quick=max(1, args.quick)))
+    result = (sim.replay(args.replay, args.out, stages=stages) if args.replay
+              else sim.trace(args.out) if args.trace
+              else sim.run(args.out, stages=stages))
     print(f"{result['out_dir']}: " + ", ".join(result["files"]))
     return 0
 

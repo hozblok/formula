@@ -280,7 +280,7 @@ class BeamletField:
 
 
 def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
-                      seed_offset: int, quick: int, extra_screens=()):
+                      seed_offset: int, extra_screens=()):
     """The beamlet deposit over the scene's ray records — from the shared
     rays file when it matches, else traced (the stage-2/6 rng stream).
 
@@ -292,7 +292,7 @@ def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     extra planes under "extras"."""
     cfg = sim.cfg
     screen = ScreenGrid(scr_cfg)
-    n_modes, n_rays = src_cfg.budget(quick)
+    n_modes, n_rays = src_cfg.budget()
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
     w0_t = cfg.beamlet_w0_t
     if w0_t == "auto":   # Fresnel scale of the scene's source->screen flight
@@ -313,7 +313,7 @@ def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
         field = make(scr)
         planes.append((field, float(field.zf) - float(screen.z), blank()))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
-                                      aim_factory, seed_offset, quick)
+                                      aim_factory, seed_offset)
     require_full_rows(sim.rays, rays_from, "beamlet stage (refl segments)")
     progress = Progress(label, n_modes * n_rays)
     t0 = time.time()

@@ -48,7 +48,7 @@ def _write_controlled_rays(path, raw, signs):
     x_ref, y_ref = grid.pixel_xy(ref)
     x_target, y_target = grid.pixel_xy(target)
     phase_flip = math.pi / float(sim.lines[0].k)
-    n_modes, n_rays = cfg.capillary.source.budget(1)
+    n_modes, n_rays = cfg.capillary.source.budget()
     assert n_modes == len(signs) and n_rays == 20
     with gzip.open(path, "xt", encoding="utf-8", newline="\n") as fh:
         # The preamble is deliberately neither {} nor legacy metadata.  It is
@@ -70,7 +70,7 @@ def _write_controlled_rays(path, raw, signs):
         fh.write(json.dumps({
             "scene_end": "capillary", "rows": n_modes * n_rays,
         }) + "\n")
-    write_metadata(path, sidecar_metadata(cfg, 1))
+    write_metadata(path, sidecar_metadata(cfg))
     return target, ref
 
 

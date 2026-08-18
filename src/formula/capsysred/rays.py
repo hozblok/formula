@@ -94,10 +94,10 @@ def geometry_metadata(cfg) -> dict:
     return json.loads(json.dumps(geo, sort_keys=True, default=str))
 
 
-def budgets(cfg, quick: int) -> dict:
+def budgets(cfg) -> dict:
     """Scene -> [n_modes, n_rays], the same clamps as the stage loops."""
     def per(src):
-        return list(src.budget(quick))
+        return list(src.budget())
     out = {}
     if cfg.free_source is not None:
         out["free"] = per(cfg.free_source)
@@ -106,10 +106,10 @@ def budgets(cfg, quick: int) -> dict:
     return out
 
 
-def sidecar_metadata(cfg, quick: int) -> dict:
+def sidecar_metadata(cfg) -> dict:
     """Structured metadata for ``rays-fingerprint.yaml``."""
     meta = {"format": FORMAT, "geometry": geometry_metadata(cfg),
-            "budgets": budgets(cfg, quick), "rng": RNG_SCHEME}
+            "budgets": budgets(cfg), "rng": RNG_SCHEME}
     if cfg.lean_rays:
         meta["lean"] = True
     return meta
@@ -441,11 +441,11 @@ class RaysFile:
 
     readonly = False
 
-    def __init__(self, path, cfg, quick):
+    def __init__(self, path, cfg):
         self.path = path
         self.sidecar_path = metadata_path(path)
         self.lean = bool(getattr(cfg, "lean_rays", False))
-        self.meta = sidecar_metadata(cfg, quick)
+        self.meta = sidecar_metadata(cfg)
         self.done = {}
         if os.path.lexists(path):
             try:
@@ -577,13 +577,13 @@ def rescreen(records, z0f: float, grid):
 
 
 def _traced_records(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
-                    seed_offset, quick):
+                    seed_offset):
     """One rng stream per global mode (lattice-v1); every record is teed
     into the run's writer."""
     cfg = sim.cfg
     source = Source(src_cfg, None)
     screen = ScreenGrid(scr_cfg)
-    n_modes, n_rays = src_cfg.budget(quick)
+    n_modes, n_rays = src_cfg.budget()
     tracer = make_tracer(optic)
     writer = sim.rays
     for mode in range(n_modes):
@@ -615,11 +615,11 @@ def _counted(records, expected: int, scene: str, path: str):
 
 
 def scene_stream(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
-                 seed_offset: int, quick: int):
+                 seed_offset: int):
     """(records, "file"|"trace"): the file when the run's rays file already
     holds this scene, complete and at these budgets, else tracing (teeing
     into the file)."""
-    n_modes, n_rays = src_cfg.budget(quick)
+    n_modes, n_rays = src_cfg.budget()
     w = sim.rays
     if w is not None and w.readonly:   # --replay: the file is the only source
         if scene not in w.done:
@@ -629,7 +629,7 @@ def scene_stream(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
             raise ValueError(
                 f"--replay: scene {scene!r} budgets "
                 f"{w.meta['budgets'].get(scene)} != config {[n_modes, n_rays]}"
-                " — match n_modes/n_rays and --quick to the recording")
+                " — match n_modes/n_rays to the recording")
         if w.done[scene] != n_modes * n_rays:
             raise ValueError(
                 f"--replay: scene {scene!r} holds {w.done[scene]} rows, "
@@ -642,4 +642,4 @@ def scene_stream(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
         return _counted(_file_records(w.path, scene), w.done[scene], scene,
                         w.path), "file"
     return _traced_records(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
-                           seed_offset, quick), "trace"
+                           seed_offset), "trace"

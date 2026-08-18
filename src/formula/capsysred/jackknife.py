@@ -147,7 +147,7 @@ class JackknifeCoherence:
 
 
 def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
-                   seed_offset: int, quick: int, screen_cfg=None):
+                   seed_offset: int, screen_cfg=None):
     """The stage-6 estimator over the scene's ray records — from the shared
     rays file when it matches, else traced (the stage-2/6 rng stream).
     screen_cfg re-bins the scr_cfg-plane records onto another screen."""
@@ -155,11 +155,11 @@ def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     target = screen_cfg or scr_cfg
     screen = ScreenGrid(target)
     scat = ScatterRaster(target)
-    n_modes, n_rays = src_cfg.budget(quick)
+    n_modes, n_rays = src_cfg.budget()
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
     jack = JackknifeCoherence(sim.lines, screen.ref_pixel(target.reference))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
-                                      aim_factory, seed_offset, quick)
+                                      aim_factory, seed_offset)
     if screen_cfg is not None or getattr(sim.rays, "readonly", False):
         # --replay records may carry pixel ids of a different grid — re-bin
         records = rescreen(records, float(scr_cfg.z), screen)

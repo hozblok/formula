@@ -189,15 +189,15 @@ class Simulation:
     # ------------------------------------------------------------- MC driver
 
     def _mc_stage(self, stage: str, label: str, src_cfg, scr_cfg, optic,
-                  aim_factory, seed_offset: int, quick: int):
+                  aim_factory, seed_offset: int):
         cfg = self.cfg
         p = cfg.precision
         screen = ScreenGrid(scr_cfg)
-        n_modes, n_rays = src_cfg.budget(quick)
+        n_modes, n_rays = src_cfg.budget()
         acc = CoherenceAccumulator(self.lines, screen.ref_pixel(scr_cfg.reference),
                                    cfg.precision)
         records, rays_from = scene_stream(self, stage, src_cfg, scr_cfg, optic,
-                                          aim_factory, seed_offset, quick)
+                                          aim_factory, seed_offset)
         require_full_rows(self.rays, rays_from,
                           "Number-path estimator (full-precision opl/sins)")
         stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
@@ -342,12 +342,12 @@ class Simulation:
 
     # ------------------------------------------------------------- stage 2+3
 
-    def _stage2(self, out_dir, quick):
+    def _stage2(self, out_dir):
         """Free space through the stage-10 jackknife estimator: the same
         algorithm and outputs, optic = None."""
         res = run_jack_stage(self, "2 without optics (MC)", "free",
                              self.cfg.free_source, self.cfg.free_screen,
-                             None, self._aim_free, SceneSeed.FREE, quick)
+                             None, self._aim_free, SceneSeed.FREE)
         self.results["free"] = res
         self._jack_outputs(out_dir, "02", "free", res)
         return res
@@ -395,13 +395,12 @@ class Simulation:
 
     # ------------------------------------------------------------- stage 6
 
-    def _stage6(self, out_dir, quick):
+    def _stage6(self, out_dir):
         cap = self.cfg.capillary
         bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
         check = self._capillary_engine_check(bundle)
         res = self._mc_stage("capillary", "6/6 capillary (MC)", cap.source,
-                             cap.screen, bundle, self._aim_capillary, SceneSeed.CAPILLARY,
-                             quick)
+                             cap.screen, bundle, self._aim_capillary, SceneSeed.CAPILLARY)
         self.results["capillary"] = res
         screen, maps = res["screen"], res["maps"]
         st = res["stats"]
@@ -451,7 +450,7 @@ class Simulation:
 
     # ------------------------------------------------------------- stage 7
 
-    def _stage7(self, out_dir, quick):
+    def _stage7(self, out_dir):
         """Alternative estimators (full W — axis C, Wigner — axis D) on the
         same ray streams as stages 2/6 (same seed offsets)."""
         cap = self.cfg.capillary
@@ -475,7 +474,7 @@ class Simulation:
                 ]
                 continue
             res = run_alt_stage(self, label, stage, src_cfg, scr_cfg,
-                                optic, aim_factory, off, quick)
+                                optic, aim_factory, off)
             self.results[f"alt:{stage}"] = res
             maps, screen, st = res["maps"], res["screen"], res["stats"]
             xs_um = [m_to_um(x) for x in screen.xs()]
@@ -542,7 +541,7 @@ class Simulation:
 
     # ------------------------------------------------------------- stage 8
 
-    def _stage8(self, out_dir, quick):
+    def _stage8(self, out_dir):
         """Streaming sketch of W (methods §3.10): pairwise reference column +
         Nystrom column + coherent-mode spectrum, 2D screens supported."""
         cap = self.cfg.capillary
@@ -559,7 +558,7 @@ class Simulation:
         rows = []
         for stage, label, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
             res = run_sketch_stage(self, label, stage, src_cfg, scr_cfg,
-                                   optic, aim_factory, off, quick)
+                                   optic, aim_factory, off)
             self.results[f"sketch:{stage}"] = res
             maps, screen, st = res["maps"], res["screen"], res["stats"]
             flat = lambda grid: [v for row in grid for v in row]
@@ -636,11 +635,11 @@ class Simulation:
 
     # ------------------------------------------------------------- stage 9
 
-    def _stage9(self, out_dir, quick):
+    def _stage9(self, out_dir):
         """Hit-method cross-validation on the capillary scene: the first wall
         hit of each validate.methods entry against validate.reference."""
         p = self.cfg.precision
-        n_rays = max(100, self.cfg.validate_rays // quick)
+        n_rays = self.cfg.validate_rays
         res = run_validate_stage(self, n_rays)
         self.results["validate"] = res
         st, per = res["stats"], res["per"]
@@ -726,14 +725,14 @@ class Simulation:
 
     # ------------------------------------------------------------- stage 10
 
-    def _stage10(self, out_dir, quick):
+    def _stage10(self, out_dir):
         """Stage-6 alternative (doc/mu28_legacy_fixed3_renamed.py, running-sum
         form): same capillary rays, |mu| plus a delete-one-mode jackknife map."""
         cap = self.cfg.capillary
         bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
         res = run_jack_stage(self, "10 jackknife capillary (MC)", "capillary",
                              cap.source, cap.screen, bundle,
-                             self._aim_capillary, SceneSeed.CAPILLARY, quick)
+                             self._aim_capillary, SceneSeed.CAPILLARY)
         self.results["jack:capillary"] = res
         self._jack_outputs(out_dir, "10", "capillary", res,
                            vs=self.results.get("capillary"))
@@ -741,7 +740,7 @@ class Simulation:
         for i, scr in enumerate(cap.screens, 1):
             res_i = run_jack_stage(self, f"10 jackknife capillary s{i} (MC)",
                                    "capillary", cap.source, cap.screen, bundle,
-                                   self._aim_capillary, SceneSeed.CAPILLARY, quick,
+                                   self._aim_capillary, SceneSeed.CAPILLARY,
                                    screen_cfg=scr)
             self.results[f"jack:capillary-s{i}"] = res_i
             self._jack_outputs(out_dir, "10", f"capillary-s{i}", res_i,
@@ -943,7 +942,7 @@ class Simulation:
 
     # ------------------------------------------------------------- stage 11
 
-    def _stage11(self, out_dir, quick):
+    def _stage11(self, out_dir):
         """Beamlet estimator (doc/2026-07-10-stage11-beamlets.ru.md):
         elliptic Gaussian phase spots instead of point bins, the 2x2 Gamma
         tensor through the bounces (general astigmatism), honest mu with no
@@ -955,7 +954,7 @@ class Simulation:
         if self.cfg.free_source is not None:
             res = run_beamlet_stage(self, "11 beamlet free (MC)", "free",
                                     self.cfg.free_source, self.cfg.free_screen,
-                                    None, self._aim_free, SceneSeed.FREE, quick)
+                                    None, self._aim_free, SceneSeed.FREE)
             self.results["beamlet:free"] = res
             maps, screen = res["maps"], res["screen"]
             ref_xy = screen.pixel_xy(maps["ref_pixel"])
@@ -987,7 +986,7 @@ class Simulation:
             res = run_beamlet_stage(self, "11 beamlet capillary (MC)",
                                     "capillary", cap.source, cap.screen,
                                     bundle, self._aim_capillary,
-                                    SceneSeed.CAPILLARY, quick,
+                                    SceneSeed.CAPILLARY,
                                     extra_screens=cap.screens)
             self.results["beamlet:capillary"] = res
             self._beamlet_outputs(out_dir, "capillary", res, rows,
@@ -1133,12 +1132,11 @@ class Simulation:
 
     # ------------------------------------------------------------- stage 12
 
-    def _stage12(self, out_dir, quick):
+    def _stage12(self, out_dir):
         """The pre-jackknife stage 2: pairwise Number estimator on the free
         scene (same rays as stage 2, no σ_jack), kept for cross-checks."""
         res = self._mc_stage("free", "12 pairwise free (MC)", self.cfg.free_source,
-                             self.cfg.free_screen, None, self._aim_free, SceneSeed.FREE,
-                             quick)
+                             self.cfg.free_screen, None, self._aim_free, SceneSeed.FREE)
         self.results["pairwise:free"] = res
         screen, maps = res["screen"], res["maps"]
         xs_um = [m_to_um(x) for x in screen.xs()]
@@ -1234,7 +1232,7 @@ class Simulation:
 
     # ------------------------------------------------------------- trace
 
-    def _ensure_stage14_rays(self, path: str, quick: int) -> bool:
+    def _ensure_stage14_rays(self, path: str) -> bool:
         """Create and close the canonical capillary recording if absent.
 
         Existing archives are intentionally not scanned here: the Stage-14
@@ -1250,7 +1248,7 @@ class Simulation:
                     "missing or invalid; remove the result manually or "
                     "choose another output directory"
                 ) from exc
-            expected = sidecar_metadata(self.cfg, quick)
+            expected = sidecar_metadata(self.cfg)
             if not metadata_equal(actual, expected):
                 raise ValueError(
                     f"{path}: existing local rays metadata does not match "
@@ -1264,16 +1262,16 @@ class Simulation:
                 "cache has a canonical provenance source"
             )
         cap = self.cfg.capillary
-        writer = RaysFile(path, self.cfg, quick)
+        writer = RaysFile(path, self.cfg)
         self.rays = writer
-        n_modes, n_rays = cap.source.budget(quick)
+        n_modes, n_rays = cap.source.budget()
         progress = Progress("trace capillary for stage 14", n_modes * n_rays)
         on_screen = 0
         try:
             records, rays_from = scene_stream(
                 self, "capillary", cap.source, cap.screen,
                 CapillaryBundle(cap.bores, cap.z0, cap.z1),
-                self._aim_capillary, SceneSeed.CAPILLARY, quick)
+                self._aim_capillary, SceneSeed.CAPILLARY)
             if rays_from != "trace":
                 raise RuntimeError("new Stage-14 rays archive unexpectedly reused")
             for rec in records:
@@ -1285,9 +1283,9 @@ class Simulation:
             self.rays = None
         return True
 
-    def trace(self, out_dir, quick: int = 1) -> dict:
+    def trace(self, out_dir) -> dict:
         """Trace-only run: record every scene's geometry (no physics) into the
-        rays file; a later run with the same config/out_dir/--quick reuses it.
+        rays file; a later run with the same config/out_dir reuses it.
         An incompatible or incomplete existing recording is never overwritten.
         """
         cfg = self.cfg
@@ -1308,17 +1306,16 @@ class Simulation:
         t0 = time.time()
         self.files = []
         rays_name = "rays.jsonl.gz"
-        _log(f"CAPSYSred: trace only, output to {out_dir}"
-             + (f", speedup ×{quick}" if quick > 1 else ""))
-        self.rays = RaysFile(os.path.join(out_dir, rays_name), cfg, quick)
+        _log(f"CAPSYSred: trace only, output to {out_dir}")
+        self.rays = RaysFile(os.path.join(out_dir, rays_name), cfg)
         try:
             for scene, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
                 records, rays_from = scene_stream(self, scene, src_cfg, scr_cfg,
-                                                  optic, aim_factory, off, quick)
+                                                  optic, aim_factory, off)
                 if rays_from == "file":
                     _log(f"  trace {scene}: already recorded, skipped")
                     continue
-                n_modes, n_rays = src_cfg.budget(quick)
+                n_modes, n_rays = src_cfg.budget()
                 progress = Progress(f"trace {scene}", n_modes * n_rays)
                 on_screen = 0
                 for rec in records:
@@ -1337,7 +1334,7 @@ class Simulation:
 
     # ------------------------------------------------------------- run
 
-    def run(self, out_dir, stages=None, quick: int = 1, rays_src=None,
+    def run(self, out_dir, stages=None, rays_src=None,
             stage14_paths=None) -> dict:
         cfg = self.cfg
         if stage14_paths is not None:
@@ -1360,7 +1357,6 @@ class Simulation:
             preflight_stage14_output(out_dir)
         t0 = time.time()
         _log(f"CAPSYSred: stages {sorted(wanted)}, output to {out_dir}"
-             + (f", speedup ×{quick}" if quick > 1 else "")
              + (f", rays from {rays_src.path}" if rays_src is not None else
                 f", rays from {' + '.join(stage14_paths)}"
                 if stage14_paths is not None else ""))
@@ -1392,12 +1388,12 @@ class Simulation:
         else:
             if 14 in wanted:
                 local_path = os.path.join(out_dir, rays_name)
-                traced14 = self._ensure_stage14_rays(local_path, quick)
+                traced14 = self._ensure_stage14_rays(local_path)
                 stage14_paths = [local_path]
                 if traced14:
                     self.report.insert(-1,
                                        "- stage 14: canonical capillary rays traced before cache build")
-            self.rays = (RaysFile(os.path.join(out_dir, rays_name), cfg, quick)
+            self.rays = (RaysFile(os.path.join(out_dir, rays_name), cfg)
                          if cfg.rays_jsonl and wanted & {2, 6, 7, 8, 10, 11, 12}
                          else None)
         try:
@@ -1407,39 +1403,39 @@ class Simulation:
             res_free = None
             if 2 in wanted:
                 _log("Stage 2: |μ| without optics (jackknife estimator, same tracer)")
-                res_free = self._stage2(out_dir, quick)
+                res_free = self._stage2(out_dir)
             if 3 in wanted:
                 _log("Stage 3: van Cittert–Zernike analytics")
                 self._stage3(out_dir, res_free)
             if 6 in wanted:
                 _log("Stage 6: capillary (MC)")
-                self._stage6(out_dir, quick)
+                self._stage6(out_dir)
             if 7 in wanted:
                 _log("Stage 7: alternative estimators — full W (axis C) + Wigner (axis D)")
-                self._stage7(out_dir, quick)
+                self._stage7(out_dir)
             if 8 in wanted:
                 _log("Stage 8: streaming sketch of W — column + mode spectrum")
-                self._stage8(out_dir, quick)
+                self._stage8(out_dir)
             if 9 in wanted:
                 _log("Stage 9: hit-method cross-validation — "
                      f"{', '.join(self.cfg.validate_methods)} vs "
                      f"{self.cfg.validate_reference} reference")
-                self._stage9(out_dir, quick)
+                self._stage9(out_dir)
             if 10 in wanted:
                 _log("Stage 10: stage-6 estimator + delete-one-mode jackknife errors")
-                self._stage10(out_dir, quick)
+                self._stage10(out_dir)
             if 11 in wanted:
                 _log("Stage 11: beamlet estimator — elliptic phase spots (Γ tensor, general astigmatism)")
-                self._stage11(out_dir, quick)
+                self._stage11(out_dir)
             if 12 in wanted:
                 _log("Stage 12: pairwise Number estimator without optics (the pre-jackknife stage 2)")
-                self._stage12(out_dir, quick)
+                self._stage12(out_dir)
         finally:
             if self.rays is not None:
                 self.rays.close()
         if 14 in wanted:
             _log("Stage 14: exact disk-backed delete-one-mode jackknife")
-            res14 = run_stage14(self, out_dir, stage14_paths, quick, log=_log)
+            res14 = run_stage14(self, out_dir, stage14_paths, log=_log)
             self.results["stage14:capillary"] = res14
             for name in res14["files"]:
                 self.files.append(name)
@@ -1528,15 +1524,14 @@ class Simulation:
 
     # ------------------------------------------------------------- replay
 
-    def replay(self, records_path, out_dir, stages=None,
-               quick: int = 1) -> dict:
+    def replay(self, records_path, out_dir, stages=None) -> dict:
         """Run stages from a recorded rays file — no tracing at all.
 
         Any streaming stage replays (2, 6-8, 10-12 and 14, plus analytics 3; stage
         9 validates live tracers and is refused); default = the Number stages
         of the scenes present (free -> 2, capillary -> 6). The
         spectrum and the material may differ from the recording — rays are
-        energy-free; the geometry, seed, budgets and --quick must match it.
+        energy-free; the geometry, seed and budgets must match it.
         """
         paths = ([records_path] if isinstance(records_path, str)
                  else list(records_path))
@@ -1555,16 +1550,16 @@ class Simulation:
                 raise ValueError(
                     f"no replayable configured scenes in {records_path!r}"
                 )
-            return self.run(out_dir, stages=stages, quick=quick, rays_src=reader)
+            return self.run(out_dir, stages=stages, rays_src=reader)
         wanted = set(stages)
         if 14 in wanted and wanted == {14}:
             # No RaysReader: its constructor scans the whole gzip.  The
             # Stage-14 builder validates/deposits in one strict pass, while a
             # cache hit does not open the ray archive at all.
-            return self.run(out_dir, stages=stages, quick=quick,
+            return self.run(out_dir, stages=stages,
                             stage14_paths=paths)
         reader = (RaysReader(paths[0]) if len(paths) == 1
                   else MultiRaysReader(paths))
-        return self.run(out_dir, stages=stages, quick=quick, rays_src=reader,
+        return self.run(out_dir, stages=stages, rays_src=reader,
                         stage14_paths=paths if 14 in wanted else None)
 

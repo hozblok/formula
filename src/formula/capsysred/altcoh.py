@@ -185,18 +185,18 @@ class AltCoherence:
 
 
 def run_alt_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
-                  seed_offset: int, quick: int):
+                  seed_offset: int):
     """The alternative estimators over the scene's ray records — from the
     shared rays file when it matches, else traced (the stage-2/6 rng stream)."""
     cfg = sim.cfg
     screen = ScreenGrid(scr_cfg)
     if screen.ny != 1:
         raise ValueError("stage 7 supports 1D screens (ny = 1) only")
-    n_modes, n_rays = src_cfg.budget(quick)
+    n_modes, n_rays = src_cfg.budget()
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
     alt = AltCoherence(sim.lines, screen, screen.ref_pixel(scr_cfg.reference))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
-                                      aim_factory, seed_offset, quick)
+                                      aim_factory, seed_offset)
     stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
              "off_window": 0}
     progress = Progress(label, n_modes * n_rays)

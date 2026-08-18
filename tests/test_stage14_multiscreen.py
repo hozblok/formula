@@ -78,7 +78,7 @@ def _write_rays(path, raw: dict) -> None:
     x_ref, y_ref = grid.pixel_xy(ref)
     x_target, y_target = grid.pixel_xy(target)
     phase_flip = math.pi / float(sim.lines[0].k)
-    n_modes, n_rays = sim.cfg.capillary.source.budget(1)
+    n_modes, n_rays = sim.cfg.capillary.source.budget()
     with gzip.open(path, "xt", encoding="utf-8", newline="\n") as fh:
         fh.write("{}\n")
         for mode in range(n_modes):
@@ -103,7 +103,7 @@ def _write_rays(path, raw: dict) -> None:
             "scene_end": "capillary",
             "rows": n_modes * n_rays,
         }) + "\n")
-    write_metadata(path, sidecar_metadata(sim.cfg, 1))
+    write_metadata(path, sidecar_metadata(sim.cfg))
 
 
 def _cache_metas(recording) -> list[dict]:

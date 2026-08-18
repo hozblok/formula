@@ -120,9 +120,9 @@ class SourceCfg:
             self.grid_r_max = (float(raw["grid_r_max"])
                                if "grid_r_max" in raw else None)
 
-    def budget(self, quick: int) -> tuple[int, int]:
-        """(n_modes, n_rays) at reduction factor `quick`, with sampling floors."""
-        return max(2, self.n_modes // quick), max(20, self.n_rays // quick)
+    def budget(self) -> tuple[int, int]:
+        """(n_modes, n_rays) exactly as configured."""
+        return self.n_modes, self.n_rays
 
 
 def _required_source(raw: object, scene: str, p: int) -> SourceCfg:
