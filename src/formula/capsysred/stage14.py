@@ -20,6 +20,7 @@ import json
 import math
 import os
 import shutil
+import statistics
 import struct
 import sys
 import time
@@ -58,6 +59,7 @@ RESULT_PAYLOAD_NAMES = (
     "14b-capillary-jack-intensity.svg",
     "14c-capillary-jack-overlay.svg",
     "14d-capillary-ray-scatter.svg",
+    "14e-capillary-ref-passport.svg",
 )
 def _canonical(value) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"),
@@ -1254,6 +1256,67 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
     }
 
 
+def _ref_passport(result_dir: str, rows, ref: int, ref_status: str, ref_warnings,
+                  diagnostics: dict, thresholds: FlagThresholds, n_modes: int,
+                  screen_label: str) -> None:
+    """14e: the reference pixel's own numbers against the registered and
+    guide thresholds; only recorded mu-jack/meta fields."""
+    row = rows[ref]
+    ic, err = row["ic"], row["ic_err"]
+    snr = ic / err if ic is not None and err else None
+    z_ref = thresholds.ref_ic_n_sigma
+    pairs, lit, n_ref = (row["m_pair_realizations"], row["m_realizations"],
+                         row["n_rays"])
+    pair_rows = [r for r in rows if r["m_pair_realizations"] > 0]
+    covered = sum(r["m_ref_realizations"] > 0 for r in pair_rows)
+    others = [r["n_rays"] for r in pair_rows if not r["is_reference"]]
+    median = statistics.median(others) if others else None
+    pct, w_cover = diagnostics.get("ref_density_percentile"), diagnostics.get("w_cover")
+    lam = diagnostics["lambda_ref"]
+    checks = [
+        {"name": "Ic_ref significance",
+         "big": f"{snr:.1f}σ" if snr is not None else "n/a",
+         "detail": (f"Ic_ref = {ic:.0f} ± {err:.0f}  ·  {snr / z_ref:.1f}× the weak line"
+                    if snr is not None else f"ref_status = {ref_status}"),
+         "value": snr, "lo": 0.0, "hi": 20.0, "threshold": z_ref,
+         "threshold_label": f"≥ ref_ic_n_sigma = {z_ref:g} (registered)",
+         "fix": "another reference (T2)"},
+        {"name": "pairness of the reference", "big": f"{pairs / n_modes:.0%}",
+         "detail": (f"{pairs} of {n_modes} realizations gave ≥ 2 rays  ·  "
+                    f"lit in {lit} ({lit / n_modes:.0%})"),
+         "value": pairs / n_modes, "lo": 0.0, "hi": 1.0, "threshold": 0.5,
+         "threshold_label": "≥ 50 % (guide)",
+         "fix": "more rays per realization (top-up)"},
+        {"name": "rays per realization at ref", "big": f"{lam:.2f}",
+         "detail": (f"n_rays = {n_ref}  ·  mean over lit realizations "
+                    f"{n_ref / lit if lit else 0.0:.2f}  ·  max {row['max_rays_per_realization']}"),
+         "value": lam, "lo": 0.0, "hi": 20.0, "threshold": 8.0,
+         "threshold_label": "≥ 8 (guide 8–16)",
+         "fix": "more rays per realization (top-up)"},
+        {"name": "density rank among paired pixels",
+         "big": f"{pct:.0f}%" if pct is not None else "n/a",
+         "detail": (f"n_rays(ref) = {n_ref}  vs  map median {median:.0f}  ·  "
+                    f"{n_ref / median:.1f}× median" if median else
+                    f"n_rays(ref) = {n_ref}  ·  no other paired pixels"),
+         "value": pct, "lo": 0.0, "hi": 100.0, "threshold": 50.0,
+         "threshold_label": "≥ 50 % (guide)", "fix": "brighter reference"},
+        {"name": "cross-link with the map  (w_cover)",
+         "big": f"{w_cover:.2f}" if w_cover is not None else "n/a",
+         "detail": f"paired pixels sharing a realization with ref: {covered} of {len(pair_rows)}",
+         "value": w_cover, "lo": 0.0, "hi": 1.0, "threshold": 0.9,
+         "threshold_label": "≥ 0.9 (guide)", "fix": "more realizations"},
+    ]
+    title = (f"Reference-pixel passport · {screen_label} · ref pixel {ref} at "
+             f"({row['x_um']:.1f}, {row['y_um']:.1f}) µm · N_jk = {n_modes} · "
+             f"ref_ic_n_sigma = {z_ref:g}")
+    header = (f"ref_status = {ref_status}   ·   warnings: "
+              f"{', '.join(ref_warnings) or 'none'}   ·   flag(ref) = null, μ(ref,ref) ≡ 1 excluded")
+    footer = ("row 1 sets ref_status (registered ref_ic_n_sigma); other thresholds are guides"
+              "   ·   big number = the check's value; second line = absolute counts behind it")
+    render.save(os.path.join(result_dir, "14e-capillary-ref-passport.svg"),
+                render.gauge_table(checks, title, header, footer))
+
+
 def preflight_stage14_output(out_dir: str) -> None:
     """Refuse an existing/partial result before tracing or cache work."""
     result_dir = os.path.join(out_dir, RESULT_DIR)
@@ -1441,6 +1504,8 @@ def _finalize_screen(sim, target: ScreenTarget, output_dir: str,
     maps = _stage14_figures(
         output_dir, rows, aggregate, result_final, grid, ref,
         flag_counts, n_modes, target.label)
+    _ref_passport(output_dir, rows, ref, ref_status, ref_warnings, ref_diagnostics,
+                  thresholds, n_modes, target.label)
     screen_seconds = time.time() - screen_started
     result_meta = {
         "stage_id": STAGE_ID, "screen": target.label,

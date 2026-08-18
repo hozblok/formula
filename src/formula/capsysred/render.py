@@ -437,3 +437,52 @@ def overlay_map(mu_grid, flag_grid, extent, title, xlabel, ylabel,
     e.append(_text(ax.px0 + 26, ax.py0 - 14,
                    f"classified but not trusted ({bad:,})", 10.5))
     return {"w": w, "h": h, "body": "".join(e)}
+
+
+GAUGE_OK, GAUGE_WARN = "#009E73", "#E69F00"
+
+
+def gauge_table(checks, title, header="", footer="", w=1000):
+    """Check rows: name + detail line, big value, gauge with a threshold, fix.
+
+    checks: [{name, detail, big, value, lo, hi, threshold, threshold_label,
+    fix}]; value None = unavailable (no marker, warn tone)."""
+    top, row_h, bottom = 96, 92, 34
+    h = top + row_h * len(checks) + bottom
+    x_check, x_big, x_gauge, gauge_w, x_fix = 14, 400, 545, 205, 790
+    e = [_text(x_check, 24, title, 15, "start", "#111", 'font-weight="bold"')]
+    if header:
+        e.append(_text(x_check, 46, header, 11, "start", "#666"))
+    for x, label in ((x_check, "check"), (x_big, "value"),
+                     (x_gauge, "gauge · threshold"), (x_fix, "what would fix it")):
+        e.append(_text(x, 72, label, 11, "start", "#666", 'font-weight="bold"'))
+    e.append(_line(0, 80, w, 80, "#bbb", 0.8))
+    for i, c in enumerate(checks):
+        y = top + row_h * i + row_h / 2
+        value = c["value"]
+        good = value is not None and value >= c["threshold"]
+        tone = GAUGE_OK if good else GAUGE_WARN
+        e.append(_text(x_check, y - 6, c["name"], 13.5))
+        e.append(_text(x_check, y + 14, c["detail"], 11.5, color="#444"))
+        e.append(_text(x_big, y + 9, c["big"], 26, "start", tone, 'font-weight="bold"'))
+        gh, lo, hi = 20, c["lo"], c["hi"]
+        ft = (c["threshold"] - lo) / (hi - lo)
+        e.append(_rect(x_gauge, y - gh / 2, gauge_w * ft, gh, GAUGE_WARN,
+                       extra='fill-opacity="0.13"'))
+        e.append(_rect(x_gauge + gauge_w * ft, y - gh / 2, gauge_w * (1 - ft), gh,
+                       GAUGE_OK, extra='fill-opacity="0.13"'))
+        e.append(_rect(x_gauge, y - gh / 2, gauge_w, gh, "none", "#999"))
+        xt = x_gauge + gauge_w * ft
+        e.append(_line(xt, y - gh / 2 - 4, xt, y + gh / 2 + 4, "#333", 1.2, "4,3"))
+        e.append(_text(x_gauge, y + gh / 2 + 12, _fmt(lo), 9, "middle", "#888"))
+        e.append(_text(x_gauge + gauge_w, y + gh / 2 + 12, _fmt(hi), 9, "middle", "#888"))
+        e.append(_text(xt, y - gh / 2 - 7, c["threshold_label"], 9.5, "middle", "#333"))
+        if value is not None:
+            xv = x_gauge + gauge_w * (min(max(value, lo), hi) - lo) / (hi - lo)
+            e.append(f'<circle cx="{xv:.1f}" cy="{y:.1f}" r="7" fill="{tone}" '
+                     f'stroke="#222" stroke-width="1"/>')
+        e.append(_text(x_fix, y + 4, "—" if good else c["fix"], 11,
+                       color="#999" if good else "#8a5a00"))
+    if footer:
+        e.append(_text(x_check, h - 12, footer, 10, "start", "#666"))
+    return {"w": w, "h": h, "body": "".join(e)}

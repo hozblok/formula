@@ -126,6 +126,7 @@ def test_stage14_cache_hit_schema_and_stage10_projection(tmp_path, monkeypatch):
         "meta.json", "mu-jack.jsonl", "14-capillary-jack-mu.svg",
         "14a-capillary-jack-slice.svg", "14b-capillary-jack-intensity.svg",
         "14c-capillary-jack-overlay.svg", "14d-capillary-ray-scatter.svg",
+        "14e-capillary-ref-passport.svg",
     }
     assert {path.name for path in (tmp_path / "stage14" / "stage14").iterdir()} == expected
     rows = [json.loads(line) for line in

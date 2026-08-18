@@ -23,6 +23,7 @@ _RESULT_FILES = {
     "14b-capillary-jack-intensity.svg",
     "14c-capillary-jack-overlay.svg",
     "14d-capillary-ray-scatter.svg",
+    "14e-capillary-ref-passport.svg",
 }
 
 _RESULT_KEYS = (
