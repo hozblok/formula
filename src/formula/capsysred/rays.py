@@ -22,7 +22,8 @@ the Number path and the beamlet stage refuse such a file (require_full_rows).
 
 rays_v3 is the per-mode layout (a directory: fingerprint, index, one gzip
 section per mode and ray range); RaysReader and Stage 14 accept either.
-convert_rays_v3 converts a v2 file, topup_trace adds rays to existing modes.
+trace_v3 writes it directly (or tops up existing modes); convert_rays_v3
+converts a v2 file.
 """
 
 import enum

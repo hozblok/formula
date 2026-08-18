@@ -32,7 +32,7 @@ def main(argv=None) -> int:
                              "the config, without tracing; several files stream as one "
                              "recording (Stage 14 builds/reuses one disk cache per "
                              "file; config n_modes = their sum); a directory is a "
-                             "v3 per-mode archive (convert_rays_v3 / topup_trace)")
+                             "v3 per-mode archive (trace_v3 / convert_rays_v3)")
     args = parser.parse_args(argv)
 
     stages = None

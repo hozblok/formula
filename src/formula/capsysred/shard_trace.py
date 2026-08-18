@@ -1,6 +1,9 @@
 """Shard-parallel tracing: split the capillary modes across processes and
 merge the records into one canonical rays.jsonl.gz.
 
+DEPRECATED for capillary recordings: trace_v3 writes the per-mode v3
+archive directly (parallel, resumable, no merge) with identical rays.
+
     python -m formula.capsysred.shard_trace config.yaml -o out/RUN \
         --jobs 7 [--quick N] [--keep-shards] [--no-merge]
 

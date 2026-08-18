@@ -20,6 +20,7 @@ from formula.capsysred.rays import RaysReader, SceneSeed, _SCENE_SEED_STRIDE
 from formula.capsysred.screen import ScreenGrid
 from formula.capsysred.source import Source
 from formula.capsysred.topup_trace import topup
+from formula.capsysred.trace_v3 import trace as trace_v3
 
 
 def _raw(n_modes=6, n_rays=60, seed=77, shape="disk"):
@@ -278,3 +279,34 @@ def test_rng_skip_counts(shape, draws):
     assert real.getstate() == skip.getstate()
     assert SceneSeed.CAPILLARY_TOPUP not in (SceneSeed.CAPILLARY, SceneSeed.FREE)
     assert _SCENE_SEED_STRIDE == 1000003
+
+
+def test_trace_v3_fresh_equals_v2_and_two_steps(tmp_path):
+    raw = _raw(n_modes=5, n_rays=40)
+    cfg40 = _write_yaml(tmp_path / "cfg-40.yaml", raw)
+    raw100 = json.loads(json.dumps(raw))
+    raw100["capillary"]["source"]["n_rays"] = 100
+    cfg100 = _write_yaml(tmp_path / "cfg-100.yaml", raw100)
+
+    one = str(tmp_path / "one")
+    trace_v3(cfg100, one, None, jobs=2, quick=1, level=6, log=lambda m: None)
+    two = str(tmp_path / "two")
+    trace_v3(cfg40, two, None, jobs=1, quick=1, level=6, log=lambda m: None)
+    trace_v3(cfg100, two, 100, jobs=2, quick=1, level=6, log=lambda m: None)
+    v2 = tmp_path / "v2"
+    Simulation.from_dict(raw100).trace(str(v2))
+
+    expected = [l for l in _v2_lines(v2 / "rays.jsonl.gz") if l.startswith(b'{"stage"')]
+    for archive in (one, two):
+        index = rays_v3.load_index(archive)
+        assert index.budgets == {"capillary": [5, 100]}
+        got = [l.rstrip(b"\n") for l in rays_v3.scene_lines(archive, index, "capillary")]
+        assert got == expected
+    assert len(rays_v3.load_index(two).sections("capillary", 0)) == 2
+    fp = rays_v3.read_fingerprint(one)
+    assert fp["rng"]["scheme"] == "lattice-v1" and fp["geometry"]["seed"] == 77
+    verify(two, jobs=1, log=lambda m: None)
+    result = _stage14(raw100, one, tmp_path / "s14")
+    assert result["stats"]["emitted"] == 500 and result["cache_hits"] == 0
+    with pytest.raises(ValueError, match="must exceed"):
+        trace_v3(cfg100, one, 100, jobs=1, quick=1, level=6, log=lambda m: None)
