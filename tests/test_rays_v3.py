@@ -274,6 +274,14 @@ def test_rng_skip_counts(shape, draws):
     for _ in range(4 * (draws + 7 * CAPILLARY_AIM_DRAWS)):
         skip.random()
     assert real.getstate() == skip.getstate()
+    from formula.capsysred.trace_v3 import SCENES
+    real, skip = random.Random(6), random.Random(6)
+    free = sim._aim_free(None, ScreenGrid(cap.screen), real)
+    for _ in range(5):
+        free(origin)
+    for _ in range(5 * SCENES["free"]["draws"]):
+        skip.random()
+    assert real.getstate() == skip.getstate()
     assert SceneSeed.CAPILLARY_TOPUP not in (SceneSeed.CAPILLARY, SceneSeed.FREE)
     assert _SCENE_SEED_STRIDE == 1000003
 
@@ -307,3 +315,36 @@ def test_trace_v3_fresh_equals_v2_and_two_steps(tmp_path):
     assert result["stats"]["emitted"] == 500 and result["cache_hits"] == 0
     with pytest.raises(ValueError, match="must exceed"):
         trace_v3(cfg100, one, 100, jobs=1, level=6, log=lambda m: None)
+
+
+def test_trace_v3_all_scenes_equals_v2_trace(tmp_path):
+    raw = _raw(n_modes=4, n_rays=30)
+    raw["free"] = {"source": {"shape": "disk", "size": 2.0e-6, "position": [0.0, 0.0, -0.02],
+                              "n_modes": 3, "n_rays": 25},
+                   "screen": {"nx": 7, "ny": 1, "edge_x": 1.4e-5, "edge_y": 2.0e-6}}
+    raw["screen"] = {"nx": 7, "ny": 1, "edge_x": 1.4e-5, "edge_y": 2.0e-6}
+    cfg = _write_yaml(tmp_path / "cfg.yaml", raw)
+    archive = str(tmp_path / "v3")
+    summary = trace_v3(cfg, archive, None, jobs=2, level=6, log=lambda m: None, scenes="all")
+    assert summary["budgets"] == {"capillary": [4, 30], "free": [3, 25]}
+    v2 = tmp_path / "v2"
+    Simulation.from_dict(raw).trace(str(v2))
+    index = rays_v3.load_index(archive)
+    for scene in ("free", "capillary"):
+        expected = [l for l in _v2_lines(v2 / "rays.jsonl.gz")
+                    if l.startswith(('{"stage": "%s"' % scene).encode())]
+        got = [l.rstrip(b"\n") for l in rays_v3.scene_lines(archive, index, scene)]
+        assert got == expected
+    # the free scene alone can be added to a capillary-only archive later, and replays
+    only_cap = str(tmp_path / "cap")
+    trace_v3(cfg, only_cap, None, jobs=1, level=6, log=lambda m: None)
+    trace_v3(cfg, only_cap, None, jobs=1, level=6, log=lambda m: None, scenes=("free",))
+    assert rays_v3.load_index(only_cap).budgets == {"capillary": [4, 30], "free": [3, 25]}
+    a = Simulation.from_dict(raw)
+    a.replay(only_cap, str(tmp_path / "s2-v3"), stages=[2])
+    b = Simulation.from_dict(raw)
+    b.replay(str(v2 / "rays.jsonl.gz"), str(tmp_path / "s2-v2"), stages=[2])
+    assert a.results["free"]["stats"] == b.results["free"]["stats"]
+    with pytest.raises(ValueError, match="single --scene"):
+        trace_v3(cfg, only_cap, 50, jobs=1, level=6, log=lambda m: None, scenes="all")
+
