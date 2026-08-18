@@ -14,7 +14,7 @@ must equal the target (Stage 14's "recorded == configured").
 lattice-v1: mode m of a scene draws its origin, then a fixed number of
 draws per ray (capillary aim 3, free aim 2) from
 ``stream_rng(seed, <scene>, m)``, so ``--jobs``, one-shot vs top-up and the
-sequential v2 ``--trace`` all give identical rays.  Legacy sequential-v2
+the legacy sequential v2 writer gave identical rays.  Legacy sequential-v2
 archives (converted Z-26) top up their capillary scene from the tail
 substream ``Random((seed*STRIDE + CAPILLARY_TOPUP) * 2**32 + m)`` at
 position 3*r.  Sections publish tmp -> rename; the index is replaced
@@ -205,8 +205,11 @@ def trace(config_path: str, archive: str, r1: int | None, jobs: int,
             if n_modes_recorded != n_modes:
                 raise ValueError(f"{archive} holds {n_modes_recorded} {scene} modes, "
                                  f"config gives {n_modes}")
-            if target <= n0:
-                raise ValueError(f"{scene}: target {target} must exceed the current "
+            if target == n0:
+                log(f"{scene}: already recorded at {n0} rays per mode, nothing to do")
+                continue
+            if target < n0:
+                raise ValueError(f"{scene}: target {target} is below the recorded "
                                  f"{n0} rays per mode")
             origins = rays_v3.origins(archive, index, scene)
             missing = [m for m, o in enumerate(origins) if not o]
@@ -243,7 +246,8 @@ def trace(config_path: str, archive: str, r1: int | None, jobs: int,
             done += 1
             if done % max(1, total // 20) == 0 or done == total:
                 log(f"  {done}/{total} modes ({(time.time() - started) / 60:.1f} min)")
-    index = rays_v3.write_index(archive, old_entries + new_entries)
+    index = (rays_v3.write_index(archive, old_entries + new_entries)
+             if new_entries else rays_v3.load_index(archive))
     summary = {"scenes": [(scene, n0, target) for scene, _, n0, target, _ in plan],
                "reused_sections": reused, "budgets": index.budgets,
                "seconds": time.time() - started}

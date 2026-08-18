@@ -1,10 +1,9 @@
-"""rays.jsonl v2: one traced-geometry stream shared by the stages.
+"""rays.jsonl v2: the legacy single-stream ray recording (read-only).
 
-The tracer's work (geometry, no physics) is recorded once and reused: a
-stage consumes the file instead of re-tracing when the geometry fingerprint
-and the per-scene budgets match; otherwise it traces and tees the records
-into the run's writer. Rows carry the PRE-threshold
-fate — amplitude_min is physics and every consumer applies its own.
+Recordings are produced by trace_v3 (per-mode v3 archives); the v2 file
+format is kept for reading older archives, --replay and convert_rays_v3.
+Rows carry the PRE-threshold fate — amplitude_min is physics and every
+consumer applies its own.
 
 Layout: one ignored preamble line (new files write {}), one row per ray, and
 a {"scene_end": scene, "rows": n} trailer per completed scene. Metadata is
@@ -22,8 +21,8 @@ the Number path and the beamlet stage refuse such a file (require_full_rows).
 
 rays_v3 is the per-mode layout (a directory: fingerprint, index, one gzip
 section per mode and ray range); RaysReader and Stage 14 accept either.
-trace_v3 writes it directly (or tops up existing modes); convert_rays_v3
-converts a v2 file.
+trace_v3 writes it (and tops up existing modes); convert_rays_v3 converts
+a v2 file.  Stages never trace: a run without a recording is an error.
 """
 
 import enum
@@ -37,10 +36,7 @@ import zlib
 import yaml
 
 from . import rays_v3
-from .native import make_tracer
-from .screen import ScreenGrid
-from .source import Source
-from .types import RayRecord, ray_record
+from .types import RayRecord
 
 FORMAT = 2
 METADATA_NAME = "rays-fingerprint.yaml"
@@ -430,105 +426,6 @@ def row_of(scene: str, rec: RayRecord, lean: bool) -> dict:
     return row
 
 
-class RaysFile:
-    """The run's rays file: append to a matching existing file or create one.
-
-    An incompatible, incomplete, or unreadable existing file is never
-    replaced. ``done`` scenes are complete and readable back mid-run. Only
-    one writer may use an output directory at a time; concurrent appenders are
-    intentionally unsupported without a lock protocol.
-    """
-
-    readonly = False
-
-    def __init__(self, path, cfg):
-        self.path = path
-        self.sidecar_path = metadata_path(path)
-        self.lean = bool(getattr(cfg, "lean_rays", False))
-        self.meta = sidecar_metadata(cfg)
-        self.done = {}
-        if os.path.lexists(path):
-            try:
-                meta, done, clean = scan(path, expected_meta=self.meta)
-            except (OSError, UnicodeError, ValueError, KeyError, IndexError,
-                    AttributeError, TypeError, EOFError, zlib.error) as exc:
-                raise ValueError(
-                    f"{path}: existing rays file or metadata sidecar "
-                    f"{self.sidecar_path} is missing, corrupt, or unreadable; "
-                    "remove the existing result manually or choose another "
-                    "output directory"
-                ) from exc
-            complete_rows_match_budgets = all(
-                scene in meta["budgets"]
-                and rows == math.prod(meta["budgets"][scene])
-                for scene, rows in done.items()
-            )
-            compatible = (meta is not None
-                          and metadata_equal(meta, self.meta) and clean
-                          and complete_rows_match_budgets)
-            if compatible:
-                self.done = done
-                self._fh = _open(path, "a")
-            else:
-                raise ValueError(
-                    f"{path}: existing rays file is incomplete or its metadata "
-                    "does not match this run; remove the existing result "
-                    "manually or choose another output directory"
-                )
-        else:
-            if os.path.lexists(self.sidecar_path):
-                raise ValueError(
-                    f"{self.sidecar_path}: metadata exists without {path}; "
-                    "remove it manually or choose another output directory"
-                )
-            fh = None
-            created = False
-            try:
-                # Exclusive creation closes the check/open race. Publish the
-                # sidecar only after the archive has a complete preamble.
-                fh = _open(path, "x")
-                created = True
-                fh.write("{}\n")
-                fh.flush()
-                write_metadata(path, self.meta)
-            except BaseException:
-                if fh is not None:
-                    try:
-                        fh.close()
-                    except BaseException:
-                        pass
-                if created:
-                    try:
-                        os.remove(path)
-                    except FileNotFoundError:
-                        pass
-                raise
-            self._fh = fh
-        self.has_sidecar = True
-        self._scene, self._count = None, 0
-
-    def write(self, scene: str, rec: RayRecord):
-        if scene in self.done:
-            return
-        if scene != self._scene:
-            self._scene, self._count = scene, 0
-        self._fh.write(json.dumps(row_of(scene, rec, self.lean),
-                                  ensure_ascii=False) + "\n")
-        self._count += 1
-
-    def finish_scene(self, scene: str):
-        if scene in self.done:
-            return
-        n = self._count if self._scene == scene else 0
-        self._fh.write(json.dumps({"scene_end": scene, "rows": n}) + "\n")
-        self._fh.flush()
-        self.done[scene] = n
-        self._scene, self._count = None, 0
-
-    def close(self):
-        self._fh.close()
-
-
 def _file_records(path, scene):
     """Scene rows -> RayRecords. opl/sins stay strings (float() at use);
     point z is unknown-by-design (nan), direction dz rebuilt (unit, dz > 0)."""
@@ -576,31 +473,6 @@ def rescreen(records, z0f: float, grid):
                            pixel=grid.pixel((x, y)), opl=float(rec.opl) + s)
 
 
-def _traced_records(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
-                    seed_offset):
-    """One rng stream per global mode (lattice-v1); every record is teed
-    into the run's writer."""
-    cfg = sim.cfg
-    source = Source(src_cfg, None)
-    screen = ScreenGrid(scr_cfg)
-    n_modes, n_rays = src_cfg.budget()
-    tracer = make_tracer(optic)
-    writer = sim.rays
-    for mode in range(n_modes):
-        rng = stream_rng(cfg.seed, seed_offset, mode)
-        source.rng = rng
-        origin = source.mode_origin()
-        aim = aim_factory(source, screen, rng)
-        for ray in range(n_rays):
-            tr = tracer(origin, aim(origin), optic, screen.z, cfg.max_bounces)
-            rec = ray_record(tr, screen, mode, ray, tr.fate)
-            if writer is not None:
-                writer.write(scene, rec)
-            yield rec
-    if writer is not None:
-        writer.finish_scene(scene)
-
-
 def _counted(records, expected: int, scene: str, path: str):
     """Guard on full consumption: a rewritten file (foreign key order defeats
     the prefix skip) or a thinned recording must fail loudly, not thin the
@@ -616,33 +488,25 @@ def _counted(records, expected: int, scene: str, path: str):
 
 def scene_stream(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
                  seed_offset: int):
-    """(records, "file"|"trace"): the file when the run's rays file already
-    holds this scene, complete and at these budgets, else tracing (teeing
-    into the file)."""
+    """(records, "file"): the run's reader must hold the scene at the
+    configured budgets; stages never trace (trace_v3 is the recording
+    command).  ``optic``/``aim_factory``/``seed_offset`` are kept for the
+    stage call sites and identify the scene only."""
     n_modes, n_rays = src_cfg.budget()
     w = sim.rays
-    if w is not None and w.readonly:   # --replay: the file is the only source
-        if scene not in w.done:
-            raise ValueError(f"--replay: scene {scene!r} is not in {w.path} "
-                             f"(recorded: {sorted(w.done)})")
-        if w.meta["budgets"].get(scene) != [n_modes, n_rays]:
-            raise ValueError(
-                f"--replay: scene {scene!r} budgets "
-                f"{w.meta['budgets'].get(scene)} != config {[n_modes, n_rays]}"
-                " — match n_modes/n_rays to the recording")
-        if w.done[scene] != n_modes * n_rays:
-            raise ValueError(
-                f"--replay: scene {scene!r} holds {w.done[scene]} rows, "
-                f"budgets promise {n_modes * n_rays} — thinned recording")
-        return _counted(w.scene_records(scene), w.done[scene], scene,
-                        w.path), "file"
     if w is None:
         raise ValueError(
             f"scene {scene!r}: no rays recording to read; stages never trace — "
-            "run trace_v3 / --trace first or pass --replay")
-    if (scene in w.done and w.meta["budgets"].get(scene) == [n_modes, n_rays]
-            and w.done[scene] == n_modes * n_rays):
-        return _counted(_file_records(w.path, scene), w.done[scene], scene,
-                        w.path), "file"
-    return _traced_records(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
-                           seed_offset), "trace"
+            "run trace_v3 first or pass --replay")
+    if scene not in w.done:
+        raise ValueError(f"scene {scene!r} is not in {w.path} "
+                         f"(recorded: {sorted(w.done)})")
+    if w.meta["budgets"].get(scene) != [n_modes, n_rays]:
+        raise ValueError(
+            f"scene {scene!r} budgets {w.meta['budgets'].get(scene)} != config "
+            f"{[n_modes, n_rays]} — match n_modes/n_rays to the recording")
+    if w.done[scene] != n_modes * n_rays:
+        raise ValueError(
+            f"scene {scene!r} holds {w.done[scene]} rows, "
+            f"budgets promise {n_modes * n_rays} — thinned recording")
+    return _counted(w.scene_records(scene), w.done[scene], scene, w.path), "file"

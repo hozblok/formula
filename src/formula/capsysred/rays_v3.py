@@ -22,6 +22,7 @@ import io
 import json
 import math
 import os
+import zlib
 from typing import NamedTuple
 
 import yaml
@@ -352,6 +353,14 @@ def iter_section_lines(archive, entry: Section, sink: dict | None = None):
     row count and the file's sha256 against the index. ``sink['header']``
     receives the parsed header when a dict is given."""
     path = section_path(archive, entry)
+    try:
+        yield from _section_lines(path, entry, sink)
+    except (EOFError, zlib.error, OSError) as exc:
+        raise ValueError(f"{path}: section is truncated or corrupt; remove it "
+                         "manually (verify the archive)") from exc
+
+
+def _section_lines(path, entry: Section, sink):
     with open(path, "rb") as raw_fh:
         hashing = _HashingRaw(raw_fh)
         buffered = io.BufferedReader(hashing, 1 << 20)

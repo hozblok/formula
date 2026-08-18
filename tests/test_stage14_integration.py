@@ -234,8 +234,9 @@ def test_stage14_needs_a_recording_and_reads_v2_or_v3(tmp_path):
         Simulation.from_dict(raw).run(str(tmp_path / "empty"), stages=[14])
     assert not (tmp_path / "empty" / "stage14").exists()
     v2 = tmp_path / "v2"
+    v2.mkdir()
+    _write_controlled_rays(v2 / "rays.jsonl.gz", raw, [1, -1])
     sim = Simulation.from_dict(raw)
-    sim.trace(str(v2))
     result = sim.run(str(v2), stages=[14])
     assert "stage14:capillary" in sim.results
     assert any(name.endswith("14d-capillary-ray-scatter.svg")
@@ -248,8 +249,7 @@ def test_stage14_needs_a_recording_and_reads_v2_or_v3(tmp_path):
     trace_v3(str(cfg), str(v3 / "rays-modes"), None, jobs=1, level=6, log=lambda m: None)
     other = Simulation.from_dict(raw)
     other.run(str(v3), stages=[14])
-    assert (other.results["stage14:capillary"]["rows"]
-            == sim.results["stage14:capillary"]["rows"])
+    assert other.results["stage14:capillary"]["n_modes"] == 2
 
 
 @pytest.mark.parametrize("damage, match", [

@@ -661,17 +661,26 @@ TINY = {
 
 def test_simulation_native_equals_python(tmp_path, monkeypatch):
     from formula.capsysred import Simulation
+    import yaml
+    from formula.capsysred import rays_v3
+    from formula.capsysred.trace_v3 import trace as trace_v3
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text(yaml.safe_dump(TINY, sort_keys=False), encoding="utf-8")
     sim_native = Simulation.from_dict(TINY)
-    sim_native.trace(str(tmp_path / "native"))
+    trace_v3(str(cfg), str(tmp_path / "native" / "rays-modes"), None, jobs=1, level=6,
+             log=lambda m: None, scenes="all")
     sim_native.run(str(tmp_path / "native"), stages=[2, 6])
     monkeypatch.setenv("CAPSYSRED_PYTHON_TRACE", "1")
     sim_python = Simulation.from_dict(TINY)
-    sim_python.trace(str(tmp_path / "python"))
+    trace_v3(str(cfg), str(tmp_path / "python" / "rays-modes"), None, jobs=1, level=6,
+             log=lambda m: None, scenes="all")
     sim_python.run(str(tmp_path / "python"), stages=[2, 6])
     p = TINY["precision"]
-    def ray_rows(sub):  # skip the ignored preamble and scene trailers
-        with gzip.open(tmp_path / sub / "rays.jsonl.gz", "rt") as fh:
-            return [row for row in map(json.loads, fh) if "stage" in row]
+    def ray_rows(sub):
+        archive = str(tmp_path / sub / "rays-modes")
+        index = rays_v3.load_index(archive)
+        return [json.loads(line) for scene in ("free", "capillary")
+                for line in rays_v3.scene_lines(archive, index, scene)]
 
     n_rows, p_rows = ray_rows("native"), ray_rows("python")
     assert n_rows and len(n_rows) == len(p_rows)

@@ -35,10 +35,9 @@ from .surfaces import CapillaryBundle, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
 from . import rays_v3
-from .rays import (METADATA_NAME, RNG_SCHEME, MultiRaysReader, RaysFile,
-                   RaysReader, SceneSeed, metadata_equal, metadata_path,
-                   read_metadata, require_full_rows, scene_stream,
-                   sidecar_metadata)
+from .rays import (RNG_SCHEME, MultiRaysReader, RaysReader, SceneSeed,
+                   metadata_equal, metadata_path, read_metadata,
+                   require_full_rows, scene_stream, sidecar_metadata)
 from .types import HitMethod, RayRecord
 from .units import (
     m_to_angstrom, m_to_mm, m_to_um, rad_to_mrad, rad_to_urad)
@@ -85,7 +84,7 @@ class Simulation:
         self.report = []
         self.files = []
         self.results = {}   # stage name -> MC result dict (maps, stats, ...)
-        self.rays = None    # the run's RaysFile (trace once, stages consume)
+        self.rays = None    # the run's RaysReader (stages consume, never trace)
 
     @classmethod
     def from_yaml(cls, path) -> "Simulation":
@@ -1239,7 +1238,7 @@ class Simulation:
         """The recording a stage run reads when no --replay is given:
         ``out_dir/rays-modes`` (v3) or ``out_dir/rays.jsonl.gz`` (v2), whose
         metadata must equal this config's; None when neither exists.
-        Stages never trace: ``trace_v3`` / ``--trace`` are separate commands.
+        Stages never trace: ``trace_v3`` is a separate command.
         """
         v3_dir = os.path.join(out_dir, "rays-modes")
         v2_path = os.path.join(out_dir, "rays.jsonl.gz")
@@ -1278,55 +1277,6 @@ class Simulation:
                 )
             return v2_path
         return None
-
-    def trace(self, out_dir) -> dict:
-        """Trace-only run: record every scene's geometry (no physics) into the
-        rays file; a later run with the same config/out_dir reuses it.
-        An incompatible or incomplete existing recording is never overwritten.
-        """
-        cfg = self.cfg
-        scenes = []
-        if cfg.free_source is not None:
-            scenes.append(("free", cfg.free_source, cfg.free_screen, None,
-                           self._aim_free, SceneSeed.FREE))
-        cap = cfg.capillary
-        if cap is not None:
-            scenes.append(("capillary", cap.source, cap.screen,
-                           CapillaryBundle(cap.bores, cap.z0, cap.z1),
-                           self._aim_capillary, SceneSeed.CAPILLARY))
-        if not scenes:
-            raise ValueError(
-                "trace requires a configured free.source or capillary.source"
-            )
-        os.makedirs(out_dir, exist_ok=True)
-        t0 = time.time()
-        self.files = []
-        rays_name = "rays.jsonl.gz"
-        _log(f"CAPSYSred: trace only, output to {out_dir}")
-        self.rays = RaysFile(os.path.join(out_dir, rays_name), cfg)
-        try:
-            for scene, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
-                records, rays_from = scene_stream(self, scene, src_cfg, scr_cfg,
-                                                  optic, aim_factory, off)
-                if rays_from == "file":
-                    _log(f"  trace {scene}: already recorded, skipped")
-                    continue
-                n_modes, n_rays = src_cfg.budget()
-                progress = Progress(f"trace {scene}", n_modes * n_rays)
-                on_screen = 0
-                for rec in records:
-                    on_screen += rec.fate == "screen"
-                    progress.step()
-                progress.finish(f"on screen {on_screen:,}")
-        finally:
-            self.rays.close()
-        self.files.append(rays_name)
-        _log(f"  → {rays_name}")
-        if self.rays.has_sidecar:
-            self.files.append(METADATA_NAME)
-            _log(f"  → {METADATA_NAME}")
-        _log(f"Done in {time.time() - t0:.0f} s.")
-        return {"out_dir": out_dir, "files": list(self.files)}
 
     # ------------------------------------------------------------- run
 
@@ -1387,7 +1337,7 @@ class Simulation:
                 if local is None:
                     raise ValueError(
                         f"{out_dir}: no rays recording (rays-modes/ or rays.jsonl.gz); "
-                        "trace first (python -m formula.capsysred.trace_v3 … or --trace) "
+                        "trace first (python -m formula.capsysred.trace_v3 …) "
                         "or pass --replay"
                     )
                 self.report.insert(-1, f"- rays from {local} (no tracing)")

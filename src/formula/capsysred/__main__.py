@@ -1,5 +1,5 @@
 """CLI: python3 -m formula.capsysred config.yaml -o out/ [--stages 1,14]
-[--trace] [--replay rays.jsonl.gz]"""
+[--replay ARCHIVE...]; recordings come from python -m formula.capsysred.trace_v3"""
 
 import argparse
 import sys
@@ -20,17 +20,15 @@ def main(argv=None) -> int:
                              "stages of the configured scenes; 3 requires 2, "
                              "which is added automatically; 10 and 14 are "
                              "separate opt-in jackknife estimators)")
-    parser.add_argument("--trace", action="store_true",
-                        help="trace-only: record every scene into the rays file and "
-                             "exit; a later run with the same config, output "
-                             "directory reuses it instead of tracing")
     parser.add_argument("--replay", metavar="RAYS_JSONL", default=None,
                         nargs="+",
                         help="re-evaluate recorded rays on the spectrum/material from "
                              "the config, without tracing; several files stream as one "
                              "recording (Stage 14 builds/reuses one disk cache per "
                              "file; config n_modes = their sum); a directory is a "
-                             "v3 per-mode archive (trace_v3 / convert_rays_v3)")
+                             "v3 per-mode archive (trace_v3 / convert_rays_v3); "
+                             "without --replay the run reads out/rays-modes or "
+                             "out/rays.jsonl.gz and never traces")
     args = parser.parse_args(argv)
 
     stages = None
@@ -42,7 +40,6 @@ def main(argv=None) -> int:
 
     sim = Simulation.from_yaml(args.config)
     result = (sim.replay(args.replay, args.out, stages=stages) if args.replay
-              else sim.trace(args.out) if args.trace
               else sim.run(args.out, stages=stages))
     print(f"{result['out_dir']}: " + ", ".join(result["files"]))
     return 0
