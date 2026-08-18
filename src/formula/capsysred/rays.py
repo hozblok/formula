@@ -587,7 +587,7 @@ def _traced_records(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
     tracer = make_tracer(optic)
     writer = sim.rays
     for mode in range(n_modes):
-        rng = stream_rng(cfg.seed, seed_offset, src_cfg.mode_start + mode)
+        rng = stream_rng(cfg.seed, seed_offset, mode)
         source.rng = rng
         origin = source.mode_origin()
         aim = aim_factory(source, screen, rng)

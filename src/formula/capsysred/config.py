@@ -110,10 +110,6 @@ class SourceCfg:
         self.position = tuple(Number(str(c), p) for c in raw["position"])
         self.n_modes = int(raw["n_modes"])
         self.n_rays = int(raw["n_rays"])
-        # global index of the first mode: shards trace a slice of one lattice
-        self.mode_start = int(raw.get("mode_start", 0))
-        if self.mode_start < 0:
-            raise ValueError("source.mode_start must be >= 0")
         if self.shape == "grid":
             # deterministic anode lattice: grid_n x grid_n nodes, gaussian weights
             self.grid_n = int(raw["grid_n"])

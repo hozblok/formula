@@ -8,8 +8,6 @@ import math
 import os
 import random
 import shutil
-import subprocess
-import sys
 
 import pytest
 import yaml
@@ -96,28 +94,27 @@ def _v2_lines(path):
         return fh.read().split(b"\n")[1:]        # drop the preamble
 
 
-def test_shards_equal_sequential_and_lattice_convert(tmp_path):
+def test_lattice_convert_and_origins_independent_of_rays(tmp_path):
     raw = _raw(n_modes=6, n_rays=40)
-    cfg = _write_yaml(tmp_path / "cfg.yaml", raw)
-    run = tmp_path / "run"
-    subprocess.run([sys.executable, "-X", "utf8", "-m", "formula.capsysred.shard_trace",
-                    cfg, "-o", str(run), "--jobs", "2"], check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     seq = tmp_path / "seq"
     Simulation.from_dict(raw).trace(str(seq))
-    assert _v2_lines(run / "rays.jsonl.gz") == _v2_lines(seq / "rays.jsonl.gz")
-    shard_cfg = yaml.safe_load(open(run / "shard-1" / "config.yaml", encoding="utf-8"))
-    assert shard_cfg["seed"] == 77 and shard_cfg["capillary"]["source"]["mode_start"] == 3
-    archive = str(run / "rays-modes")
-    summary = convert(str(run), archive, 2, 6, None, True, log=lambda m: None)
+    archive = str(seq / "rays-modes")
+    summary = convert(str(seq), archive, 2, 6, None, True, log=lambda m: None)
     assert summary["origin_check"] == {"modes": 6, "max_dxy_m": 0.0, "max_rel_dopl": 0.0}
     assert rays_v3.read_fingerprint(archive)["rng"]["scheme"] == "lattice-v1"
+    # trace_v3 with two processes writes the same rows as the sequential v2 trace
+    direct = str(tmp_path / "direct")
+    trace_v3(_write_yaml(tmp_path / "cfg.yaml", raw), direct, None, jobs=2, quick=1,
+             level=6, log=lambda m: None)
+    idx_a, idx_b = rays_v3.load_index(archive), rays_v3.load_index(direct)
+    assert (list(rays_v3.scene_lines(archive, idx_a, "capillary"))
+            == list(rays_v3.scene_lines(direct, idx_b, "capillary")))
     # Origins are a property of (seed, mode) alone: n_rays does not move them.
     short = tmp_path / "short"
     Simulation.from_dict(_raw(n_modes=6, n_rays=20)).trace(str(short))
     convert(str(short), str(short / "rays-modes"), 1, 6, None, True, log=lambda m: None)
-    long_idx, short_idx = rays_v3.load_index(archive), rays_v3.load_index(str(short / "rays-modes"))
-    assert ([rays_v3.section_header(archive, s[0])["origin"] for s in long_idx.modes("capillary")]
+    short_idx = rays_v3.load_index(str(short / "rays-modes"))
+    assert ([rays_v3.section_header(archive, s[0])["origin"] for s in idx_a.modes("capillary")]
             == [rays_v3.section_header(str(short / "rays-modes"), s[0])["origin"]
                 for s in short_idx.modes("capillary")])
 
