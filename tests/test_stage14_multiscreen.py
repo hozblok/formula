@@ -140,15 +140,15 @@ def test_stage14_cold_multiscreen_fanout_opens_archive_once_and_reuses_all(
     _write_rays(rays, raw)
 
     archive_opens = []
-    original_archive_text = stage14._archive_text
+    original_archive_lines = stage14._archive_lines
 
     @contextmanager
     def counted_archive(part):
         archive_opens.append(part.path)
-        with original_archive_text(part) as fh:
+        with original_archive_lines(part) as fh:
             yield fh
 
-    monkeypatch.setattr(stage14, "_archive_text", counted_archive)
+    monkeypatch.setattr(stage14, "_archive_lines", counted_archive)
     cold = Simulation.from_dict(raw)
     cold.replay(str(rays), str(tmp_path / "cold"), stages=[14])
 
@@ -218,15 +218,15 @@ def test_stage14_partial_hit_builds_two_missing_screens_in_one_pass(
     assert len(_cache_metas(recording)) == 1
 
     archive_opens = []
-    original_archive_text = stage14._archive_text
+    original_archive_lines = stage14._archive_lines
 
     @contextmanager
     def counted_archive(part):
         archive_opens.append(part.path)
-        with original_archive_text(part) as fh:
+        with original_archive_lines(part) as fh:
             yield fh
 
-    monkeypatch.setattr(stage14, "_archive_text", counted_archive)
+    monkeypatch.setattr(stage14, "_archive_lines", counted_archive)
     expanded = Simulation.from_dict(_config(extra_screens=True))
     expanded.replay(str(rays), str(tmp_path / "expanded"), stages=[14])
 

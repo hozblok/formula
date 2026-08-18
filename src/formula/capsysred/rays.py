@@ -19,6 +19,10 @@ trace.lean_rays writes opl/sins as float64 json numbers and drops refl
 (meta gains "lean": true): stage 10 and rescreen are bit-identical (they
 float() these fields anyway), the file shrinks ~4x on bounce-heavy scenes;
 the Number path and the beamlet stage refuse such a file (require_full_rows).
+
+rays_v3 is the per-mode layout (a directory: fingerprint, index, one gzip
+section per mode and ray range); RaysReader and Stage 14 accept either.
+convert_rays_v3 converts a v2 file, topup_trace adds rays to existing modes.
 """
 
 import enum
@@ -31,6 +35,7 @@ import zlib
 
 import yaml
 
+from . import rays_v3
 from .native import make_tracer
 from .screen import ScreenGrid
 from .source import Source
@@ -48,6 +53,7 @@ class SceneSeed(enum.IntEnum):
     reusing a scene's rays pass its tag, stage 9 gets its own."""
     FREE = 2         # no-optics scene (stages 2, 7, 8, 11, 12)
     CAPILLARY = 4    # capillary (stages 6, 7, 8, 10, 11)
+    CAPILLARY_TOPUP = 6   # per-mode tail substreams of topup_trace
     VALIDATE = 9     # stage 9 hit-method cross-check
 
 
@@ -101,8 +107,12 @@ def metadata_equal(left: dict, right: dict) -> bool:
 
 
 def metadata_path(rays_path: str | os.PathLike) -> str:
-    """Return the metadata sidecar beside a canonical rays recording."""
-    return os.path.join(os.path.dirname(os.fspath(rays_path)), METADATA_NAME)
+    """Return the metadata sidecar beside a canonical rays recording
+    (inside a v3 archive directory)."""
+    path = os.fspath(rays_path)
+    if rays_v3.is_v3(path):
+        return os.path.join(path, METADATA_NAME)
+    return os.path.join(os.path.dirname(path), METADATA_NAME)
 
 
 def read_metadata(rays_path: str | os.PathLike) -> dict:
@@ -303,20 +313,30 @@ def scan(path, expected_meta=None):
 class RaysReader:
     """Read-only rays file for --replay: stages consume, nothing traces or
     writes. Geometry fingerprint is NOT checked — replaying on a different
-    spectrum/material/precision is the point; budgets are (scene_stream)."""
+    spectrum/material/precision is the point; budgets are (scene_stream).
+    A directory path is a v3 archive (rays_v3)."""
 
     readonly = True
 
     def __init__(self, path):
-        meta, done, clean = scan(path)
-        if not clean:
-            raise ValueError(
-                f"{path}: rays archive is incomplete or corrupt; remove it "
-                "manually or choose another recording"
-            )
+        self._index = None
+        if rays_v3.is_v3(path):
+            self._index = rays_v3.load_index(path)
+            meta = rays_v3.metadata(path)
+            done = {scene: math.prod(budget)
+                    for scene, budget in meta["budgets"].items()}
+        else:
+            meta, done, clean = scan(path)
+            if not clean:
+                raise ValueError(
+                    f"{path}: rays archive is incomplete or corrupt; remove it "
+                    "manually or choose another recording"
+                )
         self.path, self.meta, self.done = path, meta, done
 
     def scene_records(self, scene):
+        if self._index is not None:
+            return rays_v3.scene_records(self.path, self._index, scene)
         return _file_records(self.path, scene)
 
     def write(self, scene, rec):
@@ -360,7 +380,7 @@ class MultiRaysReader:
     def scene_records(self, scene):
         offset = 0
         for part in self.parts:
-            for rec in _file_records(part.path, scene):
+            for rec in part.scene_records(scene):
                 yield rec._replace(mode=rec.mode + offset) if offset else rec
             offset += part.meta["budgets"][scene][0]
 
@@ -372,6 +392,25 @@ class MultiRaysReader:
 
     def close(self):
         pass
+
+
+def row_of(scene: str, rec: RayRecord, lean: bool) -> dict:
+    """The v2 row of one record: key order is part of the file contract."""
+    row = {"stage": scene, "mode": rec.mode, "ray": rec.ray,
+           "fate": rec.fate, "pixel": rec.pixel}
+    if lean:
+        row["opl"] = float(rec.opl)
+        row["sins"] = [float(s) for s in rec.sins]
+    else:
+        row["opl"] = str(rec.opl)
+        row["sins"] = [str(s) for s in rec.sins]
+    if rec.fate == "screen":
+        row["x"], row["y"] = float(rec.point[0]), float(rec.point[1])
+        row["dx"] = float(rec.direction[0])
+        row["dy"] = float(rec.direction[1])
+        if rec.refl and not lean:
+            row["refl"] = [[float(c) for c in p] for p in rec.refl]
+    return row
 
 
 class RaysFile:
@@ -456,21 +495,8 @@ class RaysFile:
             return
         if scene != self._scene:
             self._scene, self._count = scene, 0
-        row = {"stage": scene, "mode": rec.mode, "ray": rec.ray,
-               "fate": rec.fate, "pixel": rec.pixel}
-        if self.lean:
-            row["opl"] = float(rec.opl)
-            row["sins"] = [float(s) for s in rec.sins]
-        else:
-            row["opl"] = str(rec.opl)
-            row["sins"] = [str(s) for s in rec.sins]
-        if rec.fate == "screen":
-            row["x"], row["y"] = float(rec.point[0]), float(rec.point[1])
-            row["dx"] = float(rec.direction[0])
-            row["dy"] = float(rec.direction[1])
-            if rec.refl and not self.lean:
-                row["refl"] = [[float(c) for c in p] for p in rec.refl]
-        self._fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        self._fh.write(json.dumps(row_of(scene, rec, self.lean),
+                                  ensure_ascii=False) + "\n")
         self._count += 1
 
     def finish_scene(self, scene: str):

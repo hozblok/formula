@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 from .. import __version__, _formula
-from . import render
+from . import rays_v3, render
 from .altcoh import FloatLineAmplitudes
 from .progress import Progress
 from .rays import (_validate_stream_metadata, geometry_metadata,
@@ -273,6 +273,8 @@ class InputPart:
     analysis_id: str
     cache_dir: str
     identity: dict
+    bytes: int = 0
+    v3_index: object = None
 
 
 @dataclass
@@ -327,8 +329,13 @@ def _prepare_inputs(sim, paths, quick: int, signature: dict) -> list[InputPart]:
     expected_rays = None
     for pathlike in paths:
         path = os.path.abspath(os.fspath(pathlike))
-        meta = read_metadata(path)
-        _validate_stream_metadata(meta, path)
+        v3_index = None
+        if rays_v3.is_v3(path):
+            v3_index = rays_v3.load_index(path)
+            meta = rays_v3.metadata(path)
+        else:
+            meta = read_metadata(path)
+            _validate_stream_metadata(meta, path)
         budget = meta["budgets"].get("capillary")
         if not isinstance(budget, list) or len(budget) != 2:
             raise ValueError(f"{path}: no capillary scene in rays metadata")
@@ -344,16 +351,23 @@ def _prepare_inputs(sim, paths, quick: int, signature: dict) -> list[InputPart]:
             raise ValueError(
                 f"{path}: capillary trace geometry differs from the Stage-14 config"
             )
-        stat = os.stat(path)
         snapshot = _json_copy(meta)
         concrete = {
             "rays_metadata": snapshot,
             "resolved_path": os.path.normcase(os.path.realpath(path)),
+        }
+        if v3_index is not None:
+            # v3 archives are content-addressed: the index lists every
+            # section's sha256, and each section is hashed while streamed.
+            concrete["index_sha256"] = rays_v3.index_digest(path)
+            archive_bytes = v3_index.total_bytes()
+        else:
             # Rays archives are immutable under the no-clobber contract.  The
             # descriptor is checked again before and after the one strict
             # cache-building pass, closing path/symlink replacement windows.
-            "archive_stat": _stat_contract(stat),
-        }
+            stat = os.stat(path)
+            concrete["archive_stat"] = _stat_contract(stat)
+            archive_bytes = stat.st_size
         input_id = _identity(concrete)
         seed = meta["geometry"].get("seed")
         if type(seed) is not int:
@@ -378,7 +392,8 @@ def _prepare_inputs(sim, paths, quick: int, signature: dict) -> list[InputPart]:
         cache_dir = os.path.join(os.path.dirname(path), CACHE_DIR, analysis_id)
         parts.append(InputPart(path, meta, n_modes, n_rays,
                                identity["source_screen_z"], input_id, seed,
-                               analysis_id, cache_dir, identity))
+                               analysis_id, cache_dir, identity,
+                               archive_bytes, v3_index))
     configured_modes, configured_rays = sim.cfg.capillary.source.budget(quick)
     total_modes = sum(part.n_modes for part in parts)
     if (total_modes, expected_rays) != (configured_modes, configured_rays):
@@ -419,8 +434,29 @@ def _native_store(path, n_modes, n_pixels, ref, kms, weights):
 
 
 @contextmanager
-def _archive_text(part: InputPart):
-    """Open the exact archive inode selected during input preparation."""
+def _archive_lines(part: InputPart):
+    """Iterator of archive text lines: preamble, rows, scene trailers.
+
+    v2: the exact archive inode selected during input preparation.  v3: the
+    capillary sections mode-major (each hashed against the index) behind a
+    synthetic preamble and scene trailer, so the strict loop is shared.
+    """
+    if part.v3_index is not None:
+        expected = part.identity["input"]["index_sha256"]
+        if rays_v3.index_digest(part.path) != expected:
+            raise ValueError(f"{part.path}: rays index changed before cache build")
+
+        def lines():
+            yield "{}\n"
+            for raw in rays_v3.scene_lines(part.path, part.v3_index, "capillary"):
+                yield raw.decode("utf-8")
+            yield json.dumps({"scene_end": "capillary",
+                              "rows": part.n_modes * part.n_rays}) + "\n"
+
+        yield lines()
+        if rays_v3.index_digest(part.path) != expected:
+            raise ValueError(f"{part.path}: rays index changed during cache build")
+        return
     expected = part.identity["input"]["archive_stat"]
     with open(part.path, "rb") as raw_fh:
         if not metadata_equal(_stat_contract(os.fstat(raw_fh.fileno())),
@@ -431,7 +467,7 @@ def _archive_text(part: InputPart):
         with gzip.GzipFile(fileobj=raw_fh, mode="rb") as compressed:
             with io.TextIOWrapper(compressed, encoding="utf-8",
                                   newline="") as text_fh:
-                yield text_fh
+                yield iter(text_fh)
         if not metadata_equal(_stat_contract(os.fstat(raw_fh.fileno())),
                               expected):
             raise ValueError(
@@ -512,8 +548,8 @@ def _build_stream_fanout(sim, part: InputPart, builds: list[CacheBuild],
     current_mode = None
     target_rows = 0
     try:
-        with _archive_text(part) as fh:
-            preamble = fh.readline()
+        with _archive_lines(part) as fh:
+            preamble = next(fh, "")
             if not preamble or not preamble.endswith("\n"):
                 raise ValueError(f"{part.path}: missing complete ignored preamble")
             for line_no, line in enumerate(fh, 2):
@@ -904,7 +940,7 @@ def _finish_cache_build(sim, build: CacheBuild, stats: dict,
         },
         "build": {
             "seconds": time.time() - build.started_at,
-            "ray_archive_bytes": os.path.getsize(part.path),
+            "ray_archive_bytes": part.bytes,
             "yaml_file": sim.cfg.yaml_file,
         },
         "capsysred_version": __version__,
@@ -1377,7 +1413,7 @@ def _finalize_screen(sim, target: ScreenTarget, output_dir: str,
         sum(entry["bytes"] for entry in cache.meta["files"].values())
         for cache in cache_parts if not cache.cache_hit)
     target_miss_ray_bytes = sum(
-        os.path.getsize(part.path)
+        part.bytes
         for part, cache in zip(parts, cache_parts) if not cache.cache_hit)
     result_final = {
         "scatter": scatter_meta,
@@ -1486,7 +1522,7 @@ def run_stage14(sim, out_dir: str, rays_paths, quick: int, log=print) -> dict:
         part.input_id: part for part in targets[0].parts
     }
     physical_ray_bytes = sum(
-        os.path.getsize(representative_parts[input_id].path)
+        representative_parts[input_id].bytes
         for input_id in archives_read)
     written_caches = {}
     for target in targets:

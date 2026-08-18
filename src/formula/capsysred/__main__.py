@@ -31,7 +31,8 @@ def main(argv=None) -> int:
                         help="re-evaluate recorded rays on the spectrum/material from "
                              "the config, without tracing; several files stream as one "
                              "recording (Stage 14 builds/reuses one disk cache per "
-                             "file; config n_modes = their sum)")
+                             "file; config n_modes = their sum); a directory is a "
+                             "v3 per-mode archive (convert_rays_v3 / topup_trace)")
     args = parser.parse_args(argv)
 
     stages = None
