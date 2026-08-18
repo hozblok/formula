@@ -11,7 +11,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="python3 -m formula.capsysred",
         description="Source → capillaries → screen → |μ| and I: "
-                    "images, rays.jsonl.gz and a timestamped report-*.md into the output directory.")
+                    "images and a timestamped report-*.md into the output directory (rays are recorded "
+                    "separately by python -m formula.capsysred.trace_v3).")
     parser.add_argument("config", help="YAML with simulation parameters")
     parser.add_argument("-o", "--out", default="capsysred-out",
                         help="output directory (default ./capsysred-out)")

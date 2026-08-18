@@ -13,8 +13,8 @@ must equal the target (Stage 14's "recorded == configured").
 
 lattice-v1: mode m of a scene draws its origin, then a fixed number of
 draws per ray (capillary aim 3, free aim 2) from
-``stream_rng(seed, <scene>, m)``, so ``--jobs``, one-shot vs top-up and the
-the legacy sequential v2 writer gave identical rays.  Legacy sequential-v2
+``stream_rng(seed, <scene>, m)``, so ``--jobs``, one-shot and top-up give
+identical rays (as did the retired sequential v2 writer).  Legacy sequential-v2
 archives (converted Z-26) top up their capillary scene from the tail
 substream ``Random((seed*STRIDE + CAPILLARY_TOPUP) * 2**32 + m)`` at
 position 3*r.  Sections publish tmp -> rename; the index is replaced
