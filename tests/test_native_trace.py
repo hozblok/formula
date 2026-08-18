@@ -662,9 +662,11 @@ TINY = {
 def test_simulation_native_equals_python(tmp_path, monkeypatch):
     from formula.capsysred import Simulation
     sim_native = Simulation.from_dict(TINY)
+    sim_native.trace(str(tmp_path / "native"))
     sim_native.run(str(tmp_path / "native"), stages=[2, 6])
     monkeypatch.setenv("CAPSYSRED_PYTHON_TRACE", "1")
     sim_python = Simulation.from_dict(TINY)
+    sim_python.trace(str(tmp_path / "python"))
     sim_python.run(str(tmp_path / "python"), stages=[2, 6])
     p = TINY["precision"]
     def ray_rows(sub):  # skip the ignored preamble and scene trailers

@@ -52,6 +52,7 @@ TINY = {
 
 def test_full_pipeline_files_and_point_source_coherence(tmp_path):
     sim = Simulation.from_dict(TINY)
+    sim.trace(str(tmp_path))
     result = sim.run(str(tmp_path), stages=[1, 2, 3, 6])
     for name in result["files"]:
         assert (tmp_path / name).stat().st_size > 0
@@ -258,17 +259,19 @@ def test_rays_jsonl_records(tmp_path):
     from formula.capsysred.rays import read_metadata
 
     sim = Simulation.from_dict(TINY)
-    result = sim.run(str(tmp_path), stages=[6])
+    result = sim.trace(str(tmp_path))
     assert "rays.jsonl.gz" in result["files"]
     assert "rays-fingerprint.yaml" in result["files"]
+    sim.trace(str(tmp_path))
+    sim.run(str(tmp_path), stages=[6])
     sidecar = read_metadata(tmp_path / "rays.jsonl.gz")
     assert isinstance(sidecar["geometry"], dict)
     assert sidecar["budgets"]["capillary"] == [3, 40]
     with gzip.open(tmp_path / "rays.jsonl.gz", "rt") as fh:
         lines = [json.loads(line) for line in fh]
     assert lines[0] == {}                                # ignored preamble
-    assert lines[-1] == {"scene_end": "capillary", "rows": len(lines) - 2}
-    rows = [row for row in lines if "stage" in row]
+    rows = [row for row in lines if row.get("stage") == "capillary"]
+    assert {"scene_end": "capillary", "rows": len(rows)} in lines
     assert len(rows) == sim.results["capillary"]["stats"]["emitted"]
     assert {"stage", "mode", "ray", "fate", "pixel", "opl", "sins"} <= set(rows[0])
     hit = next(row for row in rows if row["fate"] == "screen")
@@ -282,6 +285,7 @@ def test_rays_jsonl_records(tmp_path):
 
 def test_replay_matches_direct_mono(tmp_path):
     sim = Simulation.from_dict(TINY)
+    sim.trace(str(tmp_path))
     sim.run(str(tmp_path), stages=[6])
     direct = sim.results["capillary"]["maps"]
     sim.replay(str(tmp_path / "rays.jsonl.gz"), str(tmp_path / "replay"))
@@ -298,6 +302,7 @@ def test_replay_matches_direct_gaussian(tmp_path):
                                "n_lines": 3, "n_sigma": 2.0})
     sim = Simulation.from_dict(cfg)
     assert sim.per_line
+    sim.trace(str(tmp_path))
     sim.run(str(tmp_path), stages=[6])
     direct = sim.results["capillary"]["maps"]
     sim.replay(str(tmp_path / "rays.jsonl.gz"), str(tmp_path / "replay"))
@@ -313,6 +318,7 @@ def test_material_change_keeps_rays_file_valid(tmp_path):
     # rays are material-free: a glass_oe2012 re-run reuses the silica trace
     # and only the physics (Fresnel amplitudes -> intensity) changes
     silica = Simulation.from_dict(TINY)
+    silica.trace(str(tmp_path))
     silica.run(str(tmp_path), stages=[6])
     oe = Simulation.from_dict(dict(TINY, material="glass_oe2012"))
     oe.run(str(tmp_path), stages=[6])
@@ -327,6 +333,7 @@ def test_replay_with_other_material(tmp_path):
     # same recorded rays, glass_oe2012 wall on replay: ray bookkeeping identical,
     # reflected amplitudes differ
     sim = Simulation.from_dict(TINY)
+    sim.trace(str(tmp_path))
     sim.run(str(tmp_path), stages=[6])
     direct = sim.results["capillary"]
     other = Simulation.from_dict(dict(TINY, material="glass_oe2012"))
@@ -956,6 +963,7 @@ def test_stage11_beamlet_point_source_fully_coherent(tmp_path):
     # point source -> one coherent field, honest estimator must give mu = 1
     # on every pixel the beamlets light up; mu never exceeds 1
     sim = Simulation.from_dict(TINY)
+    sim.trace(str(tmp_path))
     result = sim.run(str(tmp_path), stages=[11])
     for name in result["files"]:
         assert (tmp_path / name).stat().st_size > 0
@@ -991,6 +999,7 @@ def test_stage11_beamlet_gaussian_matches_vcz(tmp_path):
             "screen": {"nx": 5, "ny": 5},
         },
     })
+    sim.trace(str(tmp_path))
     sim.run(str(tmp_path), stages=[11])
     res = sim.results["beamlet:free"]
     maps, screen = res["maps"], res["screen"]
@@ -1005,6 +1014,7 @@ def test_stage11_beamlet_gaussian_matches_vcz(tmp_path):
 def test_stage11_beamlet_same_rays_as_stage6(tmp_path):
     # the rng stream matches _mc_stage: arrival-pixel densities are identical
     sim = Simulation.from_dict(TINY)
+    sim.trace(str(tmp_path))
     sim.run(str(tmp_path), stages=[6, 11])
     d6 = sim.results["capillary"]["maps"]["density"]
     d11 = sim.results["beamlet:capillary"]["maps"]["density"]
@@ -1089,9 +1099,11 @@ def test_stage10_from_file_equals_traced(tmp_path):
     # stage 6 records the capillary rays; stage 10 in the same run consumes
     # the file and must land on the traced maps exactly
     traced = Simulation.from_dict(TINY)
+    traced.trace(str(tmp_path / "a"))
     traced.run(str(tmp_path / "a"), stages=[10])
-    assert traced.results["jack:capillary"]["rays_from"] == "trace"
+    assert traced.results["jack:capillary"]["rays_from"] == "file"
     reused = Simulation.from_dict(TINY)
+    reused.trace(str(tmp_path / "b"))
     reused.run(str(tmp_path / "b"), stages=[6, 10])
     assert reused.results["jack:capillary"]["rays_from"] == "file"
     for key in ("mu", "mu_err", "intensity", "density"):
@@ -1106,11 +1118,12 @@ def test_stage10_from_file_equals_traced(tmp_path):
 def test_rays_file_reused_across_runs(tmp_path):
     # run 1 records the capillary scene; run 2 (same out dir, same config)
     # consumes it for stage 11 and appends the free scene it traces itself
-    Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+    Simulation.from_dict(TINY).trace(str(tmp_path))
     sim = Simulation.from_dict(TINY)
+    sim.trace(str(tmp_path))
     sim.run(str(tmp_path), stages=[11])
     assert sim.results["beamlet:capillary"]["rays_from"] == "file"
-    assert sim.results["beamlet:free"]["rays_from"] == "trace"
+    assert sim.results["beamlet:free"]["rays_from"] == "file"
     from formula.capsysred.rays import scan
     meta, done, clean = scan(str(tmp_path / "rays.jsonl.gz"))
     assert clean and set(done) == {"capillary", "free"}
@@ -1118,7 +1131,7 @@ def test_rays_file_reused_across_runs(tmp_path):
 
 def test_rays_file_ignores_existing_preamble(tmp_path):
     path = tmp_path / "rays.jsonl.gz"
-    Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+    Simulation.from_dict(TINY).trace(str(tmp_path))
     with gzip.open(path, "rt", encoding="utf-8") as fh:
         lines = list(fh)
     # Even a row-shaped preamble is non-semantic once rays-fingerprint.yaml
@@ -1235,7 +1248,7 @@ def test_rays_reader_refuses_partial_archive(tmp_path):
 
 
 def test_existing_rays_without_sidecar_is_refused_without_mutation(tmp_path):
-    Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+    Simulation.from_dict(TINY).trace(str(tmp_path))
     rays = tmp_path / "rays.jsonl.gz"
     sidecar = tmp_path / "rays-fingerprint.yaml"
     sidecar.unlink()
@@ -1304,7 +1317,7 @@ def test_clean_but_malformed_rays_file_is_never_appended(tmp_path, bad_row):
 def test_rays_file_geometry_change_is_never_overwritten(tmp_path):
     # A stale record must survive a mismatched run byte-for-byte.  The caller
     # must delete it manually or choose a different output directory.
-    Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+    Simulation.from_dict(TINY).trace(str(tmp_path))
     path = tmp_path / "rays.jsonl.gz"
     original = path.read_bytes()
     sidecar_path = tmp_path / "rays-fingerprint.yaml"
@@ -1327,7 +1340,7 @@ def test_unreadable_rays_file_is_never_overwritten(tmp_path):
 
 
 def test_truncated_rays_file_is_never_appended_or_overwritten(tmp_path):
-    Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+    Simulation.from_dict(TINY).trace(str(tmp_path))
     path = tmp_path / "rays.jsonl.gz"
     sidecar = tmp_path / "rays-fingerprint.yaml"
     path.write_bytes(path.read_bytes()[:-8])  # remove the gzip footer
@@ -1348,7 +1361,7 @@ def test_conflicting_sidecar_does_not_create_rays_file(tmp_path):
     write_metadata(path, {"format": 2, "geometry": {"stale": True},
                           "budgets": {}})
     with pytest.raises(ValueError, match="remove it manually"):
-        Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+        Simulation.from_dict(TINY).trace(str(tmp_path))
     assert not path.exists()
 
 
@@ -1357,7 +1370,7 @@ def test_conflicting_sidecar_is_never_overwritten(tmp_path):
     from formula.capsysred.rays import read_metadata
 
     path = tmp_path / "rays.jsonl.gz"
-    Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+    Simulation.from_dict(TINY).trace(str(tmp_path))
     original = path.read_bytes()
     wrong = read_metadata(path)
     wrong["geometry"]["seed"] += 1
@@ -1441,7 +1454,8 @@ def test_rays_sidecar_metadata_is_structured(tmp_path):
 def test_rays_file_reused_within_run(tmp_path):
     # the run's own record is reused by stage 10 after stage 6
     sim = Simulation.from_dict(TINY)
-    result = sim.run(str(tmp_path), stages=[6, 10])
+    result = sim.trace(str(tmp_path))
+    sim.run(str(tmp_path), stages=[6, 10])
     assert "rays.jsonl.gz" in result["files"]
     assert sim.results["jack:capillary"]["rays_from"] == "file"
     d6 = sim.results["capillary"]["maps"]["density"]
@@ -1454,8 +1468,10 @@ def test_stage6_from_file_equals_traced(tmp_path):
     # the traced maps exactly
     cfg = TINY
     traced = Simulation.from_dict(cfg)
+    traced.trace(str(tmp_path / "a"))
     traced.run(str(tmp_path / "a"), stages=[6])
-    assert traced.results["capillary"]["rays_from"] == "trace"
+    assert traced.results["capillary"]["rays_from"] == "file"
+    Simulation.from_dict(cfg).trace(str(tmp_path / "b"))
     Simulation.from_dict(cfg).run(str(tmp_path / "b"), stages=[10])
     reused = Simulation.from_dict(cfg)
     reused.run(str(tmp_path / "b"), stages=[6])
@@ -1473,6 +1489,7 @@ def test_stage10_extra_screens(tmp_path):
     cap = dict(TINY["capillary"],
                screens=[{}, {"z": 0.08, "edge_x": 6.4e-5, "edge_y": 6.4e-5}])
     sim = Simulation.from_dict({**TINY, "capillary": cap})
+    sim.trace(str(tmp_path))
     result = sim.run(str(tmp_path), stages=[10])
     base = sim.results["jack:capillary"]
     same, far = sim.results["jack:capillary-s1"], sim.results["jack:capillary-s2"]
@@ -1486,7 +1503,7 @@ def test_stage10_extra_screens(tmp_path):
 
 def test_rays_file_survives_added_screens(tmp_path):
     # extra screens are post-trace re-binning: the fingerprint ignores them
-    Simulation.from_dict(TINY).run(str(tmp_path), stages=[6])
+    Simulation.from_dict(TINY).trace(str(tmp_path))
     cap = dict(TINY["capillary"], screens=[{"z": 0.08}])
     sim = Simulation.from_dict({**TINY, "capillary": cap})
     sim.run(str(tmp_path), stages=[10])
@@ -1686,6 +1703,7 @@ def test_stage11_funnel_bore_runs(tmp_path):
     # deposit finite maps with the funnel meridional lens engaged
     sim = _cap_sim([{"center": [0.0, 0.0], "radius": 6.0e-6,
                      "funnel": {"g": [0.0, 0.0], "f": [-6.0, 0.0]}}])
+    sim.trace(str(tmp_path))
     sim.run(str(tmp_path), stages=[11])
     maps = sim.results["beamlet:capillary"]["maps"]
     assert not maps["flat_walls"]
@@ -2009,6 +2027,7 @@ def test_stage11_extra_screens_rebin_same_records(tmp_path):
         {"z": 0.06, "edge_x": 4.0e-5, "edge_y": 4.0e-5},
     ])
     sim = Simulation.from_dict(cfg)
+    sim.trace(str(tmp_path))
     result = sim.run(str(tmp_path), stages=[11])
     main = sim.results["beamlet:capillary"]["maps"]
     s1 = sim.results["beamlet:capillary-s1"]["maps"]
@@ -2029,6 +2048,7 @@ def test_universal_replay_runs_any_streaming_stage(tmp_path):
     rec = Simulation.from_dict(TINY)
     rec.trace(str(tmp_path / "rec"))
     direct = Simulation.from_dict(TINY)
+    direct.trace(str(tmp_path / "direct"))
     direct.run(str(tmp_path / "direct"), stages=[6, 10, 11])
     rep = Simulation.from_dict(TINY)
     rep.replay(str(tmp_path / "rec" / "rays.jsonl.gz"),
@@ -2043,8 +2063,8 @@ def test_universal_replay_runs_any_streaming_stage(tmp_path):
 def test_universal_replay_default_stages_and_guards(tmp_path):
     # default stages come from the scenes present; stage 9 and absent
     # scenes are refused
-    rec = Simulation.from_dict(TINY)
-    rec.run(str(tmp_path), stages=[6])          # capillary scene only
+    rec = Simulation.from_dict({k: v for k, v in TINY.items() if k != "free"})
+    rec.trace(str(tmp_path))                    # capillary scene only
     path = str(tmp_path / "rays.jsonl.gz")
     sim = Simulation.from_dict(TINY)
     sim.replay(path, str(tmp_path / "rep"))     # -> stage 6 by default
@@ -2093,6 +2113,7 @@ def test_replay_rebins_records_onto_the_config_grid(tmp_path):
     other = dict(TINY, capillary=dict(TINY["capillary"],
                                       screen={"nx": 5, "ny": 7}))
     direct = Simulation.from_dict(other)
+    direct.trace(str(tmp_path / "direct"))
     direct.run(str(tmp_path / "direct"), stages=[10])
     rep = Simulation.from_dict(other)
     rep.replay(str(tmp_path / "rec" / "rays.jsonl.gz"),
@@ -2190,6 +2211,7 @@ def test_stage11_w0t_auto(tmp_path):
     # w0_t: "auto" resolves to the scene's Fresnel scale sqrt(lam*L/pi)
     cfg = dict(TINY, beamlet={"w0_t": "auto"})
     sim = Simulation.from_dict(cfg)
+    sim.trace(str(tmp_path))
     sim.run(str(tmp_path), stages=[11])
     res = sim.results["beamlet:capillary"]
     src = sim.cfg.capillary.source
@@ -2408,8 +2430,10 @@ def test_stage11_aniso_auto_shrinks_spot_and_reports_sigma(tmp_path):
     # w0_t auto narrows the mean deposited spot vs the isotropic default,
     # and the jackknife maps ride along in maps and mu-beamlet.jsonl
     iso = Simulation.from_dict(TINY)
+    iso.trace(str(tmp_path / "iso"))
     iso.run(str(tmp_path / "iso"), stages=[11])
     aniso = Simulation.from_dict(dict(TINY, beamlet={"w0_t": "auto"}))
+    aniso.trace(str(tmp_path / "aniso"))
     aniso.run(str(tmp_path / "aniso"), stages=[11])
     w_iso = iso.results["beamlet:capillary"]["maps"]["w_mean"]
     w_ani = aniso.results["beamlet:capillary"]["maps"]["w_mean"]

@@ -636,8 +636,11 @@ def scene_stream(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
                 f"budgets promise {n_modes * n_rays} — thinned recording")
         return _counted(w.scene_records(scene), w.done[scene], scene,
                         w.path), "file"
-    if (w is not None and scene in w.done
-            and w.meta["budgets"].get(scene) == [n_modes, n_rays]
+    if w is None:
+        raise ValueError(
+            f"scene {scene!r}: no rays recording to read; stages never trace — "
+            "run trace_v3 / --trace first or pass --replay")
+    if (scene in w.done and w.meta["budgets"].get(scene) == [n_modes, n_rays]
             and w.done[scene] == n_modes * n_rays):
         return _counted(_file_records(w.path, scene), w.done[scene], scene,
                         w.path), "file"

@@ -217,7 +217,7 @@ def test_stage14_local_reuse_is_strict_but_explicit_replay_is_deliberate(tmp_pat
     rays = local / "rays.jsonl.gz"
     _write_controlled_rays(rays, recorded_raw,
                            [1, 1, 1, 1, 1, 1, -1, -1, -1, -1])
-    with pytest.raises(ValueError, match="local rays metadata does not match"):
+    with pytest.raises(ValueError, match="does not match this config"):
         Simulation.from_dict(run_raw).run(str(local), stages=[14])
     assert not (local / "stage14").exists()
 
@@ -226,16 +226,30 @@ def test_stage14_local_reuse_is_strict_but_explicit_replay_is_deliberate(tmp_pat
     assert explicit.results["stage14:capillary"]["n_modes"] == 10
 
 
-def test_stage14_fresh_trace_smoke(tmp_path):
+def test_stage14_needs_a_recording_and_reads_v2_or_v3(tmp_path):
+    import yaml
+    from formula.capsysred.trace_v3 import trace as trace_v3
     raw = _config(n_modes=2, seed=71)
+    with pytest.raises(ValueError, match="no rays recording"):
+        Simulation.from_dict(raw).run(str(tmp_path / "empty"), stages=[14])
+    assert not (tmp_path / "empty" / "stage14").exists()
+    v2 = tmp_path / "v2"
     sim = Simulation.from_dict(raw)
-    result = sim.run(str(tmp_path), stages=[14])
+    sim.trace(str(v2))
+    result = sim.run(str(v2), stages=[14])
     assert "stage14:capillary" in sim.results
-    assert (tmp_path / "rays.jsonl.gz").exists()
-    assert (tmp_path / "rays-fingerprint.yaml").exists()
-    assert (tmp_path / "stage14" / "meta.json").exists()
     assert any(name.endswith("14d-capillary-ray-scatter.svg")
                for name in result["files"])
+    v3 = tmp_path / "v3"
+    cfg = v3 / "cfg.yaml"
+    v3.mkdir()
+    with open(cfg, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(raw, fh, sort_keys=False)
+    trace_v3(str(cfg), str(v3 / "rays-modes"), None, jobs=1, level=6, log=lambda m: None)
+    other = Simulation.from_dict(raw)
+    other.run(str(v3), stages=[14])
+    assert (other.results["stage14:capillary"]["rows"]
+            == sim.results["stage14:capillary"]["rows"])
 
 
 @pytest.mark.parametrize("damage, match", [

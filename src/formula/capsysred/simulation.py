@@ -12,6 +12,7 @@ import math
 import os
 import sys
 import time
+import zlib
 
 from .. import __version__
 from ..formula import Number
@@ -33,9 +34,11 @@ from .spectrum import spectral_lines, wavelength_m
 from .surfaces import CapillaryBundle, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
-from .rays import (METADATA_NAME, MultiRaysReader, RaysFile, RaysReader,
-                   SceneSeed, metadata_equal, read_metadata,
-                   require_full_rows, scene_stream, sidecar_metadata)
+from . import rays_v3
+from .rays import (METADATA_NAME, RNG_SCHEME, MultiRaysReader, RaysFile,
+                   RaysReader, SceneSeed, metadata_equal, metadata_path,
+                   read_metadata, require_full_rows, scene_stream,
+                   sidecar_metadata)
 from .types import HitMethod, RayRecord
 from .units import (
     m_to_angstrom, m_to_mm, m_to_um, rad_to_mrad, rad_to_urad)
@@ -1232,56 +1235,49 @@ class Simulation:
 
     # ------------------------------------------------------------- trace
 
-    def _ensure_stage14_rays(self, path: str) -> bool:
-        """Create and close the canonical capillary recording if absent.
-
-        Existing archives are intentionally not scanned here: the Stage-14
-        cache builder is their single strict pass.  Returns true when this
-        call performed the trace.
+    def _local_recording(self, out_dir: str):
+        """The recording a stage run reads when no --replay is given:
+        ``out_dir/rays-modes`` (v3) or ``out_dir/rays.jsonl.gz`` (v2), whose
+        metadata must equal this config's; None when neither exists.
+        Stages never trace: ``trace_v3`` / ``--trace`` are separate commands.
         """
-        if os.path.lexists(path):
+        v3_dir = os.path.join(out_dir, "rays-modes")
+        v2_path = os.path.join(out_dir, "rays.jsonl.gz")
+        expected = sidecar_metadata(self.cfg)
+        if os.path.isdir(v3_dir):
             try:
-                actual = read_metadata(path)
+                actual = rays_v3.metadata(v3_dir)
+            except ValueError as exc:
+                raise ValueError(f"{v3_dir}: invalid v3 rays archive: {exc}") from exc
+            probe = {"format": 2, "geometry": actual["geometry"],
+                     "budgets": actual["budgets"], "rng": RNG_SCHEME}
+            if actual.get("lean"):
+                probe["lean"] = True
+            if (not metadata_equal(probe, expected)
+                    or (actual.get("rng") or {}).get("scheme") != RNG_SCHEME):
+                raise ValueError(
+                    f"{v3_dir}: recording metadata does not match this config "
+                    "(geometry, seed, budgets, lean or rng scheme); remove the "
+                    "recording manually, use explicit --replay or another output "
+                    "directory"
+                )
+            return v3_dir
+        if os.path.lexists(v2_path):
+            try:
+                actual = read_metadata(v2_path)
             except (OSError, UnicodeError, ValueError, TypeError) as exc:
                 raise ValueError(
-                    f"{path}: existing local Stage-14 rays metadata is "
-                    "missing or invalid; remove the result manually or "
-                    "choose another output directory"
+                    f"{metadata_path(v2_path)}: rays metadata is missing or invalid; "
+                    "remove the recording manually or choose another output directory"
                 ) from exc
-            expected = sidecar_metadata(self.cfg)
             if not metadata_equal(actual, expected):
                 raise ValueError(
-                    f"{path}: existing local rays metadata does not match "
-                    "this Stage-14 run; use explicit --replay, remove the "
-                    "result manually, or choose another output directory"
+                    f"{v2_path}: recording metadata does not match this config; "
+                    "remove the recording manually, use explicit --replay or "
+                    "another output directory"
                 )
-            return False
-        if not self.cfg.rays_jsonl:
-            raise ValueError(
-                "stage 14 requires trace.rays_jsonl: true so its persistent "
-                "cache has a canonical provenance source"
-            )
-        cap = self.cfg.capillary
-        writer = RaysFile(path, self.cfg)
-        self.rays = writer
-        n_modes, n_rays = cap.source.budget()
-        progress = Progress("trace capillary for stage 14", n_modes * n_rays)
-        on_screen = 0
-        try:
-            records, rays_from = scene_stream(
-                self, "capillary", cap.source, cap.screen,
-                CapillaryBundle(cap.bores, cap.z0, cap.z1),
-                self._aim_capillary, SceneSeed.CAPILLARY)
-            if rays_from != "trace":
-                raise RuntimeError("new Stage-14 rays archive unexpectedly reused")
-            for rec in records:
-                on_screen += rec.fate == "screen"
-                progress.step()
-            progress.finish(f"on screen {on_screen:,}")
-        finally:
-            writer.close()
-            self.rays = None
-        return True
+            return v2_path
+        return None
 
     def trace(self, out_dir) -> dict:
         """Trace-only run: record every scene's geometry (no physics) into the
@@ -1376,7 +1372,6 @@ class Simulation:
         ]
         self.files = []
         self.jack_rows = []
-        rays_name = "rays.jsonl.gz"
         if rays_src is not None:
             self.report.insert(-1, f"- replay: rays from {rays_src.path} "
                                    "(no tracing)")
@@ -1386,16 +1381,27 @@ class Simulation:
                                + " + ".join(stage14_paths) + " (no tracing)")
             self.rays = None
         else:
-            if 14 in wanted:
-                local_path = os.path.join(out_dir, rays_name)
-                traced14 = self._ensure_stage14_rays(local_path)
-                stage14_paths = [local_path]
-                if traced14:
-                    self.report.insert(-1,
-                                       "- stage 14: canonical capillary rays traced before cache build")
-            self.rays = (RaysFile(os.path.join(out_dir, rays_name), cfg)
-                         if cfg.rays_jsonl and wanted & {2, 6, 7, 8, 10, 11, 12}
-                         else None)
+            self.rays = None
+            if wanted & {2, 6, 7, 8, 10, 11, 12, 14}:
+                local = self._local_recording(out_dir)
+                if local is None:
+                    raise ValueError(
+                        f"{out_dir}: no rays recording (rays-modes/ or rays.jsonl.gz); "
+                        "trace first (python -m formula.capsysred.trace_v3 … or --trace) "
+                        "or pass --replay"
+                    )
+                self.report.insert(-1, f"- rays from {local} (no tracing)")
+                if wanted & {2, 6, 7, 8, 10, 11, 12}:
+                    try:
+                        self.rays = RaysReader(local)
+                    except (OSError, EOFError, zlib.error, UnicodeError, ValueError,
+                            KeyError, TypeError) as exc:
+                        raise ValueError(
+                            f"{local}: rays recording is incomplete or corrupt; "
+                            "remove it manually or choose another output directory"
+                        ) from exc
+                if 14 in wanted:
+                    stage14_paths = [local]
         try:
             if 1 in wanted:
                 _log("Stage 1: simulation layout")
@@ -1496,21 +1502,6 @@ class Simulation:
             ]
             for extra_result in res14.get("extra_results", []):
                 self._record_stage14_result(extra_result)
-        if self.rays is not None and rays_src is None:
-            self.files.append(rays_name)
-            _log(f"  → {rays_name}")
-            if self.rays.has_sidecar:
-                self.files.append(METADATA_NAME)
-                _log(f"  → {METADATA_NAME}")
-        elif 14 in wanted and rays_src is None and stage14_paths is not None:
-            # Stage14-only fresh runs close their archive before the strict
-            # cache pass, so there is no live RaysFile object to report here.
-            local_path = os.path.abspath(os.path.join(out_dir, rays_name))
-            if len(stage14_paths) == 1 and os.path.abspath(stage14_paths[0]) == local_path:
-                for name in (rays_name, METADATA_NAME):
-                    if name not in self.files:
-                        self.files.append(name)
-                        _log(f"  → {name}")
         report_name = _report_name(out_dir, "report")
         self.report += ["", "## Files", ""]
         self.report += [f"- {name}" for name in self.files + [report_name]]
