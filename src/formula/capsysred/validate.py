@@ -7,14 +7,13 @@ doc/2026-07-10-hit-method-backends.ru.md) — and every hit parameter t is
 compared against the Python reference.
 """
 
-import random
 import time
 
 from ..intersect import RaySurface
 from .native import compile_optic, trace_ray_native
 from .nums import lift, vadd, vscale
 from .progress import Progress
-from .rays import _SCENE_SEED_STRIDE, SceneSeed
+from .rays import SceneSeed, stream_rng
 from .source import Source
 from .surfaces import CapillaryBundle
 from .types import _EPS_T, _ONWALL_TOL, _TCAP_TOL, HitMethod
@@ -83,7 +82,7 @@ def run_validate_stage(sim, n_rays: int):
     if ref is HitMethod.CPP_CLOSED_FORM and native is None:
         raise ValueError("validate: cpp-closed-form reference has no native "
                          "twin for this wall kind")
-    rng = random.Random(cfg.seed * _SCENE_SEED_STRIDE + SceneSeed.VALIDATE)
+    rng = stream_rng(cfg.seed, SceneSeed.VALIDATE)
     source = Source(cap.source, rng)
     aim = sim._aim_capillary(source, None, rng)
     methods = tuple(m for m in cfg.validate_methods

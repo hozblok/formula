@@ -7,11 +7,12 @@
 One strict pass over the v2 stream splits every scene listed in the sidecar
 budgets into sections of one mode each; rows are copied byte for byte.  For
 the capillary scene the mode origins are recovered by replaying the recorded
-rng streams (shard-k/config.yaml gives seed and mode count per shard; a
-single stream under the base seed otherwise) and every recovered origin is
-verified by re-tracing ray 0 against the recorded row before the section is
-written.  ``--verify`` re-reads a v3 archive completely: hashes, counts and
-canonical mode/ray ids.
+rng streams — lattice-v1 recordings (sidecar ``rng: lattice-v1``): one
+stream per global mode; legacy sequential-v2 recordings: shard-k/config.yaml
+gives seed and mode count per shard, a single stream under the base seed
+otherwise — and every recovered origin is verified by re-tracing ray 0
+against the recorded row before the section is written.  ``--verify``
+re-reads a v3 archive completely: hashes, counts and canonical mode/ray ids.
 """
 
 from __future__ import annotations
@@ -89,12 +90,44 @@ def _geometry_sim(geometry: dict, seed: int):
     return Simulation.from_dict(raw)
 
 
+def _check_record(rec) -> dict:
+    check = {"fate": rec.fate, "pixel": rec.pixel, "opl": float(rec.opl),
+             "bounces": len(rec.sins)}
+    if rec.point is not None:
+        check["x"], check["y"] = float(rec.point[0]), float(rec.point[1])
+    return check
+
+
 def recover_origins(meta: dict, layout, log=_log) -> list[dict]:
-    """Per global capillary mode: origin strings and the re-traced ray 0."""
+    """Per global capillary mode: origin strings and the re-traced ray 0.
+
+    ``layout`` is the legacy sequential-v2 shard list; ``None`` selects the
+    lattice-v1 streams (one per global mode, no shard knowledge needed).
+    """
     geometry = meta["geometry"]
-    n_rays = meta["budgets"]["capillary"][1]
+    n_modes, n_rays = meta["budgets"]["capillary"]
     out = []
     started = time.time()
+    if layout is None:
+        seed = int(geometry["seed"])
+        sim = _geometry_sim(geometry, seed)
+        cfg = sim.cfg
+        cap = cfg.capillary
+        source = Source(cap.source, None)
+        screen = ScreenGrid(cap.screen)
+        optic = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+        tracer = make_tracer(optic)
+        for mode in range(n_modes):
+            rng = rays.stream_rng(seed, rays.SceneSeed.CAPILLARY, mode)
+            source.rng = rng
+            origin = source.mode_origin()
+            d0 = sim._aim_capillary(source, screen, rng)(origin)
+            tr = tracer(origin, d0, optic, screen.z, cfg.max_bounces)
+            rec = ray_record(tr, screen, mode, 0, tr.fate)
+            out.append({"origin": [str(c) for c in origin], "check": _check_record(rec),
+                        "seed": seed})
+        log(f"  origins: {len(out)} lattice modes recovered ({time.time() - started:.0f} s)")
+        return out
     for seed, n_local in layout:
         sim = _geometry_sim(geometry, seed)
         cfg = sim.cfg
@@ -114,11 +147,7 @@ def recover_origins(meta: dict, layout, log=_log) -> list[dict]:
                 draw()
             tr = tracer(origin, d0, optic, screen.z, cfg.max_bounces)
             rec = ray_record(tr, screen, len(out), 0, tr.fate)
-            check = {"fate": rec.fate, "pixel": rec.pixel, "opl": float(rec.opl),
-                     "bounces": len(rec.sins)}
-            if rec.point is not None:
-                check["x"], check["y"] = float(rec.point[0]), float(rec.point[1])
-            out.append({"origin": [str(c) for c in origin], "check": check,
+            out.append({"origin": [str(c) for c in origin], "check": _check_record(rec),
                         "seed": seed})
         log(f"  origins: {len(out)} modes recovered ({time.time() - started:.0f} s)")
     return out
@@ -188,9 +217,11 @@ def convert(run_dir: str, out_dir: str, jobs: int, level: int, shards: int | Non
 
     layout = None
     recovered = None
+    lattice = meta.get("rng") == rays.RNG_SCHEME
     if "capillary" in budgets and origins:
-        layout = shard_layout(run_dir, meta, shards)
-        log(f"  shard layout: {layout}")
+        if not lattice:
+            layout = shard_layout(run_dir, meta, shards)
+            log(f"  shard layout: {layout}")
         recovered = recover_origins(meta, layout, log)
 
     entries = []
@@ -314,7 +345,9 @@ def convert(run_dir: str, out_dir: str, jobs: int, level: int, shards: int | Non
     fingerprint = {"format": rays_v3.FORMAT, "geometry": _json(meta["geometry"])}
     if meta.get("lean"):
         fingerprint["lean"] = True
-    if layout is not None:
+    if lattice:
+        fingerprint["rng"] = {"scheme": rays.RNG_SCHEME, "aim_draws": CAPILLARY_AIM_DRAWS}
+    elif layout is not None:
         fingerprint["rng"] = {
             "scheme": "sequential-v2",
             "scene_seed_stride": rays._SCENE_SEED_STRIDE,

@@ -49,12 +49,28 @@ _SCENE_SEED_STRIDE = 1000003
 
 
 class SceneSeed(enum.IntEnum):
-    """Per-scene rng-stream tag added to cfg.seed*_SCENE_SEED_STRIDE; stages
-    reusing a scene's rays pass its tag, stage 9 gets its own."""
+    """Per-scene rng-stream tag: its lowercase name keys the lattice streams;
+    the integer is only used to replay legacy (sequential-v2) recordings,
+    added to cfg.seed*_SCENE_SEED_STRIDE."""
     FREE = 2         # no-optics scene (stages 2, 7, 8, 11, 12)
     CAPILLARY = 4    # capillary (stages 6, 7, 8, 10, 11)
-    CAPILLARY_TOPUP = 6   # per-mode tail substreams of topup_trace
+    CAPILLARY_TOPUP = 6   # legacy-archive tail substreams of topup_trace
     VALIDATE = 9     # stage 9 hit-method cross-check
+
+
+RNG_SCHEME = "lattice-v1"
+
+
+def stream_rng(seed: int, tag: SceneSeed, *parts) -> random.Random:
+    """The rng of one named stream: ``"<seed>/<scene>[/<mode>]"``.
+
+    Mode m of a scene draws its origin first, then 3 draws per ray, so the
+    ray lattice (seed, scene, mode, ray) is addressable: shards, top-ups
+    and single-piece traces produce identical rays.  Strings seed Python's
+    Random through SHA-512, so distinct keys never alias.
+    """
+    key = f"{seed}/{tag.name.lower()}" + "".join(f"/{part}" for part in parts)
+    return random.Random(key)
 
 
 def geometry_metadata(cfg) -> dict:
@@ -92,7 +108,7 @@ def budgets(cfg, quick: int) -> dict:
 def sidecar_metadata(cfg, quick: int) -> dict:
     """Structured metadata for ``rays-fingerprint.yaml``."""
     meta = {"format": FORMAT, "geometry": geometry_metadata(cfg),
-            "budgets": budgets(cfg, quick)}
+            "budgets": budgets(cfg, quick), "rng": RNG_SCHEME}
     if cfg.lean_rays:
         meta["lean"] = True
     return meta
@@ -561,17 +577,19 @@ def rescreen(records, z0f: float, grid):
 
 def _traced_records(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
                     seed_offset, quick):
-    """The stage-2/6 rng stream; every record is teed into the run's writer."""
+    """One rng stream per global mode (lattice-v1); every record is teed
+    into the run's writer."""
     cfg = sim.cfg
-    rng = random.Random(cfg.seed * _SCENE_SEED_STRIDE + seed_offset)
-    source = Source(src_cfg, rng)
+    source = Source(src_cfg, None)
     screen = ScreenGrid(scr_cfg)
     n_modes, n_rays = src_cfg.budget(quick)
-    aim = aim_factory(source, screen, rng)
     tracer = make_tracer(optic)
     writer = sim.rays
     for mode in range(n_modes):
+        rng = stream_rng(cfg.seed, seed_offset, src_cfg.mode_start + mode)
+        source.rng = rng
         origin = source.mode_origin()
+        aim = aim_factory(source, screen, rng)
         for ray in range(n_rays):
             tr = tracer(origin, aim(origin), optic, screen.z, cfg.max_bounces)
             rec = ray_record(tr, screen, mode, ray, tr.fate)

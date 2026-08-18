@@ -4,9 +4,12 @@
         --rays R1 [--jobs J] [--quick N] [--level 6]
 
 Origins come from the section headers (recorded at conversion or tracing).
-Ray r of mode m draws from the mode's own tail substream
-``Random((seed*STRIDE + CAPILLARY_TOPUP) * 2**32 + m)`` at position 3*r, so
-one top-up n0->R1 equals two top-ups n0->R->R1 bit for bit.  Sections are
+lattice-v1 archives: the tail simply continues the mode's own stream
+``stream_rng(seed, CAPILLARY, m)`` (origin, then 3 draws per ray), so head +
+tail equals a single-piece trace bit for bit.  Legacy sequential-v2
+archives (converted Z-26): ray r of mode m draws from the tail substream
+``Random((seed*STRIDE + CAPILLARY_TOPUP) * 2**32 + m)`` at position 3*r.
+Either way one top-up n0->R1 equals two top-ups n0->R->R1.  Sections are
 published tmp -> rename; the index is replaced atomically once every mode
 has its tail, so an interrupted run leaves the archive at its old budget.
 """
@@ -24,11 +27,12 @@ from ..formula import Number
 from . import rays, rays_v3
 from .native import make_tracer
 from .screen import ScreenGrid
+from .source import Source
 from .surfaces import CapillaryBundle
 from .types import ray_record
 
 AIM_DRAWS = 3
-SCHEME = "per-mode-substream-v1"
+LEGACY_SCHEME = "per-mode-substream-v1"
 
 
 def _log(msg: str) -> None:
@@ -52,7 +56,7 @@ def _init_worker(config_path, quick):
               tracer=make_tracer(optic), quick=quick)
 
 
-def _trace_tail(archive, mode, r0, r1, origin_str, lean, level):
+def _trace_tail(archive, mode, r0, r1, origin_str, lean, level, lattice):
     sim, cap = _W["sim"], _W["cap"]
     screen, optic, tracer = _W["screen"], _W["optic"], _W["tracer"]
     cfg = sim.cfg
@@ -66,15 +70,22 @@ def _trace_tail(archive, mode, r0, r1, origin_str, lean, level):
     tmp = final + ".tmp"
     if os.path.lexists(tmp):
         os.remove(tmp)
-    p = cfg.precision
-    origin = tuple(Number(c, p) for c in origin_str)
-    rng = tail_rng(cfg.seed, mode)
+    if lattice:
+        rng = rays.stream_rng(cfg.seed, rays.SceneSeed.CAPILLARY, mode)
+        origin = Source(cap.source, rng).mode_origin()
+        if [str(c) for c in origin] != list(origin_str):
+            raise ValueError(f"mode {mode}: lattice origin differs from the recorded header")
+        extra = {"rng": {"scheme": rays.RNG_SCHEME, "seed": cfg.seed, "aim_draws": AIM_DRAWS}}
+    else:
+        p = cfg.precision
+        origin = tuple(Number(c, p) for c in origin_str)
+        rng = tail_rng(cfg.seed, mode)
+        extra = {"rng": {"scheme": LEGACY_SCHEME, "tag": int(rays.SceneSeed.CAPILLARY_TOPUP),
+                         "seed": cfg.seed, "aim_draws": AIM_DRAWS}}
     draw = rng.random
     for _ in range(AIM_DRAWS * r0):
         draw()
     aim = sim._aim_capillary(None, screen, rng)
-    extra = {"rng": {"scheme": SCHEME, "tag": int(rays.SceneSeed.CAPILLARY_TOPUP),
-                     "seed": cfg.seed, "aim_draws": AIM_DRAWS}}
     writer = rays_v3.SectionWriter(archive, "capillary", mode, r0, r1, origin_str,
                                    extra, level)
     try:
@@ -115,12 +126,16 @@ def topup(config_path: str, archive: str, r1: int, jobs: int, quick: int,
     lean = bool(meta.get("lean"))
     if lean != bool(cfg.lean_rays):
         raise ValueError("config trace.lean_rays must match the archive's lean flag")
+    scheme = (meta.get("rng") or {}).get("scheme")
+    if scheme not in (rays.RNG_SCHEME, "sequential-v2"):
+        raise ValueError(f"{archive}: unknown rng scheme {scheme!r}; cannot top up")
+    lattice = scheme == rays.RNG_SCHEME
     origins = rays_v3.origins(archive, index, "capillary")
     missing = [m for m, o in enumerate(origins) if not o]
     if missing:
         raise ValueError(f"{archive}: {len(missing)} modes have no recorded origin "
                          f"(first {missing[:5]}); reconvert with origin recovery")
-    log(f"top-up {archive}: {n_modes} modes, rays {n0} -> {r1}, jobs {jobs}")
+    log(f"top-up {archive} ({scheme}): {n_modes} modes, rays {n0} -> {r1}, jobs {jobs}")
     started = time.time()
     new_entries = []
     reused = 0
@@ -128,7 +143,7 @@ def topup(config_path: str, archive: str, r1: int, jobs: int, quick: int,
             max_workers=jobs, initializer=_init_worker,
             initargs=(config_path, quick)) as pool:
         futures = {pool.submit(_trace_tail, archive, mode, n0, r1, origins[mode],
-                               lean, level): mode for mode in range(n_modes)}
+                               lean, level, lattice): mode for mode in range(n_modes)}
         done = 0
         for fut in concurrent.futures.as_completed(futures):
             entry, was_reused = fut.result()

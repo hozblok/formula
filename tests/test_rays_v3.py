@@ -90,25 +90,99 @@ def test_convert_parity_reader_and_stage14(tmp_path):
         convert(str(v2), archive, 1, 6, None, True, log=lambda m: None)
 
 
-def test_convert_sharded_origins(tmp_path):
+def _v2_lines(path):
+    with gzip.open(path, "rb") as fh:
+        return fh.read().split(b"\n")[1:]        # drop the preamble
+
+
+def test_shards_equal_sequential_and_lattice_convert(tmp_path):
     raw = _raw(n_modes=6, n_rays=40)
     cfg = _write_yaml(tmp_path / "cfg.yaml", raw)
     run = tmp_path / "run"
     subprocess.run([sys.executable, "-X", "utf8", "-m", "formula.capsysred.shard_trace",
                     cfg, "-o", str(run), "--jobs", "2"], check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-    assert (run / "shard-1" / "config.yaml").exists()
+    seq = tmp_path / "seq"
+    Simulation.from_dict(raw).trace(str(seq))
+    assert _v2_lines(run / "rays.jsonl.gz") == _v2_lines(seq / "rays.jsonl.gz")
+    shard_cfg = yaml.safe_load(open(run / "shard-1" / "config.yaml", encoding="utf-8"))
+    assert shard_cfg["seed"] == 77 and shard_cfg["capillary"]["source"]["mode_start"] == 3
     archive = str(run / "rays-modes")
     summary = convert(str(run), archive, 2, 6, None, True, log=lambda m: None)
-    assert summary["origin_check"]["modes"] == 6
+    assert summary["origin_check"] == {"modes": 6, "max_dxy_m": 0.0, "max_rel_dopl": 0.0}
+    assert rays_v3.read_fingerprint(archive)["rng"]["scheme"] == "lattice-v1"
+    # Origins are a property of (seed, mode) alone: n_rays does not move them.
+    short = tmp_path / "short"
+    Simulation.from_dict(_raw(n_modes=6, n_rays=20)).trace(str(short))
+    convert(str(short), str(short / "rays-modes"), 1, 6, None, True, log=lambda m: None)
+    long_idx, short_idx = rays_v3.load_index(archive), rays_v3.load_index(str(short / "rays-modes"))
+    assert ([rays_v3.section_header(archive, s[0])["origin"] for s in long_idx.modes("capillary")]
+            == [rays_v3.section_header(str(short / "rays-modes"), s[0])["origin"]
+                for s in short_idx.modes("capillary")])
+
+
+def _legacy_trace(raw, out_dir):
+    """A sequential-v2 recording: one rng stream per scene, as before lattice-v1."""
+    from formula.capsysred.native import make_tracer
+    from formula.capsysred.rays import RaysFile, _SCENE_SEED_STRIDE, ray_record
+    from formula.capsysred.surfaces import CapillaryBundle
+    sim = Simulation.from_dict(raw)
+    cfg = sim.cfg
+    cap = cfg.capillary
+    os.makedirs(out_dir)
+    writer = RaysFile(os.path.join(out_dir, "rays.jsonl.gz"), cfg, 1)
+    rng = random.Random(cfg.seed * _SCENE_SEED_STRIDE + SceneSeed.CAPILLARY)
+    source = Source(cap.source, rng)
+    screen = ScreenGrid(cap.screen)
+    aim = sim._aim_capillary(source, screen, rng)
+    optic = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    tracer = make_tracer(optic)
+    for mode in range(cap.source.n_modes):
+        origin = source.mode_origin()
+        for ray in range(cap.source.n_rays):
+            tr = tracer(origin, aim(origin), optic, screen.z, cfg.max_bounces)
+            writer.write("capillary", ray_record(tr, screen, mode, ray, tr.fate))
+    writer.finish_scene("capillary")
+    writer.close()
+    sidecar = os.path.join(out_dir, "rays-fingerprint.yaml")
+    meta = yaml.safe_load(open(sidecar, encoding="utf-8"))
+    del meta["rng"]
+    with open(sidecar, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(meta, fh, sort_keys=False)
+
+
+def test_convert_legacy_sequential_origins(tmp_path):
+    raw = _raw(n_modes=4, n_rays=30)
+    run = tmp_path / "legacy"
+    _legacy_trace(raw, str(run))
+    archive = str(run / "rays-modes")
+    summary = convert(str(run), archive, 1, 6, None, True, log=lambda m: None)
+    assert summary["origin_check"] == {"modes": 4, "max_dxy_m": 0.0, "max_rel_dopl": 0.0}
     fp = rays_v3.read_fingerprint(archive)
-    assert fp["rng"]["capillary"]["shards"] == [{"seed": 77, "modes": 3}, {"seed": 78, "modes": 3}]
+    assert fp["rng"]["scheme"] == "sequential-v2"
+    assert fp["rng"]["capillary"]["shards"] == [{"seed": 77, "modes": 4}]
     # A wrong layout is caught by the ray-0 re-trace before anything is published.
-    for k in (0, 1):
-        shutil.rmtree(run / f"shard-{k}")
     with pytest.raises(ValueError, match="wrong seed/shard layout"):
-        convert(str(run), str(run / "wrong"), 1, 6, 1, True, log=lambda m: None)
+        convert(str(run), str(run / "wrong"), 1, 6, 2, True, log=lambda m: None)
     assert not os.path.exists(rays_v3.index_path(run / "wrong"))
+
+
+def test_topup_lattice_equals_single_piece(tmp_path):
+    raw = _raw(n_modes=5, n_rays=40)
+    head = tmp_path / "head"
+    Simulation.from_dict(raw).trace(str(head))
+    archive = str(head / "rays-modes")
+    convert(str(head), archive, 1, 6, None, True, log=lambda m: None)
+    raw100 = json.loads(json.dumps(raw))
+    raw100["capillary"]["source"]["n_rays"] = 100
+    topup(_write_yaml(tmp_path / "cfg-100.yaml", raw100), archive, 100,
+          jobs=1, quick=1, level=6, log=lambda m: None)
+    full = tmp_path / "full"
+    Simulation.from_dict(raw100).trace(str(full))
+    index = rays_v3.load_index(archive)
+    expected = [l for l in _v2_lines(full / "rays.jsonl.gz") if l.startswith(b'{"stage"')]
+    got = [l.rstrip(b"\n") for l in rays_v3.scene_lines(archive, index, "capillary")]
+    assert got == expected
 
 
 def test_topup_chunk_invariance_and_merge_oracle(tmp_path):

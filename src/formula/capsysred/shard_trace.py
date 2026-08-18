@@ -4,17 +4,17 @@ merge the records into one canonical rays.jsonl.gz.
     python -m formula.capsysred.shard_trace config.yaml -o out/RUN \
         --jobs 7 [--quick N] [--keep-shards] [--no-merge]
 
-Shard k traces its slice of the modes under seed+k into out/RUN/shard-k/
+Shard k traces the global modes [start_k, start_k + n_k) of the one rng
+lattice (source.mode_start = start_k, same seed) into out/RUN/shard-k/
 (derived config and log sit next to the record); shards with a complete
 record are skipped on restart. The merge writes the canonical empty
-preamble, copies an optional free scene from shard 0 (seed+0 keeps its
-canonical stream), renumbers the capillary modes globally,
-recomputes the trailers, scans the body, and publishes the structured
-metadata sidecar. Consumers then run the ORIGINAL config (with the same
---quick) against out/RUN and reuse the file.
+preamble, copies an optional free scene from shard 0, renumbers the
+capillary modes globally, recomputes the trailers, scans the body, and
+publishes the structured metadata sidecar. Consumers then run the ORIGINAL
+config (with the same --quick) against out/RUN and reuse the file.
 
-Reproducibility: the seed set {seed .. seed+jobs-1} plus this command —
-not bit-equal to a sequential trace (modes are iid across seeds).
+Reproducibility: the merged record is bit-equal to a sequential trace of
+the same config for any --jobs (lattice-v1 streams are per global mode).
 Each tracer holds ~1-2 GB: pick --jobs for the RAM, not just the cores.
 Disk peak: all shard records + the growing merge; consumed shards are
 deleted unless --keep-shards. --no-merge stops after tracing: shard
@@ -40,14 +40,14 @@ def _chunks(total, jobs):
     return [base + (k < extra) for k in range(jobs)]
 
 
-def _shard_raw(raw, budgets_q, k, cap_modes):
+def _shard_raw(raw, budgets_q, cap_modes, mode_start):
     shard = copy.deepcopy(raw)
-    shard["seed"] = int(raw.get("seed", 12345)) + k
     if "free" in budgets_q:
         source = shard["free"]["source"]
         source["n_modes"], source["n_rays"] = budgets_q["free"]
     cap = shard["capillary"]["source"]
     cap["n_modes"], cap["n_rays"] = cap_modes, budgets_q["capillary"][1]
+    cap["mode_start"] = mode_start
     return shard
 
 
@@ -117,9 +117,11 @@ def main(argv=None):
 
     shards = []
     expected = {}
+    mode_start = 0
     for k, n in enumerate(chunks):
         sdir = os.path.join(args.out, f"shard-{k}")
-        shard_raw = _shard_raw(raw, budgets_q, k, n)
+        shard_raw = _shard_raw(raw, budgets_q, n, mode_start)
+        mode_start += n
         shard_cfg = Config(shard_raw)
         expected[k] = rays.sidecar_metadata(shard_cfg, 1)
         shard_path = os.path.join(sdir, "rays.jsonl.gz")
@@ -154,8 +156,9 @@ def main(argv=None):
                "-o", sdir, "--trace"]
         procs[k] = subprocess.Popen(
             cmd, stdout=log, stderr=subprocess.STDOUT)
-        print(f"shard {k}: tracing {n} modes under seed {raw.get('seed', 12345) + k} "
-              f"(pid {procs[k].pid})", flush=True)
+        print(f"shard {k}: tracing {n} modes from mode "
+              f"{shard_raw['capillary']['source']['mode_start']} (pid {procs[k].pid})",
+              flush=True)
 
     fails = [k for k, p in procs.items() if p.wait() != 0]
     if fails:
