@@ -85,7 +85,8 @@ DEFAULTS = {
     "beamlet": {"w0": 5.0e-7, "w0_t": None, "window_sigmas": 3.0},
     # stage 14: exact disk-backed delete-one-mode jackknife taxonomy.
     "stage14": {"flag_thresholds": {
-        "z": 3.0, "z_ref": 3.0, "z_w": 3.0, "f_min": 0.05,
+        "ic_n_sigma": 3.0, "ref_ic_n_sigma": 3.0, "w_n_sigma": 3.0,
+        "min_coherent_fraction": 0.05,
     }},
 }
 
@@ -416,7 +417,9 @@ class Config:
         thresholds = stage14.get("flag_thresholds")
         if not isinstance(thresholds, dict):
             raise ValueError("stage14.flag_thresholds must be a mapping")
-        required = {"z", "z_ref", "z_w", "f_min"}
+        sigma_keys = ("ic_n_sigma", "ref_ic_n_sigma", "w_n_sigma")
+        keys = sigma_keys + ("min_coherent_fraction",)
+        required = set(keys)
         missing = required - thresholds.keys()
         unknown = thresholds.keys() - required
         if missing or unknown:
@@ -426,7 +429,7 @@ class Config:
             if unknown:
                 detail.append(f"unknown {sorted(unknown)}")
             raise ValueError("stage14.flag_thresholds: " + "; ".join(detail))
-        for key in ("z", "z_ref", "z_w", "f_min"):
+        for key in keys:
             value = thresholds[key]
             if (not isinstance(value, (int, float))
                     or isinstance(value, bool)):
@@ -434,19 +437,18 @@ class Config:
                     f"stage14.flag_thresholds.{key} must be a number"
                 )
         self.stage14_flag_thresholds = {
-            key: float(thresholds[key])
-            for key in ("z", "z_ref", "z_w", "f_min")
+            key: float(thresholds[key]) for key in keys
         }
-        for key in ("z", "z_ref", "z_w"):
+        for key in sigma_keys:
             value = self.stage14_flag_thresholds[key]
             if not math.isfinite(value) or value <= 0.0:
                 raise ValueError(
                     f"stage14.flag_thresholds.{key} must be finite and > 0"
                 )
-        f_min = self.stage14_flag_thresholds["f_min"]
-        if not math.isfinite(f_min) or not 0.0 < f_min <= 1.0:
+        fraction = self.stage14_flag_thresholds["min_coherent_fraction"]
+        if not math.isfinite(fraction) or not 0.0 < fraction <= 1.0:
             raise ValueError(
-                "stage14.flag_thresholds.f_min must be finite and in (0, 1]"
+                "stage14.flag_thresholds.min_coherent_fraction must be finite and in (0, 1]"
             )
 
 

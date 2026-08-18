@@ -443,11 +443,11 @@ def test_serializer_rejects_half_w_pair_and_nan_coordinate():
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"z": 0.0},
-        {"z_ref": math.inf},
-        {"z_w": math.nan},
-        {"f_min": 0.0},
-        {"f_min": 1.01},
+        {"ic_n_sigma": 0.0},
+        {"ref_ic_n_sigma": math.inf},
+        {"w_n_sigma": math.nan},
+        {"min_coherent_fraction": 0.0},
+        {"min_coherent_fraction": 1.01},
     ],
 )
 def test_threshold_validation(kwargs: dict[str, float]):

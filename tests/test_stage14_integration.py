@@ -136,8 +136,8 @@ def test_stage14_cache_hit_schema_and_stage10_projection(tmp_path, monkeypatch):
 
     # Threshold-only reclassification uses the same expensive cache.  Prove
     # the hot path does not even call gzip.open.
-    changed = _config(thresholds={"z": 2.5, "z_ref": 3.0,
-                                  "z_w": 3.0, "f_min": 0.08})
+    changed = _config(thresholds={"ic_n_sigma": 2.5, "ref_ic_n_sigma": 3.0,
+                                  "w_n_sigma": 3.0, "min_coherent_fraction": 0.08})
 
     def no_gzip(*_args, **_kwargs):
         raise AssertionError("cache hit opened the rays archive")

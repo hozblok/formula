@@ -119,24 +119,19 @@ def _validate_n_jk(value: object) -> int:
 class FlagThresholds:
     """Pre-registered thresholds of the Stage 14 estimator."""
 
-    z: float = 3.0
-    z_ref: float = 3.0
-    z_w: float = 3.0
-    f_min: float = 0.05
+    ic_n_sigma: float = 3.0
+    ref_ic_n_sigma: float = 3.0
+    w_n_sigma: float = 3.0
+    min_coherent_fraction: float = 0.05
 
     def __post_init__(self) -> None:
-        z = _require_finite("z", self.z)
-        z_ref = _require_finite("z_ref", self.z_ref)
-        z_w = _require_finite("z_w", self.z_w)
-        f_min = _require_finite("f_min", self.f_min)
-        if z <= 0.0:
-            raise Stage14InvariantError("z must be > 0")
-        if z_ref <= 0.0:
-            raise Stage14InvariantError("z_ref must be > 0")
-        if z_w <= 0.0:
-            raise Stage14InvariantError("z_w must be > 0")
-        if not 0.0 < f_min <= 1.0:
-            raise Stage14InvariantError("f_min must satisfy 0 < f_min <= 1")
+        for name in ("ic_n_sigma", "ref_ic_n_sigma", "w_n_sigma"):
+            if _require_finite(name, getattr(self, name)) <= 0.0:
+                raise Stage14InvariantError(f"{name} must be > 0")
+        fraction = _require_finite("min_coherent_fraction", self.min_coherent_fraction)
+        if not 0.0 < fraction <= 1.0:
+            raise Stage14InvariantError(
+                "min_coherent_fraction must satisfy 0 < min_coherent_fraction <= 1")
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,7 +255,7 @@ def validate_ref(
     err = float(cast(float, ic_ref_err))
     if ic <= 0.0:
         return "ic-nonpositive"
-    if ic - thresholds.z_ref * err <= 0.0:
+    if ic - thresholds.ref_ic_n_sigma * err <= 0.0:
         return "weak"
     if any(not _is_finite_number(value) or value <= 0.0 for value in ic_ref_loo):
         return "loo-invalid"
@@ -313,10 +308,10 @@ def classify_pixel(
     if intensity <= 0.0:
         raise Stage14InvariantError("I must be > 0 when pairs exist")
 
-    lower = ic - thresholds.z * ic_err
-    upper = ic + thresholds.z * ic_err
-    upper_star = max(ic, 0.0) + thresholds.z * ic_err
-    delta = thresholds.f_min * intensity
+    lower = ic - thresholds.ic_n_sigma * ic_err
+    upper = ic + thresholds.ic_n_sigma * ic_err
+    upper_star = max(ic, 0.0) + thresholds.ic_n_sigma * ic_err
+    delta = thresholds.min_coherent_fraction * intensity
 
     if upper < 0.0:
         return "negative-Ic"
@@ -711,7 +706,7 @@ def w_signal_status(
     error = _require_nonnegative("w_err", w_err)
     if error == 0.0:
         return "unknown"
-    if value / error >= thresholds.z_w:
+    if value / error >= thresholds.w_n_sigma:
         return "detected"
     return "not-detected"
 

@@ -1343,8 +1343,8 @@ def _finalize_screen(sim, target: ScreenTarget, output_dir: str,
                 I, counters, w_abs=w_abs_value if has_w else None,
                 w_err=float(w_err[pixel]) if has_w else None)
         else:
-            lower = ic - thresholds.z * float(ic_err[pixel])
-            upper = ic + thresholds.z * float(ic_err[pixel])
+            lower = ic - thresholds.ic_n_sigma * float(ic_err[pixel])
+            upper = ic + thresholds.ic_n_sigma * float(ic_err[pixel])
             early_ic = upper < 0.0 or lower <= 0.0
             has_w = counters.m_ref_realizations > 0
             allow_mu = (not is_ref and not early_ic and ref_status == "ok" and has_w)

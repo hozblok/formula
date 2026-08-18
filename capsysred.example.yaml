@@ -97,10 +97,10 @@ trace:
 
 # stage14:               # stage 14 (opt-in): exact disk-backed jackknife
 #   flag_thresholds:
-#     z: 3
-#     z_ref: 3
-#     z_w: 3
-#     f_min: 0.05
+#     ic_n_sigma: 3            # Ic detection, n sigma
+#     ref_ic_n_sigma: 3        # reference-pixel Ic, n sigma
+#     w_n_sigma: 3             # channel-B |W| detection, n sigma
+#     min_coherent_fraction: 0.05  # null-Ic bound as a fraction of I
 
 # Trace only (record every scene, no stages); later runs with the same config,
 # output directory and --quick reuse the file instead of tracing:
