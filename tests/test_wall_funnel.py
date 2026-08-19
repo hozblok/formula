@@ -3,8 +3,8 @@
 from formula.formula import Number
 from formula.capsysred.nums import vunit
 from formula.capsysred.surfaces import engine_hit_t
-from formula.capsysred.wall_cylinder import CylinderWall
-from formula.capsysred.wall_funnel import FunnelWall
+from formula.capsysred.walls.wall_cylinder import CylinderWall
+from formula.capsysred.walls.wall_funnel import FunnelWall
 
 P = 32
 AG, BG = 1.0 / 0.03, -1.0 / (2 * 0.03 * 0.23)   # OE 20:3975 collimating conditions, SI

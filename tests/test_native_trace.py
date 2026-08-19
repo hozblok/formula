@@ -20,8 +20,8 @@ from formula.capsysred.native import (compile_optic, make_tracer,
 from formula.capsysred.nums import lift, vadd, vdot, vscale, vsub, vunit
 from formula.capsysred.surfaces import CapillaryBundle, Mirror
 from formula.capsysred.trace import trace_ray
-from formula.capsysred.wall_revolution import RevolutionWall
-from formula.capsysred.wall_torus import _dk_roots, _quartic_first
+from formula.capsysred.walls.wall_revolution import RevolutionWall
+from formula.capsysred.walls.wall_torus import _dk_roots, _quartic_first
 from formula.formula import Number
 
 PRECISIONS = (16, 30)          # storage 16 and 32

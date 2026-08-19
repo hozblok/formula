@@ -5,10 +5,10 @@
 """Straight cylinder x'²+y'² = a²; the ray intersection is an exact quadratic
 and the normal is radial with zero z-component."""
 
-from ..formula import Number
-from .nums import lift, sqrt, vadd, vscale, vunit
-from .types import _EPS_T, _INSIDE_TOL, Vec3
-from .shared.units import m_to_um
+from ...formula import Number
+from ..nums import lift, sqrt, vadd, vscale, vunit
+from ..types import _EPS_T, _INSIDE_TOL, Vec3
+from ..shared.units import m_to_um
 
 
 class CylinderWall:

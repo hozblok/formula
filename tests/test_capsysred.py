@@ -12,10 +12,10 @@ from formula.capsysred.analytic import vcz_mu
 from formula.capsysred.nums import exp_i, lift, vunit
 from formula.capsysred.spectrum import spectral_lines, wavevector
 from formula.capsysred.surfaces import CapillaryBundle, Mirror, engine_hit_t
-from formula.capsysred.wall_cylinder import CylinderWall
-from formula.capsysred.wall_polygon import PolygonWall
-from formula.capsysred.wall_revolution import RevolutionWall
-from formula.capsysred.wall_torus import (_bisect_first, _float_seeds,
+from formula.capsysred.walls.wall_cylinder import CylinderWall
+from formula.capsysred.walls.wall_polygon import PolygonWall
+from formula.capsysred.walls.wall_revolution import RevolutionWall
+from formula.capsysred.walls.wall_torus import (_bisect_first, _float_seeds,
                                           _quartic_first)
 from formula.capsysred.symbolic import (LineAmplitudes, ampl_template,
                                      ray_expression, ray_field_template)
@@ -2778,7 +2778,7 @@ def test_funnel_near_zero_lead_finds_grazing_chord():
     # wall at z = 0.01. The exact-sign scan of the same polynomial gives
     # the crossing pair [2.7398251603e-4, 3.2601316396e-4].
     from formula.capsysred.nums import lift, vadd, vdot, vscale, vsub, vunit
-    from formula.capsysred.wall_funnel import FunnelWall
+    from formula.capsysred.walls.wall_funnel import FunnelWall
 
     def N(v, p=96):
         return lift(str(v), p)
@@ -2828,7 +2828,7 @@ def test_funnel_pinch_axial_ray_does_not_tunnel():
                    "bore interior")
 def test_funnel_inside_stays_closed_past_pinch():
     from formula.capsysred.nums import lift
-    from formula.capsysred.wall_funnel import FunnelWall
+    from formula.capsysred.walls.wall_funnel import FunnelWall
     n32 = lambda v: lift(str(v), 32)
     wall = FunnelWall((n32(0), n32(0)), n32("6e-6"), (n32(0), n32(0)),
                       (n32("-6.0"), n32(0)), n32(0))
@@ -2845,7 +2845,7 @@ def test_torus_graze_pair_survives_seed_floor():
     # pair at t ~ 2.4495e-3 (dense exact-sign scan); at delta = 1e-20*a
     # hit() still returns it, one step below it tunnels.
     from formula.capsysred.nums import lift, sqrt as nsqrt
-    from formula.capsysred.wall_torus import TorusWall
+    from formula.capsysred.walls.wall_torus import TorusWall
     N = lambda v: lift(str(v), 32)
     a, R = N("6e-6"), N("0.5")
     wall = TorusWall((N(0), N(0)), a, R, (N(1), N(0)), N(0))
@@ -2865,7 +2865,7 @@ def test_torus_graze_pair_survives_seed_floor():
                    "in the half-ulp gap picks different branches")
 def test_native_quartic_first_matches_python_at_eps_t_edge():
     from formula import _formula
-    from formula.capsysred import wall_torus as wt
+    from formula.capsysred.walls import wall_torus as wt
     from formula.capsysred.nums import lift
     if not hasattr(_formula, "trace_dbg_quartic_first"):
         pytest.skip("debug binding missing from the built .so")

@@ -5,8 +5,8 @@ contract): ("reflect", t, point, normal) | ("pass", t) | ("absorb", t) |
 ("exit", None). The reference wall is ImplicitWall: an arbitrary implicit
 F(x,y,z)=0 traced by the RaySurface root-finding engine at full precision —
 exact but slow. The EXPERIMENTAL closed-form fast paths (cylinder/revolution
-quadratics, polygon plane fans, torus quartics) live in wall_cylinder.py /
-wall_revolution.py / wall_polygon.py / wall_torus.py and must stay
+quadratics, polygon plane fans, torus quartics) live in walls/ (wall_cylinder.py /
+wall_revolution.py / wall_polygon.py / wall_torus.py) and must stay
 bit-equivalent to the engine:
 every run cross-checks the first hit via expr_um (`engine_hit_t`).
 """
@@ -18,11 +18,11 @@ from .nums import lift, vadd, vscale
 from .types import (_EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _TCAP_TOL,
                     HitMethod)
 from .shared.units import m_to_um
-from .wall_cylinder import CylinderWall
-from .wall_funnel import FunnelWall
-from .wall_polygon import PolygonWall
-from .wall_revolution import RevolutionWall
-from .wall_torus import TorusWall
+from .walls.wall_cylinder import CylinderWall
+from .walls.wall_funnel import FunnelWall
+from .walls.wall_polygon import PolygonWall
+from .walls.wall_revolution import RevolutionWall
+from .walls.wall_torus import TorusWall
 
 
 class Mirror:

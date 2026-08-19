@@ -6,10 +6,10 @@
 """Regular-polygon bore: flat faces; `radius` is the apothem, face k normal
 sits at rotation + 2πk/n. Hits are plane intersections (exact linear)."""
 
-from ..formula import Number
-from .nums import lift, solver, vadd, vscale
-from .types import _EPS_T, _INSIDE_TOL
-from .shared.units import m_to_um
+from ...formula import Number
+from ..nums import lift, solver, vadd, vscale
+from ..types import _EPS_T, _INSIDE_TOL
+from ..shared.units import m_to_um
 
 
 class PolygonWall:

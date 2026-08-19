@@ -13,11 +13,11 @@ from ..formula import Number
 from .surfaces import CapillaryBundle, Mirror
 from .trace import TraceResult, trace_ray
 from .types import _INSIDE_TOL
-from .wall_cylinder import CylinderWall
-from .wall_funnel import FunnelWall
-from .wall_polygon import PolygonWall
-from .wall_revolution import RevolutionWall
-from .wall_torus import TorusWall
+from .walls.wall_cylinder import CylinderWall
+from .walls.wall_funnel import FunnelWall
+from .walls.wall_polygon import PolygonWall
+from .walls.wall_revolution import RevolutionWall
+from .walls.wall_torus import TorusWall
 
 
 def _raw(number: Number):

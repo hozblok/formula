@@ -6,10 +6,10 @@
 ellipsoid, paraboloid in one form; the ray intersection is an exact quadratic.
 The straight cylinder is served by its own wall_cylinder.CylinderWall."""
 
-from ..formula import Number
-from .nums import lift, sqrt, vadd, vscale, vunit
-from .types import _EPS_T, _INSIDE_TOL, Vec3
-from .shared.units import m_to_um
+from ...formula import Number
+from ..nums import lift, sqrt, vadd, vscale, vunit
+from ..types import _EPS_T, _INSIDE_TOL, Vec3
+from ..shared.units import m_to_um
 
 
 class RevolutionWall:

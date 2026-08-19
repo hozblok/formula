@@ -387,13 +387,23 @@ def verify(archive: str, jobs: int, log=_log) -> dict:
     meta = rays_v3.metadata(archive)
     started = time.time()
     with_origin = 0
-    with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as pool:
-        futures = [pool.submit(_verify_one, archive, e.as_dict()) for e in index.entries]
-        for k, fut in enumerate(concurrent.futures.as_completed(futures), 1):
-            result = fut.result()
-            with_origin += result["origin"]
-            if k % 100 == 0 or k == len(futures):
-                log(f"  verified {k}/{len(futures)} sections ({time.time() - started:.0f} s)")
+    n = len(index.entries)
+
+    def progress(k):
+        if k % 100 == 0 or k == n:
+            log(f"  verified {k}/{n} sections ({time.time() - started:.0f} s)")
+
+    if jobs == 1:
+        # In-process: no spawn cost.
+        for k, e in enumerate(index.entries, 1):
+            with_origin += _verify_one(archive, e.as_dict())["origin"]
+            progress(k)
+    else:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as pool:
+            futures = [pool.submit(_verify_one, archive, e.as_dict()) for e in index.entries]
+            for k, fut in enumerate(concurrent.futures.as_completed(futures), 1):
+                with_origin += fut.result()["origin"]
+                progress(k)
     summary = {"sections": len(index.entries), "budgets": index.budgets,
                "bytes": index.total_bytes(), "sections_with_origin": with_origin,
                "seconds": time.time() - started, "lean": bool(meta.get("lean"))}

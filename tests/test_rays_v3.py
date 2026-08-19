@@ -322,10 +322,10 @@ def test_trace_v3_fresh_equals_v2_and_two_steps(tmp_path):
     cfg100 = _write_yaml(tmp_path / "cfg-100.yaml", raw100)
 
     one = str(tmp_path / "one")
-    trace_v3(cfg100, one, jobs=2, level=6, log=lambda m: None)
+    trace_v3(cfg100, one, jobs=1, level=6, log=lambda m: None)
     two = str(tmp_path / "two")
     trace_v3(cfg40, two, jobs=1, level=6, log=lambda m: None)
-    trace_v3(cfg100, two, jobs=2, level=6, log=lambda m: None)
+    trace_v3(cfg100, two, jobs=1, level=6, log=lambda m: None)
     v2 = tmp_path / "v2"
     _v2_from_v3(raw100, v2)
 
