@@ -18,7 +18,7 @@ from .nums import lift, vunit
 from .source import Source
 from .surfaces import CapillaryBundle, ImplicitWall, entrance_disk
 from .trace import trace_ray
-from .units import m_to_mm, m_to_nm, m_to_um, rad_to_mrad
+from .shared.units import m_to_mm, m_to_nm, m_to_um, rad_to_mrad
 N_RAYS = 10
 GREEN, BLUE, WALL, AXIS = "#2ca02c", "#3060c0", "#5a7a94", "#bbbbbb"
 INK, DIM = "#222", "#333"

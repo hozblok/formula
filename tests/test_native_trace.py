@@ -667,12 +667,12 @@ def test_simulation_native_equals_python(tmp_path, monkeypatch):
     cfg = tmp_path / "cfg.yaml"
     cfg.write_text(yaml.safe_dump(TINY, sort_keys=False), encoding="utf-8")
     sim_native = Simulation.from_dict(TINY)
-    trace_v3(str(cfg), str(tmp_path / "native" / "rays-modes"), None, jobs=1, level=6,
+    trace_v3(str(cfg), str(tmp_path / "native" / "rays-modes"), jobs=1, level=6,
              log=lambda m: None, scenes="all")
     sim_native.run(str(tmp_path / "native"), stages=[2, 6])
     monkeypatch.setenv("CAPSYSRED_PYTHON_TRACE", "1")
     sim_python = Simulation.from_dict(TINY)
-    trace_v3(str(cfg), str(tmp_path / "python" / "rays-modes"), None, jobs=1, level=6,
+    trace_v3(str(cfg), str(tmp_path / "python" / "rays-modes"), jobs=1, level=6,
              log=lambda m: None, scenes="all")
     sim_python.run(str(tmp_path / "python"), stages=[2, 6])
     p = TINY["precision"]

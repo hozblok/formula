@@ -32,6 +32,7 @@ import time
 import yaml
 
 from . import rays, rays_v3
+from .common import tlog as _log
 from .native import make_tracer
 from .screen import ScreenGrid
 from .source import Source
@@ -41,10 +42,6 @@ from .types import ray_record
 CAPILLARY_AIM_DRAWS = 3     # bore choice + disk point; asserted by tests
 XY_TOL = 1e-9               # m, ray-0 re-trace against the recorded row
 OPL_REL_TOL = 1e-9
-
-
-def _log(msg: str) -> None:
-    print(time.strftime("%H:%M:%S ") + msg, flush=True)
 
 
 def _chunks(total, jobs):

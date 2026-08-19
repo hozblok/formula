@@ -25,6 +25,7 @@ trace_v3 writes it (and tops up existing modes); convert_rays_v3 converts
 a v2 file.  Stages never trace: a run without a recording is an error.
 """
 
+import copy
 import enum
 import gzip
 import json
@@ -88,6 +89,17 @@ def geometry_metadata(cfg) -> dict:
         }
     geo["max_bounces"] = cfg.max_bounces
     return json.loads(json.dumps(geo, sort_keys=True, default=str))
+
+
+def geometry_core(geometry: dict) -> dict:
+    """Recording geometry without the per-scene budgets."""
+    core = copy.deepcopy(geometry)
+    for scene in ("capillary", "free"):
+        source = (core.get(scene) or {}).get("source")
+        if isinstance(source, dict):
+            source.pop("n_modes", None)
+            source.pop("n_rays", None)
+    return core
 
 
 def budgets(cfg) -> dict:

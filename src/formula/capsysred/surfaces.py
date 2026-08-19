@@ -17,7 +17,7 @@ from ..formula import Number
 from .nums import lift, vadd, vscale
 from .types import (_EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _TCAP_TOL,
                     HitMethod)
-from .units import m_to_um
+from .shared.units import m_to_um
 from .wall_cylinder import CylinderWall
 from .wall_funnel import FunnelWall
 from .wall_polygon import PolygonWall

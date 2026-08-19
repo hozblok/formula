@@ -11,7 +11,7 @@ import math
 from ..formula import Number
 from .nums import lift, sqrt, vadd, vdot, vnorm, vscale, vsub, vunit
 from .types import _EPS_T, _INSIDE_TOL, _TCAP_TOL
-from .units import m_to_um
+from .shared.units import m_to_um
 
 # Newton polish stop, in digits: quit once the step falls below
 # 10^-max(24, p//2) of the root. Newton doubles digits per step, so the final

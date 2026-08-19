@@ -1,5 +1,6 @@
 """CLI: python3 -m formula.capsysred config.yaml -o out/ [--stages 1,14]
-[--replay ARCHIVE...]; recordings come from python -m formula.capsysred.trace_v3"""
+[--replay ARCHIVE...]. Stages only read rays: out/rays-modes, out/rays.jsonl.gz
+or the --replay paths; recordings come from python -m formula.capsysred.trace_v3."""
 
 import argparse
 import sys
@@ -21,15 +22,16 @@ def main(argv=None) -> int:
                              "stages of the configured scenes; 3 requires 2, "
                              "which is added automatically; 10 and 14 are "
                              "separate opt-in jackknife estimators)")
-    parser.add_argument("--replay", metavar="RAYS_JSONL", default=None,
+    parser.add_argument("--replay", metavar="ARCHIVE", default=None,
                         nargs="+",
-                        help="re-evaluate recorded rays on the spectrum/material from "
-                             "the config, without tracing; several files stream as one "
-                             "recording (Stage 14 builds/reuses one disk cache per "
-                             "file; config n_modes = their sum); a directory is a "
-                             "v3 per-mode archive (trace_v3 / convert_rays_v3); "
-                             "without --replay the run reads out/rays-modes or "
-                             "out/rays.jsonl.gz and never traces")
+                        help="rays recording(s) to re-evaluate with the spectrum and "
+                             "material from the config (no tracing). ARCHIVE is a "
+                             "v3 per-mode directory (trace_v3 / convert_rays_v3) or "
+                             "a v2 rays.jsonl.gz; several archives are read as one "
+                             "recording whose n_modes is their sum (Stage 14 keeps "
+                             "one disk cache per archive). Without --replay the run "
+                             "reads out/rays-modes or out/rays.jsonl.gz; it never "
+                             "traces")
     args = parser.parse_args(argv)
 
     stages = None

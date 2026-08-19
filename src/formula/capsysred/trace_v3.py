@@ -1,15 +1,15 @@
 """Trace scenes straight into a v3 archive, or top them up.
 
     python -m formula.capsysred.trace_v3 config.yaml --archive ARCHIVE_DIR
-        [--scene capillary|free|all] [--rays R1] [--jobs J] [--level 6]
+        [--jobs J] [--level 6]
 
-No archive yet: it is created (fingerprint from the yaml, ``rng:
-lattice-v1``) and every mode of the selected scenes traces rays 0..R1-1
-into its own section, one process per mode — no shards, no merge,
-resumable per section.  Archive present: the same command adds rays
-n0..R1-1 to every existing mode (top-up) or a whole new scene.  ``--rays``
-defaults to the yaml budget and needs a single scene; the yaml `n_rays`
-must equal the target (Stage 14's "recorded == configured").
+Scenes and budgets come from the yaml alone.  Per configured scene: absent
+from the archive -> trace rays 0..n_rays-1 (one section per mode — no
+shards, no merge, resumable per section); recorded below the yaml budget
+-> top up; at the budget -> no-op; above it -> error.  A missing archive
+is created (fingerprint from the yaml, ``rng: lattice-v1``).  On legacy
+sequential-v2 archives (converted Z-26) scenes the archive does not hold
+are skipped with a log line — only capillary can top up there.
 
 lattice-v1: mode m of a scene draws its origin, then a fixed number of
 draws per ray (capillary aim 3, free aim 2) from
@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
-import copy
 import os
 import random
 import sys
@@ -34,6 +33,7 @@ import time
 
 from ..formula import Number
 from . import rays, rays_v3
+from .common import tlog as _log
 from .native import make_tracer
 from .screen import ScreenGrid
 from .source import Source
@@ -45,10 +45,6 @@ SCENES = {"capillary": {"tag": rays.SceneSeed.CAPILLARY, "draws": 3},
           "free": {"tag": rays.SceneSeed.FREE, "draws": 2}}
 AIM_DRAWS = SCENES["capillary"]["draws"]
 LEGACY_SCHEME = "per-mode-substream-v1"
-
-
-def _log(msg: str) -> None:
-    print(time.strftime("%H:%M:%S ") + msg, flush=True)
 
 
 def tail_rng(seed: int, mode: int) -> random.Random:
@@ -77,6 +73,7 @@ _W = {}
 
 def _init_worker(config_path):
     from .simulation import Simulation
+    _W.clear()
     _W["sim"] = Simulation.from_yaml(config_path)
 
 
@@ -132,17 +129,6 @@ def _trace_section(archive, scene, mode, r0, r1, origin_str, lean, level, lattic
         raise
 
 
-def _geometry_core(geometry: dict) -> dict:
-    """Recording geometry without the per-scene budgets."""
-    core = copy.deepcopy(geometry)
-    for scene in ("capillary", "free"):
-        source = (core.get(scene) or {}).get("source")
-        if isinstance(source, dict):
-            source.pop("n_modes", None)
-            source.pop("n_rays", None)
-    return core
-
-
 def _new_archive(cfg, archive: str) -> dict:
     """Create an empty lattice-v1 archive for the yaml geometry."""
     if os.path.lexists(rays_v3.fingerprint_path(archive)):
@@ -157,8 +143,8 @@ def _new_archive(cfg, archive: str) -> dict:
     return meta
 
 
-def trace(config_path: str, archive: str, r1: int | None, jobs: int,
-          level: int, log=_log, scenes=("capillary",)) -> dict:
+def trace(config_path: str, archive: str, jobs: int,
+          level: int, log=_log, scenes="all") -> dict:
     from .simulation import Simulation
     sim = Simulation.from_yaml(config_path)
     cfg = sim.cfg
@@ -168,8 +154,6 @@ def trace(config_path: str, archive: str, r1: int | None, jobs: int,
     scenes = tuple(scenes)
     if not scenes:
         raise ValueError("no scene to trace")
-    if r1 is not None and len(scenes) != 1:
-        raise ValueError("--rays needs a single --scene")
     fresh = not os.path.lexists(rays_v3.index_path(archive))
     if fresh:
         meta = _new_archive(cfg, archive)
@@ -179,8 +163,8 @@ def trace(config_path: str, archive: str, r1: int | None, jobs: int,
         meta = rays_v3.read_fingerprint(archive)
         index = rays_v3.load_index(archive)
         old_entries = index.entries
-    if not rays.metadata_equal(_geometry_core(meta["geometry"]),
-                               _geometry_core(rays.geometry_metadata(cfg))):
+    if not rays.metadata_equal(rays.geometry_core(meta["geometry"]),
+                               rays.geometry_core(rays.geometry_metadata(cfg))):
         raise ValueError("config geometry differs from the archive")
     if int(meta["geometry"].get("seed")) != cfg.seed:
         raise ValueError("config seed differs from the archive seed")
@@ -195,11 +179,10 @@ def trace(config_path: str, archive: str, r1: int | None, jobs: int,
     plan = []
     for scene in scenes:
         src, _, _, _ = _scene_parts(sim, scene)
-        n_modes, budget_rays = src.budget()
-        target = budget_rays if r1 is None else r1
-        if src.budget() != (n_modes, target):
-            raise ValueError(f"config {scene} budget {src.budget()} must equal "
-                             f"[{n_modes}, {target}] (modes, target rays)")
+        n_modes, target = src.budget()
+        if not lattice and scene not in (index.budgets if index else ()):
+            log(f"{scene}: not in this legacy archive, skipped")
+            continue
         if index is not None and scene in index.budgets:
             n_modes_recorded, n0 = index.budgets[scene]
             if n_modes_recorded != n_modes:
@@ -219,8 +202,6 @@ def trace(config_path: str, archive: str, r1: int | None, jobs: int,
         else:
             n0 = 0
             origins = [None] * n_modes
-            if not lattice:
-                raise ValueError(f"{archive}: a new scene needs a lattice-v1 archive")
         if not lattice and scene != "capillary":
             raise ValueError("legacy sequential-v2 archives can only top up capillary")
         plan.append((scene, n_modes, n0, target, origins))
@@ -231,21 +212,37 @@ def trace(config_path: str, archive: str, r1: int | None, jobs: int,
     new_entries = []
     reused = 0
     total = sum(n_modes for _, n_modes, _, _, _ in plan)
-    with concurrent.futures.ProcessPoolExecutor(
-            max_workers=jobs, initializer=_init_worker,
-            initargs=(config_path,)) as pool:
-        futures = [pool.submit(_trace_section, archive, scene, mode, n0, target,
-                               origins[mode], lean, level, lattice)
-                   for scene, n_modes, n0, target, origins in plan
-                   for mode in range(n_modes)]
+    tasks = [(scene, mode, n0, target, origins[mode])
+             for scene, n_modes, n0, target, origins in plan
+             for mode in range(n_modes)]
+    if jobs == 1:
+        # In-process: no spawn cost, same code path as the pool workers.
+        _init_worker(config_path)
+        results = (_trace_section(archive, scene, mode, n0, target, origin,
+                                  lean, level, lattice)
+                   for scene, mode, n0, target, origin in tasks)
         done = 0
-        for fut in concurrent.futures.as_completed(futures):
-            entry, was_reused = fut.result()
+        for entry, was_reused in results:
             new_entries.append(rays_v3.Section(**entry))
             reused += was_reused
             done += 1
             if done % max(1, total // 20) == 0 or done == total:
                 log(f"  {done}/{total} modes ({(time.time() - started) / 60:.1f} min)")
+    else:
+        with concurrent.futures.ProcessPoolExecutor(
+                max_workers=jobs, initializer=_init_worker,
+                initargs=(config_path,)) as pool:
+            futures = [pool.submit(_trace_section, archive, scene, mode, n0,
+                                   target, origin, lean, level, lattice)
+                       for scene, mode, n0, target, origin in tasks]
+            done = 0
+            for fut in concurrent.futures.as_completed(futures):
+                entry, was_reused = fut.result()
+                new_entries.append(rays_v3.Section(**entry))
+                reused += was_reused
+                done += 1
+                if done % max(1, total // 20) == 0 or done == total:
+                    log(f"  {done}/{total} modes ({(time.time() - started) / 60:.1f} min)")
     index = (rays_v3.write_index(archive, old_entries + new_entries)
              if new_entries else rays_v3.load_index(archive))
     summary = {"scenes": [(scene, n0, target) for scene, _, n0, target, _ in plan],
@@ -259,18 +256,13 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="python -m formula.capsysred.trace_v3")
     ap.add_argument("config")
     ap.add_argument("--archive", required=True, help="v3 archive directory (created if absent)")
-    ap.add_argument("--scene", default="capillary", choices=[*SCENES, "all"],
-                    help="scene(s) to trace (default capillary)")
-    ap.add_argument("--rays", type=int, default=None,
-                    help="target rays per mode (default: the yaml budget; single scene only)")
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--level", type=int, default=rays_v3.DEFAULT_LEVEL)
     args = ap.parse_args(argv)
     if args.jobs < 1 or args.jobs > 8:
         ap.error("--jobs must be within 1..8")
-    scenes = "all" if args.scene == "all" else (args.scene,)
-    trace(os.path.abspath(args.config), os.path.abspath(args.archive), args.rays,
-          args.jobs, args.level, scenes=scenes)
+    trace(os.path.abspath(args.config), os.path.abspath(args.archive),
+          args.jobs, args.level)
     return 0
 
 

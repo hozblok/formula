@@ -10,7 +10,6 @@ root-finding engine and the Fresnel factor against xray.reflect_amplitude.
 import json
 import math
 import os
-import sys
 import time
 import zlib
 
@@ -21,6 +20,7 @@ from . import analytic, render, schematic
 from .altcoh import run_alt_stage
 from .beamlet import run_beamlet_stage
 from .coherence import CoherenceAccumulator
+from .common import log as _log
 from .jackknife import run_jack_stage
 from .sketch import run_sketch_stage
 from .stage14 import preflight_stage14_output, run_stage14
@@ -36,36 +36,17 @@ from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
 from . import rays_v3
 from .rays import (RNG_SCHEME, MultiRaysReader, RaysReader, SceneSeed,
+                   _validate_stream_metadata, geometry_core, geometry_metadata,
                    metadata_equal, metadata_path, read_metadata,
                    require_full_rows, scene_stream, sidecar_metadata)
 from .types import HitMethod, RayRecord
-from .units import (
+from .shared import format
+from .shared.format import mm, um
+from .shared.physics_constants import FRESNEL_PROBE_THETA
+from .shared.units import (
     m_to_angstrom, m_to_mm, m_to_um, rad_to_mrad, rad_to_urad)
 
-ALL_STAGES = (1, 2, 3, 6)
-KNOWN_STAGES = ALL_STAGES + (7, 8, 9, 10, 11, 12, 14)  # opt-in estimators/validation
-
-
-def _log(msg: str):
-    print(msg, file=sys.stderr, flush=True)
-
-
-def _mm(x) -> str:
-    return f"{m_to_mm(x):g} mm"
-
-
-def _um(x) -> str:
-    return f"{m_to_um(x):g} µm"
-
-
-def _report_name(out_dir: str, base: str) -> str:
-    """Timestamped report name, never colliding with an existing file."""
-    stamp = time.strftime("%Y-%m-%d-%H%M%S")
-    name, n = f"{base}-{stamp}.md", 2
-    while os.path.exists(os.path.join(out_dir, name)):
-        name = f"{base}-{stamp}-{n}.md"
-        n += 1
-    return name
+KNOWN_STAGES = (1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 14)
 
 
 class Simulation:
@@ -96,9 +77,9 @@ class Simulation:
 
     # ------------------------------------------------------------- helpers
 
-    def _save(self, out_dir, name, fig):
+    def _save(self, out_dir: str, name: str, figure: dict) -> None:
         path = os.path.join(out_dir, name)
-        render.save(path, fig)
+        render.save(path, figure)
         self.files.append(name)
         _log(f"  → {name}")
 
@@ -113,7 +94,7 @@ class Simulation:
                 f"({kind}, {fres})")
 
     def _fresnel_check(self) -> str:
-        theta = "1.0e-4"
+        theta = FRESNEL_PROBE_THETA
         p = self.cfg.precision
         s = solver("sin(x)", p).number({"x": theta})
         r_fast = self.fresnel(s)
@@ -123,7 +104,8 @@ class Simulation:
             {"s1": str(s), "E": str(self.cfg.energy_kev)})
         diff = float(abs(r_fast - r_ref))
         diff_sym = float(abs(r_sym - r_ref))
-        return (f"Fresnel r(θ=0.1 mrad): |r_CAPSYSred − r_xray| = {diff:.1e}; "
+        return (f"Fresnel r(θ={rad_to_mrad(theta):g} mrad): "
+                f"|r_CAPSYSred − r_xray| = {diff:.1e}; "
                 f"|r_symbolic_template − r_xray| = {diff_sym:.1e}")
 
     def _record_stage14_result(self, result: dict) -> None:
@@ -308,16 +290,16 @@ class Simulation:
             "title": "Simulation layout: source → capillary(ies) → screen",
             "n_bores": len(cap.bores),
             "source_label": ["source",
-                             f"{shape_ru}, {_um(src.size)}",
-                             f"z = {_mm(src.position[2])}"],
+                             f"{shape_ru}, {um(src.size)}",
+                             f"z = {mm(src.position[2])}"],
             "capillary_title": (f"capillaries: {len(cap.bores)}, bore ⌀{m_to_um(two_a):g} µm, "
-                                f"L = {_mm(float(cap.z1) - float(cap.z0))}{kind_note}"),
+                                f"L = {mm(float(cap.z1) - float(cap.z0))}{kind_note}"),
             "bore_label": f"2a = {m_to_um(two_a):g} µm",
             "screen_label": ["screen", f"{cap.screen.nx}×{cap.screen.ny} px"],
-            "window_label": f"window {_um(cap.screen.edge_x)}",
-            "d0_label": f"d₀ = {_mm(d0)} (capillary scene)",
-            "len_label": f"L = {_mm(float(cap.z1) - float(cap.z0))}",
-            "d2_label": f"d₂ = {_mm(d2)}",
+            "window_label": f"window {um(cap.screen.edge_x)}",
+            "d0_label": f"d₀ = {mm(d0)} (capillary scene)",
+            "len_label": f"L = {mm(float(cap.z1) - float(cap.z0))}",
+            "d2_label": f"d₂ = {mm(d2)}",
             "description": [
                 f"Energy E = {float(cfg.energy_kev):g} keV,  λ = {m_to_angstrom(self.lam):.4f} Å;  spectrum: {self._spectrum_note()}.",
                 f"Wall material: {cfg.material.name};  δ = {self.delta_f:.3e},  β = {self.beta_f:.3e},  θ_c = {rad_to_mrad(self.theta_c):.2f} mrad.",
@@ -330,13 +312,13 @@ class Simulation:
             info["description"].extend((
                 "Free-field pipeline: |μ| without optics (MC) + van "
                 "Cittert–Zernike analytics.",
-                f"Free-field scene: source {_um(cfg.free_source.size)} at "
-                f"z = {_mm(cfg.free_source.position[2])}, screen "
-                f"z = {_mm(cfg.free_screen.z)}.",
+                f"Free-field scene: source {um(cfg.free_source.size)} at "
+                f"z = {mm(cfg.free_source.position[2])}, screen "
+                f"z = {mm(cfg.free_screen.z)}.",
             ))
         if cap.screens:
             info["screen_label"].append(
-                "+" + ", ".join(f"z = {_mm(s.z)}" for s in cap.screens))
+                "+" + ", ".join(f"z = {mm(s.z)}" for s in cap.screens))
         self._save(out_dir, "01-scheme.svg", render.scheme_setup(info))
         # to-scale twin: real geometry, 10 traced rays, dimensioned axes
         G = schematic.build_geometry(cfg, "capillary")
@@ -373,7 +355,7 @@ class Simulation:
         else:
             note = ""
         sub = (f"{note}RMS(MC − analytics) = {rms:.3f};  source: {src.shape}, "
-               f"{_um(src.size)}, D = {_mm(dist)}")
+               f"{um(src.size)}, D = {mm(dist)}")
         series = [{"xs": xs_um, "ys": mu_row, "label": "MC |μ| ± σ_jack",
                    "lo": [max(m - e, 0.0) for m, e in zip(mu_row, err_row)],
                    "hi": [min(m + e, 1.0) for m, e in zip(mu_row, err_row)]},
@@ -746,8 +728,8 @@ class Simulation:
                                    screen_cfg=scr)
             self.results[f"jack:capillary-s{i}"] = res_i
             self._jack_outputs(out_dir, "10", f"capillary-s{i}", res_i,
-                               note=f"screen {i}: z = {_mm(scr.z)}, "
-                                    f"window {_um(scr.edge_x)} × {_um(scr.edge_y)}, "
+                               note=f"screen {i}: z = {mm(scr.z)}, "
+                                    f"window {um(scr.edge_x)} × {um(scr.edge_y)}, "
                                     f"{scr.nx}×{scr.ny} px")
         return res
 
@@ -997,8 +979,8 @@ class Simulation:
                 self.results[f"beamlet:capillary-s{i}"] = res_i
                 self._beamlet_outputs(
                     out_dir, f"capillary-s{i}", res_i, rows,
-                    note=f"- screen {i}: z = {_mm(scr.z)}, "
-                         f"window {_um(scr.edge_x)} × {_um(scr.edge_y)}, "
+                    note=f"- screen {i}: z = {mm(scr.z)}, "
+                         f"window {um(scr.edge_x)} × {um(scr.edge_y)}, "
                          f"{scr.nx}×{scr.ny} px")
         path = os.path.join(out_dir, "mu-beamlet.jsonl")
         with open(path, "w", encoding="utf-8") as fh:
@@ -1236,45 +1218,44 @@ class Simulation:
 
     def _local_recording(self, out_dir: str):
         """The recording a stage run reads when no --replay is given:
-        ``out_dir/rays-modes`` (v3) or ``out_dir/rays.jsonl.gz`` (v2), whose
-        metadata must equal this config's; None when neither exists.
-        Stages never trace: ``trace_v3`` is a separate command.
+        ``out_dir/rays-modes`` (v3) or ``out_dir/rays.jsonl.gz`` (v2).
+        Geometry (with seed), lean and rng scheme must equal this config's;
+        the budgets of the scenes a stage consumes are checked per scene by
+        its reader.  None when neither exists.  Stages never trace:
+        ``trace_v3`` is a separate command.
         """
         v3_dir = os.path.join(out_dir, "rays-modes")
         v2_path = os.path.join(out_dir, "rays.jsonl.gz")
-        expected = sidecar_metadata(self.cfg)
+        expected_core = geometry_core(geometry_metadata(self.cfg))
+
+        def check(path, geometry, lean, scheme):
+            if (not metadata_equal(geometry_core(geometry), expected_core)
+                    or lean != bool(self.cfg.lean_rays) or scheme != RNG_SCHEME):
+                raise ValueError(
+                    f"{path}: recording metadata does not match this config "
+                    "(geometry, seed, lean or rng scheme); remove the recording "
+                    "manually, use explicit --replay or another output directory"
+                )
+
         if os.path.isdir(v3_dir):
             try:
-                actual = rays_v3.metadata(v3_dir)
+                meta = rays_v3.metadata(v3_dir)
             except ValueError as exc:
                 raise ValueError(f"{v3_dir}: invalid v3 rays archive: {exc}") from exc
-            probe = {"format": 2, "geometry": actual["geometry"],
-                     "budgets": actual["budgets"], "rng": RNG_SCHEME}
-            if actual.get("lean"):
-                probe["lean"] = True
-            if (not metadata_equal(probe, expected)
-                    or (actual.get("rng") or {}).get("scheme") != RNG_SCHEME):
-                raise ValueError(
-                    f"{v3_dir}: recording metadata does not match this config "
-                    "(geometry, seed, budgets, lean or rng scheme); remove the "
-                    "recording manually, use explicit --replay or another output "
-                    "directory"
-                )
+            check(v3_dir, meta["geometry"], bool(meta.get("lean")),
+                  (meta.get("rng") or {}).get("scheme"))
             return v3_dir
         if os.path.lexists(v2_path):
             try:
                 actual = read_metadata(v2_path)
+                _validate_stream_metadata(actual, v2_path)
             except (OSError, UnicodeError, ValueError, TypeError) as exc:
                 raise ValueError(
                     f"{metadata_path(v2_path)}: rays metadata is missing or invalid; "
                     "remove the recording manually or choose another output directory"
                 ) from exc
-            if not metadata_equal(actual, expected):
-                raise ValueError(
-                    f"{v2_path}: recording metadata does not match this config; "
-                    "remove the recording manually, use explicit --replay or "
-                    "another output directory"
-                )
+            check(v2_path, actual["geometry"], bool(actual.get("lean")),
+                  actual.get("rng"))
             return v2_path
         return None
 
@@ -1452,7 +1433,7 @@ class Simulation:
             ]
             for extra_result in res14.get("extra_results", []):
                 self._record_stage14_result(extra_result)
-        report_name = _report_name(out_dir, "report")
+        report_name = format.report_name(out_dir, "report")
         self.report += ["", "## Files", ""]
         self.report += [f"- {name}" for name in self.files + [report_name]]
         report_path = os.path.join(out_dir, report_name)

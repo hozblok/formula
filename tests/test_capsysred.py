@@ -63,7 +63,7 @@ def _record(sim, out, scenes="all"):
     cfg = os.path.join(parent, os.path.basename(out) + ".trace-config.yaml")
     with open(cfg, "w", encoding="utf-8") as fh:
         yaml.safe_dump(sim.cfg.raw, fh, sort_keys=False)
-    return trace_v3(cfg, os.path.join(out, "rays-modes"), None, jobs=1, level=6,
+    return trace_v3(cfg, os.path.join(out, "rays-modes"), jobs=1, level=6,
                     log=lambda m: None, scenes=scenes)
 
 
@@ -363,8 +363,7 @@ def test_cli_trace_then_stages_reuse(tmp_path):
     cfg.write_text(yaml.safe_dump(TINY))
     out = tmp_path / "out"
     archive = out / "rays-modes"
-    assert trace_main([str(cfg), "--archive", str(archive), "--scene", "all",
-                       "--jobs", "1"]) == 0
+    assert trace_main([str(cfg), "--archive", str(archive), "--jobs", "1"]) == 0
     assert (archive / "rays-index.jsonl").exists()
     with pytest.raises(ValueError, match="no rays recording"):
         main([str(cfg), "-o", str(tmp_path / "empty"), "--stages", "6"])
@@ -376,7 +375,7 @@ def test_cli_trace_then_stages_reuse(tmp_path):
     changed = dict(TINY, capillary=dict(TINY["capillary"], z1=0.06))
     cfg.write_text(yaml.safe_dump(changed))
     with pytest.raises(ValueError, match="differs from the archive"):
-        trace_main([str(cfg), "--archive", str(archive), "--scene", "all", "--jobs", "1"])
+        trace_main([str(cfg), "--archive", str(archive), "--jobs", "1"])
     with pytest.raises(ValueError, match="does not match this config"):
         main([str(cfg), "-o", str(out), "--stages", "6"])
     assert (archive / "rays-index.jsonl").read_bytes() == original
@@ -1143,6 +1142,21 @@ def test_rays_file_reused_across_runs(tmp_path):
     assert sim.results["beamlet:free"]["rays_from"] == "file"
     from formula.capsysred import rays_v3
     assert set(rays_v3.load_index(str(tmp_path / "rays-modes")).budgets) == {"capillary", "free"}
+
+
+def test_partial_recording_serves_only_its_scenes(tmp_path):
+    # capillary-only recording of a yaml that also configures free: stages
+    # needing capillary run; free and budget mismatches fail per scene
+    _record(TINY, tmp_path, scenes=("capillary",))
+    sim = Simulation.from_dict(TINY)
+    sim.run(str(tmp_path), stages=[1, 6])
+    assert sim.results["capillary"]["rays_from"] == "file"
+    with pytest.raises(ValueError, match="scene 'free' is not in"):
+        Simulation.from_dict(TINY).run(str(tmp_path), stages=[2])
+    more = dict(TINY, capillary=dict(TINY["capillary"], source=dict(
+        TINY["capillary"]["source"], n_rays=TINY["capillary"]["source"]["n_rays"] * 2)))
+    with pytest.raises(ValueError, match="match n_modes/n_rays"):
+        Simulation.from_dict(more).run(str(tmp_path), stages=[6])
 
 
 def test_trace_command_records_all_scenes(tmp_path):
@@ -2989,7 +3003,7 @@ def test_multi_rays_reader_propagates_lean_from_every_part(tmp_path):
 
 
 def _hex_grazing_case():
-    from formula.capsysred.units import m_to_um
+    from formula.capsysred.shared.units import m_to_um
     from formula.intersect import RaySurface
 
     p = 32

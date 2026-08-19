@@ -63,7 +63,7 @@ def _v2_from_v3(raw, v2_dir):
     cfg = os.path.join(str(v2_dir), "trace-config.yaml")
     os.makedirs(v2_dir, exist_ok=True)
     _write_yaml(cfg, raw)
-    trace_v3(cfg, scratch, None, jobs=1, level=6, log=lambda m: None, scenes="all")
+    trace_v3(cfg, scratch, jobs=1, level=6, log=lambda m: None, scenes="all")
     index = rays_v3.load_index(scratch)
     path = os.path.join(str(v2_dir), "rays.jsonl.gz")
     with gzip.open(path, "wb") as fh:
@@ -128,7 +128,7 @@ def test_lattice_convert_and_origins_independent_of_rays(tmp_path):
     assert rays_v3.read_fingerprint(archive)["rng"]["scheme"] == "lattice-v1"
     # trace_v3 with two processes writes the same rows as the sequential v2 trace
     direct = str(tmp_path / "direct")
-    trace_v3(_write_yaml(tmp_path / "cfg.yaml", raw), direct, None, jobs=2,
+    trace_v3(_write_yaml(tmp_path / "cfg.yaml", raw), direct, jobs=2,
              level=6, log=lambda m: None)
     idx_a, idx_b = rays_v3.load_index(archive), rays_v3.load_index(direct)
     assert (list(rays_v3.scene_lines(archive, idx_a, "capillary"))
@@ -201,7 +201,7 @@ def test_topup_lattice_equals_single_piece(tmp_path):
     convert(str(head), archive, 1, 6, None, True, log=lambda m: None)
     raw100 = json.loads(json.dumps(raw))
     raw100["capillary"]["source"]["n_rays"] = 100
-    topup(_write_yaml(tmp_path / "cfg-100.yaml", raw100), archive, 100,
+    topup(_write_yaml(tmp_path / "cfg-100.yaml", raw100), archive,
           jobs=1, level=6, log=lambda m: None)
     full = tmp_path / "full"
     _v2_from_v3(raw100, full)
@@ -227,9 +227,9 @@ def test_topup_chunk_invariance_and_merge_oracle(tmp_path):
 
     raw120, cfg120 = cfg_for(120)
     _, cfg90 = cfg_for(90)
-    topup(cfg120, one, 120, jobs=1, level=6, log=lambda m: None)
-    topup(cfg90, two, 90, jobs=1, level=6, log=lambda m: None)
-    topup(cfg120, two, 120, jobs=1, level=6, log=lambda m: None)
+    topup(cfg120, one, jobs=1, level=6, log=lambda m: None)
+    topup(cfg90, two, jobs=1, level=6, log=lambda m: None)
+    topup(cfg120, two, jobs=1, level=6, log=lambda m: None)
     ia, ib = rays_v3.load_index(one), rays_v3.load_index(two)
     assert ia.budgets == ib.budgets == {"capillary": [6, 120]}
     for m in range(6):
@@ -262,8 +262,8 @@ def test_topup_chunk_invariance_and_merge_oracle(tmp_path):
     assert res_two["stats"]["emitted"] == 720
     with pytest.raises(ValueError, match="replay budgets differ"):
         _stage14(raw, two, tmp_path / "s14-wrong-budget")
-    with pytest.raises(ValueError, match="must equal"):
-        topup(cfg90, two, 150, jobs=1, level=6, log=lambda m: None)
+    with pytest.raises(ValueError, match="below the recorded"):
+        topup(cfg90, two, jobs=1, level=6, log=lambda m: None)
 
 
 def test_verify_and_stage14_detect_corruption(tmp_path):
@@ -322,10 +322,10 @@ def test_trace_v3_fresh_equals_v2_and_two_steps(tmp_path):
     cfg100 = _write_yaml(tmp_path / "cfg-100.yaml", raw100)
 
     one = str(tmp_path / "one")
-    trace_v3(cfg100, one, None, jobs=2, level=6, log=lambda m: None)
+    trace_v3(cfg100, one, jobs=2, level=6, log=lambda m: None)
     two = str(tmp_path / "two")
-    trace_v3(cfg40, two, None, jobs=1, level=6, log=lambda m: None)
-    trace_v3(cfg100, two, 100, jobs=2, level=6, log=lambda m: None)
+    trace_v3(cfg40, two, jobs=1, level=6, log=lambda m: None)
+    trace_v3(cfg100, two, jobs=2, level=6, log=lambda m: None)
     v2 = tmp_path / "v2"
     _v2_from_v3(raw100, v2)
 
@@ -342,10 +342,10 @@ def test_trace_v3_fresh_equals_v2_and_two_steps(tmp_path):
     result = _stage14(raw100, one, tmp_path / "s14")
     assert result["stats"]["emitted"] == 500 and result["cache_hits"] == 0
     before = open(rays_v3.index_path(one), "rb").read()
-    trace_v3(cfg100, one, 100, jobs=1, level=6, log=lambda m: None)   # no-op
+    trace_v3(cfg100, one, jobs=1, level=6, log=lambda m: None)   # no-op
     assert open(rays_v3.index_path(one), "rb").read() == before
     with pytest.raises(ValueError, match="below the recorded"):
-        trace_v3(cfg40, one, 40, jobs=1, level=6, log=lambda m: None)
+        trace_v3(cfg40, one, jobs=1, level=6, log=lambda m: None)
 
 
 def test_trace_v3_all_scenes_equals_v2_trace(tmp_path):
@@ -356,7 +356,7 @@ def test_trace_v3_all_scenes_equals_v2_trace(tmp_path):
     raw["screen"] = {"nx": 7, "ny": 1, "edge_x": 1.4e-5, "edge_y": 2.0e-6}
     cfg = _write_yaml(tmp_path / "cfg.yaml", raw)
     archive = str(tmp_path / "v3")
-    summary = trace_v3(cfg, archive, None, jobs=2, level=6, log=lambda m: None, scenes="all")
+    summary = trace_v3(cfg, archive, jobs=2, level=6, log=lambda m: None, scenes="all")
     assert summary["budgets"] == {"capillary": [4, 30], "free": [3, 25]}
     v2 = tmp_path / "v2"
     _v2_from_v3(raw, v2)
@@ -366,16 +366,18 @@ def test_trace_v3_all_scenes_equals_v2_trace(tmp_path):
                     if l.startswith(('{"stage": "%s"' % scene).encode())]
         got = [l.rstrip(b"\n") for l in rays_v3.scene_lines(archive, index, scene)]
         assert got == expected
-    # the free scene alone can be added to a capillary-only archive later, and replays
+    # a capillary-only archive completes itself on the next default run
     only_cap = str(tmp_path / "cap")
-    trace_v3(cfg, only_cap, None, jobs=1, level=6, log=lambda m: None)
-    trace_v3(cfg, only_cap, None, jobs=1, level=6, log=lambda m: None, scenes=("free",))
+    trace_v3(cfg, only_cap, jobs=1, level=6, log=lambda m: None, scenes=("capillary",))
+    assert rays_v3.load_index(only_cap).budgets == {"capillary": [4, 30]}
+    trace_v3(cfg, only_cap, jobs=1, level=6, log=lambda m: None)
     assert rays_v3.load_index(only_cap).budgets == {"capillary": [4, 30], "free": [3, 25]}
     a = Simulation.from_dict(raw)
     a.replay(only_cap, str(tmp_path / "s2-v3"), stages=[2])
     b = Simulation.from_dict(raw)
     b.replay(str(v2 / "rays.jsonl.gz"), str(tmp_path / "s2-v2"), stages=[2])
     assert a.results["free"]["stats"] == b.results["free"]["stats"]
-    with pytest.raises(ValueError, match="single --scene"):
-        trace_v3(cfg, only_cap, 50, jobs=1, level=6, log=lambda m: None, scenes="all")
+    before = open(rays_v3.index_path(only_cap), "rb").read()
+    trace_v3(cfg, only_cap, jobs=1, level=6, log=lambda m: None)   # both scenes: no-op
+    assert open(rays_v3.index_path(only_cap), "rb").read() == before
 

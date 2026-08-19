@@ -37,7 +37,7 @@ from .screen import ScatterRaster, ScreenGrid
 from .stage14_flags import (FlagThresholds, PIXEL_FLAGS, PixelCounters,
                             PixelStatistics, serialize_pixel, validate_counters,
                             validate_ref, w_signal_status)
-from .units import m_to_um
+from .shared.units import m_to_um
 
 
 STAGE_ID = 14
