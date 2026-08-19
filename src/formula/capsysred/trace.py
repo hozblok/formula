@@ -9,7 +9,7 @@ later — Fresnel amplitudes are computed from the recorded sines.
 from collections import namedtuple
 
 from ..formula import Number
-from .nums import vadd, vdot, vscale, vsub
+from .shared.nums import vadd, vdot, vscale, vsub
 from .types import Vec3
 
 # fate: "screen" | "absorbed" | "lost". reflections: [(point, sin_grazing), ...]

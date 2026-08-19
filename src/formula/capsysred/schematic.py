@@ -14,7 +14,7 @@ import math
 import random
 from xml.sax.saxutils import escape
 
-from .nums import lift, vunit
+from .shared.nums import lift, vunit
 from .source import Source
 from .surfaces import CapillaryBundle, ImplicitWall, entrance_disk
 from .trace import trace_ray

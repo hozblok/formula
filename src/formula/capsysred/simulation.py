@@ -26,7 +26,7 @@ from .sketch import run_sketch_stage
 from .stage14 import preflight_stage14_output, run_stage14
 from .validate import METHOD_LABELS, run_validate_stage
 from .config import Config, load
-from .nums import lift, solver, vunit
+from .shared.nums import lift, solver, vunit
 from .progress import Progress
 from .screen import ScreenGrid
 from .source import aim_disk_direction, slope_direction

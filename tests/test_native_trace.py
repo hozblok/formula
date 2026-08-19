@@ -17,7 +17,7 @@ import pytest
 from formula import _formula
 from formula.capsysred.native import (compile_optic, make_tracer,
                                       trace_ray_native)
-from formula.capsysred.nums import lift, vadd, vdot, vscale, vsub, vunit
+from formula.capsysred.shared.nums import lift, vadd, vdot, vscale, vsub, vunit
 from formula.capsysred.surfaces import CapillaryBundle, Mirror
 from formula.capsysred.trace import trace_ray
 from formula.capsysred.walls.wall_revolution import RevolutionWall

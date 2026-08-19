@@ -9,7 +9,7 @@ import pytest
 
 from formula.capsysred import Simulation
 from formula.capsysred.analytic import vcz_mu
-from formula.capsysred.nums import exp_i, lift, vunit
+from formula.capsysred.shared.nums import exp_i, lift, vunit
 from formula.capsysred.spectrum import spectral_lines, wavevector
 from formula.capsysred.surfaces import CapillaryBundle, Mirror, engine_hit_t
 from formula.capsysred.walls.wall_cylinder import CylinderWall
@@ -130,7 +130,7 @@ def test_material_enum_selects_wall_glass():
 def test_fresnel_matches_engine_reflect_amplitude():
     sim = Simulation.from_dict(TINY)
     p = sim.cfg.precision
-    from formula.capsysred.nums import solver
+    from formula.capsysred.shared.nums import solver
     s = solver("sin(x)", p).number({"x": "2.5e-4"})
     r_fast = sim.fresnel(s)
     r_ref = xray.reflect_amplitude("2.5e-4", str(sim.cfg.energy_kev),
@@ -2777,7 +2777,7 @@ def test_funnel_near_zero_lead_finds_grazing_chord():
     # 1e-5*r0 (60 pm, grazing sine ~4.5 mrad — physical range) into the
     # wall at z = 0.01. The exact-sign scan of the same polynomial gives
     # the crossing pair [2.7398251603e-4, 3.2601316396e-4].
-    from formula.capsysred.nums import lift, vadd, vdot, vscale, vsub, vunit
+    from formula.capsysred.shared.nums import lift, vadd, vdot, vscale, vsub, vunit
     from formula.capsysred.walls.wall_funnel import FunnelWall
 
     def N(v, p=96):
@@ -2827,7 +2827,7 @@ def test_funnel_pinch_axial_ray_does_not_tunnel():
                    "f < 0 but r^2 > 0 — the mirror ghost cone counts as "
                    "bore interior")
 def test_funnel_inside_stays_closed_past_pinch():
-    from formula.capsysred.nums import lift
+    from formula.capsysred.shared.nums import lift
     from formula.capsysred.walls.wall_funnel import FunnelWall
     n32 = lambda v: lift(str(v), 32)
     wall = FunnelWall((n32(0), n32(0)), n32("6e-6"), (n32(0), n32(0)),
@@ -2844,7 +2844,7 @@ def test_torus_graze_pair_survives_seed_floor():
     # bent bore (R = 0.5, a = 6e-6): the exact quartic has the crossing
     # pair at t ~ 2.4495e-3 (dense exact-sign scan); at delta = 1e-20*a
     # hit() still returns it, one step below it tunnels.
-    from formula.capsysred.nums import lift, sqrt as nsqrt
+    from formula.capsysred.shared.nums import lift, sqrt as nsqrt
     from formula.capsysred.walls.wall_torus import TorusWall
     N = lambda v: lift(str(v), 32)
     a, R = N("6e-6"), N("0.5")
@@ -2866,7 +2866,7 @@ def test_torus_graze_pair_survives_seed_floor():
 def test_native_quartic_first_matches_python_at_eps_t_edge():
     from formula import _formula
     from formula.capsysred.walls import wall_torus as wt
-    from formula.capsysred.nums import lift
+    from formula.capsysred.shared.nums import lift
     if not hasattr(_formula, "trace_dbg_quartic_first"):
         pytest.skip("debug binding missing from the built .so")
     P = 32

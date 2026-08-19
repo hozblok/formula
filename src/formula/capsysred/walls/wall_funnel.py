@@ -10,7 +10,7 @@ Durand-Kerner seeds -> Newton polish at full precision, exact-sign bisection
 as the fallback."""
 
 from ...formula import Number
-from ..nums import lift, vadd, vscale, vunit
+from ..shared.nums import lift, vadd, vscale, vunit
 from ..types import _EPS_T, _INSIDE_TOL, _TCAP_TOL
 from ..shared.units import m_to_um
 from .wall_torus import _quartic_first

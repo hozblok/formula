@@ -11,7 +11,7 @@ import time
 
 from ..intersect import RaySurface
 from .native import compile_optic, trace_ray_native
-from .nums import lift, vadd, vscale
+from .shared.nums import lift, vadd, vscale
 from .progress import Progress
 from .rays import SceneSeed, stream_rng
 from .source import Source

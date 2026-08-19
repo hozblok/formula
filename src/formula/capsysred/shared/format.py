@@ -1,9 +1,16 @@
-"""Human-readable length labels and report file names."""
+"""Human-readable length/duration labels and report file names."""
 
 import os
 import time
 
 from .units import m_to_mm, m_to_um
+
+
+def hms(seconds: float) -> str:
+    s = int(seconds)
+    if s >= 3600:
+        return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}"
+    return f"{s // 60:02d}:{s % 60:02d}"
 
 
 def mm(x) -> str:

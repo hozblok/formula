@@ -8,7 +8,7 @@ Templates are cached Solvers keyed by bounce count (variables s1..s_nb, E, L);
 
 from ..physical_constants import HC_KEV_ANGSTROM, R_E
 from ..formula import Number
-from .nums import solver
+from .shared.nums import solver
 
 
 def fresnel_expr(s: str = "s", dd: str = "dd", bb: str = "bb") -> str:

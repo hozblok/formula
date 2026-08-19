@@ -14,7 +14,7 @@ every run cross-checks the first hit via expr_um (`engine_hit_t`).
 import math
 
 from ..formula import Number
-from .nums import lift, vadd, vscale
+from .shared.nums import lift, vadd, vscale
 from .types import (_EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _TCAP_TOL,
                     HitMethod)
 from .shared.units import m_to_um

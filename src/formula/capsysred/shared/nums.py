@@ -4,8 +4,8 @@ Precision travels inside Numbers (never as a parameter downstream): `lift` is th
 only entry that takes one, and callers derive it from a Number they already hold.
 """
 
-from ..backend import mp_class, round_up_precision
-from ..formula import Number, Solver
+from ...backend import mp_class, round_up_precision
+from ...formula import Number, Solver
 
 _SOLVERS: dict = {}
 

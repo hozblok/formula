@@ -8,7 +8,7 @@ the absolute phase k*L stays exact downstream.
 import math
 import random
 
-from .nums import lift, vunit
+from .shared.nums import lift, vunit
 
 
 class Source:

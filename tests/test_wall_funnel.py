@@ -1,7 +1,7 @@
 """FunnelWall closed form: judge cross-check and the cylinder degeneracy."""
 
 from formula.formula import Number
-from formula.capsysred.nums import vunit
+from formula.capsysred.shared.nums import vunit
 from formula.capsysred.surfaces import engine_hit_t
 from formula.capsysred.walls.wall_cylinder import CylinderWall
 from formula.capsysred.walls.wall_funnel import FunnelWall

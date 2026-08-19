@@ -3,12 +3,7 @@
 import sys
 import time
 
-
-def _hms(seconds: float) -> str:
-    s = int(seconds)
-    if s >= 3600:
-        return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}"
-    return f"{s // 60:02d}:{s % 60:02d}"
+from .shared.format import hms as _hms
 
 
 class Progress:

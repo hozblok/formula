@@ -9,7 +9,7 @@ polish at full precision, exact-sign bisection as the fallback."""
 import math
 
 from ...formula import Number
-from ..nums import lift, sqrt, vadd, vdot, vnorm, vscale, vsub, vunit
+from ..shared.nums import lift, sqrt, vadd, vdot, vnorm, vscale, vsub, vunit
 from ..types import _EPS_T, _INSIDE_TOL, _TCAP_TOL
 from ..shared.units import m_to_um
 
