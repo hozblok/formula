@@ -12,16 +12,13 @@ from .. import _formula
 from ..formula import Number
 from .surfaces import CapillaryBundle, Mirror
 from .trace import TraceResult, trace_ray
+from .shared.nums import raw as _raw
 from .shared.types import _INSIDE_TOL
 from .walls.wall_cylinder import CylinderWall
 from .walls.wall_funnel import FunnelWall
 from .walls.wall_polygon import PolygonWall
 from .walls.wall_revolution import RevolutionWall
 from .walls.wall_torus import TorusWall
-
-
-def _raw(number: Number):
-    return number._value
 
 
 def _wall_spec(wall):
@@ -116,7 +113,9 @@ def make_tracer(optic):
     return tracer
 
 
-def make_beamlet_grid(nx, ny, x0, y0, ex, ey, kms, zrs, zrs_t, ns):
+def make_beamlet_grid(nx: int, ny: int, x0: float, y0: float, ex: float,
+                      ey: float, kms: list[float], zrs: list[float],
+                      zrs_t: list[float], ns: float) -> "_formula.BeamletGrid | None":
     """Native stage-11 deposit grids (propagate + window loop per ray); None
     when the .so predates BeamletGrid — the Python path is the reference and
     the fallback."""

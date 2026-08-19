@@ -355,6 +355,13 @@ def draw_optic(G, v, box):
         e.append(POLY(bot, WALL, 1.6))
         x_lo, x_hi = wall_span(b, G["z0"], G["z0"])
         e.append(L(*v.pt(G["z0"], x_hi), *v.pt(G["z0"], x_lo), WALL, 1.2))
+    spans = [wall_span(b, G["z0"], G["z0"]) for b in G["bores"]
+             if abs(float(b["center"][1])) < 1e-9]
+    if spans:
+        # absorbing front face: rays that miss the bore aperture end on it
+        px0 = v.px(G["z0"])
+        e.append(L(px0, box[1], px0, v.py(max(hi for _, hi in spans)), WALL, 1.2))
+        e.append(L(px0, v.py(min(lo for lo, _ in spans)), px0, box[3], WALL, 1.2))
     for b in G["bores"]:                           # bend geometry, once
         if b.get("kind") == "torus" and abs(float(b["center"][1])) < 1e-9:
             R = float(b["bend"]["radius"])
@@ -404,12 +411,16 @@ def draw_screen(G, v, box):
         ry = v.py(scr["ref"])
         e.append(CIRC(px, ry, 3.5, "none", "#d62728", 1.4))
         e.append(T(px - 8, ry + 4, "P_ref", 10, "end", "#d62728"))
+    used = [px]
     for i, s in enumerate(G["scr_extra"], 1):
         pxs = v.px(s["z"])
         lo, hi = v.py(s["cx"] - s["hx"]), v.py(s["cx"] + s["hx"])
         e.append(L(pxs, max(box[1], hi), pxs, min(box[3], lo), BLUE, 2.0, "7,4"))
-        e.append(T(pxs - 4, box[1] - 6, f"screen {i}", 11.5, "end", BLUE))
-        e.append(T(pxs - 4, box[1] + 9, "z = " + eng(s["z"]), 10, "end", BLUE))
+        # screens sharing one z: stack the labels instead of overprinting
+        drop = 26 * sum(1 for u in used if abs(pxs - u) < 60)
+        used.append(pxs)
+        e.append(T(pxs - 4, box[1] - 6 + drop, f"screen {i}", 11.5, "end", BLUE))
+        e.append(T(pxs - 4, box[1] + 9 + drop, "z = " + eng(s["z"]), 10, "end", BLUE))
     return e
 
 

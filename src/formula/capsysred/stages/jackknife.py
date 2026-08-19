@@ -25,6 +25,7 @@ from .altcoh import FloatLineAmplitudes
 from ..shared.progress import Progress
 from ..rays import rescreen, scene_stream
 from ..screen import ScatterRaster, ScreenGrid
+from ..shared.utils import zeros
 
 
 class JackknifeCoherence:
@@ -94,9 +95,9 @@ class JackknifeCoherence:
             for pixel, v in ic_row.items():
                 Ic[pixel] = Ic.get(pixel, 0.0) + v
         ic_ref = sum(self.ic_refs)
-        zeros = lambda: [[0.0] * nx for _ in range(ny)]
-        mu, err, intensity, density = zeros(), zeros(), zeros(), zeros()
-        solid, dubious = zeros(), zeros()
+        mu, err, intensity, density = (zeros(nx, ny), zeros(nx, ny),
+                                        zeros(nx, ny), zeros(nx, ny))
+        solid, dubious = zeros(nx, ny), zeros(nx, ny)
         for pixel in self.pairs:
             iy, ix = divmod(pixel, nx)
             solid[iy][ix] = 1.0

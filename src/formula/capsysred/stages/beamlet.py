@@ -27,6 +27,7 @@ from ..native import make_beamlet_grid
 from ..shared.progress import Progress
 from ..rays import require_full_rows, scene_stream
 from ..screen import ScreenGrid
+from ..shared.utils import zeros
 
 
 class BeamletField:
@@ -211,9 +212,8 @@ class BeamletField:
         n_modes = len(self.Ws)
         W, I = self.W, self.I
         i_ref = I.get(self.ref, 0.0)
-        zeros = lambda: [[0.0] * nx for _ in range(ny)]
-        mu, err, dubious = zeros(), zeros(), zeros()
-        intensity, density = zeros(), zeros()
+        mu, err, dubious = zeros(nx, ny), zeros(nx, ny), zeros(nx, ny)
+        intensity, density = zeros(nx, ny), zeros(nx, ny)
         for pixel, value in I.items():
             iy, ix = divmod(pixel, nx)
             intensity[iy][ix] = value

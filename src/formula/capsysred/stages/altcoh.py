@@ -23,6 +23,7 @@ import time
 
 from ...formula import Number
 from ..fresnel import FresnelAmplitude
+from ..shared.physics_constants import FRESNEL_PROBE_THETA
 from ..shared.progress import Progress
 from ..rays import scene_stream
 from ..screen import ScreenGrid
@@ -229,7 +230,7 @@ def run_alt_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     progress.finish(f"on screen {stats['screen']:,}")
     mid = len(sim.lines) // 2
     r_num = FresnelAmplitude(cfg.material, sim.lines[mid].e_kev)
-    s_probe = math.sin(1.0e-4)
+    s_probe = math.sin(float(FRESNEL_PROBE_THETA))
     check = abs(amps_of([s_probe])[mid]
                 - complex(r_num(Number(repr(s_probe), cfg.precision))))
     return {"maps": alt.finalize(), "alt": alt, "screen": screen,

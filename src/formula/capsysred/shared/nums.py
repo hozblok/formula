@@ -16,6 +16,11 @@ def lift(value, precision: int) -> Number:
     return Number(mp_class(round_up_precision(precision))(s))
 
 
+def raw(number: Number):
+    """Number -> its backend mp value (the C++ boundary takes these)."""
+    return number._value
+
+
 def solver(expression: str, precision: int) -> Solver:
     """Cached Solver for a fixed expression at a precision."""
     key = (expression, round_up_precision(precision))

@@ -41,6 +41,7 @@ from .rays import (RNG_SCHEME, MultiRaysReader, RaysReader, SceneSeed,
                    metadata_equal, metadata_path, read_metadata,
                    require_full_rows, scene_stream)
 from .shared.types import HitMethod
+from .shared.utils import flat as _flat
 from .shared import format
 from .shared.format import mm, um
 from .shared.physics_constants import FRESNEL_PROBE_THETA
@@ -546,13 +547,12 @@ class Simulation:
                                    optic, aim_factory, off)
             self.results[f"sketch:{stage}"] = res
             maps, screen, st = res["maps"], res["screen"], res["stats"]
-            flat = lambda grid: [v for row in grid for v in row]
             rms_engine = None
             num = self.results.get(stage)   # stage 2/6 Number maps, same rays
             if num is not None:
-                mask = flat(maps["solid"])   # knife pixels: junk either way
-                pairs = [(a, b) for a, b, s in zip(flat(maps["mu_pair"]),
-                                                   flat(num["maps"]["mu"]), mask) if s]
+                mask = _flat(maps["solid"])   # knife pixels: junk either way
+                pairs = [(a, b) for a, b, s in zip(_flat(maps["mu_pair"]),
+                                                   _flat(num["maps"]["mu"]), mask) if s]
                 rms_engine = analytic.rms_diff([a for a, _ in pairs],
                                                [b for _, b in pairs])
             ref_xy = screen.pixel_xy(maps["ref_pixel"])
@@ -740,17 +740,16 @@ class Simulation:
         note = extra-screen geometry line for the report."""
         maps, screen, st = res["maps"], res["screen"], res["stats"]
         nx, ny = screen.nx, screen.ny
-        flat = lambda grid: [v for row in grid for v in row]
-        n_lit = sum(1 for d in flat(maps["density"]) if d > 0)
-        solid = [i for i, v in enumerate(flat(maps["solid"])) if v > 0]
-        n_dub = sum(1 for v in flat(maps["dubious"]) if v > 0)
-        flat_err = flat(maps["mu_err"])
+        n_lit = sum(1 for d in _flat(maps["density"]) if d > 0)
+        solid = [i for i, v in enumerate(_flat(maps["solid"])) if v > 0]
+        n_dub = sum(1 for v in _flat(maps["dubious"]) if v > 0)
+        flat_err = _flat(maps["mu_err"])
         errs = [flat_err[i] for i in solid]
         med_err = sorted(errs)[len(errs) // 2] if errs else 0.0
         limit = 1.0 / math.sqrt(res["n_modes"])
         rms6 = None
         if vs is not None and solid:
-            a, b = flat(maps["mu"]), flat(vs["maps"]["mu"])
+            a, b = _flat(maps["mu"]), _flat(vs["maps"]["mu"])
             rms6 = analytic.rms_diff([a[i] for i in solid], [b[i] for i in solid])
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
         sub = (f"{res['n_modes']} modes × {res['n_rays']} rays; "
@@ -1004,7 +1003,6 @@ class Simulation:
         mu-beamlet.jsonl rows; vs = same-rays pairwise result for Δμ."""
         maps, screen, st = res["maps"], res["screen"], res["stats"]
         nx, ny = screen.nx, screen.ny
-        flat = lambda grid: [v for row in grid for v in row]
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
         sub = self._beamlet_sub(res)
         xs_um = [m_to_um(x) for x in screen.xs()]
@@ -1028,10 +1026,10 @@ class Simulation:
         if maps["gamma_bad"]:
             report.append(f"- deposits skipped (beam blew up, Im G ⊁ 0): "
                           f"{maps['gamma_bad']:,}")
-        lit_px = [i for i, v in enumerate(flat(maps["intensity"])) if v > 0.0]
-        flat_err = flat(maps["mu_err"])
+        lit_px = [i for i, v in enumerate(_flat(maps["intensity"])) if v > 0.0]
+        flat_err = _flat(maps["mu_err"])
         errs = sorted(flat_err[i] for i in lit_px)
-        n_dub = int(sum(flat(maps["dubious"])))
+        n_dub = int(sum(_flat(maps["dubious"])))
         report.append(
             f"- σ_jack (delete-one-mode) on {len(lit_px)} lit px: median "
             f"{errs[len(errs) // 2] if errs else 0.0:.4f}, max "
@@ -1064,10 +1062,10 @@ class Simulation:
                       "label": "beamlet intensity"}],
                     "beamlet intensity", "x, µm", "I, arb. units", sub)
                 self._save(out_dir, f"11a-{tag}-beamlet-intensity.svg", fig)
-            lit = ([i for i, d in enumerate(flat(vs["maps"]["density"]))
+            lit = ([i for i, d in enumerate(_flat(vs["maps"]["density"]))
                     if d > 0] if vs is not None else [])
             if lit:
-                a, b = flat(maps["mu"]), flat(vs["maps"]["mu"])
+                a, b = _flat(maps["mu"]), _flat(vs["maps"]["mu"])
                 rms6 = analytic.rms_diff([a[i] for i in lit],
                                          [b[i] for i in lit])
                 sub6 = (f"RMS on lit px {rms6:.3f}; same rays, different "

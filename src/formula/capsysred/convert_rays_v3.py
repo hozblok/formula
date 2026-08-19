@@ -31,6 +31,7 @@ import time
 import yaml
 
 from . import rays, rays_v3
+from .rays_v3 import _mode_of, _ray_of
 from .shared.common import tlog as _log
 from .native import make_tracer
 from .screen import ScreenGrid
@@ -186,16 +187,6 @@ def _write_section(out_dir, scene, mode, n, origin, extra, payload, rows, level)
     except BaseException:
         writer.abort()
         raise
-
-
-def _mode_of(line: bytes) -> int:
-    i = line.find(b'"mode": ') + 8
-    return int(line[i:line.index(b",", i)])
-
-
-def _ray_of(line: bytes) -> int:
-    i = line.find(b'"ray": ') + 7
-    return int(line[i:line.index(b",", i)])
 
 
 def convert(run_dir: str, out_dir: str, jobs: int, level: int, shards: int | None,
