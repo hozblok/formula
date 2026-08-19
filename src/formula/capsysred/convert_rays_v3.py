@@ -32,12 +32,12 @@ import time
 import yaml
 
 from . import rays, rays_v3
-from .common import tlog as _log
+from .shared.common import tlog as _log
 from .native import make_tracer
 from .screen import ScreenGrid
 from .source import Source
 from .surfaces import CapillaryBundle
-from .types import ray_record
+from .shared.types import ray_record
 
 CAPILLARY_AIM_DRAWS = 3     # bore choice + disk point; asserted by tests
 XY_TOL = 1e-9               # m, ray-0 re-trace against the recorded row

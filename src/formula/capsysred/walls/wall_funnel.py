@@ -11,7 +11,7 @@ as the fallback."""
 
 from ...formula import Number
 from ..shared.nums import lift, vadd, vscale, vunit
-from ..types import _EPS_T, _INSIDE_TOL, _TCAP_TOL
+from ..shared.types import _EPS_T, _INSIDE_TOL, _TCAP_TOL
 from ..shared.units import m_to_um
 from .wall_torus import _quartic_first
 

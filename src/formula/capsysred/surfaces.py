@@ -15,7 +15,7 @@ import math
 
 from ..formula import Number
 from .shared.nums import lift, vadd, vscale
-from .types import (_EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _TCAP_TOL,
+from .shared.types import (_EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _TCAP_TOL,
                     HitMethod)
 from .shared.units import m_to_um
 from .walls.wall_cylinder import CylinderWall

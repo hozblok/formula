@@ -33,12 +33,12 @@ import time
 
 from ..formula import Number
 from . import rays, rays_v3
-from .common import tlog as _log
+from .shared.common import tlog as _log
 from .native import make_tracer
 from .screen import ScreenGrid
 from .source import Source
 from .surfaces import CapillaryBundle
-from .types import ray_record
+from .shared.types import ray_record
 
 # aim draws per ray, asserted by tests (rng skip counts)
 SCENES = {"capillary": {"tag": rays.SceneSeed.CAPILLARY, "draws": 3},

@@ -8,7 +8,7 @@ import math
 import pytest
 
 from formula.capsysred import Simulation
-from formula.capsysred.analytic import vcz_mu
+from formula.capsysred.stages.analytic import vcz_mu
 from formula.capsysred.shared.nums import exp_i, lift, vunit
 from formula.capsysred.spectrum import spectral_lines, wavevector
 from formula.capsysred.surfaces import CapillaryBundle, Mirror, engine_hit_t
@@ -21,7 +21,7 @@ from formula.capsysred.symbolic import (LineAmplitudes, ampl_template,
                                      ray_expression, ray_field_template)
 from formula.capsysred.fresnel import FresnelAmplitude
 from formula.capsysred.trace import trace_ray
-from formula.capsysred.types import HitMethod
+from formula.capsysred.shared.types import HitMethod
 from formula import xray
 from formula.formula import Number, Solver
 
@@ -932,7 +932,7 @@ def test_stage9_hit_methods_agree_on_cylinder(tmp_path):
 
 
 def test_stage9_rejects_when_no_comparison_method_is_runnable():
-    from formula.capsysred.validate import run_validate_stage
+    from formula.capsysred.stages.validate import run_validate_stage
 
     sim = Simulation.from_dict({
         "capillary": {
@@ -953,7 +953,7 @@ def test_stage9_rejects_when_no_comparison_method_is_runnable():
 def test_stage9_mixed_bundle_disables_closed_forms_globally():
     # Stage 9 compares one common method set across the whole bundle: one
     # implicit wall therefore disables both closed-form methods everywhere.
-    from formula.capsysred.validate import run_validate_stage
+    from formula.capsysred.stages.validate import run_validate_stage
 
     sim = Simulation.from_dict({
         "capillary": {
@@ -998,7 +998,7 @@ def test_stage11_beamlet_point_source_fully_coherent(tmp_path):
 
 def test_stage11_beamlet_gaussian_matches_vcz(tmp_path):
     # extended gaussian source: the beamlet |mu| row must track the vCZ curve
-    from formula.capsysred.analytic import rms_diff
+    from formula.capsysred.stages.analytic import rms_diff
     sim = Simulation.from_dict({
         "screen": {"nx": 41},
         "free": {"source": {
@@ -1039,9 +1039,9 @@ def test_stage11_beamlet_same_rays_as_stage6(tmp_path):
 
 def test_estimator_protocol_direct_drive_identical_modes():
     # the protocol lets tests feed estimators synthetic rays: no MC, no tracing
-    from formula.capsysred.coherence import CoherenceAccumulator
-    from formula.capsysred.jackknife import JackknifeCoherence
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.stages.coherence import CoherenceAccumulator
+    from formula.capsysred.stages.jackknife import JackknifeCoherence
+    from formula.capsysred.shared.types import RayRecord
 
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     rec = lambda mode, ray, pixel, opl: RayRecord(
@@ -1071,8 +1071,8 @@ def test_estimator_protocol_direct_drive_identical_modes():
 
 def test_jackknife_direct_drive_pi_flip_decoheres():
     # ref phase fixed, pixel-1 phase flips by pi every other mode -> W sums to 0
-    from formula.capsysred.jackknife import JackknifeCoherence
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.stages.jackknife import JackknifeCoherence
+    from formula.capsysred.shared.types import RayRecord
 
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     k = float(lines[0].k)
@@ -1094,9 +1094,9 @@ def test_jackknife_direct_drive_pi_flip_decoheres():
 def test_beamlet_direct_drive_single_mode_fully_coherent():
     # one mode -> one coherent field: mu = 1 on every deposited pixel
     from types import SimpleNamespace
-    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.stages.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.shared.types import RayRecord
 
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     scr = ScreenGrid(SimpleNamespace(z=0.06, nx=7, ny=1, center=[0.0, 0.0],
@@ -1634,9 +1634,9 @@ def test_beamlet_deposit_implicit_multibore():
     # the stage-11 path of the same regression: add_ray over an implicit
     # bundle deposits a flat-bounce beamlet and flags flat_walls
     from types import SimpleNamespace
-    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.stages.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.shared.types import RayRecord
     cap = _cap_sim(_IMPLICIT_PAIR).cfg.capillary
     bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
@@ -1674,10 +1674,10 @@ def test_beamlet_native_deposit_matches_python():
     # the C++ BeamletGrid mirrors the Python window loop op-for-op: same
     # records, native on/off -> the same maps to float64 roundoff
     from types import SimpleNamespace
-    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.stages.beamlet import BeamletField
     from formula.capsysred.native import make_beamlet_grid
     from formula.capsysred.screen import ScreenGrid
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.shared.types import RayRecord
 
     if make_beamlet_grid(1, 1, 0.0, 0.0, 1.0, 1.0, [1.0], [1.0], [1.0], 3.0) is None:
         pytest.skip("BeamletGrid missing from the built .so")
@@ -1720,7 +1720,7 @@ def test_beamlet_native_deposit_matches_python():
 
 def _beamlet_field_1d(lines, nx=161, edge=8.0e-6, z=0.1, w0=2.5e-7):
     from types import SimpleNamespace
-    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.stages.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
     scr = ScreenGrid(SimpleNamespace(z=z, nx=nx, ny=1, center=[0.0, 0.0],
                                      edge_x=edge, edge_y=2.0e-6))
@@ -1732,7 +1732,7 @@ def test_beamlet_fan_reconstructs_diffraction_limited_focus():
     # is FINITE at the caustic and its coherent sum narrows to the
     # diffraction limit FWHM = 0.886*lam*f/(2a), where rays give infinity
     import cmath
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.shared.types import RayRecord
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     k = float(lines[0].k)
     lam = 2.0 * math.pi / k
@@ -1763,7 +1763,7 @@ def test_beamlet_fan_reconstructs_diffraction_limited_focus():
 def test_beamlet_two_beam_fringes_period():
     # two crossed beamlets interfere with period lam/(2*theta): the direct
     # regression for the tilt-phase term of the deposit
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.shared.types import RayRecord
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     lam = 2.0 * math.pi / float(lines[0].k)
     theta = 5.0e-5
@@ -1830,7 +1830,7 @@ def test_beamlet_edge_deposits():
     # (a) center off the window deposits the tail only, density stays empty;
     # (b) far beyond the 3w window deposits nothing and must not crash;
     # (c) a bounce exactly at the source (zero first segment) stays finite
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.shared.types import RayRecord
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     field, scr = _beamlet_field_1d(lines, nx=21, edge=1.2e-5, z=0.06, w0=5e-7)
     field.new_mode()
@@ -1866,9 +1866,9 @@ def test_beamlet_edge_deposits():
 def test_beamlet_single_pixel_screen():
     # nx = ny = 1: the window clamps to one cell, mu of the lit cell is 1
     from types import SimpleNamespace
-    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.stages.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.shared.types import RayRecord
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     scr = ScreenGrid(SimpleNamespace(z=0.06, nx=1, ny=1, center=[0.0, 0.0],
                                      edge_x=2.0e-6, edge_y=2.0e-6))
@@ -2104,9 +2104,9 @@ def test_beamlet_anisotropic_spot_flips_aspect():
     # launch narrow sagittal (y), wide tangential (x): the far field flips
     # the aspect — the spot lands WIDER along y than along x
     from types import SimpleNamespace
-    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.stages.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.shared.types import RayRecord
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     scr = ScreenGrid(SimpleNamespace(z=0.06, nx=41, ny=41, center=[0.0, 0.0],
                                      edge_x=2.4e-5, edge_y=2.4e-5))
@@ -2130,9 +2130,9 @@ def test_beamlet_anisotropic_spot_flips_aspect():
 def test_beamlet_native_parity_anisotropic():
     # the C++ elliptic launch mirrors the Python one, bounces included
     from types import SimpleNamespace
-    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.stages.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.shared.types import RayRecord
     lines = spectral_lines({"mode": "gaussian", "rel_fwhm": 1.0e-3,
                             "n_lines": 2, "n_sigma": 2.0}, Number("8.0", 32))
     scr = ScreenGrid(SimpleNamespace(z=0.06, nx=21, ny=5, center=[0.0, 0.0],
@@ -2183,7 +2183,7 @@ def test_stage11_w0t_auto(tmp_path):
 def test_beamlet_jackknife_identical_modes_pinned():
     # identical modes: mu = 1 with sigma = 0 everywhere lit — pinned at the
     # clamp, so every lit pixel must carry the don't-trust flag
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.shared.types import RayRecord
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     field, scr = _beamlet_field_1d(lines, nx=21, edge=1.2e-5, z=0.06, w0=5e-7)
     rec = RayRecord(0, 0, "screen", scr.pixel((0.0, 0.0)), (0.0, 0.0, 0.06),
@@ -2207,7 +2207,7 @@ def test_beamlet_jackknife_identical_modes_pinned():
 def test_beamlet_jackknife_matches_bruteforce_leave_one_out():
     # the incremental rows (W - W_s, I - I_s) must land on the sigma computed
     # the hard way: an independent field rebuilt from every K-1 mode subset
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.shared.types import RayRecord
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     K = 5
 
@@ -2246,7 +2246,7 @@ def test_beamlet_jackknife_matches_bruteforce_leave_one_out():
 def test_beamlet_jackknife_outlier_mode_inflates_sigma():
     # ref phased identically every mode; the probe pixel flips phase by pi in
     # ONE of three modes: the loo set is asymmetric and sigma is large
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.shared.types import RayRecord
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     k = float(lines[0].k)
     field, scr = _beamlet_field_1d(lines, nx=21, edge=1.2e-5, z=0.06,
@@ -2273,7 +2273,7 @@ def test_beamlet_jackknife_outlier_mode_inflates_sigma():
 def test_beamlet_jackknife_single_mode_pixel_guard():
     # a pixel lit by exactly one mode: its own leave-out term is skipped
     # (denominator would vanish) and sigma stays finite
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.shared.types import RayRecord
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     field, scr = _beamlet_field_1d(lines, nx=41, edge=4.0e-5, z=0.01,
                                    w0=3.0e-6)
@@ -2299,9 +2299,9 @@ def test_beamlet_aniso_free_widths_match_gaussian():
     # quantitative anisotropy: the deposited spot's second moments must land
     # on the per-axis Gaussian widths w(L) of the two launch waists
     from types import SimpleNamespace
-    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.stages.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.shared.types import RayRecord
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     k = float(lines[0].k)
     w0s, w0t, L = 5.0e-7, 3.0e-6, 0.06
@@ -2335,9 +2335,9 @@ def test_beamlet_aniso_ellipse_follows_direction_azimuth():
     # the far field is wide along the anti-diagonal (the narrow sagittal
     # launch axis) and narrow along the diagonal
     from types import SimpleNamespace
-    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.stages.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.shared.types import RayRecord
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     scr = ScreenGrid(SimpleNamespace(z=0.06, nx=61, ny=61, center=[0.0, 0.0],
                                      edge_x=4.0e-5, edge_y=4.0e-5))
@@ -2540,7 +2540,7 @@ def test_beamlet_jackknife_skips_sole_mode_pixels():
     # mode the delete-that-mode replicate is pure float32 residue and must
     # be skipped — sigma exactly 0 plus the don't-trust flag, not noise
     from types import SimpleNamespace
-    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.stages.beamlet import BeamletField
     from formula.capsysred.native import make_beamlet_grid
     from formula.capsysred.screen import ScreenGrid
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
@@ -2574,7 +2574,7 @@ def test_beamlet_window_is_the_ellipse_bounding_box():
     # full-frame one inside its support, and everything it drops must sit
     # below the ns-sigma envelope cut
     from types import SimpleNamespace
-    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.stages.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     scr = ScreenGrid(SimpleNamespace(z=0.1, nx=201, ny=101, center=[0.0, 0.0],
@@ -2602,7 +2602,7 @@ def test_beamlet_tail_ray_deposit_stays_finite():
     # to inf and poisons the row with NaN; both paths must agree and stay
     # finite across an e^-30 dynamic range
     from types import SimpleNamespace
-    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.stages.beamlet import BeamletField
     from formula.capsysred.native import make_beamlet_grid
     from formula.capsysred.screen import ScreenGrid
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
@@ -2635,11 +2635,11 @@ def test_beamlet_native_lensed_bounces_match_python():
     # a parabolic funnel (meridional f_t too), skew azimuths couple the
     # planes — the C++ reflect branch had no cross-check before
     from types import SimpleNamespace
-    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.stages.beamlet import BeamletField
     from formula.capsysred.gamma import bounce_lenses
     from formula.capsysred.native import make_beamlet_grid
     from formula.capsysred.screen import ScreenGrid
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.shared.types import RayRecord
     if make_beamlet_grid(1, 1, 0.0, 0.0, 1.0, 1.0, [1.0], [1.0], [1.0],
                          3.0) is None:
         pytest.skip("BeamletGrid missing from the built .so")
@@ -2696,10 +2696,10 @@ def test_beamlet_native_multimode_fold_matches_python():
     # three modes through the C++ fold/totals path vs the pure-Python
     # dicts: mu, sigma_jack, dubious, intensity, density must coincide
     from types import SimpleNamespace
-    from formula.capsysred.beamlet import BeamletField
+    from formula.capsysred.stages.beamlet import BeamletField
     from formula.capsysred.native import make_beamlet_grid
     from formula.capsysred.screen import ScreenGrid
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.shared.types import RayRecord
     if make_beamlet_grid(1, 1, 0.0, 0.0, 1.0, 1.0, [1.0], [1.0], [1.0],
                          3.0) is None:
         pytest.skip("BeamletGrid missing from the built .so")
@@ -2888,8 +2888,8 @@ def test_native_quartic_first_matches_python_at_eps_t_edge():
 
 def _run_jack(modes, ref=3, npx=7):
     from types import SimpleNamespace
-    from formula.capsysred.jackknife import JackknifeCoherence
-    from formula.capsysred.types import RayRecord
+    from formula.capsysred.stages.jackknife import JackknifeCoherence
+    from formula.capsysred.shared.types import RayRecord
     line = SimpleNamespace(k=4.05e10, weight=1.0)
     jack = JackknifeCoherence([line], ref)
     for rays in modes:
@@ -3033,7 +3033,7 @@ def _hex_grazing_case():
 
 
 def test_stage9_sturm_root_pair_hex_grazing():
-    from formula.capsysred.validate import _engine_t
+    from formula.capsysred.stages.validate import _engine_t
 
     rs, scale, O, d, t_exit, t_ref = _hex_grazing_case()
     t_sturm = _engine_t(rs, scale, O, d, t_exit, HitMethod.STURM)
@@ -3053,7 +3053,7 @@ def test_stage9_subdivision_root_pair_hex_grazing():
     Sturm isolates it. Constants come from replaying the stage-9 rng stream
     (seed 12345) to ray 44218 and printing O/d/full_expr_um at p = 32.
     """
-    from formula.capsysred.validate import _engine_t
+    from formula.capsysred.stages.validate import _engine_t
 
     rs, scale, O, d, t_exit, t_ref = _hex_grazing_case()
     t_sub = _engine_t(rs, scale, O, d, t_exit, HitMethod.SUBDIVISION)

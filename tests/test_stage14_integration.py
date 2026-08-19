@@ -11,7 +11,7 @@ import pytest
 from formula.capsysred import Simulation
 from formula.capsysred.rays import sidecar_metadata, write_metadata
 from formula.capsysred.screen import ScreenGrid
-from formula.capsysred.stage14_flags import FlagThresholds, validate_pixel_row
+from formula.capsysred.stages.stage14_flags import FlagThresholds, validate_pixel_row
 
 
 def _config(n_modes=10, seed=101, *, thresholds=None):
@@ -143,7 +143,7 @@ def test_stage14_cache_hit_schema_and_stage10_projection(tmp_path, monkeypatch):
     def no_gzip(*_args, **_kwargs):
         raise AssertionError("cache hit opened the rays archive")
 
-    monkeypatch.setattr("formula.capsysred.stage14.gzip.open", no_gzip)
+    monkeypatch.setattr("formula.capsysred.stages.stage14.gzip.open", no_gzip)
     hit = Simulation.from_dict(changed)
     hit.replay(str(rays), str(tmp_path / "stage14-hit"), stages=[14])
     hit_result = hit.results["stage14:capillary"]

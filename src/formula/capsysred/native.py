@@ -12,7 +12,7 @@ from .. import _formula
 from ..formula import Number
 from .surfaces import CapillaryBundle, Mirror
 from .trace import TraceResult, trace_ray
-from .types import _INSIDE_TOL
+from .shared.types import _INSIDE_TOL
 from .walls.wall_cylinder import CylinderWall
 from .walls.wall_funnel import FunnelWall
 from .walls.wall_polygon import PolygonWall

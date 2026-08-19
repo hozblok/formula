@@ -3,7 +3,7 @@
 from collections import namedtuple
 from enum import StrEnum
 
-from ..formula import Number
+from ...formula import Number
 
 Vec3 = tuple[Number, Number, Number]
 

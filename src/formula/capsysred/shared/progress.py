@@ -3,7 +3,7 @@
 import sys
 import time
 
-from .shared.format import hms as _hms
+from .format import hms as _hms
 
 
 class Progress:

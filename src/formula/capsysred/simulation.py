@@ -16,18 +16,19 @@ import zlib
 from .. import __version__
 from ..formula import Number
 from .. import xray
-from . import analytic, render, schematic
-from .altcoh import run_alt_stage
-from .beamlet import run_beamlet_stage
-from .coherence import CoherenceAccumulator
-from .common import log as _log
-from .jackknife import run_jack_stage
-from .sketch import run_sketch_stage
-from .stage14 import preflight_stage14_output, run_stage14
-from .validate import METHOD_LABELS, run_validate_stage
+from . import render, schematic
+from .stages import analytic
+from .stages.altcoh import run_alt_stage
+from .stages.beamlet import run_beamlet_stage
+from .stages.coherence import CoherenceAccumulator
+from .shared.common import log as _log
+from .stages.jackknife import run_jack_stage
+from .stages.sketch import run_sketch_stage
+from .stages.stage14 import preflight_stage14_output, run_stage14
+from .stages.validate import METHOD_LABELS, run_validate_stage
 from .config import Config, load
 from .shared.nums import lift, solver, vunit
-from .progress import Progress
+from .shared.progress import Progress
 from .screen import ScreenGrid
 from .source import aim_disk_direction, slope_direction
 from .spectrum import spectral_lines, wavelength_m
@@ -39,7 +40,7 @@ from .rays import (RNG_SCHEME, MultiRaysReader, RaysReader, SceneSeed,
                    _validate_stream_metadata, geometry_core, geometry_metadata,
                    metadata_equal, metadata_path, read_metadata,
                    require_full_rows, scene_stream, sidecar_metadata)
-from .types import HitMethod, RayRecord
+from .shared.types import HitMethod, RayRecord
 from .shared import format
 from .shared.format import mm, um
 from .shared.physics_constants import FRESNEL_PROBE_THETA

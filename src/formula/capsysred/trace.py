@@ -10,7 +10,7 @@ from collections import namedtuple
 
 from ..formula import Number
 from .shared.nums import vadd, vdot, vscale, vsub
-from .types import Vec3
+from .shared.types import Vec3
 
 # fate: "screen" | "absorbed" | "lost". reflections: [(point, sin_grazing), ...]
 # direction: unit direction at the final point (post-bounce for absorbed/lost).

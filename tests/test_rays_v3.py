@@ -148,7 +148,7 @@ def _legacy_trace(raw, out_dir):
     from formula.capsysred.native import make_tracer
     from formula.capsysred.rays import (_SCENE_SEED_STRIDE, row_of, sidecar_metadata,
                                         write_metadata)
-    from formula.capsysred.types import ray_record
+    from formula.capsysred.shared.types import ray_record
     from formula.capsysred.surfaces import CapillaryBundle
     sim = Simulation.from_dict(raw)
     cfg = sim.cfg

@@ -20,9 +20,9 @@ import math
 import time
 
 from .altcoh import FloatLineAmplitudes
-from .progress import Progress
-from .rays import scene_stream
-from .screen import ScreenGrid
+from ..shared.progress import Progress
+from ..rays import scene_stream
+from ..screen import ScreenGrid
 
 
 class SketchCoherence:

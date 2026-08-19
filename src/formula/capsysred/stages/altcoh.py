@@ -21,11 +21,11 @@ import cmath
 import math
 import time
 
-from ..formula import Number
-from .fresnel import FresnelAmplitude
-from .progress import Progress
-from .rays import scene_stream
-from .screen import ScreenGrid
+from ...formula import Number
+from ..fresnel import FresnelAmplitude
+from ..shared.progress import Progress
+from ..rays import scene_stream
+from ..screen import ScreenGrid
 
 
 class FloatLineAmplitudes:

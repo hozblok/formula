@@ -37,7 +37,7 @@ import zlib
 import yaml
 
 from . import rays_v3
-from .types import RayRecord
+from .shared.types import RayRecord
 
 FORMAT = 2
 METADATA_NAME = "rays-fingerprint.yaml"

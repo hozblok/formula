@@ -18,7 +18,7 @@ final mu are float (statistical estimators, noise floor >> 1e-15).
 
 import math
 
-from .shared.nums import conj, exp_i, lift
+from ..shared.nums import conj, exp_i, lift
 
 class CoherenceAccumulator:
     def __init__(self, lines, ref_pixel: int, precision: int):

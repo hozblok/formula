@@ -14,7 +14,7 @@ from .._roots import get_backend
 from ..formula import Number
 from ..xray import FUSED_SILICA, OE2012_GLASS
 from .spectrum import spectral_lines
-from .types import HitMethod
+from .shared.types import HitMethod
 
 MATERIALS = {"fused_silica": FUSED_SILICA, "glass_oe2012": OE2012_GLASS}
 

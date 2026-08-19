@@ -10,7 +10,7 @@ import math
 import pytest
 
 from formula.capsysred import Simulation
-from formula.capsysred import stage14
+from formula.capsysred.stages import stage14
 from formula.capsysred.rays import sidecar_metadata, write_metadata
 from formula.capsysred.screen import ScreenGrid
 

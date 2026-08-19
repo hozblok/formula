@@ -8,7 +8,7 @@ sits at rotation + 2πk/n. Hits are plane intersections (exact linear)."""
 
 from ...formula import Number
 from ..shared.nums import lift, solver, vadd, vscale
-from ..types import _EPS_T, _INSIDE_TOL
+from ..shared.types import _EPS_T, _INSIDE_TOL
 from ..shared.units import m_to_um
 
 

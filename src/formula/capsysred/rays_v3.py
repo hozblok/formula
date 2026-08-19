@@ -27,7 +27,7 @@ from typing import NamedTuple
 
 import yaml
 
-from .types import RayRecord
+from .shared.types import RayRecord
 
 FORMAT = 3
 METADATA_NAME = "rays-fingerprint.yaml"

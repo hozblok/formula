@@ -22,9 +22,9 @@ import math
 import time
 
 from .altcoh import FloatLineAmplitudes
-from .progress import Progress
-from .rays import rescreen, scene_stream
-from .screen import ScatterRaster, ScreenGrid
+from ..shared.progress import Progress
+from ..rays import rescreen, scene_stream
+from ..screen import ScatterRaster, ScreenGrid
 
 
 class JackknifeCoherence:

@@ -7,7 +7,7 @@ and the normal is radial with zero z-component."""
 
 from ...formula import Number
 from ..shared.nums import lift, sqrt, vadd, vscale, vunit
-from ..types import _EPS_T, _INSIDE_TOL, Vec3
+from ..shared.types import _EPS_T, _INSIDE_TOL, Vec3
 from ..shared.units import m_to_um
 
 

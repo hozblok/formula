@@ -9,15 +9,15 @@ compared against the Python reference.
 
 import time
 
-from ..intersect import RaySurface
-from .native import compile_optic, trace_ray_native
-from .shared.nums import lift, vadd, vscale
-from .progress import Progress
-from .rays import SceneSeed, stream_rng
-from .source import Source
-from .surfaces import CapillaryBundle
-from .types import _EPS_T, _ONWALL_TOL, _TCAP_TOL, HitMethod
-from .shared.units import m_to_um
+from ...intersect import RaySurface
+from ..native import compile_optic, trace_ray_native
+from ..shared.nums import lift, vadd, vscale
+from ..shared.progress import Progress
+from ..rays import SceneSeed, stream_rng
+from ..source import Source
+from ..surfaces import CapillaryBundle
+from ..shared.types import _EPS_T, _ONWALL_TOL, _TCAP_TOL, HitMethod
+from ..shared.units import m_to_um
 
 METHOD_LABELS = {
     HitMethod.PYTHON_CLOSED_FORM: "Python closed form",

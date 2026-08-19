@@ -22,11 +22,11 @@ import time
 from array import array
 
 from .altcoh import FloatLineAmplitudes
-from .gamma import EXACT_KINDS, bounce_lenses, inv2, propagate
-from .native import make_beamlet_grid
-from .progress import Progress
-from .rays import require_full_rows, scene_stream
-from .screen import ScreenGrid
+from ..gamma import EXACT_KINDS, bounce_lenses, inv2, propagate
+from ..native import make_beamlet_grid
+from ..shared.progress import Progress
+from ..rays import require_full_rows, scene_stream
+from ..screen import ScreenGrid
 
 
 class BeamletField:
