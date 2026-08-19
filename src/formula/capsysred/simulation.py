@@ -39,13 +39,13 @@ from . import rays_v3
 from .rays import (RNG_SCHEME, MultiRaysReader, RaysReader, SceneSeed,
                    _validate_stream_metadata, geometry_core, geometry_metadata,
                    metadata_equal, metadata_path, read_metadata,
-                   require_full_rows, scene_stream, sidecar_metadata)
-from .shared.types import HitMethod, RayRecord
+                   require_full_rows, scene_stream)
+from .shared.types import HitMethod
 from .shared import format
 from .shared.format import mm, um
 from .shared.physics_constants import FRESNEL_PROBE_THETA
 from .shared.units import (
-    m_to_angstrom, m_to_mm, m_to_um, rad_to_mrad, rad_to_urad)
+    m_to_angstrom, m_to_um, rad_to_mrad, rad_to_urad)
 
 KNOWN_STAGES = (1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 14)
 

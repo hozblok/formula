@@ -1,4 +1,4 @@
-"""Arbitrary-precision formula parser and solver."""
+"""Multiprecision formula parser and solver."""
 
 __version__ = "6.0.0"
 

@@ -3,7 +3,7 @@
 # Ray–surface intersections (`RaySurface`)
 
 `RaySurface` finds **every** intersection of a ray with an implicit surface
-`F(x, y, z) = 0`, at arbitrary precision.
+`F(x, y, z) = 0`, in multiprecision.
 
 This document explains the mechanism, walks through each root-finding backend, and
 states the **limits of applicability**. For the *why* — design decisions and the
@@ -46,7 +46,7 @@ rs.points(origin, direction, t_max, **kwargs)
 ```
 
 - `origin` / `direction` are `(x, y, z)` triples; `direction` must be non-zero.
-- Roots come back as arbitrary-precision `Number`s, ascending.
+- Roots come back as multiprecision `Number`s, ascending.
 - `points()` reconstructs the **full** 3-D point even for axes the surface
   ignores (a cylinder is independent of `z`, but a ray's `z` is still reported):
 
@@ -245,11 +245,11 @@ RaySurface("x*x + y*y - 1", 48).intersect(
 that is the weak link.
 
 - **Reduction to `g(t)` reusing `Solver.evaluate` / `get_derivative`** — correct
-  and economical. It inherits arbitrary precision for free and adds no symbolic
+  and economical. It inherits multiprecision for free and adds no symbolic
   machinery. The cost is one surface evaluation per `g` sample.
 
 - **Sturm over companion/colleague-matrix eigenvalues** for the algebraic path —
-  the right call here. No arbitrary-precision eigensolver exists in this project;
+  the right call here. No multiprecision eigensolver exists in this project;
   Sturm stays inside `formula`'s precision world and yields a *provable* root
   count rather than approximate eigenvalues. The price is the interpolation step
   (recovering the polynomial), which is well-conditioned only up to moderate

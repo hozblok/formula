@@ -34,9 +34,9 @@ from ..shared.progress import Progress
 from ..rays import (_validate_stream_metadata, geometry_metadata,
                    metadata_equal, read_metadata)
 from ..screen import ScatterRaster, ScreenGrid
-from .stage14_flags import (FlagThresholds, PIXEL_FLAGS, PixelCounters,
-                            PixelStatistics, serialize_pixel, validate_counters,
-                            validate_ref, w_signal_status)
+from .stage14_flags import (FlagThresholds, PixelCounters, PixelStatistics,
+                            serialize_pixel, validate_counters, validate_ref,
+                            w_signal_status)
 from ..shared.units import m_to_um
 
 

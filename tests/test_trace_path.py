@@ -3,8 +3,6 @@ plus point+direction bookkeeping on wall, cylinder, cone, torus and funnel."""
 
 import math
 
-import pytest
-
 from formula import Number, RaySurface
 
 

@@ -31,7 +31,7 @@ struct GetValueVisitor : public boost::static_visitor<py::object> {
 
 PYBIND11_MODULE(_formula, m) {
   m.doc() = R"pbdoc(
-        Arbitrary-precision formula parser and solver.
+        Multiprecision formula parser and solver.
         -----------------------
 
         .. currentmodule:: formula

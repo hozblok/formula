@@ -23,7 +23,6 @@ import copy
 import gzip
 import io
 import json
-import math
 import os
 import random
 import sys

@@ -7,7 +7,6 @@ inside() booleans — and values within tolerances far below any physical
 scale yet far above the twins' rounding noise.
 """
 
-import gzip
 import json
 import math
 import random

@@ -15,7 +15,7 @@
 #include "../csconstants.hpp"
 
 /**
- * Arbitrary-precision arithmetic with complex numbers.
+ * Multiprecision arithmetic with complex numbers.
  */
 template <unsigned N>
 using mp_complex =

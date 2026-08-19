@@ -113,7 +113,7 @@ setup(
         "Topic :: Scientific/Engineering :: Physics",
     ],
     cmdclass={"build_ext": build_ext},
-    description="Arbitrary-precision formula parser and solver.",
+    description="Multiprecision formula parser and solver.",
     ext_modules=EXT_MODULES,
     extras_require={
         "test": TEST_DEPS,

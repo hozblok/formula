@@ -8,7 +8,7 @@ This started inside a big project for simulating physical processes. From around
 2011 I kept wanting to reuse the C++ work over in Python. Eventually I cut away
 everything that did not belong and concentrated on small, local modules. One of
 them became `formula`: hand it a string with an expression and it evaluates it to
-more than 16 digits. Arbitrary-precision libraries for Python may have already existed by
+more than 16 digits. Multiprecision libraries for Python may have already existed by
 then. But this code had grown on its own, and carrying Boost's muscle and speed
 into Python through pybind11 looked like a fine experiment. So I tried it.
 

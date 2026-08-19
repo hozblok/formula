@@ -1,6 +1,6 @@
 🇬🇧 **English** · [🇷🇺 Русский](README.ru.md)
 
-# formula - Arbitrary-precision formula parser and solver
+# formula - Multiprecision formula parser and solver
 
 [![PyPI](https://img.shields.io/pypi/v/formula.svg)](https://pypi.org/project/formula/)
 [![PyPI - Format](https://img.shields.io/pypi/format/formula)](https://pypi.org/project/formula/)
@@ -224,11 +224,11 @@ And it is enough to call the `formula` object to calculate the value of the expr
 '9.0000000000000000000000000000009e-20'
 ```
 
-### Using `Number` as an arbitrary-precision Python value
+### Using `Number` as a multiprecision Python value
 
 `Number` is a small Pythonic wrapper around `Solver` that lets you compose
 expressions with the standard arithmetic and comparison operators while
-keeping arbitrary precision throughout:
+keeping multiprecision throughout:
 
 ```python
 >>> from formula import Number

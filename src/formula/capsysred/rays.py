@@ -32,7 +32,6 @@ import json
 import math
 import os
 import random
-import zlib
 
 import yaml
 

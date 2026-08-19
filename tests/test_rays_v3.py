@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import gzip
 import json
-import math
 import os
 import random
 import shutil

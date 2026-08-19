@@ -3,7 +3,7 @@
 For X-rays the refractive index is n = 1 - delta - i*beta with delta, beta << 1,
 so a ray hitting a surface below the critical angle theta_c = sqrt(2*delta)
 undergoes near-total external reflection. Reflectivity is the Fresnel equation
-evaluated with the arbitrary-precision complex engine; delta and beta are taken
+evaluated with the multiprecision complex engine; delta and beta are taken
 from a simple material model that scales with photon energy. This is the
 building block for tracing X-rays down a glass capillary (see XRAY.md).
 """

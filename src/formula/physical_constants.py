@@ -1,4 +1,4 @@
-"""Tabular physical constants (strings for the arbitrary-precision engine)."""
+"""Tabular physical constants (strings for the multiprecision engine)."""
 
 # Classical electron radius (m).
 R_E = "2.8179403262e-15"
