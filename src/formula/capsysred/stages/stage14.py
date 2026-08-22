@@ -391,7 +391,13 @@ def _prepare_inputs(sim, paths, signature: dict) -> list[InputPart]:
             "n_rays": n_rays,
         }
         analysis_id = _identity(identity)[:32]
-        cache_dir = os.path.join(os.path.dirname(path), CACHE_DIR, analysis_id)
+        # CAPSYSRED_STAGE14_CACHE relocates the cache root away from the archive.
+        cache_root = os.environ.get("CAPSYSRED_STAGE14_CACHE")
+        if cache_root:
+            os.makedirs(cache_root, exist_ok=True)
+        else:
+            cache_root = os.path.join(os.path.dirname(path), CACHE_DIR)
+        cache_dir = os.path.join(cache_root, analysis_id)
         parts.append(InputPart(path, meta, n_modes, n_rays,
                                identity["source_screen_z"], input_id, seed,
                                analysis_id, cache_dir, identity,

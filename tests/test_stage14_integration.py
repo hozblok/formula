@@ -154,6 +154,24 @@ def test_stage14_cache_hit_schema_and_stage10_projection(tmp_path, monkeypatch):
     assert result["out_dir"] == str(tmp_path / "stage14")
 
 
+def test_stage14_cache_root_override(tmp_path, monkeypatch):
+    raw = _config()
+    rays_dir = tmp_path / "recording"
+    rays_dir.mkdir()
+    rays = rays_dir / "rays.jsonl.gz"
+    _write_controlled_rays(rays, raw, [1, 1, 1, 1, 1, 1, -1, -1, -1, -1])
+    root = tmp_path / "elsewhere" / "cache"
+    monkeypatch.setenv("CAPSYSRED_STAGE14_CACHE", str(root))
+
+    Simulation.from_dict(raw).replay(str(rays), str(tmp_path / "a"), stages=[14])
+    assert not (rays_dir / "stage14-cache").exists()
+    assert [p.name for p in root.iterdir()] and all(
+        (p / "meta.json").is_file() for p in root.iterdir())
+    hit = Simulation.from_dict(raw)
+    hit.replay(str(rays), str(tmp_path / "b"), stages=[14])
+    assert hit.results["stage14:capillary"]["cache_hits"] == 1
+
+
 def test_stage14_union_matches_monolithic_cache(tmp_path):
     union_raw = _config(n_modes=10, seed=999)
     signs_a = [1, 1, 1, -1, -1]
