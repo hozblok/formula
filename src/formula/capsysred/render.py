@@ -462,19 +462,19 @@ def overlay_map(mu_grid, flag_grid, extent, title, xlabel, ylabel,
 GAUGE_OK, GAUGE_WARN = "#009E73", "#E69F00"
 
 
-def gauge_table(checks, title, header="", footer="", w=1000):
-    """Check rows: name + detail line, big value, gauge with a threshold, fix.
+def gauge_table(checks, title, header="", footer="", w=770):
+    """Check rows: name + detail line, big value, gauge with a threshold.
 
-    checks: [{name, detail, big, value, lo, hi, threshold, threshold_label,
-    fix}]; value None = unavailable (no marker, warn tone)."""
+    checks: [{name, detail, big, value, lo, hi, threshold, threshold_label}];
+    value None = unavailable (no marker, warn tone)."""
     top, row_h, bottom = 96, 92, 34
     h = top + row_h * len(checks) + bottom
-    x_check, x_big, x_gauge, gauge_w, x_fix = 14, 400, 545, 205, 790
+    x_check, x_big, x_gauge, gauge_w = 14, 400, 545, 205
     e = [_text(x_check, 24, title, 15, "start", "#111", 'font-weight="bold"')]
     if header:
         e.append(_text(x_check, 46, header, 11, "start", "#666"))
     for x, label in ((x_check, "check"), (x_big, "value"),
-                     (x_gauge, "gauge · threshold"), (x_fix, "what would fix it")):
+                     (x_gauge, "gauge · threshold")):
         e.append(_text(x, 72, label, 11, "start", "#666", 'font-weight="bold"'))
     e.append(_line(0, 80, w, 80, "#bbb", 0.8))
     for i, c in enumerate(checks):
@@ -501,8 +501,6 @@ def gauge_table(checks, title, header="", footer="", w=1000):
             xv = x_gauge + gauge_w * (min(max(value, lo), hi) - lo) / (hi - lo)
             e.append(f'<circle cx="{xv:.1f}" cy="{y:.1f}" r="7" fill="{tone}" '
                      f'stroke="#222" stroke-width="1"/>')
-        e.append(_text(x_fix, y + 4, "—" if good else c["fix"], 11,
-                       color="#999" if good else "#8a5a00"))
     if footer:
         e.append(_text(x_check, h - 12, footer, 10, "start", "#666"))
     return {"w": w, "h": h, "body": "".join(e)}
