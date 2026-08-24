@@ -196,6 +196,17 @@ def line_chart(series, title, xlabel, ylabel, subtitle="", vlines=(),
     return {"w": w, "h": h, "body": "".join(e)}
 
 
+CBAR_GUTTER = 74      # heatmap colorbar margin
+LEGEND_GUTTER = 190   # category_map legend margin
+
+
+def _mark_pixel(ax, mark, nx, ny):
+    """Reference pixel as one filled data cell."""
+    w = (ax.px1 - ax.px0) / nx
+    h = (ax.py0 - ax.py1) / ny
+    return _rect(ax.x(mark[0]) - w / 2, ax.y(mark[1]) - h / 2, w, h, "#d62728")
+
+
 def heatmap(grid, extent, title, xlabel, ylabel, subtitle="", cbar_label="",
             w=560, h=460, vmax=None, mark=None, equal=False):
     """grid: row-major [iy][ix], iy=0 at the bottom edge; extent=(x0,x1,y0,y1).
@@ -214,20 +225,19 @@ def heatmap(grid, extent, title, xlabel, ylabel, subtitle="", cbar_label="",
                      if value is None else viridis(float(value) / vmax))
             row.extend([color] * scale)
         rows.extend([row] * scale)
-    ax = _Axes(w, h, (extent[0], extent[1]), (extent[2], extent[3]), right=74)
+    ax = _Axes(w, h, (extent[0], extent[1]), (extent[2], extent[3]), right=CBAR_GUTTER)
     if equal:
         # size h so one data unit spans equal px on both axes
         span = (ax.px1 - ax.px0) * (extent[3] - extent[2]) / (extent[1] - extent[0])
         h = round(h - (ax.py0 - ax.py1) + span)
-        ax = _Axes(w, h, (extent[0], extent[1]), (extent[2], extent[3]), right=74)
+        ax = _Axes(w, h, (extent[0], extent[1]), (extent[2], extent[3]), right=CBAR_GUTTER)
     e = ax.frame(xlabel, ylabel, title, subtitle)
     e.append(f'<image x="{ax.px0:.1f}" y="{ax.py1:.1f}" '
              f'width="{ax.px1 - ax.px0:.1f}" height="{ax.py0 - ax.py1:.1f}" '
              f'preserveAspectRatio="none" image-rendering="pixelated" '
              f'href="{_png_uri(rows)}"/>')
     if mark:
-        e.append(f'<circle cx="{ax.x(mark[0]):.1f}" cy="{ax.y(mark[1]):.1f}" r="5" '
-                 f'fill="none" stroke="#ff5555" stroke-width="1.6"/>')
+        e.append(_mark_pixel(ax, mark, nx, ny))
     cb = [[viridis(1.0 - j / 255.0)] * 12 for j in range(256)]
     cx = ax.px1 + 14
     e.append(f'<image x="{cx}" y="{ax.py1:.1f}" width="14" '
@@ -357,6 +367,8 @@ def category_map(grid, extent, title, xlabel, ylabel, subtitle="", mark=None,
     """
     ny, nx = len(grid), len(grid[0])
     scale = max(1, int(360 / max(nx, ny)))
+    # w means the same plot width as heatmap's w; the wider legend adds on top
+    w += LEGEND_GUTTER - CBAR_GUTTER
     rows = []
     null_a, null_b = (238, 238, 238), (184, 184, 184)
     for iy in range(ny - 1, -1, -1):
@@ -367,19 +379,18 @@ def category_map(grid, extent, title, xlabel, ylabel, subtitle="", mark=None,
                      else (null_a if (ix + iy) % 2 == 0 else null_b))
             row.extend([color] * scale)
         rows.extend([row] * scale)
-    ax = _Axes(w, h, (extent[0], extent[1]), (extent[2], extent[3]), right=190)
+    ax = _Axes(w, h, (extent[0], extent[1]), (extent[2], extent[3]), right=LEGEND_GUTTER)
     if equal:
         span = (ax.px1 - ax.px0) * (extent[3] - extent[2]) / (extent[1] - extent[0])
         h = round(h - (ax.py0 - ax.py1) + span)
-        ax = _Axes(w, h, (extent[0], extent[1]), (extent[2], extent[3]), right=190)
+        ax = _Axes(w, h, (extent[0], extent[1]), (extent[2], extent[3]), right=LEGEND_GUTTER)
     e = ax.frame(xlabel, ylabel, title, subtitle)
     e.append(f'<image x="{ax.px0:.1f}" y="{ax.py1:.1f}" '
              f'width="{ax.px1 - ax.px0:.1f}" height="{ax.py0 - ax.py1:.1f}" '
              f'preserveAspectRatio="none" image-rendering="pixelated" '
              f'href="{_png_uri(rows)}"/>')
     if mark:
-        e.append(f'<circle cx="{ax.x(mark[0]):.1f}" cy="{ax.y(mark[1]):.1f}" r="5" '
-                 f'fill="none" stroke="#d62728" stroke-width="1.8"/>')
+        e.append(_mark_pixel(ax, mark, nx, ny))
     observed = counts or {}
     lit_observed = observed if lit_counts is None else lit_counts
     total = (lit_total if lit_total is not None else

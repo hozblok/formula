@@ -55,6 +55,9 @@ STREAM_COUNTERS = ("emitted", "screen", "absorbed", "lost", "off_window",
 RESULT_PAYLOAD_NAMES = (
     "mu-jack.jsonl",
     "14-capillary-jack-mu.svg",
+    "14-capillary-jack-mu-map.svg",
+    "14-capillary-jack-mu-err.svg",
+    "14-capillary-jack-mu-flags.svg",
     "14a-capillary-jack-slice.svg",
     "14b-capillary-jack-intensity.svg",
     "14c-capillary-jack-overlay.svg",
@@ -1177,19 +1180,23 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
     mark = (m_to_um(ref_xy[0]), m_to_um(ref_xy[1]))
     sub = (f"{screen_label}; {n_modes} exact delete-one-mode units; "
            "raw μ, display clipped at 1")
-    main = render.hstack([
-        render.heatmap(mu_grid, extent, "|μ_raw(P,P_ref)|", "x, µm", "y, µm",
-                       sub, "|μ|", vmax=1.0, mark=mark, w=430, equal=True),
-        render.heatmap(err_grid, extent, "σ_jack(μ_raw)", "x, µm", "y, µm",
-                       "null is masked", "σ", mark=mark, w=430, equal=True),
-        render.category_map(flag_grid, extent, "Stage-14 pixel flags", "x, µm",
-                            "y, µm", "first-match normative taxonomy", mark=mark,
-                            counts=flag_counts,
-                            lit_counts=lit_flag_counts,
-                            lit_total=sum(row["n_rays"] > 0 for row in rows),
-                            w=600, equal=True),
-    ])
-    render.save(os.path.join(result_dir, "14-capillary-jack-mu.svg"), main)
+    mu_sub = (f"ref cell at ({round(mark[0], 3) or 0.0:g}, "
+              f"{round(mark[1], 3) or 0.0:g}) µm")
+    mu_fig = render.heatmap(mu_grid, extent, "|μ(P,P_ref)|", "x, µm", "y, µm",
+                            mu_sub, "|μ|", vmax=1.0, mark=mark, w=430, equal=True)
+    err_fig = render.heatmap(err_grid, extent, "σ_jack(μ)", "x, µm", "y, µm",
+                             "", "σ", mark=mark, w=430, equal=True)
+    flag_fig = render.category_map(flag_grid, extent, "Cell trust map", "x, µm",
+                                   "y, µm", "", mark=mark,
+                                   counts=flag_counts,
+                                   lit_counts=lit_flag_counts,
+                                   lit_total=sum(row["n_rays"] > 0 for row in rows),
+                                   w=430, equal=True)
+    render.save(os.path.join(result_dir, "14-capillary-jack-mu.svg"),
+                render.hstack([mu_fig, err_fig, flag_fig]))
+    render.save(os.path.join(result_dir, "14-capillary-jack-mu-map.svg"), mu_fig)
+    render.save(os.path.join(result_dir, "14-capillary-jack-mu-err.svg"), err_fig)
+    render.save(os.path.join(result_dir, "14-capillary-jack-mu-flags.svg"), flag_fig)
     iy = ref // nx
     xs = [m_to_um(x) for x in grid.xs()]
     row_ids = range(iy * nx, (iy + 1) * nx)

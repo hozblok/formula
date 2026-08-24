@@ -124,6 +124,8 @@ def test_stage14_cache_hit_schema_and_stage10_projection(tmp_path, monkeypatch):
 
     expected = {
         "meta.json", "mu-jack.jsonl", "14-capillary-jack-mu.svg",
+        "14-capillary-jack-mu-map.svg", "14-capillary-jack-mu-err.svg",
+        "14-capillary-jack-mu-flags.svg",
         "14a-capillary-jack-slice.svg", "14b-capillary-jack-intensity.svg",
         "14c-capillary-jack-overlay.svg", "14d-capillary-ray-scatter.svg",
         "14e-capillary-ref-passport.svg",
