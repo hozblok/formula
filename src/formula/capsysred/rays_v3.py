@@ -22,7 +22,9 @@ import io
 import json
 import math
 import os
+import time
 import zlib
+from contextlib import suppress
 from typing import NamedTuple
 
 import yaml
@@ -34,6 +36,8 @@ METADATA_NAME = "rays-fingerprint.yaml"
 INDEX_NAME = "rays-index.jsonl"
 MODES_DIR = "modes"
 DEFAULT_LEVEL = 6
+READ_ATTEMPTS = 5               # transient device errors: reopen and resume
+READ_BACKOFF_S = 10.0
 
 
 class Section(NamedTuple):
@@ -312,8 +316,12 @@ def _hash_file(path: str) -> tuple[int, str]:
 # ------------------------------------------------------------------ reading
 
 class _HashingRaw(io.RawIOBase):
-    def __init__(self, fh):
-        self.fh = fh
+    """Hashes what it reads; an OSError reopens the file and resumes at the
+    same offset, so a flaky device never corrupts the stream."""
+
+    def __init__(self, path):
+        self.path = path
+        self.fh = None
         self.h = hashlib.sha256()
         self.n = 0
 
@@ -321,11 +329,34 @@ class _HashingRaw(io.RawIOBase):
         return True
 
     def readinto(self, b):
-        n = self.fh.readinto(b)
+        for attempt in range(1, READ_ATTEMPTS + 1):
+            try:
+                if self.fh is None:
+                    self.fh = open(self.path, "rb")
+                    self.fh.seek(self.n)
+                n = self.fh.readinto(b)
+                break
+            except FileNotFoundError:
+                raise
+            except OSError:
+                self.close_file()
+                if attempt == READ_ATTEMPTS:
+                    raise
+                time.sleep(READ_BACKOFF_S * attempt)
         if n:
             self.h.update(memoryview(b)[:n])
             self.n += n
         return n
+
+    def close_file(self):
+        if self.fh is not None:
+            with suppress(OSError):
+                self.fh.close()
+            self.fh = None
+
+    def close(self):
+        self.close_file()
+        super().close()
 
 
 def _check_header(row, entry: Section, path: str) -> dict:
@@ -361,8 +392,7 @@ def iter_section_lines(archive, entry: Section, sink: dict | None = None):
 
 
 def _section_lines(path, entry: Section, sink):
-    with open(path, "rb") as raw_fh:
-        hashing = _HashingRaw(raw_fh)
+    with _HashingRaw(path) as hashing:
         buffered = io.BufferedReader(hashing, 1 << 20)
         with gzip.GzipFile(fileobj=buffered, mode="rb") as gz:
             first = gz.readline()

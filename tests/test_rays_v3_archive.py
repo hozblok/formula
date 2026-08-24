@@ -207,6 +207,41 @@ def test_fingerprint_no_clobber_and_validation(tmp_path):
 
 # ------------------------------------------------------------ verification
 
+def test_section_read_resumes_after_transient_io_error(tmp_path, monkeypatch):
+    archive, index = _archive(tmp_path, n_modes=1, n_rays=4)
+    entry = index.sections("capillary", 0)[0]
+    good = list(rays_v3.iter_section_lines(archive, entry))
+    monkeypatch.setattr(rays_v3, "READ_BACKOFF_S", 0.0)
+    failures = {"left": 0, "seen": 0}
+    real_open = open
+
+    class Flaky:
+        def __init__(self, fh):
+            self.fh = fh
+
+        def readinto(self, b):
+            if failures["left"]:
+                failures["left"] -= 1
+                failures["seen"] += 1
+                raise OSError(22, "Invalid argument")
+            return self.fh.readinto(b)
+
+        def __getattr__(self, name):
+            return getattr(self.fh, name)
+
+    def flaky_open(path, mode="r", *args, **kwargs):
+        fh = real_open(path, mode, *args, **kwargs)
+        return Flaky(fh) if str(path).endswith(".jsonl.gz") else fh
+
+    monkeypatch.setattr(rays_v3, "open", flaky_open, raising=False)
+    failures["left"] = 2
+    assert list(rays_v3.iter_section_lines(archive, entry)) == good
+    assert failures["seen"] == 2
+    failures["left"] = rays_v3.READ_ATTEMPTS
+    with pytest.raises(ValueError, match="truncated or corrupt"):
+        list(rays_v3.iter_section_lines(archive, entry))
+
+
 def test_section_corruption_is_detected(tmp_path):
     archive, index = _archive(tmp_path, n_modes=1, n_rays=4)
     entry = index.sections("capillary", 0)[0]
