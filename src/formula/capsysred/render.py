@@ -275,6 +275,15 @@ def ray_scatter(counts, extent, title, xlabel, ylabel, subtitle="", w=640):
     return {"w": w, "h": h, "body": "".join(e)}
 
 
+def vstack(figs, gap=8):
+    w = max(f["w"] for f in figs)
+    body, y = [], 0
+    for f in figs:
+        body.append(f'<g transform="translate(0,{y})">{f["body"]}</g>')
+        y += f["h"] + gap
+    return {"w": w, "h": y - gap, "body": "".join(body)}
+
+
 def hstack(figs, gap=12):
     w = sum(f["w"] for f in figs) + gap * (len(figs) - 1)
     h = max(f["h"] for f in figs)

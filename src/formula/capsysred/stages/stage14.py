@@ -1186,7 +1186,7 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
                             mu_sub, "|μ|", vmax=1.0, mark=mark, w=430, equal=True)
     err_fig = render.heatmap(err_grid, extent, "σ_jack(μ)", "x, µm", "y, µm",
                              "", "σ", mark=mark, w=430, equal=True)
-    flag_fig = render.category_map(flag_grid, extent, "Cell trust map", "x, µm",
+    flag_fig = render.category_map(flag_grid, extent, "Cell classification", "x, µm",
                                    "y, µm", "", mark=mark,
                                    counts=flag_counts,
                                    lit_counts=lit_flag_counts,
@@ -1211,13 +1211,13 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
                    for p in with_err],
             "hi": [min(rows[p]["mu_raw"] + rows[p]["mu_raw_err"], 1.0)
                    for p in with_err],
-            "label": "min(μ_raw,1) ± σ_jack",
+            "label": "min(μ,1) ± σ_jack",
         })
     without_err = [p for p in good if rows[p]["mu_raw_err"] is None]
     if without_err:
         series.append({"xs": [xs[p % nx] for p in without_err],
                        "ys": [min(rows[p]["mu_raw"], 1.0) for p in without_err],
-                       "label": "μ_raw; σ unavailable", "dots": True,
+                       "label": "μ; σ unavailable", "dots": True,
                        "color": "#CC79A7"})
     if not series:
         series.append({"xs": [xs[0], xs[-1]], "ys": [0.0, 0.0],
@@ -1229,10 +1229,18 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
                            "ys": [min(rows[p]["mu_raw"] or 0.0, 1.0) for p in ids],
                            "label": flag, "color": render.FLAG_COLORS[flag],
                            "dots": True})
-    render.save(os.path.join(result_dir, "14a-capillary-jack-slice.svg"),
-                render.line_chart(series, "Stage-14 reference-row slice", "x, µm",
-                                  "|μ|", f"y={m_to_um(grid.ys()[iy]):.3g} µm",
-                                  vlines=[(m_to_um(ref_xy[0]), "ref")], w=760))
+    slice_fig = render.line_chart(
+        series, f"|μ(P,P_ref)| — slice y = {m_to_um(grid.ys()[iy]):.3g} µm",
+        "x, µm", "|μ|", mu_sub, vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
+    if with_err:
+        err_xs = [xs[p % nx] for p in with_err]
+        err_ys = [rows[p]["mu_raw_err"] for p in with_err]
+        strip = render.line_chart(
+            [{"xs": err_xs, "ys": err_ys, "lo": [0.0] * len(err_ys),
+              "hi": err_ys, "color": "#ff7f0e", "width": 1.0}],
+            "", "x, µm", "σ_jack", w=760, h=150)
+        slice_fig = render.vstack([slice_fig, strip])
+    render.save(os.path.join(result_dir, "14a-capillary-jack-slice.svg"), slice_fig)
     if ny > 1:
         intensity_fig = render.hstack([
             render.heatmap(i_grid, extent, "intensity", "x, µm", "y, µm", sub,
