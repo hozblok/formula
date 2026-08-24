@@ -196,7 +196,7 @@ def line_chart(series, title, xlabel, ylabel, subtitle="", vlines=(),
     return {"w": w, "h": h, "body": "".join(e)}
 
 
-CBAR_GUTTER = 74      # heatmap colorbar margin
+CBAR_GUTTER = 92      # heatmap colorbar margin
 LEGEND_GUTTER = 190   # category_map legend margin
 
 
@@ -208,13 +208,22 @@ def _mark_pixel(ax, mark, nx, ny):
 
 
 def heatmap(grid, extent, title, xlabel, ylabel, subtitle="", cbar_label="",
-            w=560, h=460, vmax=None, mark=None, equal=False):
+            w=560, h=460, vmax=None, mark=None, equal=False, log=False,
+            decades=3):
     """grid: row-major [iy][ix], iy=0 at the bottom edge; extent=(x0,x1,y0,y1).
-    equal=True: pick h so one data unit spans equal px on both axes."""
+    equal=True: pick h so one data unit spans equal px on both axes.
+    log=True: color spans `decades` below vmax, colorbar labeled per decade."""
     ny, nx = len(grid), len(grid[0])
     finite = [float(v) for row in grid for v in row
               if v is not None and math.isfinite(float(v))]
     vmax = vmax or max(finite, default=1.0) or 1.0
+    floor = vmax / 10 ** decades
+
+    def tone(v):
+        if log:
+            return viridis(0.0 if v <= floor else math.log10(v / floor) / decades)
+        return viridis(v / vmax)
+
     scale = max(1, int(360 / max(nx, ny)))
     rows = []
     for iy in range(ny - 1, -1, -1):
@@ -222,7 +231,7 @@ def heatmap(grid, extent, title, xlabel, ylabel, subtitle="", cbar_label="",
         for ix in range(nx):
             value = grid[iy][ix]
             color = (((224, 224, 224) if (ix + iy) % 2 else (184, 184, 184))
-                     if value is None else viridis(float(value) / vmax))
+                     if value is None else tone(float(value)))
             row.extend([color] * scale)
         rows.extend([row] * scale)
     ax = _Axes(w, h, (extent[0], extent[1]), (extent[2], extent[3]), right=CBAR_GUTTER)
@@ -244,9 +253,16 @@ def heatmap(grid, extent, title, xlabel, ylabel, subtitle="", cbar_label="",
              f'height="{ax.py0 - ax.py1:.1f}" preserveAspectRatio="none" '
              f'href="{_png_uri(cb)}"/>')
     e.append(_rect(cx, ax.py1, 14, ax.py0 - ax.py1, "none", "#888"))
-    for frac in (0.0, 0.5, 1.0):
-        y = ax.py0 - frac * (ax.py0 - ax.py1)
-        e.append(_text(cx + 18, y + 4, _fmt(vmax * frac), 10.5, "start", "#444"))
+    if log:
+        for k in range(math.ceil(math.log10(floor)),
+                       math.floor(math.log10(vmax)) + 1):
+            frac = math.log10(10 ** k / floor) / decades
+            y = ax.py0 - frac * (ax.py0 - ax.py1)
+            e.append(_text(cx + 18, y + 4, f"1e{k}", 10.5, "start", "#444"))
+    else:
+        for frac in (0.0, 0.5, 1.0):
+            y = ax.py0 - frac * (ax.py0 - ax.py1)
+            e.append(_text(cx + 18, y + 4, _fmt(vmax * frac), 10.5, "start", "#444"))
     if cbar_label:
         e.append(_text(cx + 7, ax.py0 + 36, cbar_label, 11.5, "middle", "#333"))
     return {"w": w, "h": h, "body": "".join(e)}

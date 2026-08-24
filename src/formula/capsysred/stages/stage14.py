@@ -60,6 +60,8 @@ RESULT_PAYLOAD_NAMES = (
     "14-capillary-jack-mu-flags.svg",
     "14a-capillary-jack-slice.svg",
     "14b-capillary-jack-intensity.svg",
+    "14b-capillary-jack-intensity-log.svg",
+    "14b-capillary-jack-density.svg",
     "14c-capillary-jack-overlay.svg",
     "14d-capillary-ray-scatter.svg",
     "14e-capillary-ref-passport.svg",
@@ -1183,15 +1185,15 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
     mu_sub = (f"ref cell at ({round(mark[0], 3) or 0.0:g}, "
               f"{round(mark[1], 3) or 0.0:g}) µm")
     mu_fig = render.heatmap(mu_grid, extent, "|μ(P,P_ref)|", "x, µm", "y, µm",
-                            mu_sub, "|μ|", vmax=1.0, mark=mark, w=430, equal=True)
+                            mu_sub, "|μ|", vmax=1.0, mark=mark, w=448, equal=True)
     err_fig = render.heatmap(err_grid, extent, "σ_jack(μ)", "x, µm", "y, µm",
-                             "", "σ", mark=mark, w=430, equal=True)
+                             "", "σ", mark=mark, w=448, equal=True)
     flag_fig = render.category_map(flag_grid, extent, "Cell classification", "x, µm",
                                    "y, µm", "", mark=mark,
                                    counts=flag_counts,
                                    lit_counts=lit_flag_counts,
                                    lit_total=sum(row["n_rays"] > 0 for row in rows),
-                                   w=430, equal=True)
+                                   w=448, equal=True)
     render.save(os.path.join(result_dir, "14-capillary-jack-mu.svg"),
                 render.hstack([mu_fig, err_fig, flag_fig]))
     render.save(os.path.join(result_dir, "14-capillary-jack-mu-map.svg"), mu_fig)
@@ -1242,21 +1244,33 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
         slice_fig = render.vstack([slice_fig, strip])
     render.save(os.path.join(result_dir, "14a-capillary-jack-slice.svg"), slice_fig)
     if ny > 1:
-        intensity_fig = render.hstack([
-            render.heatmap(i_grid, extent, "intensity", "x, µm", "y, µm", sub,
-                           "I", w=500, equal=True),
-            render.heatmap(d_grid, extent, "ray density", "x, µm", "y, µm", "",
-                           "rays", w=500, equal=True),
-        ])
+        intensity_fig = render.heatmap(i_grid, extent, "intensity", "x, µm",
+                                       "y, µm", "", "I", w=518, equal=True)
+        log_fig = render.heatmap(i_grid, extent, "intensity, log scale", "x, µm",
+                                 "y, µm", "", "I", w=518, equal=True, log=True)
+        density_fig = render.heatmap(d_grid, extent, "ray density", "x, µm",
+                                     "y, µm", "", "rays", w=518, equal=True)
     else:
         imax, dmax = max(intensity) or 1.0, max(density) or 1.0
         intensity_fig = render.line_chart([
-            {"xs": xs, "ys": [v / imax for v in intensity], "label": "I/max"},
+            {"xs": xs, "ys": [v / imax for v in intensity], "label": "I/max"}],
+            "intensity", "x, µm", "normalized", sub, w=760)
+        lit = [(x, v) for x, v in zip(xs, intensity) if v > 0]
+        log_fig = render.line_chart(
+            [{"xs": [x for x, _ in lit], "ys": [math.log10(v) for _, v in lit],
+              "label": "log10 I"}] if lit else
+            [{"xs": [xs[0], xs[-1]], "ys": [0.0, 0.0],
+              "label": "no lit cells", "dash": "2,3"}],
+            "intensity, log scale", "x, µm", "log10 I", "", y_zero=False, w=760)
+        density_fig = render.line_chart([
             {"xs": xs, "ys": [v / dmax for v in density], "label": "rays/max",
-             "dash": "6,4"}], "intensity and density", "x, µm", "normalized",
-            sub, w=760)
+             "dash": "6,4"}], "ray density", "x, µm", "normalized", "", w=760)
     render.save(os.path.join(result_dir, "14b-capillary-jack-intensity.svg"),
                 intensity_fig)
+    render.save(os.path.join(result_dir, "14b-capillary-jack-intensity-log.svg"),
+                log_fig)
+    render.save(os.path.join(result_dir, "14b-capillary-jack-density.svg"),
+                density_fig)
     render.save(os.path.join(result_dir, "14c-capillary-jack-overlay.svg"),
                 render.overlay_map(mu_grid, flag_grid, extent,
                                    "Stage-14 non-trusted overlay", "x, µm", "y, µm",
