@@ -252,9 +252,15 @@ class SectionWriter:
         if header_extra:
             header.update(header_extra)
         self._raw = open(self.tmp, "wb")
-        self._gz = gzip.GzipFile(filename="", mode="wb", fileobj=self._raw,
-                                 compresslevel=level, mtime=0)
-        self._gz.write(json.dumps(header, ensure_ascii=False).encode("utf-8") + b"\n")
+        try:
+            self._gz = gzip.GzipFile(filename="", mode="wb", fileobj=self._raw,
+                                     compresslevel=level, mtime=0)
+            self._gz.write(json.dumps(header, ensure_ascii=False).encode("utf-8") + b"\n")
+        except BaseException:
+            self._raw.close()
+            with suppress(FileNotFoundError):
+                os.remove(self.tmp)
+            raise
         self.rows = 0
         self._closed = False
 
@@ -273,12 +279,12 @@ class SectionWriter:
     def abort(self) -> None:
         if not self._closed:
             self._closed = True
-            self._gz.close()
-            self._raw.close()
-            try:
+            with suppress(OSError, ValueError):
+                self._gz.close()
+            with suppress(OSError, ValueError):
+                self._raw.close()
+            with suppress(FileNotFoundError):
                 os.remove(self.tmp)
-            except FileNotFoundError:
-                pass
 
     def close(self) -> Section:
         if self._closed:
@@ -294,9 +300,9 @@ class SectionWriter:
         self._raw.flush()
         os.fsync(self._raw.fileno())
         self._raw.close()
-        self._closed = True
         size, digest = _hash_file(self.tmp)
         os.replace(self.tmp, self.final)
+        self._closed = True
         return Section(scene, mode, r0, r1, self.rows, size, digest, self.name)
 
 
