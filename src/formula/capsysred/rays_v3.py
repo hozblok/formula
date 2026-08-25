@@ -36,6 +36,7 @@ METADATA_NAME = "rays-fingerprint.yaml"
 INDEX_NAME = "rays-index.jsonl"
 MODES_DIR = "modes"
 DEFAULT_LEVEL = 6
+SHA256_HEX = 64
 READ_ATTEMPTS = 5               # transient device errors: reopen and resume
 READ_BACKOFF_S = 10.0
 
@@ -177,7 +178,7 @@ def _parse_entry(row: dict, path: str) -> Section:
                         str(row["sha256"]), str(row["file"]))
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"{path}: invalid rays index entry {row!r}") from exc
-    if entry.mode < 0 or entry.r0 < 0 or len(entry.sha256) != 64:
+    if entry.mode < 0 or entry.r0 < 0 or len(entry.sha256) != SHA256_HEX:
         raise ValueError(f"{path}: invalid rays index entry {row!r}")
     return entry
 

@@ -280,7 +280,7 @@ class Simulation:
             G = schematic.build_geometry(cfg, "free")
             self._save(out_dir, "01a-scheme-traced.svg", schematic.compose(G))
             return
-        src, scr = cap.source, cap.screen
+        src = cap.source
         two_a = 2.0 * entrance_disk(cap.bores[0], float(cap.z0))[2]
         kinds = sorted({b.get("kind", "cylinder") for b in cap.bores})
         kind_note = "" if kinds == ["cylinder"] else f" [{', '.join(kinds)}]"

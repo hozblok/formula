@@ -42,6 +42,7 @@ from .shared.types import ray_record
 CAPILLARY_AIM_DRAWS = 3     # bore choice + disk point; asserted by tests
 XY_TOL = 1e-9               # m, ray-0 re-trace against the recorded row
 OPL_REL_TOL = 1e-9
+MAX_JOBS = 1024
 
 
 def _chunks(total, jobs):
@@ -414,8 +415,8 @@ def main(argv=None):
     ap.add_argument("--verify", metavar="ARCHIVE_DIR", default=None,
                     help="re-read a v3 archive completely instead of converting")
     args = ap.parse_args(argv)
-    if args.jobs < 1 or args.jobs > 8:
-        ap.error("--jobs must be within 1..8")
+    if args.jobs < 1 or args.jobs > MAX_JOBS:
+        ap.error(f"--jobs must be within 1..{MAX_JOBS}")
     if args.verify:
         verify(os.path.abspath(args.verify), args.jobs)
         return 0

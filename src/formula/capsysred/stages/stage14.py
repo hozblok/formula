@@ -1172,7 +1172,7 @@ def _grid(values, nx, ny):
 def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
                      ref: int, flag_counts: Counter, n_modes: int,
                      screen_label: str = "capillary"):
-    nx, ny, npix = grid.nx, grid.ny, grid.nx * grid.ny
+    nx, ny = grid.nx, grid.ny
     mu = [row["mu_raw"] for row in rows]
     err = [row["mu_raw_err"] for row in rows]
     flags = [row["flag"] for row in rows]

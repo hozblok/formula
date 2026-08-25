@@ -20,6 +20,7 @@ from .surfaces import CapillaryBundle, ImplicitWall, entrance_disk
 from .trace import trace_ray
 from .shared.units import m_to_mm, m_to_nm, m_to_um, rad_to_mrad
 N_RAYS = 10
+AXIS_EPS = 1e-9      # m, bore centre counts as on-axis below this
 GREEN, BLUE, WALL, AXIS = "#2ca02c", "#3060c0", "#5a7a94", "#bbbbbb"
 INK, DIM = "#222", "#333"
 
@@ -227,7 +228,7 @@ def trace_rays(G, p, n=N_RAYS, seed=7):
     if mode == "capillary":
         z0f = G["z0"]
         disks = [entrance_disk(b, z0f) for b in G["bores"]
-                 if abs(float(b["center"][1])) < 1e-9] or \
+                 if abs(float(b["center"][1])) < AXIS_EPS] or \
                 [entrance_disk(b, z0f) for b in G["bores"]]
         mb = int(G["cfg"].max_bounces)
     else:
@@ -295,7 +296,7 @@ def side_view(G):
     if mode == "capillary":
         for b in G["bores"]:
             cy = float(b["center"][1])
-            if abs(cy) < 1e-9:
+            if abs(cy) < AXIS_EPS:
                 for k in range(13):
                     zf = G["z0"] + (G["z1"] - G["z0"]) * k / 12
                     xs += list(wall_span(b, G["z0"], zf))
@@ -340,7 +341,7 @@ def draw_optic(G, v, box):
     zs = [G["z0"] + (G["z1"] - G["z0"]) * k / 60 for k in range(61)]
     for b in G["bores"]:
         cy = float(b["center"][1])
-        if abs(cy) > 1e-9:
+        if abs(cy) > AXIS_EPS:
             continue
         top, bot = [], []
         for zf in zs:
@@ -356,14 +357,14 @@ def draw_optic(G, v, box):
         x_lo, x_hi = wall_span(b, G["z0"], G["z0"])
         e.append(L(*v.pt(G["z0"], x_hi), *v.pt(G["z0"], x_lo), WALL, 1.2))
     spans = [wall_span(b, G["z0"], G["z0"]) for b in G["bores"]
-             if abs(float(b["center"][1])) < 1e-9]
+             if abs(float(b["center"][1])) < AXIS_EPS]
     if spans:
         # absorbing front face: rays that miss the bore aperture end on it
         px0 = v.px(G["z0"])
         e.append(L(px0, box[1], px0, v.py(max(hi for _, hi in spans)), WALL, 1.2))
         e.append(L(px0, v.py(min(lo for lo, _ in spans)), px0, box[3], WALL, 1.2))
     for b in G["bores"]:                           # bend geometry, once
-        if b.get("kind") == "torus" and abs(float(b["center"][1])) < 1e-9:
+        if b.get("kind") == "torus" and abs(float(b["center"][1])) < AXIS_EPS:
             R = float(b["bend"]["radius"])
             th = math.asin((G["z1"] - G["z0"]) / R)
             sag = R * (1.0 - math.cos(th))
@@ -588,7 +589,7 @@ def need_unrolled(G):
     """Bore-relative panel: one in-plane bent bore whose sag dwarfs its radius."""
     return (G["mode"] == "capillary" and len(G["bores"]) == 1
             and G["bores"][0].get("kind") == "torus"
-            and abs(float(G["bores"][0]["center"][1])) < 1e-9)
+            and abs(float(G["bores"][0]["center"][1])) < AXIS_EPS)
 
 
 def unrolled(G):
