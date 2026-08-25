@@ -140,10 +140,25 @@ class _Axes:
         return e
 
 
+def _runs(values):
+    """Index runs of consecutive non-None values; None is a gap."""
+    run = []
+    for i, v in enumerate(values):
+        if v is None:
+            if run:
+                yield run
+            run = []
+        else:
+            run.append(i)
+    if run:
+        yield run
+
+
 def _ranges(series, y_zero: bool):
     xs = [v for s in series for v in s["xs"]]
-    ys = [v for s in series for v in s["ys"]]
-    ys += [v for s in series for key in ("lo", "hi") for v in (s.get(key) or ())]
+    ys = [v for s in series for v in s["ys"] if v is not None]
+    ys += [v for s in series for key in ("lo", "hi") for v in (s.get(key) or ())
+           if v is not None]
     xa, xb = min(xs), max(xs)
     ya, yb = min(ys), max(ys)
     if xb <= xa:
@@ -158,7 +173,8 @@ def _ranges(series, y_zero: bool):
 def line_chart(series, title, xlabel, ylabel, subtitle="", vlines=(),
                y_zero=True, w=560, h=400):
     """series: [{xs, ys, label, color?, dash?, width?, lo?, hi?, dots?}];
-    lo/hi: shaded band; dots: circle markers instead of a line."""
+    lo/hi: shaded band; dots: circle markers instead of a line.
+    None in ys marks a gap: lines and bands break, single cells become dots."""
     ax = _Axes(w, h, *_ranges(series, y_zero))
     e = ax.frame(xlabel, ylabel, title, subtitle)
     for x, label in vlines:
@@ -169,20 +185,35 @@ def line_chart(series, title, xlabel, ylabel, subtitle="", vlines=(),
     for i, s in enumerate(series):
         color = s.get("color") or PALETTE[i % len(PALETTE)]
         dash = f' stroke-dasharray="{s["dash"]}"' if s.get("dash") else ""
-        if s.get("lo") and s.get("hi"):
-            band = " ".join(f"{ax.x(x):.1f},{ax.y(y):.1f}" for x, y in
-                            list(zip(s["xs"], s["hi"]))
-                            + list(zip(reversed(s["xs"]), reversed(s["lo"]))))
-            e.append(f'<polygon points="{band}" fill="{color}" '
-                     f'fill-opacity="0.16" stroke="none"/>')
         if s.get("dots"):
             e.extend(f'<circle cx="{ax.x(x):.1f}" cy="{ax.y(y):.1f}" r="3" '
-                     f'fill="{color}"/>' for x, y in zip(s["xs"], s["ys"]))
+                     f'fill="{color}"/>'
+                     for x, y in zip(s["xs"], s["ys"]) if y is not None)
             continue
-        pts = " ".join(f"{ax.x(x):.1f},{ax.y(y):.1f}"
-                       for x, y in zip(s["xs"], s["ys"]))
-        e.append(f'<polyline points="{pts}" fill="none" stroke="{color}" '
-                 f'stroke-width="{s.get("width", 1.8)}"{dash}/>')
+        for run in _runs(s["ys"]):
+            if s.get("lo") and s.get("hi"):
+                if len(run) == 1:
+                    k = run[0]
+                    e.append(_line(ax.x(s["xs"][k]), ax.y(s["lo"][k]),
+                                   ax.x(s["xs"][k]), ax.y(s["hi"][k]),
+                                   color, 2.0))
+                else:
+                    band = " ".join(
+                        f"{ax.x(s['xs'][k]):.1f},{ax.y(s['hi'][k]):.1f}"
+                        for k in run) + " " + " ".join(
+                        f"{ax.x(s['xs'][k]):.1f},{ax.y(s['lo'][k]):.1f}"
+                        for k in reversed(run))
+                    e.append(f'<polygon points="{band}" fill="{color}" '
+                             f'fill-opacity="0.16" stroke="none"/>')
+            if len(run) == 1:
+                k = run[0]
+                e.append(f'<circle cx="{ax.x(s["xs"][k]):.1f}" '
+                         f'cy="{ax.y(s["ys"][k]):.1f}" r="2.2" fill="{color}"/>')
+                continue
+            pts = " ".join(f"{ax.x(s['xs'][k]):.1f},{ax.y(s['ys'][k]):.1f}"
+                           for k in run)
+            e.append(f'<polyline points="{pts}" fill="none" stroke="{color}" '
+                     f'stroke-width="{s.get("width", 1.8)}"{dash}/>')
     ly = ax.py1 + 14
     lx = ax.px1 - 10
     for i, s in enumerate(reversed(series)):
@@ -217,11 +248,12 @@ def heatmap(grid, extent, title, xlabel, ylabel, subtitle="", cbar_label="",
     finite = [float(v) for row in grid for v in row
               if v is not None and math.isfinite(float(v))]
     vmax = vmax or max(finite, default=1.0) or 1.0
-    floor = vmax / 10 ** decades
+    floor = vmax / 10 ** decades if vmax > 0 else 0.0
 
     def tone(v):
         if log:
-            return viridis(0.0 if v <= floor else math.log10(v / floor) / decades)
+            return viridis(0.0 if floor <= 0 or v <= floor
+                           else math.log10(v / floor) / decades)
         return viridis(v / vmax)
 
     scale = max(1, int(360 / max(nx, ny)))
@@ -253,7 +285,7 @@ def heatmap(grid, extent, title, xlabel, ylabel, subtitle="", cbar_label="",
              f'height="{ax.py0 - ax.py1:.1f}" preserveAspectRatio="none" '
              f'href="{_png_uri(cb)}"/>')
     e.append(_rect(cx, ax.py1, 14, ax.py0 - ax.py1, "none", "#888"))
-    if log:
+    if log and floor > 0:
         for k in range(math.ceil(math.log10(floor)),
                        math.floor(math.log10(vmax)) + 1):
             frac = math.log10(10 ** k / floor) / decades

@@ -1210,20 +1210,28 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
     iy = ref // nx
     xs = [m_to_um(x) for x in grid.xs()]
     row_ids = range(iy * nx, (iy + 1) * nx)
-    good = [p for p in row_ids if rows[p]["mu_raw"] is not None]
-    with_err = [p for p in good if rows[p]["mu_raw_err"] is not None]
+    xs_row = [xs[p % nx] for p in row_ids]
+
+    def _row(fn):
+        # per-cell values along the reference row; None = gap, lines break
+        return [fn(rows[p]) for p in row_ids]
+
+    def banded(r):
+        return r["mu_raw"] is not None and r["mu_raw_err"] is not None
+
+    mu_band = _row(lambda r: min(r["mu_raw"], 1.0) if banded(r) else None)
     series = []
-    if with_err:
+    if any(v is not None for v in mu_band):
         series.append({
-            "xs": [xs[p % nx] for p in with_err],
-            "ys": [min(rows[p]["mu_raw"], 1.0) for p in with_err],
-            "lo": [max(rows[p]["mu_raw"] - rows[p]["mu_raw_err"], 0.0)
-                   for p in with_err],
-            "hi": [min(rows[p]["mu_raw"] + rows[p]["mu_raw_err"], 1.0)
-                   for p in with_err],
+            "xs": xs_row, "ys": mu_band,
+            "lo": _row(lambda r: max(r["mu_raw"] - r["mu_raw_err"], 0.0)
+                       if banded(r) else None),
+            "hi": _row(lambda r: min(r["mu_raw"] + r["mu_raw_err"], 1.0)
+                       if banded(r) else None),
             "label": "min(μ,1) ± σ_jack",
         })
-    without_err = [p for p in good if rows[p]["mu_raw_err"] is None]
+    without_err = [p for p in row_ids if rows[p]["mu_raw"] is not None
+                   and rows[p]["mu_raw_err"] is None]
     if without_err:
         series.append({"xs": [xs[p % nx] for p in without_err],
                        "ys": [min(rows[p]["mu_raw"], 1.0) for p in without_err],
@@ -1243,36 +1251,36 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
     slice_fig = render.line_chart(
         series, f"|μ(P,P_ref)| — {slice_label}",
         "x, µm", "|μ|", mu_sub, vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
-    def _strip(points, ylabel):
+
+    def _strip(vals, ylabel):
         return render.line_chart(
-            [{"xs": [x for x, _ in points], "ys": [v for _, v in points],
-              "lo": [0.0] * len(points), "hi": [v for _, v in points],
+            [{"xs": xs_row, "ys": vals,
+              "lo": [0.0 if v is not None else None for v in vals], "hi": vals,
               "color": "#ff7f0e", "width": 1.0}], "", "x, µm", ylabel,
             w=760, h=150)
 
-    err_pts = [(xs[p % nx], rows[p]["mu_raw_err"]) for p in with_err]
-    if err_pts:
-        slice_fig = render.vstack([slice_fig, _strip(err_pts, "σ_jack")])
+    err_vals = _row(lambda r: r["mu_raw_err"])
+    if any(v is not None for v in err_vals):
+        slice_fig = render.vstack([slice_fig, _strip(err_vals, "σ_jack")])
     render.save(os.path.join(result_dir, "14a-capillary-jack-slice.svg"), slice_fig)
     ref_line = [(m_to_um(ref_xy[0]), "ref")]
 
-    def _slice_chart(points, title, ylabel, empty, log=False):
-        series = ([{"xs": [x for x, _ in points],
-                    "ys": [math.log10(v) if log else v for _, v in points],
-                    "label": ylabel}] if points else
+    def _slice_chart(vals, title, ylabel, empty, y_zero=True):
+        series = ([{"xs": xs_row, "ys": vals, "label": ylabel}]
+                  if any(v is not None for v in vals) else
                   [{"xs": [xs[0], xs[-1]], "ys": [0.0, 0.0],
                     "label": empty, "dash": "2,3"}])
         return render.line_chart(series, f"{title} — {slice_label}", "x, µm",
                                  ylabel, mu_sub, vlines=ref_line,
-                                 y_zero=not log, w=760)
+                                 y_zero=y_zero, w=760)
 
-    row_i = [(xs[p % nx], intensity[p]) for p in row_ids]
+    row_i = [intensity[p] for p in row_ids]
     render.save(os.path.join(result_dir, "14b-capillary-jack-intensity-slice.svg"),
                 _slice_chart(row_i, "intensity", "I", "no rays"))
-    lit_row = [(x, v) for x, v in row_i if v > 0]
     render.save(os.path.join(result_dir, "14b-capillary-jack-intensity-log-slice.svg"),
-                _slice_chart(lit_row, "intensity, log scale", "log10 I",
-                             "no lit cells", log=True))
+                _slice_chart([math.log10(v) if v > 0 else None for v in row_i],
+                             "intensity, log scale", "log10 I",
+                             "no lit cells", y_zero=False))
     ic_grid = _grid([row["ic"] for row in rows], nx, ny)
     ic_err_grid = _grid([row["ic_err"] for row in rows], nx, ny)
     for name, grid_, title, cbar, log_ in (
@@ -1287,21 +1295,20 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
         render.save(os.path.join(result_dir, name),
                     render.heatmap(grid_, extent, title, "x, µm", "y, µm", "",
                                    cbar, w=518, equal=True, log=log_))
-    ic_row = [(xs[p % nx], rows[p]["ic"]) for p in row_ids
-              if rows[p]["ic"] is not None]
+    ic_row = _row(lambda r: r["ic"])
     ic_fig = _slice_chart(ic_row, "coherent intensity Ic", "Ic", "no paired cells")
-    ic_pts = [(xs[p % nx], rows[p]["ic_err"]) for p in row_ids
-              if rows[p]["ic_err"] is not None]
-    if ic_pts:
-        ic_fig = render.vstack([ic_fig, _strip(ic_pts, "σ_jack(Ic)")])
+    ic_errs = _row(lambda r: r["ic_err"])
+    if any(v is not None for v in ic_errs):
+        ic_fig = render.vstack([ic_fig, _strip(ic_errs, "σ_jack(Ic)")])
     render.save(os.path.join(result_dir, "14f-capillary-jack-ic-slice.svg"), ic_fig)
-    ic_log_fig = _slice_chart([(x, v) for x, v in ic_row if v > 0],
-                              "coherent intensity Ic, log scale", "log10 Ic",
-                              "no positive Ic", log=True)
-    rel_pts = [(xs[p % nx], rows[p]["ic_err"] / rows[p]["ic"]) for p in row_ids
-               if rows[p]["ic_err"] is not None and (rows[p]["ic"] or 0) > 0]
-    if rel_pts:
-        ic_log_fig = render.vstack([ic_log_fig, _strip(rel_pts, "σ_jack(Ic)/Ic")])
+    ic_log_fig = _slice_chart(
+        [math.log10(v) if v is not None and v > 0 else None for v in ic_row],
+        "coherent intensity Ic, log scale", "log10 Ic", "no positive Ic",
+        y_zero=False)
+    rel = _row(lambda r: r["ic_err"] / r["ic"]
+               if r["ic_err"] is not None and (r["ic"] or 0) > 0 else None)
+    if any(v is not None for v in rel):
+        ic_log_fig = render.vstack([ic_log_fig, _strip(rel, "σ_jack(Ic)/Ic")])
     render.save(os.path.join(result_dir, "14f-capillary-jack-ic-log-slice.svg"),
                 ic_log_fig)
     if ny > 1:
