@@ -1169,7 +1169,18 @@ def _grid(values, nx, ny):
     return [list(values[i * nx:(i + 1) * nx]) for i in range(ny)]
 
 
-def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
+def _figure_saver(result_dir: str):
+    """Single gate for figure writes; the caller checks names against the manifest."""
+    written = set()
+
+    def save(name, fig):
+        written.add(name)
+        render.save(os.path.join(result_dir, name), fig)
+
+    return written, save
+
+
+def _stage14_figures(save, rows, aggregate, final, grid: ScreenGrid,
                      ref: int, flag_counts: Counter, n_modes: int,
                      screen_label: str = "capillary"):
     nx, ny = grid.nx, grid.ny
@@ -1205,11 +1216,11 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
                                    lit_counts=lit_flag_counts,
                                    lit_total=sum(row["n_rays"] > 0 for row in rows),
                                    w=448, equal=True)
-    render.save(os.path.join(result_dir, "14-capillary-jack-mu.svg"),
-                render.hstack([mu_fig, err_fig, flag_fig]))
-    render.save(os.path.join(result_dir, "14-capillary-jack-mu-map.svg"), mu_fig)
-    render.save(os.path.join(result_dir, "14-capillary-jack-mu-err.svg"), err_fig)
-    render.save(os.path.join(result_dir, "14-capillary-jack-mu-flags.svg"), flag_fig)
+    save("14-capillary-jack-mu.svg",
+         render.hstack([mu_fig, err_fig, flag_fig]))
+    save("14-capillary-jack-mu-map.svg", mu_fig)
+    save("14-capillary-jack-mu-err.svg", err_fig)
+    save("14-capillary-jack-mu-flags.svg", flag_fig)
     iy = ref // nx
     xs = [m_to_um(x) for x in grid.xs()]
     row_ids = range(iy * nx, (iy + 1) * nx)
@@ -1265,7 +1276,7 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
     err_vals = _row(lambda r: r["mu_raw_err"])
     if any(v is not None for v in err_vals):
         slice_fig = render.vstack([slice_fig, _strip(err_vals, "σ_jack")])
-    render.save(os.path.join(result_dir, "14a-capillary-jack-slice.svg"), slice_fig)
+    save("14a-capillary-jack-slice.svg", slice_fig)
     ref_line = [(m_to_um(ref_xy[0]), "ref")]
 
     def _slice_chart(vals, title, ylabel, empty, y_zero=True):
@@ -1278,10 +1289,10 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
                                  y_zero=y_zero, w=760)
 
     row_i = [intensity[p] for p in row_ids]
-    render.save(os.path.join(result_dir, "14b-capillary-jack-intensity-slice.svg"),
-                _slice_chart(row_i, "intensity", "I", "no rays"))
-    render.save(os.path.join(result_dir, "14b-capillary-jack-intensity-log-slice.svg"),
-                _slice_chart([math.log10(v) if v > 0 else None for v in row_i],
+    save("14b-capillary-jack-intensity-slice.svg",
+         _slice_chart(row_i, "intensity", "I", "no rays"))
+    save("14b-capillary-jack-intensity-log-slice.svg",
+         _slice_chart([math.log10(v) if v > 0 else None for v in row_i],
                              "intensity, log scale", "log10 I",
                              "no lit cells", y_zero=False))
     ic_grid = _grid([row["ic"] for row in rows], nx, ny)
@@ -1295,15 +1306,15 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
              "σ_jack(Ic)", "σ", False),
             ("14f-capillary-jack-ic-err-log.svg", ic_err_grid,
              "σ_jack(Ic), log scale", "σ", True)):
-        render.save(os.path.join(result_dir, name),
-                    render.heatmap(grid_, extent, title, "x, µm", "y, µm", "",
+        save(name,
+         render.heatmap(grid_, extent, title, "x, µm", "y, µm", "",
                                    cbar, w=518, equal=True, log=log_))
     ic_row = _row(lambda r: r["ic"])
     ic_fig = _slice_chart(ic_row, "coherent intensity Ic", "Ic", "no paired cells")
     ic_errs = _row(lambda r: r["ic_err"])
     if any(v is not None for v in ic_errs):
         ic_fig = render.vstack([ic_fig, _strip(ic_errs, "σ_jack(Ic)")])
-    render.save(os.path.join(result_dir, "14f-capillary-jack-ic-slice.svg"), ic_fig)
+    save("14f-capillary-jack-ic-slice.svg", ic_fig)
     ic_log_fig = _slice_chart(
         [math.log10(v) if v is not None and v > 0 else None for v in ic_row],
         "coherent intensity Ic, log scale", "log10 Ic", "no positive Ic",
@@ -1312,8 +1323,8 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
                if r["ic_err"] is not None and (r["ic"] or 0) > 0 else None)
     if any(v is not None for v in rel):
         ic_log_fig = render.vstack([ic_log_fig, _strip(rel, "σ_jack(Ic)/Ic")])
-    render.save(os.path.join(result_dir, "14f-capillary-jack-ic-log-slice.svg"),
-                ic_log_fig)
+    save("14f-capillary-jack-ic-log-slice.svg",
+         ic_log_fig)
     if ny > 1:
         intensity_fig = render.heatmap(i_grid, extent, "intensity", "x, µm",
                                        "y, µm", "", "I", w=518, equal=True)
@@ -1336,14 +1347,14 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
         density_fig = render.line_chart([
             {"xs": xs, "ys": [v / dmax for v in density], "label": "rays/max",
              "dash": "6,4"}], "ray density", "x, µm", "normalized", "", w=760)
-    render.save(os.path.join(result_dir, "14b-capillary-jack-intensity.svg"),
-                intensity_fig)
-    render.save(os.path.join(result_dir, "14b-capillary-jack-intensity-log.svg"),
-                log_fig)
-    render.save(os.path.join(result_dir, "14b-capillary-jack-density.svg"),
-                density_fig)
-    render.save(os.path.join(result_dir, "14c-capillary-jack-overlay.svg"),
-                render.overlay_map(mu_grid, flag_grid, extent,
+    save("14b-capillary-jack-intensity.svg",
+         intensity_fig)
+    save("14b-capillary-jack-intensity-log.svg",
+         log_fig)
+    save("14b-capillary-jack-density.svg",
+         density_fig)
+    save("14c-capillary-jack-overlay.svg",
+         render.overlay_map(mu_grid, flag_grid, extent,
                                    "Stage-14 non-trusted overlay", "x, µm", "y, µm",
                                    sub, mark=mark, equal=True))
     scatter_meta = final["scatter"]
@@ -1352,8 +1363,8 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
                       m_to_um(scatter_meta["x0"] + scatter_meta["edge_x"]),
                       m_to_um(scatter_meta["y0"]),
                       m_to_um(scatter_meta["y0"] + scatter_meta["edge_y"]))
-    render.save(os.path.join(result_dir, "14d-capillary-ray-scatter.svg"),
-                render.ray_scatter(scatter_grid, scatter_extent,
+    save("14d-capillary-ray-scatter.svg",
+         render.ray_scatter(scatter_grid, scatter_extent,
                                    f"{screen_label}: ray locations on target screen",
                                    "x, µm", "y, µm", sub))
     return {
@@ -1362,7 +1373,7 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
     }
 
 
-def _ref_passport(result_dir: str, rows, ref: int, ref_status: str, ref_warnings,
+def _ref_passport(save, rows, ref: int, ref_status: str, ref_warnings,
                   diagnostics: dict, thresholds: FlagThresholds, n_modes: int,
                   screen_label: str) -> None:
     """14e: the reference pixel's own numbers against the registered and
@@ -1412,8 +1423,8 @@ def _ref_passport(result_dir: str, rows, ref: int, ref_status: str, ref_warnings
     title = (f"Reference-cell passport — "
              f"({row['x_um']:.1f}, {row['y_um']:.1f}) µm, N_jk = {n_modes}, "
              f"ref_ic_n_sigma = {z_ref:g}")
-    render.save(os.path.join(result_dir, "14e-capillary-ref-passport.svg"),
-                render.gauge_table(checks, title))
+    save("14e-capillary-ref-passport.svg",
+         render.gauge_table(checks, title))
 
 
 def preflight_stage14_output(out_dir: str) -> None:
@@ -1600,11 +1611,18 @@ def _finalize_screen(sim, target: ScreenTarget, output_dir: str,
             fh.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
         fh.flush()
         os.fsync(fh.fileno())
+    written, save = _figure_saver(output_dir)
     maps = _stage14_figures(
-        output_dir, rows, aggregate, result_final, grid, ref,
+        save, rows, aggregate, result_final, grid, ref,
         flag_counts, n_modes, target.label)
-    _ref_passport(output_dir, rows, ref, ref_status, ref_warnings, ref_diagnostics,
+    _ref_passport(save, rows, ref, ref_status, ref_warnings, ref_diagnostics,
                   thresholds, n_modes, target.label)
+    expected = {name for name in RESULT_PAYLOAD_NAMES if name.endswith(".svg")}
+    if written != expected:
+        raise ValueError(
+            "stage-14 figures drifted from RESULT_PAYLOAD_NAMES: "
+            f"missing {sorted(expected - written)}, "
+            f"unexpected {sorted(written - expected)}")
     screen_seconds = time.time() - screen_started
     result_meta = {
         "stage_id": STAGE_ID, "screen": target.label,
