@@ -25,10 +25,18 @@ _RESULT_FILES = {
     "14a-capillary-jack-slice.svg",
     "14b-capillary-jack-intensity.svg",
     "14b-capillary-jack-intensity-log.svg",
+    "14b-capillary-jack-intensity-slice.svg",
+    "14b-capillary-jack-intensity-log-slice.svg",
     "14b-capillary-jack-density.svg",
     "14c-capillary-jack-overlay.svg",
     "14d-capillary-ray-scatter.svg",
     "14e-capillary-ref-passport.svg",
+    "14f-capillary-jack-ic.svg",
+    "14f-capillary-jack-ic-log.svg",
+    "14f-capillary-jack-ic-err.svg",
+    "14f-capillary-jack-ic-err-log.svg",
+    "14f-capillary-jack-ic-slice.svg",
+    "14f-capillary-jack-ic-log-slice.svg",
 }
 
 _RESULT_KEYS = (

@@ -61,10 +61,18 @@ RESULT_PAYLOAD_NAMES = (
     "14a-capillary-jack-slice.svg",
     "14b-capillary-jack-intensity.svg",
     "14b-capillary-jack-intensity-log.svg",
+    "14b-capillary-jack-intensity-slice.svg",
+    "14b-capillary-jack-intensity-log-slice.svg",
     "14b-capillary-jack-density.svg",
     "14c-capillary-jack-overlay.svg",
     "14d-capillary-ray-scatter.svg",
     "14e-capillary-ref-passport.svg",
+    "14f-capillary-jack-ic.svg",
+    "14f-capillary-jack-ic-log.svg",
+    "14f-capillary-jack-ic-err.svg",
+    "14f-capillary-jack-ic-err-log.svg",
+    "14f-capillary-jack-ic-slice.svg",
+    "14f-capillary-jack-ic-log-slice.svg",
 )
 def _canonical(value) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"),
@@ -1231,18 +1239,71 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
                            "ys": [min(rows[p]["mu_raw"] or 0.0, 1.0) for p in ids],
                            "label": flag, "color": render.FLAG_COLORS[flag],
                            "dots": True})
+    slice_label = f"slice y = {round(m_to_um(grid.ys()[iy]), 3) or 0.0:g} µm"
     slice_fig = render.line_chart(
-        series, f"|μ(P,P_ref)| — slice y = {m_to_um(grid.ys()[iy]):.3g} µm",
+        series, f"|μ(P,P_ref)| — {slice_label}",
         "x, µm", "|μ|", mu_sub, vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
-    if with_err:
-        err_xs = [xs[p % nx] for p in with_err]
-        err_ys = [rows[p]["mu_raw_err"] for p in with_err]
-        strip = render.line_chart(
-            [{"xs": err_xs, "ys": err_ys, "lo": [0.0] * len(err_ys),
-              "hi": err_ys, "color": "#ff7f0e", "width": 1.0}],
-            "", "x, µm", "σ_jack", w=760, h=150)
-        slice_fig = render.vstack([slice_fig, strip])
+    def _strip(points, ylabel):
+        return render.line_chart(
+            [{"xs": [x for x, _ in points], "ys": [v for _, v in points],
+              "lo": [0.0] * len(points), "hi": [v for _, v in points],
+              "color": "#ff7f0e", "width": 1.0}], "", "x, µm", ylabel,
+            w=760, h=150)
+
+    err_pts = [(xs[p % nx], rows[p]["mu_raw_err"]) for p in with_err]
+    if err_pts:
+        slice_fig = render.vstack([slice_fig, _strip(err_pts, "σ_jack")])
     render.save(os.path.join(result_dir, "14a-capillary-jack-slice.svg"), slice_fig)
+    ref_line = [(m_to_um(ref_xy[0]), "ref")]
+
+    def _slice_chart(points, title, ylabel, empty, log=False):
+        series = ([{"xs": [x for x, _ in points],
+                    "ys": [math.log10(v) if log else v for _, v in points],
+                    "label": ylabel}] if points else
+                  [{"xs": [xs[0], xs[-1]], "ys": [0.0, 0.0],
+                    "label": empty, "dash": "2,3"}])
+        return render.line_chart(series, f"{title} — {slice_label}", "x, µm",
+                                 ylabel, mu_sub, vlines=ref_line,
+                                 y_zero=not log, w=760)
+
+    row_i = [(xs[p % nx], intensity[p]) for p in row_ids]
+    render.save(os.path.join(result_dir, "14b-capillary-jack-intensity-slice.svg"),
+                _slice_chart(row_i, "intensity", "I", "no rays"))
+    lit_row = [(x, v) for x, v in row_i if v > 0]
+    render.save(os.path.join(result_dir, "14b-capillary-jack-intensity-log-slice.svg"),
+                _slice_chart(lit_row, "intensity, log scale", "log10 I",
+                             "no lit cells", log=True))
+    ic_grid = _grid([row["ic"] for row in rows], nx, ny)
+    ic_err_grid = _grid([row["ic_err"] for row in rows], nx, ny)
+    for name, grid_, title, cbar, log_ in (
+            ("14f-capillary-jack-ic.svg", ic_grid,
+             "coherent intensity Ic", "Ic", False),
+            ("14f-capillary-jack-ic-log.svg", ic_grid,
+             "coherent intensity Ic, log scale", "Ic", True),
+            ("14f-capillary-jack-ic-err.svg", ic_err_grid,
+             "σ_jack(Ic)", "σ", False),
+            ("14f-capillary-jack-ic-err-log.svg", ic_err_grid,
+             "σ_jack(Ic), log scale", "σ", True)):
+        render.save(os.path.join(result_dir, name),
+                    render.heatmap(grid_, extent, title, "x, µm", "y, µm", "",
+                                   cbar, w=518, equal=True, log=log_))
+    ic_row = [(xs[p % nx], rows[p]["ic"]) for p in row_ids
+              if rows[p]["ic"] is not None]
+    ic_fig = _slice_chart(ic_row, "coherent intensity Ic", "Ic", "no paired cells")
+    ic_pts = [(xs[p % nx], rows[p]["ic_err"]) for p in row_ids
+              if rows[p]["ic_err"] is not None]
+    if ic_pts:
+        ic_fig = render.vstack([ic_fig, _strip(ic_pts, "σ_jack(Ic)")])
+    render.save(os.path.join(result_dir, "14f-capillary-jack-ic-slice.svg"), ic_fig)
+    ic_log_fig = _slice_chart([(x, v) for x, v in ic_row if v > 0],
+                              "coherent intensity Ic, log scale", "log10 Ic",
+                              "no positive Ic", log=True)
+    rel_pts = [(xs[p % nx], rows[p]["ic_err"] / rows[p]["ic"]) for p in row_ids
+               if rows[p]["ic_err"] is not None and (rows[p]["ic"] or 0) > 0]
+    if rel_pts:
+        ic_log_fig = render.vstack([ic_log_fig, _strip(rel_pts, "σ_jack(Ic)/Ic")])
+    render.save(os.path.join(result_dir, "14f-capillary-jack-ic-log-slice.svg"),
+                ic_log_fig)
     if ny > 1:
         intensity_fig = render.heatmap(i_grid, extent, "intensity", "x, µm",
                                        "y, µm", "", "I", w=518, equal=True)
