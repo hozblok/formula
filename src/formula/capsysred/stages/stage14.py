@@ -1190,8 +1190,11 @@ def _stage14_figures(result_dir: str, rows, aggregate, final, grid: ScreenGrid,
     mark = (m_to_um(ref_xy[0]), m_to_um(ref_xy[1]))
     sub = (f"{screen_label}; {n_modes} exact delete-one-mode units; "
            "raw μ, display clipped at 1")
+    cell_x, cell_y = m_to_um(grid.exf) / nx, m_to_um(grid.eyf) / ny
+    cell = (f"{cell_x:.3g} µm" if abs(cell_x - cell_y) < 5e-4
+            else f"{cell_x:.3g} × {cell_y:.3g} µm")
     mu_sub = (f"ref cell at ({round(mark[0], 3) or 0.0:g}, "
-              f"{round(mark[1], 3) or 0.0:g}) µm")
+              f"{round(mark[1], 3) or 0.0:g}) µm, cell {cell}")
     mu_fig = render.heatmap(mu_grid, extent, "|μ(P,P_ref)|", "x, µm", "y, µm",
                             mu_sub, "|μ|", vmax=1.0, mark=mark, w=448, equal=True)
     err_fig = render.heatmap(err_grid, extent, "σ_jack(μ)", "x, µm", "y, µm",
