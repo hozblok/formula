@@ -927,7 +927,7 @@ class Simulation:
     # ------------------------------------------------------------- stage 11
 
     def _stage11(self, out_dir):
-        """Beamlet estimator (doc/2026-07-10-stage11-beamlets.ru.md):
+        """Beamlet estimator:
         elliptic Gaussian phase spots instead of point bins, the 2x2 Gamma
         tensor through the bounces (general astigmatism), honest mu with no
         self-pair subtraction. Free scene validates against vCZ; the

@@ -1,6 +1,6 @@
 """Stage 8: streaming low-rank sketch of W -> numerical CMD of the field.
 
-doc/coherence-methods-analysis.ru.md §3.10/§8: W = Σ_s Σ_m w_m·g·g† is PSD of
+W = Σ_s Σ_m w_m·g·g† is PSD of
 low effective rank, so a fixed random Ω (M×r) and the running sum
 Y += Σ_m w_m·g·(g†Ω) capture it in O(M·r) memory — the M×M matrix is never
 materialized, which is what makes 2D screens (ny > 1) affordable. Nystrom

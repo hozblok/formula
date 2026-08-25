@@ -1,5 +1,3 @@
-🇬🇧 **English** · [🇷🇺 Русский](derivatives.ru.md)
-
 # Differentiation in `formula`: the mechanism and its domain of applicability
 
 ## 1. What is computed

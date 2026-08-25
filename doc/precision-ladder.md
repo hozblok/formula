@@ -1,5 +1,3 @@
-🇬🇧 **English** · [🇷🇺 Русский](precision-ladder.ru.md)
-
 # The precision ladder
 
 ## Where it came from

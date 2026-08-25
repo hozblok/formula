@@ -1500,7 +1500,7 @@ def test_gamma_free_drift_reduces_to_scalar_q():
 
 def test_gamma_meridional_reduces_to_two_scalar_q():
     # phi in {0, pi} bounces keep Gamma diagonal: each axis is its own
-    # scalar-q chain (doc/capsysred-results.ru.md §5в reduction)
+    # scalar-q chain
     import cmath
     from formula.capsysred.gamma import propagate
     k = 2.0 * math.pi / 1.55e-10
@@ -1728,7 +1728,7 @@ def _beamlet_field_1d(lines, nx=161, edge=8.0e-6, z=0.1, w0=2.5e-7):
 
 
 def test_beamlet_fan_reconstructs_diffraction_limited_focus():
-    # the raison d'etre of beamlets (beamlets.ru.md §7B): a converging fan
+    # the raison d'etre of beamlets: a converging fan
     # is FINITE at the caustic and its coherent sum narrows to the
     # diffraction limit FWHM = 0.886*lam*f/(2a), where rays give infinity
     import cmath

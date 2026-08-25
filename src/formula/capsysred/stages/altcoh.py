@@ -1,7 +1,6 @@
 """Stage 7: alternative coherence estimators on one shared ray stream.
 
-Axis change per doc/coherence-methods-analysis.ru.md §3.3/§3.4: three
-estimators are fed IDENTICAL rays (same rng stream as stages 2/6), so map
+Three estimators are fed IDENTICAL rays (same rng stream as stages 2/6), so map
 differences are estimator effects, not statistics:
 
   pairwise  — the reference W(P, P_ref) estimator, float mirror of

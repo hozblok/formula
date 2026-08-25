@@ -1,5 +1,3 @@
-🇬🇧 **English** · [🇷🇺 Русский](README.ru.md)
-
 # formula - Multiprecision formula parser and solver
 
 [![PyPI](https://img.shields.io/pypi/v/formula.svg)](https://pypi.org/project/formula/)

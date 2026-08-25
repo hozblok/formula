@@ -1,7 +1,7 @@
 # EXPERIMENTAL: typed fast-path wall. The reference is the `surface:`
 # ImplicitWall in surfaces.py (RaySurface engine); this closed form must stay
 # bit-equivalent to it — every run cross-checks the first hit via expr_um
-# (engine_hit_t). Plan: doc/2026-07-14-funnel-wall-plan.ru.md.
+# (engine_hit_t).
 """Conformal-bundle bore (the Liu wall): axis center*g(z), radius r0*f(z),
 f and g quadratic in z-z0. The ray hit is an exact Number polynomial —
 degree 4, dropping to 2 on structural zeros (a straight cylinder is the

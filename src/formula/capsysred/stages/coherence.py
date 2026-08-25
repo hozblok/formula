@@ -1,6 +1,6 @@
 """Cross-spectral density vs a reference pixel and the degree of coherence.
 
-Textbook estimator (legacy CAPSYS bugs C1..C6 fixed, plan-cap.ru.md §0): per
+Textbook estimator (legacy CAPSYS bugs C1..C6 fixed): per
 mode s and line m the screen field is g_{s,m}[pix] = sum_rays r_prod_m *
 exp(i*k_m*L); W[pix] = sum_s sum_m w_m g g*(ref) — complex, averaged BEFORE the
 modulus — and mu = |W| / sqrt(Ic*Ic_ref) with no seed in the denominator.

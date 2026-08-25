@@ -1,5 +1,3 @@
-🇬🇧 **English** · [🇷🇺 Русский](ray-surface-design.ru.md)
-
 # RaySurface: design & decisions
 
 **Status:** shipped &middot; **See also:**

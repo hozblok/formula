@@ -1,5 +1,3 @@
-🇬🇧 **English** · [🇷🇺 Русский](ray-surface-intersections.ru.md)
-
 # Ray–surface intersections (`RaySurface`)
 
 `RaySurface` finds **every** intersection of a ray with an implicit surface

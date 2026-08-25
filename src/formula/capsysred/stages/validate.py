@@ -2,9 +2,8 @@
 
 Rays are emitted exactly as in the capillary stage; the first wall hit of
 each ray is computed three ways — Python closed form, the C++ twin, and the
-RaySurface engine subdivision backend (the only grazing-safe one, see
-doc/2026-07-10-hit-method-backends.ru.md) — and every hit parameter t is
-compared against the Python reference.
+RaySurface engine subdivision backend (the only grazing-safe one) — and
+every hit parameter t is compared against the Python reference.
 """
 
 import time

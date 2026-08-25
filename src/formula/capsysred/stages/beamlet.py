@@ -1,6 +1,6 @@
 """Stage 11: beamlet (Gaussian-beam summation) estimator, float64.
 
-Each ray becomes a Gaussian beamlet (doc/beamlets.ru.md): the central ray is
+Each ray becomes a Gaussian beamlet: the central ray is
 the engine trace; the complex 2x2 beam tensor Q = Gamma^-1 rides the
 segments and bounces by tensor ABCD (gamma.py, Arnaud-Kogelnik general
 astigmatism — grazing bounces focus sagittally f_s = R/(2 sin) and, on

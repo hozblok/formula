@@ -234,7 +234,7 @@ def _conditioning_loss(bores, theta_c: float, z_span: float = 0.0) -> int:
     (w^2+K)^2 - 4R^2*(w^2-s^2) subtracts terms ~4R^4 (2.2e40 um^4 at
     R = 8625 m, a = 6 um), so at 64 digits their ULP ~2e-24 blurs the wall
     to ~1e-44 um, and grazing hits stretch the root jitter by another
-    1/theta: doc/2026-07-13-torus-quartic-cancellation.ru.md.
+    1/theta.
     Funnel: 2*log10(S/r0) + 2 with S = max(|c|*g, r0*f) over the z-span —
     the quartic mixes the dilated-axis scale against the r0-scale wall
     (measured ~2 digits at S/r0 ~ 19: exp/out/37-quick stage 9).
@@ -280,7 +280,7 @@ def _precision_target(raw, p: int, bores, theta_c: float, z_span: float = 0.0):
             f"precision_target {target} exceeds the certifiable ceiling "
             f"{ceiling} (precision {p} - 2 guard - {loss} wall conditioning): "
             "stage-9 matches will undershoot; raise precision or lower the "
-            "target (doc/2026-07-13-torus-quartic-cancellation.ru.md)")
+            "target")
     return target, raw is None, loss
 
 
