@@ -329,6 +329,7 @@ class _HashingRaw(io.RawIOBase):
         return True
 
     def readinto(self, b):
+        n = 0
         for attempt in range(1, READ_ATTEMPTS + 1):
             try:
                 if self.fh is None:
