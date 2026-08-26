@@ -37,6 +37,7 @@ import yaml
 
 from . import rays_v3
 from .shared.types import RayRecord
+from .shared.utils import durable_open
 
 FORMAT = 2
 METADATA_NAME = "rays-fingerprint.yaml"
@@ -179,11 +180,9 @@ def write_metadata(rays_path: str | os.PathLike, meta: dict) -> str:
         # Exclusive creation is the no-lock, no-clobber publication rule.
         # A concurrent writer wins or this call fails; neither overwrites the
         # other's metadata.
-        with open(path, "x", encoding="utf-8", newline="\n") as fh:
+        with durable_open(path, encoding="utf-8", newline="\n") as fh:
             created = True
             yaml.safe_dump(meta, fh, sort_keys=False, allow_unicode=True)
-            fh.flush()
-            os.fsync(fh.fileno())
     except FileExistsError as exc:
         raise ValueError(
             f"{path}: metadata appeared concurrently; remove it manually "

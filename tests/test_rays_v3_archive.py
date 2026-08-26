@@ -341,9 +341,9 @@ def test_trace_v3_cli_rejects_jobs(tmp_path, jobs):
 
 
 def test_convert_cli_rejects_jobs(tmp_path):
-    from formula.capsysred.convert_rays_v3 import main
+    from formula.capsysred.convert_rays_v3 import MAX_JOBS, main
     with pytest.raises(SystemExit):
-        main([str(tmp_path), "--jobs", "9"])
+        main([str(tmp_path), "--jobs", str(MAX_JOBS + 1)])
     with pytest.raises(SystemExit):
         main(["--verify", str(tmp_path), "--jobs", "0"])
 

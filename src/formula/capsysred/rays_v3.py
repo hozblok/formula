@@ -30,6 +30,7 @@ from typing import NamedTuple
 import yaml
 
 from .shared.types import RayRecord
+from .shared.utils import durable_open
 
 FORMAT = 3
 METADATA_NAME = "rays-fingerprint.yaml"
@@ -107,10 +108,8 @@ def write_fingerprint(archive, meta: dict) -> str:
             return path
         raise ValueError(f"{path}: fingerprint exists and differs; remove it manually")
     os.makedirs(os.fspath(archive), exist_ok=True)
-    with open(path, "x", encoding="utf-8", newline="\n") as fh:
+    with durable_open(path, encoding="utf-8", newline="\n") as fh:
         yaml.safe_dump(meta, fh, sort_keys=False, allow_unicode=True)
-        fh.flush()
-        os.fsync(fh.fileno())
     return path
 
 
@@ -208,11 +207,9 @@ def write_index(archive, entries) -> Index:
     index = Index(list(entries))
     path = index_path(archive)
     tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+    with durable_open(tmp, "w", encoding="utf-8", newline="\n") as fh:
         for entry in index.entries:
             fh.write(json.dumps(entry.as_dict(), sort_keys=True) + "\n")
-        fh.flush()
-        os.fsync(fh.fileno())
     os.replace(tmp, path)
     return index
 

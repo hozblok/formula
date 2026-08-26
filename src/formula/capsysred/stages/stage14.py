@@ -38,6 +38,7 @@ from .stage14_flags import (FlagThresholds, PixelCounters, PixelStatistics,
                             serialize_pixel, validate_counters, validate_ref,
                             w_signal_status)
 from ..shared.units import m_to_um
+from ..shared.utils import durable_open
 
 
 STAGE_ID = 14
@@ -88,11 +89,9 @@ def _json_copy(value):
 
 
 def _write_json(path: str, value) -> None:
-    with open(path, "x", encoding="utf-8", newline="\n") as fh:
+    with durable_open(path, encoding="utf-8", newline="\n") as fh:
         json.dump(value, fh, ensure_ascii=False, indent=2, allow_nan=False)
         fh.write("\n")
-        fh.flush()
-        os.fsync(fh.fileno())
 
 
 def _stat_contract(value) -> dict:
@@ -793,12 +792,10 @@ def _write_aggregates(path: str, native: dict, npix: int, stats: dict,
     if size != expected:
         raise ValueError(f"Stage-14 aggregate size {size}, expected {expected}")
     h = hashlib.sha256()
-    with open(path, "xb") as fh:
+    with durable_open(path, "xb") as fh:
         for chunk in chunks:
             fh.write(chunk)
             h.update(chunk)
-        fh.flush()
-        os.fsync(fh.fileno())
     return size, h.hexdigest()
 
 
@@ -1606,11 +1603,9 @@ def _finalize_screen(sim, target: ScreenTarget, output_dir: str,
     if target.output_subdir:
         os.mkdir(output_dir)
     jsonl_path = os.path.join(output_dir, "mu-jack.jsonl")
-    with open(jsonl_path, "x", encoding="utf-8", newline="\n") as fh:
+    with durable_open(jsonl_path, encoding="utf-8", newline="\n") as fh:
         for row in rows:
             fh.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
-        fh.flush()
-        os.fsync(fh.fileno())
     written, save = _figure_saver(output_dir)
     maps = _stage14_figures(
         save, rows, aggregate, result_final, grid, ref,
