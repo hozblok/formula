@@ -45,6 +45,7 @@ SCENES = {"capillary": {"tag": rays.SceneSeed.CAPILLARY, "draws": 3},
           "free": {"tag": rays.SceneSeed.FREE, "draws": 2}}
 AIM_DRAWS = SCENES["capillary"]["draws"]
 LEGACY_SCHEME = "per-mode-substream-v1"
+MAX_JOBS = 1024
 
 
 def tail_rng(seed: int, mode: int) -> random.Random:
@@ -259,8 +260,9 @@ def main(argv=None):
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--level", type=int, default=rays_v3.DEFAULT_LEVEL)
     args = ap.parse_args(argv)
-    if args.jobs < 1 or args.jobs > 8:
-        ap.error("--jobs must be within 1..8")
+    max_jobs = os.cpu_count() or MAX_JOBS
+    if args.jobs < 1 or args.jobs > max_jobs:
+        ap.error(f"--jobs must be within 1..{max_jobs}")
     trace(os.path.abspath(args.config), os.path.abspath(args.archive),
           args.jobs, args.level)
     return 0
