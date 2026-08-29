@@ -901,11 +901,17 @@ def _load_cache(part: InputPart, signature: dict, npix: int,
     if not os.path.lexists(final):
         return None
     meta_path = os.path.join(final, META_NAME)
-    if allow_partial and not os.path.lexists(meta_path):
-        # A publication that crashed mid-move: the metadata marker is moved
-        # last, so a meta-less cache directory can never become valid.
-        shutil.rmtree(final)
-        return None
+    if not os.path.lexists(meta_path):
+        if (allow_partial and os.path.lexists(partial)
+                and os.path.lexists(os.path.join(partial, PARTITION_NAME))):
+            # Our crashed mid-publish: the meta marker moves last, and the
+            # range checkpoints still sit in the partial beside it.
+            shutil.rmtree(final)
+            return None
+        # No such evidence: never auto-delete a foreign directory.
+        raise ValueError(
+            f"{final}: cache directory without {META_NAME}; remove it manually"
+        )
     meta = _read_json(meta_path)
     if (meta.get("cache_schema") != CACHE_SCHEMA
             or meta.get("analysis_id") != part.analysis_id
@@ -1194,7 +1200,7 @@ def _sum_range_aggregates(items: list[dict], npix: int) -> dict:
 
 def _range_worker(raw_cfg: dict, archive_path: str, contract: dict,
                   m0: int, m1: int,
-                  screens: list[tuple[int, str, str]]) -> tuple[int, int]:
+                  screens: list[tuple[int, str, str, dict]]) -> tuple[int, int]:
     """One parallel builder process: decode modes [m0, m1) of a v3 archive
     into per-range rows/aggregate files inside each screen's partial dir.
 
@@ -1230,16 +1236,24 @@ def _range_worker(raw_cfg: dict, archive_path: str, contract: dict,
     kms = [float(line.k) for line in sim.lines]
     weights = [float(line.weight) for line in sim.lines]
     builds = []
-    for screen_index, label, partial in screens:
+    for screen_index, label, partial, expected_contract in screens:
         cfg = configs[screen_index]
         grid = ScreenGrid(cfg)
+        ref = _reference_pixel(cfg, grid)
+        # Typed screen config is rebuilt from raw here; the parent's targets
+        # came from its live typed config — any post-construction mutation
+        # of the latter must fail loudly, not deposit under a foreign meta.
+        if not metadata_equal(_screen_contract(grid, ref), expected_contract):
+            raise ValueError(
+                f"{label}: worker screen contract differs from the parent's "
+                "(config mutated after construction?)")
         target = SimpleNamespace(grid=grid, label=label, cfg=cfg,
                                  index=screen_index)
         rows_tmp = os.path.join(partial, _range_rows_name(m0, m1) + ".tmp")
         if os.path.lexists(rows_tmp):
             os.remove(rows_tmp)
         store = _native_store(rows_tmp, m1 - m0, grid.nx * grid.ny,
-                              _reference_pixel(cfg, grid), kms, weights)
+                              ref, kms, weights)
         builds.append(CacheBuild(target, part, partial, rows_tmp, "",
                                  store, ScatterRaster(cfg), time.time()))
     stats_rows, bounce_hist = _build_stream_fanout(
@@ -1295,7 +1309,8 @@ def _build_fanout_parallel(sim, part: InputPart, builds: list[CacheBuild],
             f"{part.path}: stage-14 jobs > 1 needs a v3 rays archive")
     max_bounces = sim.cfg.max_bounces
     ranges = _pin_partition(builds, part.n_modes, jobs, log)
-    screens = [(b.target.index, b.target.label, b.partial) for b in builds]
+    screens = [(b.target.index, b.target.label, b.partial, b.target.contract)
+               for b in builds]
     todo = []
     for m0, m1 in ranges:
         if all(_range_done(b, m0, m1, max_bounces) for b in builds):

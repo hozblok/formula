@@ -258,6 +258,61 @@ def test_stage14_jobs_change_resumes(tmp_path, monkeypatch):
     assert not list(tmp_path.rglob("*.partial"))
 
 
+def test_stage14_metaless_final_fail_closed(tmp_path, monkeypatch):
+    """A meta-less cache directory with no .partial evidence is foreign:
+    fail closed, never auto-delete."""
+    cfg_path, archive = _scene(tmp_path)
+    monkeypatch.setenv("CAPSYSRED_STAGE14_JOBS", "2")
+    Simulation.from_yaml(str(cfg_path)).replay(
+        [str(archive)], str(tmp_path / "p1"), stages=[14])
+    metas = sorted((tmp_path / "stage14-cache").glob("*/meta.json"))
+    assert metas
+    metas[0].unlink()
+    valuable = metas[0].parent / "mode-rows.f64"
+    assert valuable.exists()
+    with pytest.raises(ValueError, match="remove it manually"):
+        Simulation.from_yaml(str(cfg_path)).replay(
+            [str(archive)], str(tmp_path / "p2"), stages=[14])
+    assert valuable.exists()                     # nothing was deleted
+
+
+def test_stage14_metaless_final_healed_with_partial_evidence(
+        tmp_path, monkeypatch):
+    """A crashed mid-publish (meta-less final + checkpointed partial) is
+    removed and the build resumes from the recorded ranges."""
+    from formula.capsysred.stages import stage14
+    cfg_path, archive = _scene(tmp_path)
+    monkeypatch.delenv("CAPSYSRED_STAGE14_JOBS", raising=False)
+    Simulation.from_yaml(str(cfg_path)).replay(
+        [str(archive)], str(tmp_path / "serial"), stages=[14])
+    shutil.rmtree(tmp_path / "stage14-cache")
+    monkeypatch.setenv("CAPSYSRED_STAGE14_JOBS", "2")
+    _publish_ranges_then_abort(tmp_path, cfg_path, archive, "p1")
+    partials = sorted(tmp_path.rglob("*.partial"))
+    assert partials
+    crashed_final = partials[0].with_name(
+        partials[0].name.removesuffix(".partial"))
+    crashed_final.mkdir()
+    (crashed_final / "mode-rows.f64").write_bytes(b"half-moved")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(stage14, "_range_worker", _boom)   # ranges must be reused
+        Simulation.from_yaml(str(cfg_path)).replay(
+            [str(archive)], str(tmp_path / "p2"), stages=[14])
+    _assert_outputs_match(tmp_path / "serial", tmp_path / "p2")
+    assert not list(tmp_path.rglob("*.partial"))
+
+
+def test_stage14_worker_rejects_mutated_screen(tmp_path, monkeypatch):
+    """A typed screen config mutated after construction must fail loudly:
+    the parent meta would describe a screen the workers did not deposit."""
+    cfg_path, archive = _scene(tmp_path)
+    sim = Simulation.from_yaml(str(cfg_path))
+    sim.cfg.capillary.screen.reference = (-1e-6, 0.0)
+    monkeypatch.setenv("CAPSYSRED_STAGE14_JOBS", "2")
+    with pytest.raises(ValueError, match="screen contract differs"):
+        sim.replay([str(archive)], str(tmp_path / "out"), stages=[14])
+
+
 def test_stage14_stale_partial_removed_on_cache_hit(tmp_path, monkeypatch):
     cfg_path, archive = _scene(tmp_path)
     monkeypatch.setenv("CAPSYSRED_STAGE14_JOBS", "2")

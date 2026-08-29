@@ -624,6 +624,17 @@ def test_on_wall_point_counts_inside():
         assert not wall.inside(a * (1 + 1e-6), 0.0, 0.0)
 
 
+def test_config_yaml_file_compat(tmp_path):
+    # Public constructor: yaml_file by keyword, positionally, and defaulted.
+    from formula.capsysred.config import Config, load
+    assert Config({}, yaml_file="cfg.yaml").yaml_file == "cfg.yaml"
+    assert Config({}, "cfg.yaml").yaml_file == "cfg.yaml"
+    assert Config({}).yaml_file is None
+    path = tmp_path / "scene.yaml"
+    path.write_text("seed: 7\n", encoding="utf-8")
+    assert load(path).yaml_file == "scene.yaml"      # pathlib input, basename
+
+
 def test_implicit_engine_method_config_wiring():
     # Each implicit bore owns its root finder; typed walls reject that option.
     from formula.capsysred.config import load
