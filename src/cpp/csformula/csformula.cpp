@@ -179,7 +179,7 @@ the string is empty");
         "The given expression contains the wrong \
 location and / or number of brackets");
   }
-  // TODO check for forbidden symbols for complex: < or >, <= or >=.
+  expression_original_ = expression;
   expression_ = expression;
   // Remove spaces, tabs, \n, \r, \t, \v.
   boost::algorithm::erase_all(expression_, " ");
@@ -189,7 +189,6 @@ location and / or number of brackets");
   boost::algorithm::erase_all(expression_, "\v");
 
   if (case_insensitive_) {
-    // TODO cannot give back to user the original expression?
     boost::algorithm::to_lower(expression_);
     if (imaginary_unit_ != tolower(imaginary_unit_)) {
       throw std::invalid_argument(

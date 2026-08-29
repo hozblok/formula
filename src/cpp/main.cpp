@@ -122,6 +122,11 @@ PYBIND11_MODULE(_formula, m) {
       .def_property("expression", &Formula::get_expression,
                     &Formula::set_expression,
                     "Formula expression that is ready for calculations.")
+      .def("get_original_expression", &Formula::get_original_expression)
+      .def_property_readonly("original_expression",
+                             &Formula::get_original_expression,
+                             "User input as received (preserves whitespace "
+                             "and original case).")
       .def("copy", &Formula::copy, py::return_value_policy::take_ownership,
            "Create copy of the Formula object.")
       .def("variables",
