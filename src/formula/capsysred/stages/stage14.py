@@ -33,6 +33,9 @@ from ... import __version__, _formula
 from .. import rays_v3, render
 from .altcoh import FloatLineAmplitudes
 from ..env import Env
+from ._stage14_checkpoints import (mode_ranges, range_agg_name, range_done,
+                                   range_manifest_name, range_rows_name,
+                                   read_range_manifest)
 from ..shared.progress import Progress
 from ..rays import (_validate_stream_metadata, geometry_metadata,
                    metadata_equal, read_metadata)
@@ -107,16 +110,12 @@ def _stat_contract(value) -> dict:
     }
 
 
-def _publish_directory(partial: str, final: str, names: list[str],
-                       scrub_leftovers: bool = False) -> None:
+def _publish_directory(partial: str, final: str, names: list[str]) -> None:
     """Publish files or child trees into an exclusively reserved directory.
 
     The metadata marker is supplied last by callers.  A crash can therefore
     leave an unmistakably incomplete directory, but can never replace a
-    previously published result or cache.  ``scrub_leftovers`` (parallel
-    cache builds): whatever remains in ``partial`` after the moves — range
-    checkpoints, their manifests, the partition record — is build byproduct
-    and is deleted only now, after the metadata marker landed.
+    previously published result or cache.
     """
     try:
         os.mkdir(final)
@@ -127,9 +126,6 @@ def _publish_directory(partial: str, final: str, names: list[str],
     try:
         for name in names:
             os.rename(os.path.join(partial, name), os.path.join(final, name))
-        if scrub_leftovers:
-            for name in os.listdir(partial):
-                os.remove(os.path.join(partial, name))
         os.rmdir(partial)
     except BaseException:
         # Keep both paths as loud, fail-closed evidence.  The final directory
@@ -338,7 +334,6 @@ class CacheBuild:
     part: InputPart
     partial: str
     rows_path: str
-    aggregate_path: str
     store: object
     scatter: ScatterRaster
     started_at: float
@@ -902,13 +897,8 @@ def _load_cache(part: InputPart, signature: dict, npix: int,
         return None
     meta_path = os.path.join(final, META_NAME)
     if not os.path.lexists(meta_path):
-        if (allow_partial and os.path.lexists(partial)
-                and os.path.lexists(os.path.join(partial, PARTITION_NAME))):
-            # Our crashed mid-publish: the meta marker moves last, and the
-            # range checkpoints still sit in the partial beside it.
-            shutil.rmtree(final)
-            return None
-        # No such evidence: never auto-delete a foreign directory.
+        # The cache is published as one directory rename, so a meta-less
+        # final can never be ours: fail closed, never auto-delete.
         raise ValueError(
             f"{final}: cache directory without {META_NAME}; remove it manually"
         )
@@ -959,14 +949,13 @@ def _prepare_cache_build(sim, target: ScreenTarget, part: InputPart,
     else:
         os.makedirs(partial, exist_ok=True)
     rows_path = os.path.join(partial, ROWS_NAME)
-    aggregate_path = os.path.join(partial, AGGREGATES_NAME)
     kms = [float(line.k) for line in sim.lines]
     weights = [float(line.weight) for line in sim.lines]
     npix = target.grid.nx * target.grid.ny
     store = (_native_store(rows_path, part.n_modes, npix, target.ref,
                            kms, weights) if with_store else None)
     return CacheBuild(
-        target, part, partial, rows_path, aggregate_path, store,
+        target, part, partial, rows_path, store,
         ScatterRaster(target.cfg), time.time(),
     )
 
@@ -980,14 +969,6 @@ def _finish_cache_build(sim, build: CacheBuild, stats: dict,
     target, part = build.target, build.part
     grid, scatter = target.grid, build.scatter
     npix = grid.nx * grid.ny
-    resume = native is not None
-    if resume:
-        # Resume-capable finalize (parallel): a crashed attempt may have left
-        # the canonical files behind; rewrite them instead of wedging on "x".
-        for stale in (build.aggregate_path,
-                      os.path.join(build.partial, META_NAME)):
-            if os.path.lexists(stale):
-                os.remove(stale)
     if native is None:
         native = build.store.finish()
     rows_size = int(native["payload_bytes"])
@@ -999,10 +980,17 @@ def _finish_cache_build(sim, build: CacheBuild, stats: dict,
     if sum(_typed_array("Q", native["n_rays"])) != stats["screen"]:
         raise ValueError(
             f"Stage-14 density differs from {target.label} screen counter")
+    # Assemble the publishable directory; a stale one is a crashed attempt.
+    ready = os.path.join(build.partial, "ready.tmp")
+    if os.path.lexists(ready):
+        shutil.rmtree(ready)
+    os.mkdir(ready)
+    os.rename(build.rows_path, os.path.join(ready, ROWS_NAME))
     agg_size, agg_sha = _write_aggregates(
-        build.aggregate_path, native, npix, stats, bounce_hist, scatter)
-    for path in (build.rows_path, build.aggregate_path):
-        with open(path, "rb+") as fh:
+        os.path.join(ready, AGGREGATES_NAME), native, npix, stats,
+        bounce_hist, scatter)
+    for name in (ROWS_NAME, AGGREGATES_NAME):
+        with open(os.path.join(ready, name), "rb+") as fh:
             os.fsync(fh.fileno())
     meta = {
         "cache_schema": CACHE_SCHEMA,
@@ -1037,138 +1025,18 @@ def _finish_cache_build(sim, build: CacheBuild, stats: dict,
         },
         "capsysred_version": __version__,
     }
-    _write_json(os.path.join(build.partial, META_NAME), meta)
-    _publish_directory(
-        build.partial, part.cache_dir,
-        [ROWS_NAME, AGGREGATES_NAME, META_NAME],
-        scrub_leftovers=resume,
-    )
+    _write_json(os.path.join(ready, META_NAME), meta)
+    # One atomic directory rename: a meta-less final cannot exist, and the
+    # range checkpoints in the partial survive until the cache is published.
+    _publish_result_tree(ready, part.cache_dir,
+                         [ROWS_NAME, AGGREGATES_NAME, META_NAME])
+    try:
+        shutil.rmtree(build.partial)
+    except OSError:
+        pass    # published; an orphan partial is removed on the next hit
     return CachePart(
         part, meta, os.path.join(part.cache_dir, ROWS_NAME),
         os.path.join(part.cache_dir, AGGREGATES_NAME), False)
-
-
-def _range_rows_name(m0: int, m1: int) -> str:
-    return f"rows-m{m0:06d}-{m1:06d}.f64"
-
-
-def _range_agg_name(m0: int, m1: int) -> str:
-    return f"agg-m{m0:06d}-{m1:06d}.bin"
-
-
-def _range_manifest_name(m0: int, m1: int) -> str:
-    return f"done-m{m0:06d}-{m1:06d}.json"
-
-
-PARTITION_NAME = "partition.json"
-
-
-def _scrub_range_files(partial: str) -> None:
-    """Remove every per-range artifact (the partition is being re-created)."""
-    for name in os.listdir(partial):
-        if (name.startswith(("rows-m", "agg-m", "done-m"))
-                or name == PARTITION_NAME or name.endswith(".tmp")):
-            os.remove(os.path.join(partial, name))
-
-
-def _pin_partition(builds, n_modes: int, jobs: int, log) -> list[tuple[int, int]]:
-    """The range partition is fixed by the first parallel run and recorded in
-    every partial; a resume reuses the record and jobs only caps concurrency,
-    so checkpoints survive a jobs change."""
-    recorded = {}
-    for build in builds:
-        path = os.path.join(build.partial, PARTITION_NAME)
-        try:
-            with open(path, encoding="utf-8") as fh:
-                recorded[build.partial] = json.load(fh)
-        except FileNotFoundError:
-            continue
-        except (OSError, ValueError) as exc:
-            raise ValueError(f"{path}: unreadable partition record") from exc
-    if len({_canonical(value) for value in recorded.values()}) > 1:
-        raise ValueError(
-            "stage-14 partials disagree on the range partition; remove the "
-            ".partial directories to rebuild")
-    if recorded:
-        value = next(iter(recorded.values()))
-        ranges = value.get("ranges") if isinstance(value, dict) else None
-        ok = (isinstance(ranges, list) and ranges
-              and all(isinstance(r, list) and len(r) == 2
-                      and all(type(v) is int for v in r) for r in ranges)
-              and ranges[0][0] == 0 and ranges[-1][1] == n_modes
-              and all(a < b for a, b in ranges)
-              and all(ranges[i][1] == ranges[i + 1][0]
-                      for i in range(len(ranges) - 1)))
-        if not ok or value.get("n_modes") != n_modes:
-            raise ValueError(
-                "stage-14 recorded partition is invalid; remove the .partial "
-                "directories to rebuild")
-        ranges = [tuple(r) for r in ranges]
-        if len(ranges) != len(_mode_ranges(n_modes, jobs)):
-            log(f"  stage 14 partition: {len(ranges)} recorded ranges reused "
-                f"(jobs={jobs} caps concurrency only)")
-    else:
-        ranges = _mode_ranges(n_modes, jobs)
-    record = {"n_modes": n_modes, "ranges": [list(r) for r in ranges]}
-    for build in builds:
-        if build.partial in recorded:
-            continue
-        path = os.path.join(build.partial, PARTITION_NAME)
-        _scrub_range_files(build.partial)
-        with durable_open(path + ".tmp", "w", encoding="utf-8",
-                          newline="\n") as fh:
-            json.dump(record, fh)
-        os.replace(path + ".tmp", path)
-    return ranges
-
-
-def _read_range_manifest(partial: str, m0: int, m1: int) -> dict:
-    """The range pair's commit record: bytes and sha256 of rows/aggregates
-    as the worker wrote them from memory."""
-    path = os.path.join(partial, _range_manifest_name(m0, m1))
-    with open(path, encoding="utf-8") as fh:
-        manifest = json.load(fh)
-    for kind in ("rows", "aggregates"):
-        entry = manifest.get(kind) if isinstance(manifest, dict) else None
-        if (not isinstance(entry, dict)
-                or type(entry.get("bytes")) is not int
-                or not isinstance(entry.get("sha256"), str)
-                or len(entry["sha256"]) != 64):
-            raise ValueError(f"{path}: invalid range manifest")
-    return manifest
-
-
-def _mode_ranges(n_modes: int, jobs: int) -> list[tuple[int, int]]:
-    jobs = min(jobs, n_modes)
-    base, extra = divmod(n_modes, jobs)
-    ranges, start = [], 0
-    for i in range(jobs):
-        size = base + (1 if i < extra else 0)
-        ranges.append((start, start + size))
-        start += size
-    return ranges
-
-
-def _range_done(build: CacheBuild, m0: int, m1: int, max_bounces: int) -> bool:
-    """Done = manifest present and both files at their recorded sizes; the
-    content sha256 is verified against the manifest during assembly."""
-    npix = build.target.grid.nx * build.target.grid.ny
-    try:
-        manifest = _read_range_manifest(build.partial, m0, m1)
-        expected = {
-            "rows": ((m1 - m0) * npix * 24, _range_rows_name(m0, m1)),
-            "aggregates": (_expected_aggregate_size(
-                npix, max_bounces, build.scatter.nx * build.scatter.ny),
-                _range_agg_name(m0, m1)),
-        }
-        for kind, (size, name) in expected.items():
-            if (manifest[kind]["bytes"] != size
-                    or os.path.getsize(os.path.join(build.partial, name))
-                    != size):
-                return False
-    except (OSError, ValueError):
-        return False
-    return True
 
 
 def _sum_range_aggregates(items: list[dict], npix: int) -> dict:
@@ -1249,12 +1117,12 @@ def _range_worker(raw_cfg: dict, archive_path: str, contract: dict,
                 "(config mutated after construction?)")
         target = SimpleNamespace(grid=grid, label=label, cfg=cfg,
                                  index=screen_index)
-        rows_tmp = os.path.join(partial, _range_rows_name(m0, m1) + ".tmp")
+        rows_tmp = os.path.join(partial, range_rows_name(m0, m1) + ".tmp")
         if os.path.lexists(rows_tmp):
             os.remove(rows_tmp)
         store = _native_store(rows_tmp, m1 - m0, grid.nx * grid.ny,
                               ref, kms, weights)
-        builds.append(CacheBuild(target, part, partial, rows_tmp, "",
+        builds.append(CacheBuild(target, part, partial, rows_tmp,
                                  store, ScatterRaster(cfg), time.time()))
     stats_rows, bounce_hist = _build_stream_fanout(
         sim, part, builds, lambda *_: None, mode_range=(m0, m1), quiet=True)
@@ -1269,7 +1137,7 @@ def _range_worker(raw_cfg: dict, archive_path: str, contract: dict,
             raise ValueError(
                 f"Stage-14 range density differs from {build.target.label} "
                 "screen counter")
-        agg_tmp = os.path.join(build.partial, _range_agg_name(m0, m1) + ".tmp")
+        agg_tmp = os.path.join(build.partial, range_agg_name(m0, m1) + ".tmp")
         if os.path.lexists(agg_tmp):
             os.remove(agg_tmp)
         agg_size, agg_sha = _write_aggregates(agg_tmp, native, npix, stats,
@@ -1280,13 +1148,13 @@ def _range_worker(raw_cfg: dict, archive_path: str, contract: dict,
         # The manifest is the pair's commit record; drop a stale one first so
         # the range reads as not-done while its files are being swapped.
         manifest_path = os.path.join(build.partial,
-                                     _range_manifest_name(m0, m1))
+                                     range_manifest_name(m0, m1))
         if os.path.lexists(manifest_path):
             os.remove(manifest_path)
         os.replace(build.rows_path,
-                   os.path.join(build.partial, _range_rows_name(m0, m1)))
+                   os.path.join(build.partial, range_rows_name(m0, m1)))
         os.replace(agg_tmp,
-                   os.path.join(build.partial, _range_agg_name(m0, m1)))
+                   os.path.join(build.partial, range_agg_name(m0, m1)))
         manifest = {"rows": {"bytes": expected_rows,
                              "sha256": str(native["payload_sha256"])},
                     "aggregates": {"bytes": agg_size, "sha256": agg_sha}}
@@ -1308,12 +1176,17 @@ def _build_fanout_parallel(sim, part: InputPart, builds: list[CacheBuild],
         raise ValueError(
             f"{part.path}: stage-14 jobs > 1 needs a v3 rays archive")
     max_bounces = sim.cfg.max_bounces
-    ranges = _pin_partition(builds, part.n_modes, jobs, log)
+    ranges = mode_ranges(part.n_modes)
     screens = [(b.target.index, b.target.label, b.partial, b.target.contract)
                for b in builds]
+    sizes = [(b.partial, b.target.grid.nx * b.target.grid.ny,
+              _expected_aggregate_size(
+                  b.target.grid.nx * b.target.grid.ny, max_bounces,
+                  b.scatter.nx * b.scatter.ny)) for b in builds]
     todo = []
     for m0, m1 in ranges:
-        if all(_range_done(b, m0, m1, max_bounces) for b in builds):
+        if all(range_done(partial, m0, m1, (m1 - m0) * npix * 24, agg)
+               for partial, npix, agg in sizes):
             log(f"  stage 14 range {m0}..{m1}: reused")
         else:
             todo.append((m0, m1))
@@ -1345,8 +1218,8 @@ def _build_fanout_parallel(sim, part: InputPart, builds: list[CacheBuild],
         parsed = []
         manifests = {}
         for m0, m1 in ranges:
-            manifests[m0, m1] = _read_range_manifest(build.partial, m0, m1)
-            path = os.path.join(build.partial, _range_agg_name(m0, m1))
+            manifests[m0, m1] = read_range_manifest(build.partial, m0, m1)
+            path = os.path.join(build.partial, range_agg_name(m0, m1))
             with open(path, "rb") as fh:
                 data = fh.read()
             if (hashlib.sha256(data).hexdigest()
@@ -1366,7 +1239,7 @@ def _build_fanout_parallel(sim, part: InputPart, builds: list[CacheBuild],
             for m0, m1 in ranges:
                 range_digest = hashlib.sha256()
                 range_path = os.path.join(build.partial,
-                                          _range_rows_name(m0, m1))
+                                          range_rows_name(m0, m1))
                 with open(range_path, "rb") as fh:
                     while True:
                         chunk = fh.read(1 << 22)

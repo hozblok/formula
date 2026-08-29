@@ -223,12 +223,12 @@ def test_stage14_finalize_crash_resumes(tmp_path, monkeypatch):
     shutil.rmtree(tmp_path / "stage14-cache")
     monkeypatch.setenv("CAPSYSRED_STAGE14_JOBS", "2")
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(stage14, "_publish_directory", _boom)
+        mp.setattr(stage14, "_publish_result_tree", _boom)
         with pytest.raises(RuntimeError, match="stop before assembly"):
             Simulation.from_yaml(str(cfg_path)).replay(
                 [str(archive)], str(tmp_path / "p1"), stages=[14])
-    # canonical files are already in the partial, checkpoints survived
-    assert list(tmp_path.rglob("aggregates.bin"))
+    # canonical files already sit in ready.tmp, checkpoints survived
+    assert list(tmp_path.rglob("ready.tmp/aggregates.bin"))
     assert list(tmp_path.rglob("rows-m*.f64"))
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(stage14, "_range_worker", _boom)   # ranges must be reused
@@ -259,8 +259,9 @@ def test_stage14_jobs_change_resumes(tmp_path, monkeypatch):
 
 
 def test_stage14_metaless_final_fail_closed(tmp_path, monkeypatch):
-    """A meta-less cache directory with no .partial evidence is foreign:
-    fail closed, never auto-delete."""
+    """A meta-less cache directory is never ours (the cache is published as
+    one directory rename): fail closed, never auto-delete — with or without
+    a .partial beside it."""
     cfg_path, archive = _scene(tmp_path)
     monkeypatch.setenv("CAPSYSRED_STAGE14_JOBS", "2")
     Simulation.from_yaml(str(cfg_path)).replay(
@@ -274,32 +275,13 @@ def test_stage14_metaless_final_fail_closed(tmp_path, monkeypatch):
         Simulation.from_yaml(str(cfg_path)).replay(
             [str(archive)], str(tmp_path / "p2"), stages=[14])
     assert valuable.exists()                     # nothing was deleted
-
-
-def test_stage14_metaless_final_healed_with_partial_evidence(
-        tmp_path, monkeypatch):
-    """A crashed mid-publish (meta-less final + checkpointed partial) is
-    removed and the build resumes from the recorded ranges."""
-    from formula.capsysred.stages import stage14
-    cfg_path, archive = _scene(tmp_path)
-    monkeypatch.delenv("CAPSYSRED_STAGE14_JOBS", raising=False)
-    Simulation.from_yaml(str(cfg_path)).replay(
-        [str(archive)], str(tmp_path / "serial"), stages=[14])
-    shutil.rmtree(tmp_path / "stage14-cache")
-    monkeypatch.setenv("CAPSYSRED_STAGE14_JOBS", "2")
-    _publish_ranges_then_abort(tmp_path, cfg_path, archive, "p1")
-    partials = sorted(tmp_path.rglob("*.partial"))
-    assert partials
-    crashed_final = partials[0].with_name(
-        partials[0].name.removesuffix(".partial"))
-    crashed_final.mkdir()
-    (crashed_final / "mode-rows.f64").write_bytes(b"half-moved")
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(stage14, "_range_worker", _boom)   # ranges must be reused
+    stale = metas[0].parent.with_name(metas[0].parent.name + ".partial")
+    stale.mkdir()
+    (stale / "done-m000000-000001.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="remove it manually"):
         Simulation.from_yaml(str(cfg_path)).replay(
-            [str(archive)], str(tmp_path / "p2"), stages=[14])
-    _assert_outputs_match(tmp_path / "serial", tmp_path / "p2")
-    assert not list(tmp_path.rglob("*.partial"))
+            [str(archive)], str(tmp_path / "p3"), stages=[14])
+    assert valuable.exists()                     # a partial is no license
 
 
 def test_stage14_worker_rejects_mutated_screen(tmp_path, monkeypatch):
@@ -401,12 +383,12 @@ def test_stage14_manifest_size_lie_rebuilds(tmp_path, monkeypatch):
     _assert_outputs_match(tmp_path / "serial", tmp_path / "p2")
 
 
-@pytest.mark.parametrize("n_modes,jobs", [(4, 1), (4, 3), (4, 4), (4, 9),
-                                          (5, 2), (7, 7), (1000, 48)])
-def test_mode_ranges_partition(n_modes, jobs):
-    from formula.capsysred.stages.stage14 import _mode_ranges
-    ranges = _mode_ranges(n_modes, jobs)
-    assert len(ranges) == min(jobs, n_modes)
+@pytest.mark.parametrize("n_modes", [1, 4, 5, 127, 128, 129, 1000, 2000])
+def test_mode_ranges_partition(n_modes):
+    from formula.capsysred.stages._stage14_checkpoints import (RANGE_SLOTS,
+                                                               mode_ranges)
+    ranges = mode_ranges(n_modes)
+    assert len(ranges) == min(RANGE_SLOTS, n_modes)
     assert ranges[0][0] == 0 and ranges[-1][1] == n_modes
     assert all(m1 > m0 for m0, m1 in ranges)
     assert all(ranges[i][1] == ranges[i + 1][0]

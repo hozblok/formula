@@ -29,7 +29,7 @@ class SketchCoherence:
     """Pairwise reference column + streaming sketch over one mode stream."""
 
     def __init__(self, lines, npix: int, ref_pixel: int, rank: int, seed: int):
-        import numpy as np
+        import numpy as np  # TODO: drop numpy — needs pinv/eigh replacement in finalize()
         self.np = np
         self.kms = np.array([float(l.k) for l in lines])
         self.wfs = [l.weight for l in lines]
