@@ -6,10 +6,9 @@ Wall specs are (kind, mp_values, float_values) tuples; the layouts must match
 the reader in src/cpp/bindings_trace.cpp (make_wall).
 """
 
-import os
-
 from .. import _formula
 from ..formula import Number
+from .env import Env
 from .surfaces import CapillaryBundle, Mirror
 from .trace import TraceResult, trace_ray
 from .shared.nums import raw as _raw
@@ -96,7 +95,7 @@ def make_tracer(optic):
     An optic other than the compiled one falls back to the Python reference;
     CAPSYSRED_PYTHON_TRACE=1 forces it globally.
     """
-    if os.environ.get("CAPSYSRED_PYTHON_TRACE", "0") not in ("", "0"):
+    if Env.python_trace():
         return trace_ray
     native = None
     if optic is not None:

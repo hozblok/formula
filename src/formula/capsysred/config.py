@@ -9,6 +9,7 @@ import copy
 import math
 import os
 import warnings
+from pathlib import Path
 
 from .._roots import get_backend
 from ..formula import Number
@@ -302,7 +303,7 @@ class CapillaryCfg:
 
 
 class Config:
-    def __init__(self, raw: dict, yaml_file: str | None = None):
+    def __init__(self, raw: dict, yaml_path: Path | None = None):
         if raw is None:
             raw = {}
         elif not isinstance(raw, dict):
@@ -336,7 +337,7 @@ class Config:
                 raise ValueError(f"{scene} must be a mapping")
             cfg[scene] = _merge(defaults, raw[scene])
         self.raw = cfg
-        self.yaml_file = yaml_file
+        self.yaml_path = yaml_path
         p = int(cfg["precision"])
         self.precision = p
         self.seed = int(cfg["seed"])
@@ -451,14 +452,20 @@ class Config:
                 "stage14.flag_thresholds.min_coherent_fraction must be finite and in (0, 1]"
             )
 
+    @property
+    def yaml_file(self) -> str | None:
+        """Config basename for report/result metadata; never the full path."""
+        return self.yaml_path.name if self.yaml_path else None
 
-def load(path_or_dict) -> Config:
+
+def load(path_or_dict: str | os.PathLike | dict) -> Config:
     """Build Config from a YAML file path or an already-parsed dict."""
     if isinstance(path_or_dict, dict):
         return Config(path_or_dict)
     import yaml
-    path = os.fspath(path_or_dict)
+    # resolve(): the physical path (junctions unfolded) — worker processes
+    # reload the config by it.
+    path = Path(os.fspath(path_or_dict)).resolve()
     with open(path, encoding="utf-8") as fh:
         raw = yaml.safe_load(fh)
-    return Config({} if raw is None else raw,
-                  yaml_file=os.path.basename(path))
+    return Config({} if raw is None else raw, yaml_path=path)

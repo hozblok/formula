@@ -7,8 +7,10 @@ from .format import hms as _hms
 
 
 class Progress:
-    def __init__(self, label: str, total: int, stream=sys.stderr):
+    def __init__(self, label: str, total: int, stream=sys.stderr,
+                 silent: bool = False):
         self.label, self.total, self.stream = label, max(total, 1), stream
+        self.silent = silent
         self.done = 0
         self.t0 = time.time()
         self._last = 0.0
@@ -19,6 +21,8 @@ class Progress:
         self._render(extra=extra)
 
     def _render(self, extra: str = "", force: bool = False):
+        if self.silent:
+            return
         now = time.time()
         if not force and now - self._last < 0.2 and self.done < self.total:
             return
@@ -32,6 +36,8 @@ class Progress:
         self.stream.flush()
 
     def finish(self, extra: str = ""):
+        if self.silent:
+            return
         elapsed = time.time() - self.t0
         self.stream.write(
             f"\r  {self.label:<22} {self.done:>9,} rays in {_hms(elapsed)}  {extra}".ljust(100) + "\n")

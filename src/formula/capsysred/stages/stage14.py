@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from array import array
 from collections import Counter
+from collections.abc import Iterator
+import concurrent.futures
 from contextlib import contextmanager
 import copy
 import gzip
@@ -30,6 +32,7 @@ from types import SimpleNamespace
 from ... import __version__, _formula
 from .. import rays_v3, render
 from .altcoh import FloatLineAmplitudes
+from ..env import Env
 from ..shared.progress import Progress
 from ..rays import (_validate_stream_metadata, geometry_metadata,
                    metadata_equal, read_metadata)
@@ -104,12 +107,16 @@ def _stat_contract(value) -> dict:
     }
 
 
-def _publish_directory(partial: str, final: str, names: list[str]) -> None:
+def _publish_directory(partial: str, final: str, names: list[str],
+                       scrub_leftovers: bool = False) -> None:
     """Publish files or child trees into an exclusively reserved directory.
 
     The metadata marker is supplied last by callers.  A crash can therefore
     leave an unmistakably incomplete directory, but can never replace a
-    previously published result or cache.
+    previously published result or cache.  ``scrub_leftovers`` (parallel
+    cache builds): whatever remains in ``partial`` after the moves — range
+    checkpoints, their manifests, the partition record — is build byproduct
+    and is deleted only now, after the metadata marker landed.
     """
     try:
         os.mkdir(final)
@@ -120,6 +127,9 @@ def _publish_directory(partial: str, final: str, names: list[str]) -> None:
     try:
         for name in names:
             os.rename(os.path.join(partial, name), os.path.join(final, name))
+        if scrub_leftovers:
+            for name in os.listdir(partial):
+                os.remove(os.path.join(partial, name))
         os.rmdir(partial)
     except BaseException:
         # Keep both paths as loud, fail-closed evidence.  The final directory
@@ -403,8 +413,8 @@ def _prepare_inputs(sim, paths, signature: dict) -> list[InputPart]:
             "n_rays": n_rays,
         }
         analysis_id = _identity(identity)[:32]
-        # CAPSYSRED_STAGE14_CACHE relocates the cache root away from the archive.
-        cache_root = os.environ.get("CAPSYSRED_STAGE14_CACHE")
+        # Env.stage14_cache relocates the cache root away from the archive.
+        cache_root = Env.stage14_cache()
         if cache_root:
             os.makedirs(cache_root, exist_ok=True)
         else:
@@ -454,29 +464,37 @@ def _native_store(path, n_modes, n_pixels, ref, kms, weights):
 
 
 @contextmanager
-def _archive_lines(part: InputPart):
+def _archive_lines(part: InputPart,
+                   mode_range: tuple[int, int] | None = None,
+                   ) -> Iterator[Iterator[str]]:
     """Iterator of archive text lines: preamble, rows, scene trailers.
 
     v2: the exact archive inode selected during input preparation.  v3: the
     capillary sections mode-major (each hashed against the index) behind a
     synthetic preamble and scene trailer, so the strict loop is shared.
+    ``mode_range`` (v3 only) restricts the stream to modes [m0, m1).
     """
     if part.v3_index is not None:
+        m0, m1 = mode_range if mode_range else (0, part.n_modes)
         expected = part.identity["input"]["index_sha256"]
         if rays_v3.index_digest(part.path) != expected:
             raise ValueError(f"{part.path}: rays index changed before cache build")
 
         def lines():
             yield "{}\n"
-            for raw in rays_v3.scene_lines(part.path, part.v3_index, "capillary"):
-                yield raw.decode("utf-8")
+            for sections in part.v3_index.modes("capillary")[m0:m1]:
+                for entry in sections:
+                    for raw in rays_v3.iter_section_lines(part.path, entry):
+                        yield raw.decode("utf-8")
             yield json.dumps({"scene_end": "capillary",
-                              "rows": part.n_modes * part.n_rays}) + "\n"
+                              "rows": (m1 - m0) * part.n_rays}) + "\n"
 
         yield lines()
         if rays_v3.index_digest(part.path) != expected:
             raise ValueError(f"{part.path}: rays index changed during cache build")
         return
+    if mode_range is not None:
+        raise ValueError(f"{part.path}: a mode range needs a v3 rays archive")
     expected = part.identity["input"]["archive_stat"]
     with open(part.path, "rb") as raw_fh:
         if not metadata_equal(_stat_contract(os.fstat(raw_fh.fileno())),
@@ -529,13 +547,6 @@ def _project_coordinates(row: dict, source_z: float, target_z: float):
         raise ValueError("re-projected screen ray is non-finite")
     return x, y, opl, True
 
-
-def _project_row(row: dict, source_z: float, grid: ScreenGrid):
-    x, y, opl, reachable = _project_coordinates(
-        row, source_z, float(grid.z))
-    return x, y, grid.pixel((x, y)) if reachable else None, opl
-
-
 def _row_ids(row: dict, path: str):
     mode, ray = row.get("mode"), row.get("ray")
     if (type(mode) is not int or type(ray) is not int
@@ -544,9 +555,69 @@ def _row_ids(row: dict, path: str):
     return mode, ray
 
 
+def _validate_row(row: dict, line_no: int, path: str, trailers: dict):
+    """Shape checks of one ray row (``trailers`` is read only); returns
+    the parsed ``(scene, mode, ray, sins, fate)``."""
+    scene = row.get("stage")
+    if not isinstance(scene, str):
+        raise ValueError(f"{path}:{line_no}: ray row lacks stage")
+    if scene in trailers:
+        raise ValueError(
+            f"{path}:{line_no}: {scene} row follows its trailer"
+        )
+    mode, ray = _row_ids(row, path)
+    if "pixel" not in row or not (
+            row["pixel"] is None
+            or (type(row["pixel"]) is int and row["pixel"] >= 0)):
+        raise ValueError(
+            f"{path}:{line_no}: invalid saved pixel id"
+        )
+    try:
+        opl_value = float(row["opl"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{path}:{line_no}: invalid optical path length"
+        ) from exc
+    if not math.isfinite(opl_value):
+        raise ValueError(
+            f"{path}:{line_no}: non-finite optical path length"
+        )
+    sins_raw = row.get("sins")
+    if not isinstance(sins_raw, list):
+        raise ValueError(f"{path}:{line_no}: sins must be a list")
+    try:
+        sins = [float(value) for value in sins_raw]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{path}:{line_no}: invalid sins") from exc
+    if not all(math.isfinite(value) for value in sins):
+        raise ValueError(f"{path}:{line_no}: non-finite sins")
+    fate = row.get("fate")
+    if fate not in ("screen", "absorbed", "lost"):
+        raise ValueError(
+            f"{path}:{line_no}: invalid ray fate {fate!r}"
+        )
+    if fate == "screen":
+        try:
+            screen_values = tuple(float(row[name]) for name in
+                                  ("x", "y", "dx", "dy"))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{path}:{line_no}: screen ray lacks finite "
+                "x/y/direction"
+            ) from exc
+        if not all(math.isfinite(value) for value in screen_values):
+            raise ValueError(
+                f"{path}:{line_no}: screen ray has non-finite "
+                "x/y/direction"
+            )
+    return scene, mode, ray, sins, fate
+
+
 def _build_stream_fanout(sim, part: InputPart, builds: list[CacheBuild],
-                         log) -> tuple[list[dict], list[int]]:
-    """Strictly decode one archive into every missing screen cache."""
+                         log, mode_range=None,
+                         quiet=False) -> tuple[list[dict], list[int]]:
+    """Strictly decode one archive (or a v3 mode range) into every missing
+    screen cache."""
     if not builds:
         raise ValueError("Stage-14 fan-out needs at least one cache build")
     for build in builds:
@@ -558,17 +629,21 @@ def _build_stream_fanout(sim, part: InputPart, builds: list[CacheBuild],
                 or other.input_id != part.input_id):
             raise ValueError("Stage-14 fan-out inputs do not describe one archive")
     amps_of = _amplitudes_factory(sim)
-    expected = part.n_modes * part.n_rays
+    m0, m1 = mode_range if mode_range else (0, part.n_modes)
+    expected = (m1 - m0) * part.n_rays
     suffix = "s" if len(builds) != 1 else ""
     progress = Progress(
-        f"14 cache capillary fan-out ({len(builds)} screen{suffix})", expected)
+        f"14 cache capillary fan-out ({len(builds)} screen{suffix})", expected,
+        silent=quiet)
     counts, trailers, known_seen = {}, {}, set()
     stats_rows = [dict.fromkeys(STREAM_COUNTERS, 0) for _ in builds]
     bounce_hist = [0] * (sim.cfg.max_bounces + 1)
     current_mode = None
     target_rows = 0
     try:
-        with _archive_lines(part) as fh:
+        archive = (_archive_lines(part, mode_range) if mode_range is not None
+                   else _archive_lines(part))
+        with archive as fh:
             preamble = next(fh, "")
             if not preamble or not preamble.endswith("\n"):
                 raise ValueError(f"{part.path}: missing complete ignored preamble")
@@ -589,62 +664,14 @@ def _build_stream_fanout(sim, part: InputPart, builds: list[CacheBuild],
                         raise ValueError(f"{part.path}:{line_no}: duplicate scene trailer")
                     trailers[scene] = rows
                     continue
-                scene = row.get("stage")
-                if not isinstance(scene, str):
-                    raise ValueError(f"{part.path}:{line_no}: ray row lacks stage")
-                if scene in trailers:
-                    raise ValueError(
-                        f"{part.path}:{line_no}: {scene} row follows its trailer"
-                    )
-                mode, ray = _row_ids(row, part.path)
-                if "pixel" not in row or not (
-                        row["pixel"] is None
-                        or (type(row["pixel"]) is int and row["pixel"] >= 0)):
-                    raise ValueError(
-                        f"{part.path}:{line_no}: invalid saved pixel id"
-                    )
-                try:
-                    opl_value = float(row["opl"])
-                except (KeyError, TypeError, ValueError) as exc:
-                    raise ValueError(
-                        f"{part.path}:{line_no}: invalid optical path length"
-                    ) from exc
-                if not math.isfinite(opl_value):
-                    raise ValueError(
-                        f"{part.path}:{line_no}: non-finite optical path length"
-                    )
-                sins_raw = row.get("sins")
-                if not isinstance(sins_raw, list):
-                    raise ValueError(f"{part.path}:{line_no}: sins must be a list")
-                try:
-                    sins = [float(value) for value in sins_raw]
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(f"{part.path}:{line_no}: invalid sins") from exc
-                if not all(math.isfinite(value) for value in sins):
-                    raise ValueError(f"{part.path}:{line_no}: non-finite sins")
-                fate = row.get("fate")
-                if fate not in ("screen", "absorbed", "lost"):
-                    raise ValueError(
-                        f"{part.path}:{line_no}: invalid ray fate {fate!r}"
-                    )
-                if fate == "screen":
-                    try:
-                        screen_values = tuple(float(row[name]) for name in
-                                              ("x", "y", "dx", "dy"))
-                    except (KeyError, TypeError, ValueError) as exc:
-                        raise ValueError(
-                            f"{part.path}:{line_no}: screen ray lacks finite "
-                            "x/y/direction"
-                        ) from exc
-                    if not all(math.isfinite(value) for value in screen_values):
-                        raise ValueError(
-                            f"{part.path}:{line_no}: screen ray has non-finite "
-                            "x/y/direction"
-                        )
+                scene, mode, ray, sins, fate = _validate_row(
+                    row, line_no, part.path, trailers)
                 counts[scene] = counts.get(scene, 0) + 1
                 budget = part.meta["budgets"].get(scene)
                 if budget:
                     idx = counts[scene] - 1
+                    if scene == "capillary":
+                        idx += m0 * budget[1]
                     if (mode, ray) != divmod(idx, budget[1]):
                         raise ValueError(
                             f"{part.path}:{line_no}: non-canonical {scene} mode/ray"
@@ -652,7 +679,8 @@ def _build_stream_fanout(sim, part: InputPart, builds: list[CacheBuild],
                 known_seen.add(scene)
                 if scene != "capillary":
                     continue
-                if target_rows >= expected or (mode, ray) != divmod(target_rows, part.n_rays):
+                if target_rows >= expected or (mode, ray) != divmod(
+                        m0 * part.n_rays + target_rows, part.n_rays):
                     raise ValueError(
                         f"{part.path}:{line_no}: capillary mode/ray gap, duplicate or reorder"
                     )
@@ -721,7 +749,9 @@ def _build_stream_fanout(sim, part: InputPart, builds: list[CacheBuild],
         if trailers.get(scene) != counts.get(scene):
             raise ValueError(f"{part.path}: incomplete scene {scene!r}")
         budget = part.meta["budgets"].get(scene)
-        if budget and counts[scene] != math.prod(budget):
+        expected_scene = ((m1 - m0) * budget[1] if scene == "capillary"
+                          else math.prod(budget)) if budget else None
+        if budget and counts[scene] != expected_scene:
             raise ValueError(f"{part.path}: scene {scene!r} contradicts its budget")
     if set(trailers) != set(counts):
         raise ValueError(f"{part.path}: orphan scene trailer or partial scene")
@@ -732,7 +762,8 @@ def _build_stream_fanout(sim, part: InputPart, builds: list[CacheBuild],
             raise ValueError(
                 f"{part.path}: inconsistent Stage-14 counters for "
                 f"{build.target.label}")
-    log(f"  stage 14 cache input validated: {part.n_modes} modes × {part.n_rays} rays")
+    log(f"  stage 14 cache input validated: modes {m0}..{m1} of {part.n_modes} "
+        f"× {part.n_rays} rays")
     return stats_rows, bounce_hist
 
 
@@ -755,13 +786,14 @@ def _estimated_peak_rss(npix: int, n_lines: int, scatter_cells: int) -> int:
     return max(native_build, python_finalize)
 
 
-def _estimated_fanout_peak_rss(targets: list[ScreenTarget], n_lines: int) -> int:
+def _estimated_fanout_peak_rss(targets: list[ScreenTarget], n_lines: int,
+                               jobs: int = 1) -> int:
     """Conservative peak for simultaneous stores and retained screen results."""
     unique_builds = {}
     for target in targets:
         key = _canonical(target.signature)
         unique_builds.setdefault(key, target)
-    native_build = 512 * 1024 * 1024 + sum(
+    native_build = 512 * 1024 * 1024 + jobs * sum(
         target.grid.nx * target.grid.ny * (24 * n_lines + 128)
         + target.scatter.nx * target.scatter.ny * 40
         for target in unique_builds.values())
@@ -815,8 +847,17 @@ def _read_aggregates(part: CachePart, npix: int, max_bounces: int,
     digest = hashlib.sha256(data).hexdigest()
     if digest != meta_file.get("sha256"):
         raise ValueError(f"{part.aggregates_path}: aggregate SHA-256 mismatch")
+    return _parse_aggregates(data, part.aggregates_path, npix, max_bounces,
+                             scatter_cells)
+
+
+def _parse_aggregates(data: bytes, label: str, npix: int, max_bounces: int,
+                      scatter_cells: int) -> dict:
+    expected_size = _expected_aggregate_size(npix, max_bounces, scatter_cells)
+    if len(data) != expected_size:
+        raise ValueError(f"{label}: truncated aggregates")
     if struct.unpack_from("<8sII", data, 0) != (AGG_MAGIC, AGG_FORMAT, 0):
-        raise ValueError(f"{part.aggregates_path}: invalid aggregate header")
+        raise ValueError(f"{label}: invalid aggregate header")
     offset = 16
 
     def take(typecode, width, count):
@@ -843,20 +884,28 @@ def _read_aggregates(part: CachePart, npix: int, max_bounces: int,
     out["scatter"] = list(struct.unpack_from(f"<{scatter_cells}Q", data, offset))
     offset += 8 * scatter_cells
     if offset != len(data):
-        raise ValueError(f"{part.aggregates_path}: aggregate trailing bytes")
+        raise ValueError(f"{label}: aggregate trailing bytes")
     return out
 
 
 def _load_cache(part: InputPart, signature: dict, npix: int,
-                max_bounces: int, scatter: ScatterRaster) -> CachePart | None:
+                max_bounces: int, scatter: ScatterRaster,
+                allow_partial: bool = False) -> CachePart | None:
+    """``allow_partial`` (parallel builds): a leftover .partial is resume
+    state holding completed ranges, not an error."""
     final, partial = part.cache_dir, part.cache_dir + ".partial"
-    if os.path.lexists(partial):
+    if os.path.lexists(partial) and not allow_partial:
         raise ValueError(
             f"{partial}: incomplete Stage-14 cache exists; remove it manually"
         )
     if not os.path.lexists(final):
         return None
     meta_path = os.path.join(final, META_NAME)
+    if allow_partial and not os.path.lexists(meta_path):
+        # A publication that crashed mid-move: the metadata marker is moved
+        # last, so a meta-less cache directory can never become valid.
+        shutil.rmtree(final)
+        return None
     meta = _read_json(meta_path)
     if (meta.get("cache_schema") != CACHE_SCHEMA
             or meta.get("analysis_id") != part.analysis_id
@@ -884,25 +933,32 @@ def _load_cache(part: InputPart, signature: dict, npix: int,
     return cache
 
 
-def _prepare_cache_build(sim, target: ScreenTarget,
-                         part: InputPart) -> CacheBuild:
-    """Exclusively reserve one missing cache and construct its native store."""
+def _prepare_cache_build(sim, target: ScreenTarget, part: InputPart,
+                         with_store: bool = True) -> CacheBuild:
+    """Exclusively reserve one missing cache and construct its native store.
+
+    ``with_store=False`` (parallel range build): the partial directory is
+    reused if present — completed range files inside it resume the build —
+    and no whole-archive store is opened."""
     cache_root = os.path.dirname(part.cache_dir)
     os.makedirs(cache_root, exist_ok=True)
     partial = part.cache_dir + ".partial"
-    try:
-        os.mkdir(partial)
-    except FileExistsError as exc:
-        raise ValueError(
-            f"{partial}: cache conflict; remove it manually or choose another input"
-        ) from exc
+    if with_store:
+        try:
+            os.mkdir(partial)
+        except FileExistsError as exc:
+            raise ValueError(
+                f"{partial}: cache conflict; remove it manually or choose another input"
+            ) from exc
+    else:
+        os.makedirs(partial, exist_ok=True)
     rows_path = os.path.join(partial, ROWS_NAME)
     aggregate_path = os.path.join(partial, AGGREGATES_NAME)
     kms = [float(line.k) for line in sim.lines]
     weights = [float(line.weight) for line in sim.lines]
     npix = target.grid.nx * target.grid.ny
-    store = _native_store(
-        rows_path, part.n_modes, npix, target.ref, kms, weights)
+    store = (_native_store(rows_path, part.n_modes, npix, target.ref,
+                           kms, weights) if with_store else None)
     return CacheBuild(
         target, part, partial, rows_path, aggregate_path, store,
         ScatterRaster(target.cfg), time.time(),
@@ -910,12 +966,24 @@ def _prepare_cache_build(sim, target: ScreenTarget,
 
 
 def _finish_cache_build(sim, build: CacheBuild, stats: dict,
-                        bounce_hist: list[int]) -> CachePart:
-    """Validate, serialize and publish one fan-out store after stream EOF."""
+                        bounce_hist: list[int], native: dict | None = None) -> CachePart:
+    """Validate, serialize and publish one fan-out store after stream EOF.
+
+    ``native`` overrides the live store (parallel path: summed range
+    aggregates plus the concatenated payload sha/bytes)."""
     target, part = build.target, build.part
     grid, scatter = target.grid, build.scatter
     npix = grid.nx * grid.ny
-    native = build.store.finish()
+    resume = native is not None
+    if resume:
+        # Resume-capable finalize (parallel): a crashed attempt may have left
+        # the canonical files behind; rewrite them instead of wedging on "x".
+        for stale in (build.aggregate_path,
+                      os.path.join(build.partial, META_NAME)):
+            if os.path.lexists(stale):
+                os.remove(stale)
+    if native is None:
+        native = build.store.finish()
     rows_size = int(native["payload_bytes"])
     rows_sha = str(native["payload_sha256"])
     expected_rows = part.n_modes * npix * 24
@@ -967,10 +1035,356 @@ def _finish_cache_build(sim, build: CacheBuild, stats: dict,
     _publish_directory(
         build.partial, part.cache_dir,
         [ROWS_NAME, AGGREGATES_NAME, META_NAME],
+        scrub_leftovers=resume,
     )
     return CachePart(
         part, meta, os.path.join(part.cache_dir, ROWS_NAME),
         os.path.join(part.cache_dir, AGGREGATES_NAME), False)
+
+
+def _range_rows_name(m0: int, m1: int) -> str:
+    return f"rows-m{m0:06d}-{m1:06d}.f64"
+
+
+def _range_agg_name(m0: int, m1: int) -> str:
+    return f"agg-m{m0:06d}-{m1:06d}.bin"
+
+
+def _range_manifest_name(m0: int, m1: int) -> str:
+    return f"done-m{m0:06d}-{m1:06d}.json"
+
+
+PARTITION_NAME = "partition.json"
+
+
+def _scrub_range_files(partial: str) -> None:
+    """Remove every per-range artifact (the partition is being re-created)."""
+    for name in os.listdir(partial):
+        if (name.startswith(("rows-m", "agg-m", "done-m"))
+                or name == PARTITION_NAME or name.endswith(".tmp")):
+            os.remove(os.path.join(partial, name))
+
+
+def _pin_partition(builds, n_modes: int, jobs: int, log) -> list[tuple[int, int]]:
+    """The range partition is fixed by the first parallel run and recorded in
+    every partial; a resume reuses the record and jobs only caps concurrency,
+    so checkpoints survive a jobs change."""
+    recorded = {}
+    for build in builds:
+        path = os.path.join(build.partial, PARTITION_NAME)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                recorded[build.partial] = json.load(fh)
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"{path}: unreadable partition record") from exc
+    if len({_canonical(value) for value in recorded.values()}) > 1:
+        raise ValueError(
+            "stage-14 partials disagree on the range partition; remove the "
+            ".partial directories to rebuild")
+    if recorded:
+        value = next(iter(recorded.values()))
+        ranges = value.get("ranges") if isinstance(value, dict) else None
+        ok = (isinstance(ranges, list) and ranges
+              and all(isinstance(r, list) and len(r) == 2
+                      and all(type(v) is int for v in r) for r in ranges)
+              and ranges[0][0] == 0 and ranges[-1][1] == n_modes
+              and all(a < b for a, b in ranges)
+              and all(ranges[i][1] == ranges[i + 1][0]
+                      for i in range(len(ranges) - 1)))
+        if not ok or value.get("n_modes") != n_modes:
+            raise ValueError(
+                "stage-14 recorded partition is invalid; remove the .partial "
+                "directories to rebuild")
+        ranges = [tuple(r) for r in ranges]
+        if len(ranges) != len(_mode_ranges(n_modes, jobs)):
+            log(f"  stage 14 partition: {len(ranges)} recorded ranges reused "
+                f"(jobs={jobs} caps concurrency only)")
+    else:
+        ranges = _mode_ranges(n_modes, jobs)
+    record = {"n_modes": n_modes, "ranges": [list(r) for r in ranges]}
+    for build in builds:
+        if build.partial in recorded:
+            continue
+        path = os.path.join(build.partial, PARTITION_NAME)
+        _scrub_range_files(build.partial)
+        with durable_open(path + ".tmp", "w", encoding="utf-8",
+                          newline="\n") as fh:
+            json.dump(record, fh)
+        os.replace(path + ".tmp", path)
+    return ranges
+
+
+def _read_range_manifest(partial: str, m0: int, m1: int) -> dict:
+    """The range pair's commit record: bytes and sha256 of rows/aggregates
+    as the worker wrote them from memory."""
+    path = os.path.join(partial, _range_manifest_name(m0, m1))
+    with open(path, encoding="utf-8") as fh:
+        manifest = json.load(fh)
+    for kind in ("rows", "aggregates"):
+        entry = manifest.get(kind) if isinstance(manifest, dict) else None
+        if (not isinstance(entry, dict)
+                or type(entry.get("bytes")) is not int
+                or not isinstance(entry.get("sha256"), str)
+                or len(entry["sha256"]) != 64):
+            raise ValueError(f"{path}: invalid range manifest")
+    return manifest
+
+
+def _mode_ranges(n_modes: int, jobs: int) -> list[tuple[int, int]]:
+    jobs = min(jobs, n_modes)
+    base, extra = divmod(n_modes, jobs)
+    ranges, start = [], 0
+    for i in range(jobs):
+        size = base + (1 if i < extra else 0)
+        ranges.append((start, start + size))
+        start += size
+    return ranges
+
+
+def _range_done(build: CacheBuild, m0: int, m1: int, max_bounces: int) -> bool:
+    """Done = manifest present and both files at their recorded sizes; the
+    content sha256 is verified against the manifest during assembly."""
+    npix = build.target.grid.nx * build.target.grid.ny
+    try:
+        manifest = _read_range_manifest(build.partial, m0, m1)
+        expected = {
+            "rows": ((m1 - m0) * npix * 24, _range_rows_name(m0, m1)),
+            "aggregates": (_expected_aggregate_size(
+                npix, max_bounces, build.scatter.nx * build.scatter.ny),
+                _range_agg_name(m0, m1)),
+        }
+        for kind, (size, name) in expected.items():
+            if (manifest[kind]["bytes"] != size
+                    or os.path.getsize(os.path.join(build.partial, name))
+                    != size):
+                return False
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _sum_range_aggregates(items: list[dict], npix: int) -> dict:
+    """Element-wise union of per-range aggregates (disjoint mode sets)."""
+    total = dict(items[0])
+    for name in ("I", "w_re", "w_im", "ic"):
+        total[name] = array(
+            "d", (math.fsum(item[name][i] for item in items)
+                  for i in range(npix)))
+    total["n_rays"] = array(
+        "Q", (sum(item["n_rays"][i] for item in items) for i in range(npix)))
+    for name in ("m_realizations", "m_pair_realizations",
+                 "m_ref_realizations"):
+        values = [sum(item[name][i] for item in items) for i in range(npix)]
+        if any(value > 0xFFFFFFFF for value in values):
+            raise ValueError(f"summed Stage-14 {name} overflows uint32")
+        total[name] = array("I", values)
+    total["max_rays_per_realization"] = array(
+        "I", (max(item["max_rays_per_realization"][i] for item in items)
+              for i in range(npix)))
+    total["stats"] = {name: sum(item["stats"][name] for item in items)
+                      for name in STREAM_COUNTERS}
+    total["bounce_hist"] = [sum(vals) for vals in
+                            zip(*(item["bounce_hist"] for item in items))]
+    total["scatter"] = [sum(vals) for vals in
+                        zip(*(item["scatter"] for item in items))]
+    return total
+
+
+def _range_worker(raw_cfg: dict, archive_path: str, contract: dict,
+                  m0: int, m1: int,
+                  screens: list[tuple[int, str, str]]) -> tuple[int, int]:
+    """One parallel builder process: decode modes [m0, m1) of a v3 archive
+    into per-range rows/aggregate files inside each screen's partial dir.
+
+    ``raw_cfg`` is the parent's merged config dict and ``contract`` the
+    parent-fixed input identity — the worker re-reads no mutable config
+    and refuses an archive that drifted since input preparation."""
+    from ..simulation import Simulation
+    sim = Simulation.from_dict(raw_cfg)
+    # First check: config indirections (a spectrum table file) re-resolve
+    # here, so the reconstructed physics must equal the parent's exactly.
+    if not metadata_equal(_physics_contract(sim), contract["physics"]):
+        raise ValueError(
+            "stage-14 worker physics differs from the parent's contract "
+            "(spectrum table or config drifted under the build)")
+    expected_sha = contract["index_sha256"]
+    if rays_v3.index_digest(archive_path) != expected_sha:
+        raise ValueError(
+            f"{archive_path}: rays index changed since input preparation")
+    index = rays_v3.load_index(archive_path)
+    meta = rays_v3.metadata(archive_path)
+    n_modes, n_rays = contract["n_modes"], contract["n_rays"]
+    source_z = contract["source_z"]
+    if (meta["budgets"].get("capillary") != [n_modes, n_rays]
+            or _recorded_screen_z(meta, archive_path) != source_z):
+        raise ValueError(
+            f"{archive_path}: rays metadata differs from the prepared input")
+    part = InputPart(
+        archive_path, meta, n_modes, n_rays, source_z, "", None, "", "",
+        {"input": {"index_sha256": expected_sha}},
+        0, index)
+    cap = sim.cfg.capillary
+    configs = [cap.screen, *cap.screens]
+    kms = [float(line.k) for line in sim.lines]
+    weights = [float(line.weight) for line in sim.lines]
+    builds = []
+    for screen_index, label, partial in screens:
+        cfg = configs[screen_index]
+        grid = ScreenGrid(cfg)
+        target = SimpleNamespace(grid=grid, label=label, cfg=cfg,
+                                 index=screen_index)
+        rows_tmp = os.path.join(partial, _range_rows_name(m0, m1) + ".tmp")
+        if os.path.lexists(rows_tmp):
+            os.remove(rows_tmp)
+        store = _native_store(rows_tmp, m1 - m0, grid.nx * grid.ny,
+                              _reference_pixel(cfg, grid), kms, weights)
+        builds.append(CacheBuild(target, part, partial, rows_tmp, "",
+                                 store, ScatterRaster(cfg), time.time()))
+    stats_rows, bounce_hist = _build_stream_fanout(
+        sim, part, builds, lambda *_: None, mode_range=(m0, m1), quiet=True)
+    for build, stats in zip(builds, stats_rows):
+        npix = build.target.grid.nx * build.target.grid.ny
+        native = build.store.finish()
+        expected_rows = (m1 - m0) * npix * 24
+        if (int(native["payload_bytes"]) != expected_rows
+                or os.path.getsize(build.rows_path) != expected_rows):
+            raise ValueError("Stage-14 range store wrote the wrong payload size")
+        if sum(_typed_array("Q", native["n_rays"])) != stats["screen"]:
+            raise ValueError(
+                f"Stage-14 range density differs from {build.target.label} "
+                "screen counter")
+        agg_tmp = os.path.join(build.partial, _range_agg_name(m0, m1) + ".tmp")
+        if os.path.lexists(agg_tmp):
+            os.remove(agg_tmp)
+        agg_size, agg_sha = _write_aggregates(agg_tmp, native, npix, stats,
+                                              bounce_hist, build.scatter)
+        for tmp in (build.rows_path, agg_tmp):
+            with open(tmp, "rb+") as fh:
+                os.fsync(fh.fileno())
+        # The manifest is the pair's commit record; drop a stale one first so
+        # the range reads as not-done while its files are being swapped.
+        manifest_path = os.path.join(build.partial,
+                                     _range_manifest_name(m0, m1))
+        if os.path.lexists(manifest_path):
+            os.remove(manifest_path)
+        os.replace(build.rows_path,
+                   os.path.join(build.partial, _range_rows_name(m0, m1)))
+        os.replace(agg_tmp,
+                   os.path.join(build.partial, _range_agg_name(m0, m1)))
+        manifest = {"rows": {"bytes": expected_rows,
+                             "sha256": str(native["payload_sha256"])},
+                    "aggregates": {"bytes": agg_size, "sha256": agg_sha}}
+        with open(manifest_path + ".tmp", "w", encoding="utf-8",
+                  newline="\n") as fh:
+            json.dump(manifest, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(manifest_path + ".tmp", manifest_path)
+    return m0, m1
+
+
+def _build_fanout_parallel(sim, part: InputPart, builds: list[CacheBuild],
+                           jobs: int, log):
+    """Decode one v3 archive in parallel mode ranges (published atomically,
+    so a rerun reuses completed ranges), then assemble each screen's
+    canonical rows file and summed aggregates."""
+    if part.v3_index is None:
+        raise ValueError(
+            f"{part.path}: stage-14 jobs > 1 needs a v3 rays archive")
+    max_bounces = sim.cfg.max_bounces
+    ranges = _pin_partition(builds, part.n_modes, jobs, log)
+    screens = [(b.target.index, b.target.label, b.partial) for b in builds]
+    todo = []
+    for m0, m1 in ranges:
+        if all(_range_done(b, m0, m1, max_bounces) for b in builds):
+            log(f"  stage 14 range {m0}..{m1}: reused")
+        else:
+            todo.append((m0, m1))
+    if todo:
+        # Workers get the config by value and the parent-fixed input identity:
+        # the yaml and the archive may not drift under a running build.
+        contract = {"index_sha256": part.identity["input"]["index_sha256"],
+                    "n_modes": part.n_modes, "n_rays": part.n_rays,
+                    "source_z": part.source_z,
+                    "physics": _physics_contract(sim)}
+        with concurrent.futures.ProcessPoolExecutor(
+                max_workers=min(jobs, len(todo))) as pool:
+            futures = {pool.submit(_range_worker, sim.cfg.raw,
+                                   os.path.abspath(part.path), contract,
+                                   m0, m1, screens): (m0, m1)
+                       for m0, m1 in todo}
+            done = 0
+            for fut in concurrent.futures.as_completed(futures):
+                fut.result()
+                m0, m1 = futures[fut]
+                done += 1
+                log(f"  stage 14 range {m0}..{m1} built ({done}/{len(todo)})")
+        if rays_v3.index_digest(part.path) != contract["index_sha256"]:
+            raise ValueError(f"{part.path}: rays index changed during cache build")
+    stats_rows, natives = [], []
+    bounce_hist = None
+    for build in builds:
+        npix = build.target.grid.nx * build.target.grid.ny
+        parsed = []
+        manifests = {}
+        for m0, m1 in ranges:
+            manifests[m0, m1] = _read_range_manifest(build.partial, m0, m1)
+            path = os.path.join(build.partial, _range_agg_name(m0, m1))
+            with open(path, "rb") as fh:
+                data = fh.read()
+            if (hashlib.sha256(data).hexdigest()
+                    != manifests[m0, m1]["aggregates"]["sha256"]):
+                raise ValueError(
+                    f"{path}: range checkpoint corrupted (aggregates differ "
+                    "from the manifest sha256)")
+            parsed.append(_parse_aggregates(
+                data, path, npix, max_bounces,
+                build.scatter.nx * build.scatter.ny))
+        total = _sum_range_aggregates(parsed, npix)
+        if os.path.lexists(build.rows_path):
+            os.remove(build.rows_path)
+        digest = hashlib.sha256()
+        size = 0
+        with open(build.rows_path, "wb") as out:
+            for m0, m1 in ranges:
+                range_digest = hashlib.sha256()
+                range_path = os.path.join(build.partial,
+                                          _range_rows_name(m0, m1))
+                with open(range_path, "rb") as fh:
+                    while True:
+                        chunk = fh.read(1 << 22)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        digest.update(chunk)
+                        range_digest.update(chunk)
+                        size += len(chunk)
+                if (range_digest.hexdigest()
+                        != manifests[m0, m1]["rows"]["sha256"]):
+                    raise ValueError(
+                        f"{range_path}: range checkpoint corrupted (rows "
+                        "differ from the manifest sha256)")
+            out.flush()
+            os.fsync(out.fileno())
+        # Range checkpoints stay on disk until this cache's publication:
+        # _publish_directory(scrub_leftovers=True) deletes them last.
+        for iy in range(build.scatter.ny):
+            row = build.scatter.counts[iy]
+            base = iy * build.scatter.nx
+            for ix in range(build.scatter.nx):
+                row[ix] = total["scatter"][base + ix]
+        native = {name: _array_bytes(total[name]) for name in
+                  ("I", "w_re", "w_im", "ic", "n_rays", "m_realizations",
+                   "m_pair_realizations", "m_ref_realizations",
+                   "max_rays_per_realization")}
+        native["payload_bytes"] = size
+        native["payload_sha256"] = digest.hexdigest()
+        natives.append(native)
+        stats_rows.append(total["stats"])
+        bounce_hist = total["bounce_hist"]
+    return stats_rows, bounce_hist, natives
 
 
 def _missing_cache_specs(targets: list[ScreenTarget]):
@@ -984,14 +1398,17 @@ def _missing_cache_specs(targets: list[ScreenTarget]):
     return list(unique.values())
 
 
-def _preflight_fanout_builds(missing, max_bounces: int, log) -> None:
+def _preflight_fanout_builds(missing, max_bounces: int, log, jobs: int = 1) -> None:
     """Check the summed footprint of every screen x input cache miss."""
     groups = {}
     for target, part in missing:
         npix = target.grid.nx * target.grid.ny
         scatter_cells = target.scatter.nx * target.scatter.ny
-        required = part.n_modes * npix * 24 + _expected_aggregate_size(
-            npix, max_bounces, scatter_cells)
+        agg = _expected_aggregate_size(npix, max_bounces, scatter_cells)
+        rows = part.n_modes * npix * 24
+        # jobs > 1: range files coexist with the concatenated canonical rows
+        required = (rows * (2 if jobs > 1 else 1)
+                    + agg * (1 + (jobs if jobs > 1 else 0)))
         probe = os.path.dirname(os.path.dirname(part.cache_dir))
         stat = os.stat(probe)
         group = groups.setdefault(
@@ -1013,7 +1430,8 @@ def _preflight_fanout_builds(missing, max_bounces: int, log) -> None:
                 "Stage-14 screen caches")
 
 
-def _load_or_build_screen_caches(sim, targets: list[ScreenTarget], log) -> set[str]:
+def _load_or_build_screen_caches(sim, targets: list[ScreenTarget], log,
+                                 jobs: int = 1) -> set[str]:
     """Resolve every target cache and decode each missing archive only once.
 
     The return value is the set of input IDs whose gzip streams were opened.
@@ -1026,13 +1444,19 @@ def _load_or_build_screen_caches(sim, targets: list[ScreenTarget], log) -> set[s
         for index, part in enumerate(target.parts):
             cache = _load_cache(
                 part, target.signature, npix, sim.cfg.max_bounces,
-                target.scatter)
+                target.scatter, allow_partial=jobs > 1)
             target.caches[index] = cache
             if cache is not None:
+                if jobs > 1:
+                    stale = part.cache_dir + ".partial"
+                    if os.path.lexists(stale):
+                        # Leftover of a crash between publication and cleanup.
+                        shutil.rmtree(stale)
+                        log(f"  stage 14 stale partial removed: {stale}")
                 cache_by_dir[os.path.normcase(part.cache_dir)] = cache
 
     missing = _missing_cache_specs(targets)
-    _preflight_fanout_builds(missing, sim.cfg.max_bounces, log)
+    _preflight_fanout_builds(missing, sim.cfg.max_bounces, log, jobs)
     by_input = {}
     for target, part in missing:
         by_input.setdefault(part.input_id, []).append((target, part))
@@ -1042,13 +1466,21 @@ def _load_or_build_screen_caches(sim, targets: list[ScreenTarget], log) -> set[s
         labels = ", ".join(target.label for target, _ in specs)
         part = specs[0][1]
         log(f"  Stage 14 cache miss fan-out: {part.path} -> {labels}")
-        builds = [_prepare_cache_build(sim, target, screen_part)
-                  for target, screen_part in specs]
-        stats_rows, bounce_hist = _build_stream_fanout(
-            sim, part, builds, log)
+        if jobs > 1:
+            builds = [_prepare_cache_build(sim, target, screen_part,
+                                           with_store=False)
+                      for target, screen_part in specs]
+            stats_rows, bounce_hist, natives = _build_fanout_parallel(
+                sim, part, builds, jobs, log)
+        else:
+            builds = [_prepare_cache_build(sim, target, screen_part)
+                      for target, screen_part in specs]
+            stats_rows, bounce_hist = _build_stream_fanout(
+                sim, part, builds, log)
+            natives = [None] * len(builds)
         archives_read.add(part.input_id)
-        for build, stats in zip(builds, stats_rows):
-            cache = _finish_cache_build(sim, build, stats, bounce_hist)
+        for build, stats, native in zip(builds, stats_rows, natives):
+            cache = _finish_cache_build(sim, build, stats, bounce_hist, native)
             cache_by_dir[os.path.normcase(build.part.cache_dir)] = cache
 
     for target in targets:
@@ -1680,6 +2112,7 @@ def _finalize_screen(sim, target: ScreenTarget, output_dir: str,
 
 def run_stage14(sim, out_dir: str, rays_paths, log=print) -> dict:
     """Build all configured screen caches in one pass per input and publish."""
+    jobs = Env.stage14_jobs()
     run_started = time.time()
     result_dir = os.path.join(out_dir, RESULT_DIR)
     partial = result_dir + ".partial"
@@ -1688,13 +2121,15 @@ def run_stage14(sim, out_dir: str, rays_paths, log=print) -> dict:
         raise ValueError("stage 14 requires a configured capillary.source")
 
     targets = _screen_targets(sim, rays_paths)
-    fanout_peak_rss = _estimated_fanout_peak_rss(targets, len(sim.lines))
+    fanout_peak_rss = _estimated_fanout_peak_rss(targets, len(sim.lines), jobs)
     log("  Stage 14 screens: " + ", ".join(
         f"{target.label}={target.grid.nx}×{target.grid.ny}"
         for target in targets))
+    if jobs > 1:
+        log(f"  Stage 14 cache builder jobs: {jobs} ({Env.STAGE14_JOBS})")
     log(f"  Stage 14 fan-out estimated peak RSS: "
         f"{fanout_peak_rss / (1024 ** 3):.2f} GiB")
-    archives_read = _load_or_build_screen_caches(sim, targets, log)
+    archives_read = _load_or_build_screen_caches(sim, targets, log, jobs)
     representative_parts = {
         part.input_id: part for part in targets[0].parts
     }

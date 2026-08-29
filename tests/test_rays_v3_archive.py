@@ -332,7 +332,7 @@ def test_geometry_core_and_metadata_equal():
 
 # ------------------------------------------------------------------- cli
 
-@pytest.mark.parametrize("jobs", ["0", "9", "-1"])
+@pytest.mark.parametrize("jobs", ["0", str((os.cpu_count() or 8) + 1), "-1"])
 def test_trace_v3_cli_rejects_jobs(tmp_path, jobs):
     from formula.capsysred.trace_v3 import main
     with pytest.raises(SystemExit):
