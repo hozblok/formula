@@ -186,6 +186,30 @@ def test_capillary_multibounce_survives():
     assert tr.fate == "screen" and len(tr.reflections) >= 3
 
 
+@pytest.mark.xfail(strict=True, reason=(
+    "P1: max_bounces budgets tracer events, not reflections — the entry "
+    "pass, the pass to z1 and the exit each consume one, so N reflections "
+    "need max_bounces >= N+3 (trace.py and cstrace.hpp alike); the counter "
+    "should charge reflections only"))
+def test_max_bounces_counts_reflections_only():
+    sim = Simulation.from_dict(TINY)
+    cap = sim.cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    p = sim.cfg.precision
+    a = float(cap.bores[0]["radius"])
+    length = float(cap.z1) - float(cap.z0)
+    slope = 3.5 * 2 * a / length
+    d = vunit((lift(slope, p), lift(0.0, p), lift(1.0, p)))
+    origin = (cap.bores[0]["center"][0], cap.bores[0]["center"][1], cap.z0)
+    reference = trace_ray(origin, d, bundle, cap.screen.z, 50)
+    assert reference.fate == "screen"
+    n = len(reference.reflections)
+    assert n >= 3
+    exact = trace_ray(origin, d, bundle, cap.screen.z, n)
+    assert exact.fate == "screen"                 # N reflections, budget N
+    assert len(exact.reflections) == n
+
+
 def test_symbolic_templates_match_references():
     p = 30
     mat = xray.FUSED_SILICA

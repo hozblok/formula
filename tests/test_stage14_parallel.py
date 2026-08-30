@@ -5,6 +5,7 @@ files."""
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import os
@@ -556,6 +557,30 @@ def test_stage14_loo_equals_sum_of_remaining_rows(tmp_path):
     assert total == 2.0                       # every small row was absorbed
     native_loo = total - rows[0]              # the finalizer's delete-one
     assert native_loo == math.fsum(rows[1:])  # true remainder: 3 * 2**-52
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "P1: the main capillary screen is never validated against z1 (config "
+    "checks only the extra screens) and the stage-14 re-projection happily "
+    "steps backwards through the optic, ignoring reflections; the invariant "
+    "source.z < z0 < z1 <= screen.z must hold for every screen"))
+def test_stage14_rejects_main_screen_inside_optic(tmp_path, monkeypatch):
+    raw = _config()
+    raw["capillary"]["z0"] = 0.0
+    raw["capillary"]["z1"] = 0.05
+    raw["capillary"]["screen"]["z"] = 0.06
+    raw["capillary"]["screens"][0]["z"] = 0.06
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    sim = Simulation.from_yaml(str(cfg_path))
+    archive = tmp_path / "arch"
+    _write_v3(archive, sim)
+    monkeypatch.delenv("CAPSYSRED_STAGE14_JOBS", raising=False)
+    inside = copy.deepcopy(raw)
+    inside["capillary"]["screen"]["z"] = 0.025    # inside the optic (< z1)
+    with pytest.raises(ValueError):
+        Simulation.from_dict(inside).replay(
+            [str(archive)], str(tmp_path / "out"), stages=[14])
 
 
 def test_stage14_worker_pins_prepared_input(tmp_path):
