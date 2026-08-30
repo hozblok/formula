@@ -175,7 +175,7 @@ def _publish_ranges_then_abort(tmp_path, cfg_path, archive, out: str) -> None:
     """Run a parallel build that dies after the workers publish their ranges."""
     from formula.capsysred.stages import stage14
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(stage14, "_sum_range_aggregates", _boom)
+        mp.setattr(stage14, "_fsum_double_fields", _boom)
         with pytest.raises(RuntimeError, match="stop before assembly"):
             Simulation.from_yaml(str(cfg_path)).replay(
                 [str(archive)], str(tmp_path / out), stages=[14])
@@ -436,17 +436,14 @@ def test_mode_ranges_partition(n_modes):
     assert max(sizes) - min(sizes) <= 1
 
 
-def test_sum_range_aggregates_manual():
+def test_fold_int_aggregates_manual():
     from array import array
     from formula.capsysred.stages.stage14 import (STREAM_COUNTERS,
-                                                  _sum_range_aggregates)
+                                                  _fold_int_aggregates,
+                                                  _seal_int_aggregates)
 
     def item(scale):
         return {
-            "I": array("d", [1.5 * scale, 2.0 * scale]),
-            "w_re": array("d", [0.25 * scale, -0.5 * scale]),
-            "w_im": array("d", [-1.0 * scale, 0.125 * scale]),
-            "ic": array("d", [3.0 * scale, 0.0]),
             "n_rays": array("Q", [10 * scale, 0]),
             "m_realizations": array("I", [2 * scale, 1]),
             "m_pair_realizations": array("I", [scale, 0]),
@@ -457,23 +454,108 @@ def test_sum_range_aggregates_manual():
             "scatter": [scale, 2 * scale],
         }
 
-    total = _sum_range_aggregates([item(1), item(4)], npix=2)
-    assert list(total["I"]) == [7.5, 10.0]
-    assert list(total["w_re"]) == [1.25, -2.5]
-    assert list(total["w_im"]) == [-5.0, 0.625]
-    assert list(total["ic"]) == [15.0, 0.0]
+    total = item(1)
+    _fold_int_aggregates(total, item(4))
+    _seal_int_aggregates(total)
     assert list(total["n_rays"]) == [50, 0]
+    assert total["n_rays"].typecode == "Q"
     assert list(total["m_realizations"]) == [10, 2]
+    assert total["m_realizations"].typecode == "I"
     assert list(total["m_pair_realizations"]) == [5, 0]
     assert list(total["m_ref_realizations"]) == [5, 5]
     assert list(total["max_rays_per_realization"]) == [20, 7]  # max, not sum
     assert total["stats"] == {name: 5 for name in STREAM_COUNTERS}
     assert total["bounce_hist"] == [5, 0, 15]
     assert total["scatter"] == [5, 10]
-    overflowing = item(1)
-    overflowing["m_realizations"] = array("I", [0xFFFFFFFF, 0])
+    total = item(1)
+    total["m_realizations"] = array("I", [0xFFFFFFFF, 0])
+    _fold_int_aggregates(total, item(1))
     with pytest.raises(ValueError, match="overflows uint32"):
-        _sum_range_aggregates([overflowing, item(1)], npix=2)
+        _seal_int_aggregates(total)
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "P1: the native store accumulates += per ray/mode, so range subtotals "
+    "are already rounded before the union fsum; serial and parallel "
+    "aggregates differ in last ulps (documented ordering class; the fix "
+    "would be a compensated accumulator inside the C++ Stage14Store)"))
+def test_stage14_union_matches_monolithic_store_bitwise(tmp_path):
+    from formula.capsysred.stages.stage14 import _native_store, _typed_array
+    contributions = [1.0, 1e-16, 1e-16, -1.0]
+
+    def w_re(path, values):
+        # ref=1 carries a unit ray, so pixel 0's W row is exactly `value`
+        # (a ray at the ref pixel alone contributes zero: self-pairs are
+        # excluded by the estimator).
+        store = _native_store(str(path), len(values), 2, 1, [1.0], [1.0])
+        for mode, value in enumerate(values):
+            store.begin_mode(mode)
+            store.add_ray(0, 0.0, [complex(value, 0.0)])
+            store.add_ray(1, 0.0, [complex(1.0, 0.0)])
+            store.fold_mode()
+        return _typed_array("d", store.finish()["w_re"])[0]
+
+    mono = w_re(tmp_path / "mono.f64", contributions)
+    left = w_re(tmp_path / "left.f64", contributions[:2])
+    right = w_re(tmp_path / "right.f64", contributions[2:])
+    assert mono == 0.0                            # each +1e-16 is absorbed
+    assert math.fsum([left, right]) == mono
+
+
+def test_fsum_double_fields_adversarial(tmp_path):
+    """Windowed folding is forbidden: cancellation across ranges must give
+    the exact global fsum, with 1e16/1e300 outliers and 1-pixel tiles."""
+    import struct
+    from formula.capsysred.stages.stage14 import _fsum_double_fields
+    spread = [1e16] + [1.0] * 126 + [-1e16]      # exact global fsum = 126
+    huge = [1e300] + [1.0] * 126 + [-1e300]
+    npix = 2
+    paths = []
+    for k, (a, b) in enumerate(zip(spread, huge)):
+        path = tmp_path / f"agg-{k:03d}.bin"
+        path.write_bytes(bytes(16) + struct.pack(
+            "<8d",
+            a, b,        # I
+            b, a,        # w_re
+            1.0, -1.0,   # w_im
+            0.0, 0.0))   # ic
+        paths.append(str(path))
+    for budget in (8 * len(paths), 1 << 20):     # tile = 1 px, then one shot
+        out = _fsum_double_fields(paths, npix, tile_budget=budget)
+        assert list(out["I"]) == [126.0, 126.0]
+        assert list(out["w_re"]) == [126.0, 126.0]
+        assert list(out["w_im"]) == [128.0, -128.0]
+        assert list(out["ic"]) == [0.0, 0.0]
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "P1: the native finalizer computes every LOO as rounded_total - row "
+    "(bindings_stage14.cpp:1000-1002,1079-1081); with a dominating mode "
+    "that is not the sum of the remaining mode rows — the fix is an "
+    "error-free expansion of the totals with deletion from it"))
+def test_stage14_loo_equals_sum_of_remaining_rows(tmp_path):
+    from formula.capsysred.stages.stage14 import _native_store, _typed_array
+    # W row of pixel 0 = ray amplitude at 0 times the unit ref ray; powers
+    # of two keep every row exact, and 2.0 + 2**-53-scale rows are ties that
+    # round to even (2.0), so the dominant-mode total provably absorbs all
+    # small rows.
+    path = tmp_path / "rows.f64"
+    w_values = [2.0, 2.0 ** -52, 2.0 ** -52, 2.0 ** -52]
+    store = _native_store(str(path), len(w_values), 2, 1, [1.0], [1.0])
+    for mode, value in enumerate(w_values):
+        store.begin_mode(mode)
+        store.add_ray(0, 0.0, [complex(value, 0.0)])
+        store.add_ray(1, 0.0, [complex(1.0, 0.0)])
+        store.fold_mode()
+    native = store.finish()
+    total = _typed_array("d", native["w_re"])[0]
+    data = path.read_bytes()
+    rows = [_typed_array("d", data[mode * 48:mode * 48 + 8])[0]
+            for mode in range(len(w_values))]
+    assert rows == w_values                   # rows are stored exactly
+    assert total == 2.0                       # every small row was absorbed
+    native_loo = total - rows[0]              # the finalizer's delete-one
+    assert native_loo == math.fsum(rows[1:])  # true remainder: 3 * 2**-52
 
 
 def test_stage14_worker_pins_prepared_input(tmp_path):

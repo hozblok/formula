@@ -20,6 +20,7 @@ import hashlib
 import io
 import json
 import math
+import operator
 import os
 import shutil
 import statistics
@@ -808,9 +809,9 @@ def _estimated_fanout_peak_rss(targets: list[ScreenTarget], n_lines: int,
         target.grid.nx * target.grid.ny * (24 * n_lines + 128)
         + target.scatter.nx * target.scatter.ny * 40
         for target in unique_builds.values())
-    # Parent-side assembly holds at most the bounded fold window of parsed
-    # range aggregates (56 B/pixel each) plus the running total.
-    fold = ((_AGG_FOLD_WIDTH + 1) * 56 * max(
+    # Parent-side assembly: the double-field tile budget plus one running
+    # total and one parsed item (56 B/pixel each).
+    fold = (_TILE_BUDGET + 2 * 56 * max(
         target.grid.nx * target.grid.ny
         for target in unique_builds.values()) if jobs > 1 else 0)
     retained_results = 512 * 1024 * 1024 + fold + sum(
@@ -1062,12 +1063,14 @@ def _finish_cache_build(sim, build: CacheBuild, stats: dict,
         os.path.join(part.cache_dir, AGGREGATES_NAME), False)
 
 
-# Bounded-memory reducer: at most this many parsed range aggregates coexist
-# (56 B/pixel each); the window is folded through _sum_range_aggregates.
-_AGG_FOLD_WIDTH = 8
-
 # ProcessPoolExecutor on Windows is limited by WaitForMultipleObjects.
 _MAX_NT_WORKERS = 61
+
+# Bounded-memory reducer: per double field, at most this many bytes of range
+# tiles coexist; every pixel still gets ONE global math.fsum over all ranges.
+_TILE_BUDGET = 256 * 1024 * 1024
+
+_DOUBLE_FIELDS = ("I", "w_re", "w_im", "ic")
 
 
 def _effective_workers(jobs: int, tasks: int) -> int:
@@ -1077,31 +1080,64 @@ def _effective_workers(jobs: int, tasks: int) -> int:
     return workers
 
 
-def _sum_range_aggregates(items: list[dict], npix: int) -> dict:
-    """Element-wise union of per-range aggregates (disjoint mode sets)."""
-    total = dict(items[0])
-    for name in ("I", "w_re", "w_im", "ic"):
-        total[name] = array(
-            "d", (math.fsum(item[name][i] for item in items)
-                  for i in range(npix)))
-    total["n_rays"] = array(
-        "Q", (sum(item["n_rays"][i] for item in items) for i in range(npix)))
+def _fold_int_aggregates(total: dict, item: dict) -> None:
+    """In-place fold of the integer aggregate fields; exact in any order.
+
+    m_* counters widen to "Q" while folding; _seal_int_aggregates narrows
+    them back after the uint32 overflow check."""
+    for name in ("n_rays", "m_realizations", "m_pair_realizations",
+                 "m_ref_realizations"):
+        total[name] = array("Q", map(operator.add, total[name], item[name]))
+    total["max_rays_per_realization"] = array(
+        "I", map(max, total["max_rays_per_realization"],
+                 item["max_rays_per_realization"]))
+    total["stats"] = {name: total["stats"][name] + item["stats"][name]
+                      for name in STREAM_COUNTERS}
+    total["bounce_hist"] = [a + b for a, b in
+                            zip(total["bounce_hist"], item["bounce_hist"])]
+    total["scatter"] = [a + b for a, b in
+                        zip(total["scatter"], item["scatter"])]
+
+
+def _seal_int_aggregates(total: dict) -> None:
     for name in ("m_realizations", "m_pair_realizations",
                  "m_ref_realizations"):
-        values = [sum(item[name][i] for item in items) for i in range(npix)]
-        if any(value > 0xFFFFFFFF for value in values):
+        values = total[name]
+        if len(values) and max(values) > 0xFFFFFFFF:
             raise ValueError(f"summed Stage-14 {name} overflows uint32")
-        total[name] = array("I", values)
-    total["max_rays_per_realization"] = array(
-        "I", (max(item["max_rays_per_realization"][i] for item in items)
-              for i in range(npix)))
-    total["stats"] = {name: sum(item["stats"][name] for item in items)
-                      for name in STREAM_COUNTERS}
-    total["bounce_hist"] = [sum(vals) for vals in
-                            zip(*(item["bounce_hist"] for item in items))]
-    total["scatter"] = [sum(vals) for vals in
-                        zip(*(item["scatter"] for item in items))]
-    return total
+        if values.typecode != "I":
+            total[name] = array("I", values)
+
+
+def _fsum_double_fields(paths: list[str], npix: int,
+                        tile_budget: int = _TILE_BUDGET) -> dict:
+    """One global math.fsum per pixel across every range file, bounded RAM.
+
+    The double fields sit first in the fixed aggregate layout; each is read
+    in pixel tiles from all files — no windowed folding ever happens."""
+    tile = max(1, tile_budget // (8 * max(1, len(paths))))
+    out = {}
+    for index, name in enumerate(_DOUBLE_FIELDS):
+        base = 16 + index * 8 * npix
+        total = array("d")
+        handles = [open(path, "rb") for path in paths]
+        try:
+            for p0 in range(0, npix, tile):
+                count = min(tile, npix - p0)
+                tiles = []
+                for fh in handles:
+                    fh.seek(base + 8 * p0)
+                    chunk = fh.read(8 * count)
+                    if len(chunk) != 8 * count:
+                        raise ValueError(f"{fh.name}: truncated aggregates")
+                    tiles.append(_typed_array("d", chunk))
+                total.extend(math.fsum(part[i] for part in tiles)
+                             for i in range(count))
+        finally:
+            for fh in handles:
+                fh.close()
+        out[name] = total
+    return out
 
 
 def _range_worker(raw_cfg: dict, archive_path: str, contract: dict,
@@ -1260,8 +1296,9 @@ def _build_fanout_parallel(sim, part: InputPart, builds: list[CacheBuild],
         stale_ready = os.path.join(build.partial, "ready.tmp")
         if os.path.lexists(stale_ready):
             shutil.rmtree(stale_ready)
-        parsed = []
+        total = None
         manifests = {}
+        agg_paths = []
         for m0, m1 in ranges:
             manifests[m0, m1] = read_range_manifest(build.partial, m0, m1)
             path = os.path.join(build.partial, range_agg_name(m0, m1))
@@ -1272,14 +1309,17 @@ def _build_fanout_parallel(sim, part: InputPart, builds: list[CacheBuild],
                 raise ValueError(
                     f"{path}: range checkpoint corrupted (aggregates differ "
                     "from the manifest sha256)")
-            parsed.append(_parse_aggregates(
-                data, path, npix, max_bounces,
-                build.scatter.nx * build.scatter.ny))
-            if len(parsed) == _AGG_FOLD_WIDTH:
-                # Bounded-memory reduce: fold the window into one item.
-                parsed = [_sum_range_aggregates(parsed, npix)]
-        total = (parsed[0] if len(parsed) == 1
-                 else _sum_range_aggregates(parsed, npix))
+            item = _parse_aggregates(data, path, npix, max_bounces,
+                                     build.scatter.nx * build.scatter.ny)
+            # Integer fields fold exactly in any order; the double fields
+            # get one global per-pixel fsum from the tile pass below.
+            if total is None:
+                total = item
+            else:
+                _fold_int_aggregates(total, item)
+            agg_paths.append(path)
+        _seal_int_aggregates(total)
+        total.update(_fsum_double_fields(agg_paths, npix))
         if os.path.lexists(build.rows_path):
             os.remove(build.rows_path)
         digest = hashlib.sha256()
