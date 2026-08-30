@@ -85,7 +85,8 @@ EXT_MODULES = [
     )
 ]
 
-TEST_DEPS = ["pytest"]
+CAPSYSRED_DEPS = ["PyYAML"]
+TEST_DEPS = ["pytest"] + CAPSYSRED_DEPS
 
 README_PATH = os.path.join(CURRENT_DIR, "README.md")
 if os.path.exists(README_PATH):
@@ -116,6 +117,7 @@ setup(
     description="Multiprecision formula parser and solver.",
     ext_modules=EXT_MODULES,
     extras_require={
+        "capsysred": CAPSYSRED_DEPS,
         "test": TEST_DEPS,
         "dev": TEST_DEPS,
     },
