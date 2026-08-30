@@ -292,6 +292,15 @@ class CapillaryCfg:
         self.source = _required_source(raw.get("source"), "capillary", p)
         base = _merge(base_screen, raw.get("screen", {}))
         self.screen = ScreenCfg(base, p)
+        # straight-flight invariant: source.z < z0 < z1 <= screen.z
+        if not float(self.source.position[2]) < float(self.z0) < float(self.z1):
+            raise ValueError(
+                f"capillary: source z = {float(self.source.position[2])}, "
+                f"z0 = {float(self.z0)}, z1 = {float(self.z1)} violate "
+                "source.z < z0 < z1")
+        if float(self.screen.z) < float(self.z1):
+            raise ValueError(f"capillary screen: z = {float(self.screen.z)} "
+                             f"is inside the optic (z1 = {float(self.z1)})")
         # extra screens (stage 10): re-binned from the same trace, each merged
         # onto the main capillary screen; must sit past the exit (straight flight)
         self.screens = [ScreenCfg(_merge(base, s), p) for s in raw.get("screens", ())]

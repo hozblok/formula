@@ -560,11 +560,6 @@ def test_stage14_loo_equals_sum_of_remaining_rows(tmp_path):
     assert native_loo == math.fsum(rows[1:])  # true remainder: 3 * 2**-52
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "P1: the main capillary screen is never validated against z1 (config "
-    "checks only the extra screens) and the stage-14 re-projection happily "
-    "steps backwards through the optic, ignoring reflections; the invariant "
-    "source.z < z0 < z1 <= screen.z must hold for every screen"))
 def test_stage14_rejects_main_screen_inside_optic(tmp_path, monkeypatch):
     raw = _config()
     raw["capillary"]["z0"] = 0.0
