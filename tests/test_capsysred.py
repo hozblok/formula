@@ -396,7 +396,7 @@ def test_cli_trace_then_stages_reuse(tmp_path):
     assert any("no tracing" in r.read_text(encoding="utf-8") for r in reports)
 
     original = (archive / "rays-index.jsonl").read_bytes()
-    changed = dict(TINY, capillary=dict(TINY["capillary"], z1=0.06))
+    changed = dict(TINY, capillary=dict(TINY["capillary"], z1=0.04))
     cfg.write_text(yaml.safe_dump(changed))
     with pytest.raises(ValueError, match="differs from the archive"):
         trace_main([str(cfg), "--archive", str(archive), "--jobs", "1"])
@@ -1311,7 +1311,7 @@ def test_rays_file_geometry_change_is_never_overwritten(tmp_path):
     archive = tmp_path / "rays-modes"
     index, fingerprint = archive / "rays-index.jsonl", archive / "rays-fingerprint.yaml"
     original, original_fp = index.read_bytes(), fingerprint.read_bytes()
-    changed = dict(TINY, capillary=dict(TINY["capillary"], z1=0.06))
+    changed = dict(TINY, capillary=dict(TINY["capillary"], z1=0.04))
     with pytest.raises(ValueError, match="remove"):
         Simulation.from_dict(changed).run(str(tmp_path), stages=[11])
     with pytest.raises(ValueError, match="differs from the archive"):
