@@ -4,9 +4,11 @@ A build decodes disjoint mode ranges [m0, m1); each completed range is the
 triple rows+aggregates+manifest, committed by the manifest (written last,
 carrying byte sizes and sha256 of both files as the worker wrote them from
 memory).  The partition is a pure function of n_modes — a range file is
-valid independently of the split — so resumes survive any jobs change and
-jobs only caps pool concurrency.  Content sha256 is verified against the
-manifests at assembly time; this module knows nothing about stage14 proper.
+valid independently of the split — so resumes survive any change among
+jobs > 1 and jobs only caps pool concurrency (jobs = 1 selects the strict
+serial pass, which refuses a leftover partial).  Content sha256 is verified
+against the manifests at assembly time; this module knows nothing about
+stage14 proper.
 """
 
 import json

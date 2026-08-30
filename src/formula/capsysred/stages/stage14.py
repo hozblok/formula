@@ -33,9 +33,9 @@ from ... import __version__, _formula
 from .. import rays_v3, render
 from .altcoh import FloatLineAmplitudes
 from ..env import Env
-from ._stage14_checkpoints import (mode_ranges, range_agg_name, range_done,
-                                   range_manifest_name, range_rows_name,
-                                   read_range_manifest)
+from ._stage14_checkpoints import (RANGE_SLOTS, mode_ranges, range_agg_name,
+                                   range_done, range_manifest_name,
+                                   range_rows_name, read_range_manifest)
 from ..shared.progress import Progress
 from ..rays import (_validate_stream_metadata, geometry_metadata,
                    metadata_equal, read_metadata)
@@ -151,6 +151,21 @@ def _publish_result_tree(partial: str, final: str,
             ) from exc
         return
     _publish_directory(partial, final, fallback_names)
+
+
+def _publish_cache_tree(ready: str, final: str) -> None:
+    """One-rename cache publication on every platform (single-writer).
+
+    POSIX rename may replace an *empty* destination, so probe first; the
+    accepted single-writer scope makes the probe race-free enough."""
+    if os.path.lexists(final):
+        raise ValueError(f"{final}: publication conflict; remove it manually")
+    try:
+        os.rename(ready, final)
+    except OSError as exc:
+        raise ValueError(
+            f"{final}: publication conflict; remove it manually"
+        ) from exc
 
 
 def _read_json(path: str):
@@ -788,11 +803,17 @@ def _estimated_fanout_peak_rss(targets: list[ScreenTarget], n_lines: int,
     for target in targets:
         key = _canonical(target.signature)
         unique_builds.setdefault(key, target)
-    native_build = 512 * 1024 * 1024 + jobs * sum(
+    workers = _effective_workers(jobs, RANGE_SLOTS)
+    native_build = 512 * 1024 * 1024 + workers * sum(
         target.grid.nx * target.grid.ny * (24 * n_lines + 128)
         + target.scatter.nx * target.scatter.ny * 40
         for target in unique_builds.values())
-    retained_results = 512 * 1024 * 1024 + sum(
+    # Parent-side assembly holds at most the bounded fold window of parsed
+    # range aggregates (56 B/pixel each) plus the running total.
+    fold = ((_AGG_FOLD_WIDTH + 1) * 56 * max(
+        target.grid.nx * target.grid.ny
+        for target in unique_builds.values()) if jobs > 1 else 0)
+    retained_results = 512 * 1024 * 1024 + fold + sum(
         target.grid.nx * target.grid.ny * 4096
         + target.scatter.nx * target.scatter.ny * 40
         for target in targets)
@@ -886,14 +907,15 @@ def _parse_aggregates(data: bytes, label: str, npix: int, max_bounces: int,
 def _load_cache(part: InputPart, signature: dict, npix: int,
                 max_bounces: int, scatter: ScatterRaster,
                 allow_partial: bool = False) -> CachePart | None:
-    """``allow_partial`` (parallel builds): a leftover .partial is resume
-    state holding completed ranges, not an error."""
+    """A valid final always wins; ``allow_partial`` (parallel builds) makes a
+    leftover .partial resume state instead of an error when no final exists."""
     final, partial = part.cache_dir, part.cache_dir + ".partial"
-    if os.path.lexists(partial) and not allow_partial:
-        raise ValueError(
-            f"{partial}: incomplete Stage-14 cache exists; remove it manually"
-        )
     if not os.path.lexists(final):
+        if os.path.lexists(partial) and not allow_partial:
+            raise ValueError(
+                f"{partial}: incomplete Stage-14 cache exists; remove it "
+                "manually or resume with CAPSYSRED_STAGE14_JOBS > 1"
+            )
         return None
     meta_path = os.path.join(final, META_NAME)
     if not os.path.lexists(meta_path):
@@ -926,6 +948,10 @@ def _load_cache(part: InputPart, signature: dict, npix: int,
         raise ValueError(f"{final}: Stage-14 cache size mismatch")
     cache = CachePart(part, meta, rows_path, aggregates_path, True)
     _read_aggregates(cache, npix, max_bounces, scatter.nx * scatter.ny)
+    if os.path.lexists(partial):
+        # Orphan of a crash between publication and cleanup (single-writer):
+        # a validated final wins over any leftover partial, whatever jobs is.
+        shutil.rmtree(partial)
     return cache
 
 
@@ -980,10 +1006,8 @@ def _finish_cache_build(sim, build: CacheBuild, stats: dict,
     if sum(_typed_array("Q", native["n_rays"])) != stats["screen"]:
         raise ValueError(
             f"Stage-14 density differs from {target.label} screen counter")
-    # Assemble the publishable directory; a stale one is a crashed attempt.
+    # The publishable directory; a stale one was dropped before assembly.
     ready = os.path.join(build.partial, "ready.tmp")
-    if os.path.lexists(ready):
-        shutil.rmtree(ready)
     os.mkdir(ready)
     os.rename(build.rows_path, os.path.join(ready, ROWS_NAME))
     agg_size, agg_sha = _write_aggregates(
@@ -1028,8 +1052,7 @@ def _finish_cache_build(sim, build: CacheBuild, stats: dict,
     _write_json(os.path.join(ready, META_NAME), meta)
     # One atomic directory rename: a meta-less final cannot exist, and the
     # range checkpoints in the partial survive until the cache is published.
-    _publish_result_tree(ready, part.cache_dir,
-                         [ROWS_NAME, AGGREGATES_NAME, META_NAME])
+    _publish_cache_tree(ready, part.cache_dir)
     try:
         shutil.rmtree(build.partial)
     except OSError:
@@ -1037,6 +1060,21 @@ def _finish_cache_build(sim, build: CacheBuild, stats: dict,
     return CachePart(
         part, meta, os.path.join(part.cache_dir, ROWS_NAME),
         os.path.join(part.cache_dir, AGGREGATES_NAME), False)
+
+
+# Bounded-memory reducer: at most this many parsed range aggregates coexist
+# (56 B/pixel each); the window is folded through _sum_range_aggregates.
+_AGG_FOLD_WIDTH = 8
+
+# ProcessPoolExecutor on Windows is limited by WaitForMultipleObjects.
+_MAX_NT_WORKERS = 61
+
+
+def _effective_workers(jobs: int, tasks: int) -> int:
+    workers = max(1, min(jobs, tasks))
+    if os.name == "nt":
+        workers = min(workers, _MAX_NT_WORKERS)
+    return workers
 
 
 def _sum_range_aggregates(items: list[dict], npix: int) -> dict:
@@ -1197,8 +1235,10 @@ def _build_fanout_parallel(sim, part: InputPart, builds: list[CacheBuild],
                     "n_modes": part.n_modes, "n_rays": part.n_rays,
                     "source_z": part.source_z,
                     "physics": _physics_contract(sim)}
+        workers = _effective_workers(jobs, len(todo))
+        log(f"  stage 14 workers: {workers} over {len(todo)} ranges")
         with concurrent.futures.ProcessPoolExecutor(
-                max_workers=min(jobs, len(todo))) as pool:
+                max_workers=workers) as pool:
             futures = {pool.submit(_range_worker, sim.cfg.raw,
                                    os.path.abspath(part.path), contract,
                                    m0, m1, screens): (m0, m1)
@@ -1215,6 +1255,11 @@ def _build_fanout_parallel(sim, part: InputPart, builds: list[CacheBuild],
     bounce_hist = None
     for build in builds:
         npix = build.target.grid.nx * build.target.grid.ny
+        # A stale ready.tmp is a crashed publication attempt; drop it before
+        # assembly so at most two rows copies (ranges + canonical) coexist.
+        stale_ready = os.path.join(build.partial, "ready.tmp")
+        if os.path.lexists(stale_ready):
+            shutil.rmtree(stale_ready)
         parsed = []
         manifests = {}
         for m0, m1 in ranges:
@@ -1230,7 +1275,11 @@ def _build_fanout_parallel(sim, part: InputPart, builds: list[CacheBuild],
             parsed.append(_parse_aggregates(
                 data, path, npix, max_bounces,
                 build.scatter.nx * build.scatter.ny))
-        total = _sum_range_aggregates(parsed, npix)
+            if len(parsed) == _AGG_FOLD_WIDTH:
+                # Bounded-memory reduce: fold the window into one item.
+                parsed = [_sum_range_aggregates(parsed, npix)]
+        total = (parsed[0] if len(parsed) == 1
+                 else _sum_range_aggregates(parsed, npix))
         if os.path.lexists(build.rows_path):
             os.remove(build.rows_path)
         digest = hashlib.sha256()
@@ -1257,7 +1306,7 @@ def _build_fanout_parallel(sim, part: InputPart, builds: list[CacheBuild],
             out.flush()
             os.fsync(out.fileno())
         # Range checkpoints stay on disk until this cache's publication:
-        # _publish_directory(scrub_leftovers=True) deletes them last.
+        # _finish_cache_build removes the whole partial after the rename.
         for iy in range(build.scatter.ny):
             row = build.scatter.counts[iy]
             base = iy * build.scatter.nx
@@ -1294,9 +1343,10 @@ def _preflight_fanout_builds(missing, max_bounces: int, log, jobs: int = 1) -> N
         scatter_cells = target.scatter.nx * target.scatter.ny
         agg = _expected_aggregate_size(npix, max_bounces, scatter_cells)
         rows = part.n_modes * npix * 24
-        # jobs > 1: range files coexist with the concatenated canonical rows
-        required = (rows * (2 if jobs > 1 else 1)
-                    + agg * (1 + (jobs if jobs > 1 else 0)))
+        # jobs > 1: range files coexist with the concatenated canonical rows,
+        # and one range aggregate exists per range of the actual plan.
+        ranges_n = len(mode_ranges(part.n_modes)) if jobs > 1 else 0
+        required = rows * (2 if jobs > 1 else 1) + agg * (1 + ranges_n)
         probe = os.path.dirname(os.path.dirname(part.cache_dir))
         stat = os.stat(probe)
         group = groups.setdefault(
@@ -1335,12 +1385,6 @@ def _load_or_build_screen_caches(sim, targets: list[ScreenTarget], log,
                 target.scatter, allow_partial=jobs > 1)
             target.caches[index] = cache
             if cache is not None:
-                if jobs > 1:
-                    stale = part.cache_dir + ".partial"
-                    if os.path.lexists(stale):
-                        # Leftover of a crash between publication and cleanup.
-                        shutil.rmtree(stale)
-                        log(f"  stage 14 stale partial removed: {stale}")
                 cache_by_dir[os.path.normcase(part.cache_dir)] = cache
 
     missing = _missing_cache_specs(targets)

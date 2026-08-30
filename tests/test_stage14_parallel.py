@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import shutil
 
 import pytest
@@ -223,7 +224,7 @@ def test_stage14_finalize_crash_resumes(tmp_path, monkeypatch):
     shutil.rmtree(tmp_path / "stage14-cache")
     monkeypatch.setenv("CAPSYSRED_STAGE14_JOBS", "2")
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(stage14, "_publish_result_tree", _boom)
+        mp.setattr(stage14, "_publish_cache_tree", _boom)
         with pytest.raises(RuntimeError, match="stop before assembly"):
             Simulation.from_yaml(str(cfg_path)).replay(
                 [str(archive)], str(tmp_path / "p1"), stages=[14])
@@ -296,6 +297,7 @@ def test_stage14_worker_rejects_mutated_screen(tmp_path, monkeypatch):
 
 
 def test_stage14_stale_partial_removed_on_cache_hit(tmp_path, monkeypatch):
+    """A validated final wins over an orphan partial at any jobs value."""
     cfg_path, archive = _scene(tmp_path)
     monkeypatch.setenv("CAPSYSRED_STAGE14_JOBS", "2")
     Simulation.from_yaml(str(cfg_path)).replay(
@@ -309,6 +311,43 @@ def test_stage14_stale_partial_removed_on_cache_hit(tmp_path, monkeypatch):
         [str(archive)], str(tmp_path / "p2"), stages=[14])
     assert not stale.exists()
     _assert_outputs_match(tmp_path / "p1", tmp_path / "p2")
+    # the same orphan must not block the strict serial pass either
+    monkeypatch.delenv("CAPSYSRED_STAGE14_JOBS", raising=False)
+    stale.mkdir()
+    (stale / "rows-m000000-000002.f64").write_bytes(b"junk")
+    Simulation.from_yaml(str(cfg_path)).replay(
+        [str(archive)], str(tmp_path / "p3"), stages=[14])
+    assert not stale.exists()
+    _assert_outputs_match(tmp_path / "p1", tmp_path / "p3")
+
+
+def test_stage14_parallel_matches_serial_many_ranges(tmp_path, monkeypatch):
+    """n_modes above the fold width exercises the bounded-memory reducer."""
+    raw = _config()
+    raw["capillary"]["source"]["n_modes"] = 12
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    sim = Simulation.from_yaml(str(cfg_path))
+    archive = tmp_path / "arch"
+    _write_v3(archive, sim)
+    monkeypatch.delenv("CAPSYSRED_STAGE14_JOBS", raising=False)
+    Simulation.from_yaml(str(cfg_path)).replay(
+        [str(archive)], str(tmp_path / "serial"), stages=[14])
+    shutil.rmtree(tmp_path / "stage14-cache")
+    monkeypatch.setenv("CAPSYSRED_STAGE14_JOBS", "3")
+    Simulation.from_dict(raw).replay(
+        [str(archive)], str(tmp_path / "parallel"), stages=[14])
+    _assert_outputs_match(tmp_path / "serial", tmp_path / "parallel")
+
+
+def test_effective_workers_caps():
+    from formula.capsysred.stages.stage14 import (_MAX_NT_WORKERS,
+                                                  _effective_workers)
+    assert _effective_workers(2, 128) == 2
+    assert _effective_workers(50, 3) == 3
+    assert _effective_workers(1, 0) == 1
+    big = _effective_workers(128, 128)
+    assert big == (_MAX_NT_WORKERS if os.name == "nt" else 128)
 
 
 def _cache_metas(tmp_path) -> dict[str, dict]:
