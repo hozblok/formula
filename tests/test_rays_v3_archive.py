@@ -332,6 +332,50 @@ def test_geometry_core_and_metadata_equal():
 
 # ------------------------------------------------------------------- cli
 
+def test_new_archive_refuses_orphan_sections(tmp_path):
+    """A fresh fingerprint must never adopt sections of unknown provenance."""
+    from formula.capsysred import trace_v3
+    from formula.capsysred import Simulation
+    archive = str(tmp_path / "arch")
+    os.makedirs(os.path.join(archive, rays_v3.MODES_DIR))
+    with open(os.path.join(archive, rays_v3.MODES_DIR, "orphan.jsonl.gz"),
+              "wb") as fh:
+        fh.write(b"junk")
+    sim = Simulation.from_dict({
+        "seed": 7,
+        "capillary": {
+            "source": {"shape": "point", "size": 3.0e-7,
+                       "position": [0.0, 0.0, -0.01],
+                       "n_modes": 2, "n_rays": 3},
+            "screen": {"nx": 3, "ny": 1, "edge_x": 3.0e-6, "edge_y": 1.0e-6},
+        },
+    })
+    with pytest.raises(ValueError, match="orphan sections"):
+        trace_v3._new_archive(sim.cfg, archive)
+
+
+def test_convert_section_reuse_requires_identical_payload(tmp_path):
+    """Converter resume re-adopts a published section only byte-for-byte."""
+    from formula.capsysred import convert_rays_v3
+    out_dir = str(tmp_path / "arch")
+    os.makedirs(os.path.join(out_dir, rays_v3.MODES_DIR))
+    payload = (b'{"stage": "capillary", "mode": 0, "ray": 0, "fate": "lost"}\n'
+               b'{"stage": "capillary", "mode": 0, "ray": 1, "fate": "lost"}\n')
+    entry, reused = convert_rays_v3._write_section(
+        out_dir, "capillary", 0, 2, None, None, payload, 2,
+        rays_v3.DEFAULT_LEVEL)
+    assert not reused
+    entry, reused = convert_rays_v3._write_section(
+        out_dir, "capillary", 0, 2, None, None, payload, 2,
+        rays_v3.DEFAULT_LEVEL)
+    assert reused
+    tampered = payload.replace(b'"ray": 1', b'"ray": 9')
+    with pytest.raises(ValueError, match="differs from the current source"):
+        convert_rays_v3._write_section(
+            out_dir, "capillary", 0, 2, None, None, tampered, 2,
+            rays_v3.DEFAULT_LEVEL)
+
+
 @pytest.mark.parametrize("jobs", ["0", str((os.cpu_count() or 8) + 1), "-1"])
 def test_trace_v3_cli_rejects_jobs(tmp_path, jobs):
     from formula.capsysred.trace_v3 import main

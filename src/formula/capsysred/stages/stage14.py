@@ -38,7 +38,7 @@ from ._stage14_checkpoints import (RANGE_SLOTS, mode_ranges, range_agg_name,
                                    range_done, range_manifest_name,
                                    range_rows_name, read_range_manifest)
 from ..shared.progress import Progress
-from ..rays import (_validate_stream_metadata, geometry_metadata,
+from ..rays import (RNG_SCHEME, _validate_stream_metadata, geometry_metadata,
                    metadata_equal, read_metadata)
 from ..screen import ScatterRaster, ScreenGrid
 from .stage14_flags import (FlagThresholds, PixelCounters, PixelStatistics,
@@ -60,6 +60,7 @@ AGG_MAGIC = b"CPS14AGG"
 AGG_FORMAT = 1
 STREAM_COUNTERS = ("emitted", "screen", "absorbed", "lost", "off_window",
                    "reflected_rays", "reflections")
+_KNOWN_RNG_SCHEMES = (RNG_SCHEME, "sequential-v2")
 RESULT_PAYLOAD_NAMES = (
     "mu-jack.jsonl",
     "14-capillary-jack-mu.svg",
@@ -371,6 +372,23 @@ def _prepare_inputs(sim, paths, signature: dict) -> list[InputPart]:
         else:
             meta = read_metadata(path)
             _validate_stream_metadata(meta, path)
+        # Jackknife counts modes as independent realizations: that is proven
+        # only for recorded provenance, and across parts only for lattice-v1
+        # (stream keys "{seed}/{scene}/{mode}" are disjoint for distinct
+        # seeds; sequential-v2 shard seeds are base+k and may intersect).
+        rng = meta.get("rng")
+        scheme = rng.get("scheme") if isinstance(rng, dict) else rng
+        if scheme not in _KNOWN_RNG_SCHEMES:
+            raise ValueError(
+                f"{path}: rays metadata lacks a known rng scheme "
+                f"(got {scheme!r}); realization independence is unproven — "
+                "re-record or convert with provenance")
+        if len(paths) > 1 and scheme != RNG_SCHEME:
+            raise ValueError(
+                f"{path}: stage 14 union requires lattice-v1 provenance for "
+                "every part (sequential/legacy shard streams may intersect); "
+                "replay such archives separately or prove disjointness "
+                "manually")
         budget = meta["budgets"].get("capillary")
         if not isinstance(budget, list) or len(budget) != 2:
             raise ValueError(f"{path}: no capillary scene in rays metadata")

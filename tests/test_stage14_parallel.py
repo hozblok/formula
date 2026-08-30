@@ -48,6 +48,7 @@ def _write_v3(archive, sim: Simulation) -> None:
     rays_v3.write_fingerprint(archive, {
         "format": rays_v3.FORMAT,
         "geometry": geometry_metadata(sim.cfg),
+        "rng": {"scheme": "lattice-v1"},
     })
     entries = []
     for mode in range(n_modes):
@@ -618,6 +619,59 @@ def test_stage14_jobs_env_validation(monkeypatch):
         monkeypatch.setenv("CAPSYSRED_STAGE14_JOBS", bad)
         with pytest.raises(ValueError, match="CAPSYSRED_STAGE14_JOBS"):
             Env.stage14_jobs()
+
+
+def _set_fingerprint_rng(archive, rng) -> None:
+    path = archive / "rays-fingerprint.yaml"
+    meta = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if rng is None:
+        meta.pop("rng", None)
+    else:
+        meta["rng"] = rng
+    path.write_text(yaml.safe_dump(meta), encoding="utf-8")
+
+
+def test_stage14_requires_known_rng_scheme(tmp_path):
+    """Provenance-less archives must not feed the jackknife."""
+    cfg_path, archive = _scene(tmp_path)
+    _set_fingerprint_rng(archive, None)
+    with pytest.raises(ValueError, match="known rng scheme"):
+        Simulation.from_yaml(str(cfg_path)).replay(
+            [str(archive)], str(tmp_path / "out"), stages=[14])
+
+
+def _union_scene(tmp_path, seeds=(1402, 1403)):
+    archives = []
+    for k, seed in enumerate(seeds):
+        raw = _config()
+        raw["seed"] = seed
+        sim = Simulation.from_dict(raw)
+        archive = tmp_path / f"arch{k}"
+        _write_v3(archive, sim)
+        archives.append(str(archive))
+    union = _config()
+    union["capillary"]["source"]["n_modes"] = 4 * len(seeds)
+    return union, archives
+
+
+def test_stage14_union_lattice_parts(tmp_path, monkeypatch):
+    """A fresh lattice-v1 union with distinct seeds is the supported case."""
+    union, archives = _union_scene(tmp_path)
+    monkeypatch.delenv("CAPSYSRED_STAGE14_JOBS", raising=False)
+    Simulation.from_dict(union).replay(
+        archives, str(tmp_path / "out"), stages=[14])
+    assert _mu_rows(tmp_path / "out")
+
+
+def test_stage14_union_requires_lattice_provenance(tmp_path):
+    """Sequential shard seeds are base+k: distinct top-level seeds do not
+    prove disjoint streams, so a non-lattice part must fail the union."""
+    union, archives = _union_scene(tmp_path)
+    _set_fingerprint_rng(tmp_path / "arch1",
+                         {"scheme": "sequential-v2", "shards": [{"seed": 1403}]})
+    with pytest.raises(ValueError, match="lattice-v1 provenance"):
+        Simulation.from_dict(union).replay(
+            archives, str(tmp_path / "out"), stages=[14])
 
 
 def test_stage14_jobs_reject_v2_archive():

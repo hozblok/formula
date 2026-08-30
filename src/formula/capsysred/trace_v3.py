@@ -134,6 +134,12 @@ def _new_archive(cfg, archive: str) -> dict:
     """Create an empty lattice-v1 archive for the yaml geometry."""
     if os.path.lexists(rays_v3.fingerprint_path(archive)):
         raise ValueError(f"{archive}: fingerprint exists without an index; remove it manually")
+    modes_dir = os.path.join(archive, rays_v3.MODES_DIR)
+    if os.path.isdir(modes_dir) and any(os.scandir(modes_dir)):
+        # Sections of unknown provenance must never be adopted silently.
+        raise ValueError(
+            f"{archive}: orphan sections exist without an index; delete the "
+            "whole archive directory and re-record")
     meta = {"format": rays_v3.FORMAT, "geometry": rays.geometry_metadata(cfg),
             "rng": {"scheme": rays.RNG_SCHEME,
                     "aim_draws": {name: spec["draws"] for name, spec in SCENES.items()}}}

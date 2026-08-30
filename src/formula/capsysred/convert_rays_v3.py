@@ -172,11 +172,18 @@ def _write_section(out_dir, scene, mode, n, origin, extra, payload, rows, level)
     final = os.path.join(out_dir, rays_v3.MODES_DIR,
                          rays_v3.section_name(scene, mode, 0, n))
     if os.path.exists(final):
-        # Resume: an already published section is re-verified, not rewritten.
+        # Resume: an already published section is re-verified, not rewritten —
+        # and it must match the current source byte for byte, so an orphan
+        # from another conversion can never be adopted.
         size, digest = rays_v3._hash_file(final)
         entry = rays_v3.Section(scene, mode, 0, n, n, size, digest,
                                 os.path.basename(final))
         rays_v3.verify_section(out_dir, entry)
+        existing = b"".join(rays_v3.iter_section_lines(out_dir, entry))
+        if existing != payload:
+            raise ValueError(
+                f"{final}: published section differs from the current "
+                "source; delete the whole archive and reconvert")
         return entry, True
     tmp = final + ".tmp"
     if os.path.lexists(tmp):
