@@ -49,4 +49,4 @@ jobs:
           python -m pip install .[test]
       - name: Test
         run: |
-          python -m pytest -q
+          python -m pytest -v
