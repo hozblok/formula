@@ -8,6 +8,7 @@ from formula import (
     energy_kev,
     reflect_ray,
     reflectivity,
+    reflect_amplitude,
     wavelength_angstrom,
 )
 
@@ -44,6 +45,13 @@ def test_reflectivity_low_above_critical_angle():
     # Same energy, far above theta_c -> reflectivity collapses.
     r = _f(reflectivity(1e-2, 10.0, precision=32))
     assert r < 0.01
+
+
+def test_reflect_amplitude_lags_below_critical_angle():
+    # Convention n = 1 - delta + i*beta with e^{+ikL}: below theta_c the
+    # reflected wave lags, arg r in (-pi, 0) — r* would fail this.
+    r = complex(reflect_amplitude(1e-3, 10.0, precision=32))
+    assert r.imag < 0.0
 
 
 def test_soft_xray_has_larger_critical_angle():
