@@ -42,7 +42,7 @@ class FloatLineAmplitudes:
         for d2, b2 in self.db:
             a = 1.0 + 0.0j
             for s in sins:
-                root = cmath.sqrt(s * s - d2 - 1j * b2)
+                root = cmath.sqrt(s * s - d2 + 1j * b2)
                 a *= (s - root) / (s + root)
             out.append(a)
         return out

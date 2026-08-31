@@ -1,6 +1,7 @@
 """Grazing-incidence X-ray reflection from glass.
 
-For X-rays the refractive index is n = 1 - delta - i*beta with delta, beta << 1,
+For X-rays the refractive index is n = 1 - delta + i*beta (convention e^{-i*omega*t},
+propagation e^{+i*k*L}) with delta, beta << 1,
 so a ray hitting a surface below the critical angle theta_c = sqrt(2*delta)
 undergoes near-total external reflection. Reflectivity is the Fresnel equation
 evaluated with the multiprecision complex engine; delta and beta are taken
@@ -37,7 +38,7 @@ def energy_kev(wavelength_angstrom_value, *, precision: int) -> Number:
 
 
 class GlassMaterial:
-    """Optical constants of a glass for the X-ray refractive index n=1-delta-i*beta.
+    """Optical constants of a glass for the X-ray refractive index n=1-delta+i*beta.
 
     delta comes from the electron density via the classical formula
     delta = r_e * lambda^2 * rho_e / (2*pi); beta is a reference value scaled as
@@ -106,13 +107,13 @@ def reflect_amplitude(
 ) -> Number:
     """Complex amplitude reflection coefficient r (s-polarization).
 
-    r = (s - sqrt(s^2 - 2*delta - 2i*beta)) / (s + sqrt(...)), s = sin(theta).
+    r = (s - sqrt(s^2 - 2*delta + 2i*beta)) / (s + sqrt(...)), s = sin(theta).
     Carries magnitude and phase; coherent tracing must multiply r, not sqrt(R).
     """
     s = Number(f"sin({_s(grazing_angle)})", precision)
     d2 = material.delta(energy_kev_value, precision=precision) * 2
     b2 = material.beta(energy_kev_value, precision=precision) * 2
-    root = (s * s - d2 - b2 * Number("i", precision)) ** Number("0.5", precision)
+    root = (s * s - d2 + b2 * Number("i", precision)) ** Number("0.5", precision)
     return (s - root) / (s + root)
 
 

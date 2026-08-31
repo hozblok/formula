@@ -17,7 +17,7 @@ class FresnelAmplitude:
         self.b2i = material.beta(energy_kev, precision=p) * two * Number("i", p)
 
     def __call__(self, sin_theta: Number) -> Number:
-        root = (sin_theta * sin_theta - self.d2 - self.b2i).sqrt()
+        root = (sin_theta * sin_theta - self.d2 + self.b2i).sqrt()
         return (sin_theta - root) / (sin_theta + root)
 
     def product(self, sins: list[Number]) -> Number:

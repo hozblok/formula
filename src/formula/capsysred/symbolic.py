@@ -13,7 +13,7 @@ from .shared.nums import solver
 
 def fresnel_expr(s: str = "s", dd: str = "dd", bb: str = "bb") -> str:
     """Complex r (s-pol) as a formula string; args are variable names or literals."""
-    root = f"sqrt(({s})^2-({dd})-i*({bb}))"
+    root = f"sqrt(({s})^2-({dd})+i*({bb}))"
     return f"((({s})-{root})/(({s})+{root}))"
 
 

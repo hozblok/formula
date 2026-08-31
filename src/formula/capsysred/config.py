@@ -40,7 +40,7 @@ DEFAULTS = {
     "precision_target": None,
     "seed": 12345,
     "energy_kev": 8.0,
-    # wall glass n = 1 - delta - i*beta: fused_silica | glass_oe2012 (Opt. Express 20, 3975)
+    # wall glass n = 1 - delta + i*beta: fused_silica | glass_oe2012 (Opt. Express 20, 3975)
     "material": "fused_silica",
     # monochromatic | gaussian {rel_fwhm, n_lines, n_sigma} | lines [{energy_kev, weight}]
     # | table {file}; per_line_fresnel (multi-line modes only): r(E_m) per
