@@ -19,9 +19,12 @@ estimator lands on the same maps). 1D screens only (ny = 1).
 import cmath
 import math
 import time
+from typing import Sequence
 
 from ...formula import Number
+from ...xray import GlassMaterial
 from ..fresnel import FresnelAmplitude
+from ..spectrum import SpectralLine
 from ..shared.physics_constants import FRESNEL_PROBE_THETA
 from ..shared.progress import Progress
 from ..rays import scene_stream
@@ -32,14 +35,17 @@ class FloatLineAmplitudes:
     """prod_j r(sin θ_j; E_m) per line in float64, constants from the exact
     material model; cross-checked against the Number Fresnel via check()."""
 
-    def __init__(self, material, lines, precision):
-        self.db = [(2.0 * float(material.delta(l.e_kev, precision=precision)),
-                    2.0 * float(material.beta(l.e_kev, precision=precision)))
-                   for l in lines]
+    def __init__(self, material: GlassMaterial, lines: Sequence[SpectralLine],
+                 precision: int):
+        # (2*delta, 2*beta) per line: the root is sqrt(sin^2 - 2d + 2ib)
+        self.two_delta_beta: list[tuple[float, float]] = [
+            (2.0 * float(material.delta(l.e_kev, precision=precision)),
+             2.0 * float(material.beta(l.e_kev, precision=precision)))
+            for l in lines]
 
-    def __call__(self, sins):
+    def __call__(self, sins: Sequence[float]) -> list[complex]:
         out = []
-        for d2, b2 in self.db:
+        for d2, b2 in self.two_delta_beta:
             a = 1.0 + 0.0j
             for s in sins:
                 root = cmath.sqrt(s * s - d2 + 1j * b2)

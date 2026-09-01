@@ -126,6 +126,7 @@ setup(
     long_description=LONG_DESCRIPTION,
     name="formula",
     package_dir={"": "src"},
+    package_data={"formula.henke": ["*.nff"]},
     packages=find_packages(where="src"),
     python_requires=">=3.11, <4",
     url="https://github.com/hozblok/formula",

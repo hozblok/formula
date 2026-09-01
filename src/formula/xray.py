@@ -4,27 +4,19 @@ For X-rays the refractive index is n = 1 - delta + i*beta (convention e^{-i*omeg
 propagation e^{+i*k*L}) with delta, beta << 1,
 so a ray hitting a surface below the critical angle theta_c = sqrt(2*delta)
 undergoes near-total external reflection. Reflectivity is the Fresnel equation
-evaluated with the multiprecision complex engine; delta and beta are taken
-from a simple material model that scales with photon energy. This is the
-building block for tracing X-rays down a glass capillary (see XRAY.md).
+evaluated with the multiprecision complex engine; delta and beta come from the
+material's complex effective electron density (tabulated Henke f1/f2 for
+silica). This is the building block for tracing X-rays down a glass capillary
+(see XRAY.md).
 """
 
 from collections import namedtuple
-from typing import Union
+from typing import Callable, Union
 
 from .formula import Number
 from .intersect import RaySurface
-from .physical_constants import (
-    ANGSTROM,
-    HC_KEV_ANGSTROM,
-    R_E,
-    SILICA_BETA_REF,
-    SILICA_ELECTRON_DENSITY,
-    SILICA_ENERGY_REF_KEV,
-    OE2012_BETA_REF,
-    OE2012_ELECTRON_DENSITY,
-    OE2012_ENERGY_REF_KEV,
-)
+from .henke import silica_electron_density
+from .physical_constants import ANGSTROM, HC_KEV_ANGSTROM, R_E
 
 
 def wavelength_angstrom(energy_kev, *, precision: int) -> Number:
@@ -32,43 +24,57 @@ def wavelength_angstrom(energy_kev, *, precision: int) -> Number:
     return Number(f"({HC_KEV_ANGSTROM})/({_s(energy_kev)})", precision)
 
 
-def energy_kev(wavelength_angstrom_value, *, precision: int) -> Number:
-    """Photon energy (keV) for a wavelength in angstrom."""
-    return Number(f"({HC_KEV_ANGSTROM})/({_s(wavelength_angstrom_value)})", precision)
-
-
 class GlassMaterial:
     """Optical constants of a glass for the X-ray refractive index n=1-delta+i*beta.
 
-    delta comes from the electron density via the classical formula
-    delta = r_e * lambda^2 * rho_e / (2*pi); beta is a reference value scaled as
-    1/E^4 (photoelectric absorption far from edges). Both are crude away from
-    absorption edges -- replace with tabulated f1/f2 for accurate work.
+    Exactly one input channel:
+    - electron_density(E_keV) -> complex effective electron density (m^-3);
+      delta + i*beta = r_e * lambda^2 / (2*pi) * n_eff(E) (tabulated Henke
+      f1/f2 for silica);
+    - delta_beta_ref = complex(delta, beta) at energy_ref_kev — an empirical
+      anchor scaled as delta ~ 1/E^2, beta ~ 1/E^4; for a published epsilon
+      use delta = (1 - Re eps)/2, beta = Im eps/2.
     """
 
     def __init__(
         self,
         name: str = "glass",
         *,
-        electron_density: str,
-        beta_ref: str,
-        energy_ref_kev: str,
+        electron_density: Callable[[float], complex] | None = None,
+        delta_beta_ref: complex | None = None,
+        energy_ref_kev: str | None = None,
     ):
-        self.electron_density = electron_density  # electrons per m^3
-        self.beta_ref = beta_ref
+        if (electron_density is None) == (delta_beta_ref is None):
+            raise ValueError("exactly one of electron_density / delta_beta_ref")
+        if delta_beta_ref is not None and energy_ref_kev is None:
+            raise ValueError("delta_beta_ref requires energy_ref_kev")
+        self.electron_density = electron_density  # E [keV] -> complex, m^-3
+        self.delta_beta_ref = delta_beta_ref
         self.energy_ref_kev = energy_ref_kev
         self.name = name
 
-    def delta(self, energy_kev_value, *, precision: int) -> Number:
-        """Refractive-index decrement delta(E)."""
+    def _optical(self, n_eff_part: float, energy_kev_value, precision: int) -> Number:
         lam_m = f"({HC_KEV_ANGSTROM})/({_s(energy_kev_value)})*({ANGSTROM})"
-        expr = f"({R_E})*({lam_m})^2*({self.electron_density})/(2*pi)"
+        expr = f"({R_E})*({lam_m})^2*({repr(n_eff_part)})/(2*pi)"
         return Number(expr, precision)
 
+    def delta(self, energy_kev_value, *, precision: int) -> Number:
+        """delta(E): prefactor * Re n_eff(E), or the empirical anchor * 1/E^2."""
+        if self.electron_density is None:
+            ratio = float(self.energy_ref_kev) / float(str(energy_kev_value))
+            return Number(repr(self.delta_beta_ref.real * ratio ** 2), precision)
+        else:
+            n_eff = self.electron_density(float(str(energy_kev_value)))
+            return self._optical(n_eff.real, energy_kev_value, precision)
+
     def beta(self, energy_kev_value, *, precision: int) -> Number:
-        """Absorption index beta(E), scaled as 1/E^4 from the reference value."""
-        ratio = f"({self.energy_ref_kev})/({_s(energy_kev_value)})"
-        return Number(f"({self.beta_ref})*({ratio})^4", precision)
+        """beta(E): prefactor * Im n_eff(E), or the empirical anchor * 1/E^4."""
+        if self.electron_density is None:
+            ratio = float(self.energy_ref_kev) / float(str(energy_kev_value))
+            return Number(repr(self.delta_beta_ref.imag * ratio ** 4), precision)
+        else:
+            n_eff = self.electron_density(float(str(energy_kev_value)))
+            return self._optical(n_eff.imag, energy_kev_value, precision)
 
     def critical_angle(self, energy_kev_value, *, precision: int) -> Number:
         """Critical grazing angle theta_c = sqrt(2*delta) (radians)."""
@@ -76,20 +82,19 @@ class GlassMaterial:
         return Number(f"sqrt(2*({d}))", precision)
 
 
-# Fused silica (SiO2, ~2.20 g/cm^3); optical constants in physical_constants.
+# Fused silica (SiO2, ~2.20 g/cm^3): tabulated Henke n_eff(E).
 FUSED_SILICA = GlassMaterial(
     name="fused silica",
-    electron_density=SILICA_ELECTRON_DENSITY,
-    beta_ref=SILICA_BETA_REF,
-    energy_ref_kev=SILICA_ENERGY_REF_KEV,
+    electron_density=silica_electron_density,
 )
 
-# Polycapillary glass of Opt. Express 20, 3975 (2012).
+
+# Polycapillary glass of Opt. Express 20, 3975 (2012), composition unknown:
+# eps = 1 - 9.115e-6 + i*1.145e-7 at 8 keV -> delta = 4.5575e-6, beta = 5.725e-8.
 OE2012_GLASS = GlassMaterial(
     name="OE 20:3975 (2012) glass",
-    electron_density=OE2012_ELECTRON_DENSITY,
-    beta_ref=OE2012_BETA_REF,
-    energy_ref_kev=OE2012_ENERGY_REF_KEV,
+    delta_beta_ref=complex(4.5575e-6, 5.725e-8),
+    energy_ref_kev="8.0",
 )
 
 

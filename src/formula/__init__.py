@@ -13,7 +13,6 @@ from .xray import (
     FUSED_SILICA,
     GlassMaterial,
     ReflectionEvent,
-    energy_kev,
     reflect_amplitude,
     reflect_ray,
     reflectivity,

@@ -9,7 +9,7 @@ import pytest
 
 from formula.capsysred import Simulation
 from formula.capsysred.stages.analytic import vcz_mu
-from formula.capsysred.shared.nums import exp_i, lift, vunit
+from formula.capsysred.shared.nums import lift, vunit
 from formula.capsysred.spectrum import spectral_lines, wavevector
 from formula.capsysred.surfaces import CapillaryBundle, Mirror, engine_hit_t
 from formula.capsysred.walls.wall_cylinder import CylinderWall
@@ -17,13 +17,12 @@ from formula.capsysred.walls.wall_polygon import PolygonWall
 from formula.capsysred.walls.wall_revolution import RevolutionWall
 from formula.capsysred.walls.wall_torus import (_bisect_first, _float_seeds,
                                           _quartic_first)
-from formula.capsysred.symbolic import (LineAmplitudes, ampl_template,
-                                     ray_expression, ray_field_template)
+from formula.capsysred.symbolic import LineAmplitudes, ampl_template
 from formula.capsysred.fresnel import FresnelAmplitude
 from formula.capsysred.trace import trace_ray
 from formula.capsysred.shared.types import HitMethod
 from formula import xray
-from formula.formula import Number, Solver
+from formula.formula import Number
 
 FREE_SOURCE = {
     "shape": "point",
@@ -214,40 +213,29 @@ def test_symbolic_templates_match_references():
     p = 30
     mat = xray.FUSED_SILICA
     fres = FresnelAmplitude(mat, Number("8.0", p))
+    two = Number("2", p)
+
+    def db(e):
+        return {"dd": str(mat.delta(e, precision=p) * two),
+                "bb": str(mat.beta(e, precision=p) * two)}
+
     for e in ("8.0", "9.0", "10.0"):
         for theta in ("2.5e-4", "1.5e-3", "3.5e-3"):
             s = Number(f"sin({theta})", p)
-            r_sym = ampl_template(1, mat, p).number({"s1": str(s), "E": e})
+            r_sym = ampl_template(1, p).number({"s1": str(s), **db(e)})
             r_ref = xray.reflect_amplitude(theta, e, mat, precision=p)
             assert float(abs(r_sym - r_ref)) < 1e-27
     sins = [Number(f"sin({t})", p) for t in ("8e-4", "1.2e-3", "2.1e-3")]
     chain = fres(sins[0]) * fres(sins[1]) * fres(sins[2])
     values = {f"s{j + 1}": str(s) for j, s in enumerate(sins)}
-    values["E"] = "8.0"
-    prod = ampl_template(3, mat, p).number(values)
+    values.update(db("8.0"))
+    prod = ampl_template(3, p).number(values)
     assert float(abs(chain - prod)) < 1e-27
-    # a baked literal expression of E is the same function
-    lit = Solver(ray_expression(sins, mat), p).number({"E": "8.0"})
-    assert float(abs(lit - prod)) == 0.0
     # max_bounces-sized template parses and evaluates
-    big = ampl_template(200, mat, p)
+    big = ampl_template(200, p)
     values = {f"s{j + 1}": "1.0e-3" for j in range(200)}
-    values["E"] = "8.0"
+    values.update(db("8.0"))
     assert float(abs(big.number(values))) > 0.0
-
-
-def test_ray_field_template_carries_exact_phase():
-    p = 30
-    mat = xray.FUSED_SILICA
-    e, opl = Number("8.0", p), Number("0.1", p)
-    u0 = ray_field_template(0, mat, p).number({"E": str(e), "L": str(opl)})
-    ref = exp_i(wavevector(e) * opl)
-    assert float(abs(u0 - ref)) < 1e-20
-    s = Number("sin(1.5e-3)", p)
-    u1 = ray_field_template(1, mat, p).number(
-        {"E": str(e), "L": str(opl), "s1": str(s)})
-    r = ampl_template(1, mat, p).number({"s1": str(s), "E": str(e)})
-    assert float(abs(u1 - ref * r)) < 1e-20
 
 
 def test_cylinder_grazing_invariant_gives_r_pow_nb():

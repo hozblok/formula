@@ -102,8 +102,11 @@ class Simulation:
         r_fast = self.fresnel(s)
         r_ref = xray.reflect_amplitude(theta, str(self.cfg.energy_kev),
                                        self.cfg.material, precision=p)
-        r_sym = ampl_template(1, self.cfg.material, p).number(
-            {"s1": str(s), "E": str(self.cfg.energy_kev)})
+        two = Number("2", p)
+        mat, e0 = self.cfg.material, self.cfg.energy_kev
+        r_sym = ampl_template(1, p).number(
+            {"s1": str(s), "dd": str(mat.delta(e0, precision=p) * two),
+             "bb": str(mat.beta(e0, precision=p) * two)})
         diff = float(abs(r_fast - r_ref))
         diff_sym = float(abs(r_sym - r_ref))
         return (f"Fresnel r(θ={rad_to_mrad(theta):g} mrad): "
