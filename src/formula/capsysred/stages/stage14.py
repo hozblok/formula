@@ -276,6 +276,9 @@ def _physics_contract(sim) -> dict:
         "lines": [{"energy_kev": str(line.e_kev), "k": float(line.k),
                    "weight": float(line.weight)} for line in sim.lines],
         "material": sim.cfg.material.name,
+        # exact optical-constant strings entering the amplitudes (E0 and per line)
+        "two_delta_beta_e0": [str(sim.fresnel.d2), str(sim.fresnel.b2)],
+        "two_delta_beta_lines": [[dd, bb] for dd, bb in sim.line_amps.two_delta_beta],
         "per_line_fresnel": bool(sim.per_line),
         "amplitude_min": float(sim.cfg.amplitude_min),
         "precision": int(sim.cfg.precision),
