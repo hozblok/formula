@@ -71,6 +71,7 @@ EXT_MODULES = [
             "src/cpp/bindings_mp_real.cpp",
             "src/cpp/bindings_mp_complex.cpp",
             "src/cpp/bindings_trace.cpp",
+            "src/cpp/bindings_stage14.cpp",
         ],
         include_dirs=[
             BOOST_HEADERS,
@@ -80,10 +81,12 @@ EXT_MODULES = [
         extra_compile_args=EXTRA_COMPILE_ARGS,
         extra_link_args=EXTRA_LINK_ARGS,
         language="c++",
+        cxx_std=17,
     )
 ]
 
-TEST_DEPS = ["pytest"]
+CAPSYSRED_DEPS = ["PyYAML"]
+TEST_DEPS = ["pytest"] + CAPSYSRED_DEPS
 
 README_PATH = os.path.join(CURRENT_DIR, "README.md")
 if os.path.exists(README_PATH):
@@ -111,9 +114,10 @@ setup(
         "Topic :: Scientific/Engineering :: Physics",
     ],
     cmdclass={"build_ext": build_ext},
-    description="Arbitrary-precision formula parser and solver.",
+    description="Multiprecision formula parser and solver.",
     ext_modules=EXT_MODULES,
     extras_require={
+        "capsysred": CAPSYSRED_DEPS,
         "test": TEST_DEPS,
         "dev": TEST_DEPS,
     },
@@ -122,6 +126,7 @@ setup(
     long_description=LONG_DESCRIPTION,
     name="formula",
     package_dir={"": "src"},
+    package_data={"formula.henke": ["*.nff"]},
     packages=find_packages(where="src"),
     python_requires=">=3.11, <4",
     url="https://github.com/hozblok/formula",

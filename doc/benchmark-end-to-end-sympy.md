@@ -1,5 +1,3 @@
-🇬🇧 **English** · [🇷🇺 Русский](benchmark-end-to-end-sympy.ru.md)
-
 # Benchmark: end to end vs SymPy
 
 The job `formula` is built for: hand it the string `x^2 + sin(x)`, get the value,

@@ -1,5 +1,3 @@
-🇬🇧 **English** · [🇷🇺 Русский](tests.ru.md)
-
 ## Running tests
 
 This project ships a compiled Python extension (`formula._formula`). The

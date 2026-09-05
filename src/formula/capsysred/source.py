@@ -8,7 +8,7 @@ the absolute phase k*L stays exact downstream.
 import math
 import random
 
-from .nums import lift, vunit
+from .shared.nums import lift, vunit
 
 
 class Source:
@@ -18,12 +18,31 @@ class Source:
         self.rng = rng
         self._p = self.size.precision
         self._size_f = float(self.size)
+        if self.shape == "grid":
+            # fixed node set; modes are importance draws ~ gaussian node weight
+            n, s = cfg.grid_n, float(cfg.grid_step)
+            half = (n - 1) / 2.0
+            rot = math.radians(getattr(cfg, "grid_rot_deg", 0.0))
+            c, q = math.cos(rot), math.sin(rot)
+            self._sites = [(x * c - y * q, x * q + y * c)
+                           for i in range(n) for j in range(n)
+                           for x, y in [((i - half) * s, (j - half) * s)]]
+            r_max = getattr(cfg, "grid_r_max", None)
+            if r_max is not None:
+                self._sites = [(x, y) for x, y in self._sites
+                               if math.hypot(x, y) <= r_max]
+            two_sig2 = 2.0 * self._size_f * self._size_f
+            self._weights = ([math.exp(-(x * x + y * y) / two_sig2)
+                              for x, y in self._sites] if two_sig2 > 0.0
+                             else [1.0] * len(self._sites))
 
     def mode_origin(self):
         """One source point = one coherent mode."""
-        if self.shape == "point" or self._size_f <= 0.0:
+        if self.shape == "grid":
+            ox, oy = self.rng.choices(self._sites, weights=self._weights)[0]
+        elif self.shape == "point" or self._size_f <= 0.0:
             return self.position
-        if self.shape == "gaussian":
+        elif self.shape == "gaussian":
             ox = self.rng.gauss(0.0, self._size_f)
             oy = self.rng.gauss(0.0, self._size_f)
         else:  # disk

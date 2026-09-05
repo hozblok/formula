@@ -1,5 +1,3 @@
-🇬🇧 **English** · [🇷🇺 Русский](benchmark-transcendentals.ru.md)
-
 # Benchmark: transcendentals
 
 Raw arithmetic is not where real formulas spend their time — transcendental

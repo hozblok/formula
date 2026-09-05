@@ -1,4 +1,4 @@
-"""Arbitrary-precision formula parser and solver."""
+"""Multiprecision formula parser and solver."""
 
 __version__ = "6.0.0"
 
@@ -13,7 +13,6 @@ from .xray import (
     FUSED_SILICA,
     GlassMaterial,
     ReflectionEvent,
-    energy_kev,
     reflect_amplitude,
     reflect_ray,
     reflectivity,

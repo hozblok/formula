@@ -8,7 +8,7 @@ import math
 from collections import namedtuple
 
 from ..formula import Number
-from ..xray import HC_KEV_ANGSTROM
+from ..physical_constants import HC_KEV_ANGSTROM
 
 _FWHM_TO_SIGMA = 2.0 * math.sqrt(2.0 * math.log(2.0))
 

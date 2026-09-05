@@ -1,14 +1,12 @@
 """Capillary X-ray coherence simulator on the Number/Solver engine (no numpy).
 
-One command runs the whole project (see plan-cap.ru.md): setup scheme, degree
-of coherence with no optics (MC + van Cittert-Zernike analytics), the Lloyd
-single-wall experiment (MC + two-path analytics, wall = capillary surface in
-the same tracer), and the capillary run — images, rays.jsonl, a timestamped report-*.md:
+trace_v3 records rays; the stages consume the recording:
 
-    python3 -m formula.capsysred config.yaml -o out/
+    python3 -m formula.capsysred.trace_v3 config.yaml --archive out/rays-modes
+    python3 -m formula.capsysred config.yaml -o out/ --stages 1,14
 """
 
 from .config import Config, load
-from .simulation import ALL_STAGES, Simulation
+from .simulation import KNOWN_STAGES, Simulation
 
-__all__ = ["ALL_STAGES", "Config", "Simulation", "load"]
+__all__ = ["KNOWN_STAGES", "Config", "Simulation", "load"]

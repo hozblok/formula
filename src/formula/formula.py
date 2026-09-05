@@ -142,7 +142,7 @@ class Solver(Formula):
 
 
 class Number:
-    """Arbitrary-precision real/complex value backed by mp_real/mp_complex.
+    """Multiprecision real/complex value backed by mp_real/mp_complex.
 
     The constructor parses and evaluates any Formula expression once (so
     "sin(pi/8)", "3+4*i", "1/3" all work), wrapping the C++ mp value directly;

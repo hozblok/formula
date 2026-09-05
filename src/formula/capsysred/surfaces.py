@@ -1,12 +1,12 @@
 """Reflecting optics as event generators over exact Number geometry.
 
-One event protocol for every optic (the Lloyd wall is literally a capillary-wall
-surface): ("reflect", t, point, normal) | ("pass", t) | ("absorb", t) |
+One event protocol for every optic (the flat mirror uses the same wall-event
+contract): ("reflect", t, point, normal) | ("pass", t) | ("absorb", t) |
 ("exit", None). The reference wall is ImplicitWall: an arbitrary implicit
 F(x,y,z)=0 traced by the RaySurface root-finding engine at full precision —
 exact but slow. The EXPERIMENTAL closed-form fast paths (cylinder/revolution
-quadratics, polygon plane fans, torus quartics) live in wall_cylinder.py /
-wall_revolution.py / wall_polygon.py / wall_torus.py and must stay
+quadratics, polygon plane fans, torus quartics) live in walls/ (wall_cylinder.py /
+wall_revolution.py / wall_polygon.py / wall_torus.py) and must stay
 bit-equivalent to the engine:
 every run cross-checks the first hit via expr_um (`engine_hit_t`).
 """
@@ -14,12 +14,15 @@ every run cross-checks the first hit via expr_um (`engine_hit_t`).
 import math
 
 from ..formula import Number
-from .nums import lift, vadd, vscale
-from .types import _EPS_LOC, _EPS_T, _INSIDE_TOL, _M_TO_UM, _TCAP_TOL
-from .wall_cylinder import CylinderWall
-from .wall_polygon import PolygonWall
-from .wall_revolution import RevolutionWall
-from .wall_torus import TorusWall
+from .shared.nums import lift, vadd, vscale
+from .shared.types import (_EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _TCAP_TOL,
+                    HitMethod)
+from .shared.units import m_to_um
+from .walls.wall_cylinder import CylinderWall
+from .walls.wall_funnel import FunnelWall
+from .walls.wall_polygon import PolygonWall
+from .walls.wall_revolution import RevolutionWall
+from .walls.wall_torus import TorusWall
 
 
 class Mirror:
@@ -31,7 +34,7 @@ class Mirror:
         p = z0.precision
         self._normal = (Number("1", p), Number("0", p), Number("0", p))
 
-    expr_um = "x"  # surface F=0 for the engine cross-check (scale-free)
+    expr_um = "x"  # surface F=0 for engine cross-checks (scale-free)
 
     def next_event(self, O, d):
         if float(O[0]) <= 0.0 or float(d[0]) >= 0.0:
@@ -53,21 +56,23 @@ class ImplicitWall:
     for prototypes and small ray budgets, not overnight maps.
     """
 
-    def __init__(self, expr, center, aim_radius, method="subdivision"):
+    def __init__(self, expr, center, aim_radius, method=HitMethod.SUBDIVISION):
         from ..intersect import RaySurface
         self.kind = "implicit"
         self.center = center
+        # float center cache: the wall protocol read by gamma._center
+        self._cxf, self._cyf = float(center[0]), float(center[1])
         p = center[0].precision
         self.rs = RaySurface(expr, p)
         self.method = method
-        self._scale = lift(_M_TO_UM, p)
+        self._scale = lift(m_to_um(1), p)
         self.expr_um = None            # the engine IS the hit path here
         self.probe_xy = (1.0, 0.0)
 
     def _f(self, xf, yf, zf) -> float:
         val = self.rs.surface.evaluate(
-            {"x": repr(xf * _M_TO_UM), "y": repr(yf * _M_TO_UM),
-             "z": repr(zf * _M_TO_UM)})
+            {"x": repr(m_to_um(xf)), "y": repr(m_to_um(yf)),
+             "z": repr(m_to_um(zf))})
         return float(Number(val, self.rs.precision))
 
     def inside(self, xf, yf, zf):
@@ -76,12 +81,12 @@ class ImplicitWall:
         return self._f(xf, yf, zf) < _INSIDE_TOL * depth
 
     def hit(self, O, d, t_exit):
-        eps_um = _EPS_T * _M_TO_UM
+        eps_um = m_to_um(_EPS_T)
         Oum = tuple(x * self._scale for x in O)
         ts = self.rs.intersect(Oum, d,
-                               t_max=float(t_exit) * _M_TO_UM * (1.0 + _TCAP_TOL),
+                               t_max=m_to_um(t_exit) * (1.0 + _TCAP_TOL),
                                t_min=eps_um, method=self.method)
-        ts = [t for t in ts if float(t) > 1.5 * eps_um]
+        ts = [t for t in ts if float(t) > _ONWALL_TOL * eps_um]
         if not ts:
             return None
         t = ts[0] / self._scale
@@ -104,13 +109,13 @@ def entrance_disk(bore: dict, z0f: float):
     return cxf, cyf, rf
 
 
-def _make_wall(bore: dict, z0, engine_method="subdivision"):
+def _make_wall(bore: dict, z0):
     """Bore spec -> wall object."""
     kind = bore.get("kind", "cylinder")
     center = bore["center"]
     if kind == "implicit":
         return ImplicitWall(bore["surface"], center, bore["aim_radius"],
-                            method=engine_method)
+                            method=bore["engine_method"])
     if kind == "cylinder":
         return CylinderWall(center, bore["radius"])
     if kind == "revolution":
@@ -120,19 +125,21 @@ def _make_wall(bore: dict, z0, engine_method="subdivision"):
     if kind == "torus":
         return TorusWall(center, bore["radius"], bore["bend"]["radius"],
                          bore["bend"]["toward"], z0)
+    if kind == "funnel":
+        return FunnelWall(center, bore["radius"], bore["g"], bore["f"], z0)
     raise ValueError(f"unknown bore kind: {kind!r}")
 
 
 class CapillaryBundle:
     """Parallel bores along z in [z0, z1]; rays reflect off per-bore walls."""
 
-    def __init__(self, bores, z0, z1, engine_method="subdivision"):
+    def __init__(self, bores, z0, z1):
         self.bores, self.z0, self.z1 = bores, z0, z1
         self._z0f, self._z1f = float(z0), float(z1)
         self._zero = Number("0", z0.precision)
         self.walls = []
         for bore in bores:
-            wall = _make_wall(bore, z0, engine_method)
+            wall = _make_wall(bore, z0)
             wall.aim = entrance_disk(bore, self._z0f)
             self.walls.append(wall)
 
@@ -166,15 +173,15 @@ class CapillaryBundle:
 
 
 def engine_hit_t(surface_expr_um: str, O, d, t_max_m: float,
-                 method="subdivision"):
+                 method=HitMethod.SUBDIVISION):
     """First hit via the RaySurface root-finding engine; returns t in metres.
 
     Coordinates are scaled to micrometres for backend conditioning; t scales back.
     """
     from ..intersect import RaySurface
     p = O[0].precision
-    scale = lift(_M_TO_UM, p)
+    scale = lift(m_to_um(1), p)
     rs = RaySurface(surface_expr_um, p)
     ts = rs.intersect(tuple(c * scale for c in O), tuple(d),
-                      t_max=t_max_m * _M_TO_UM, method=method)
+                      t_max=m_to_um(t_max_m), method=method)
     return ts[0] / scale if ts else None

@@ -17,6 +17,7 @@ namespace py = pybind11;
 void register_mp_real(py::module_ &m);
 void register_mp_complex(py::module_ &m);
 void register_trace(py::module_ &m);
+void register_stage14(py::module_ &m);
 
 // Evaluate a formula node and return the value as the registered mp_real_<P> /
 // mp_complex_<P> Python object, so its type carries the real/complex kind.
@@ -30,7 +31,7 @@ struct GetValueVisitor : public boost::static_visitor<py::object> {
 
 PYBIND11_MODULE(_formula, m) {
   m.doc() = R"pbdoc(
-        Arbitrary-precision formula parser and solver.
+        Multiprecision formula parser and solver.
         -----------------------
 
         .. currentmodule:: formula
@@ -183,6 +184,7 @@ using the passed real values of the variables.",
   register_mp_real(m);
   register_mp_complex(m);
   register_trace(m);
+  register_stage14(m);
 
 #ifdef VERSION_INFO
   m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);

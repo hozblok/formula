@@ -1,5 +1,3 @@
-🇬🇧 **English** · [🇷🇺 Русский](benchmark-dec-float-scaling.ru.md)
-
 # Benchmark: cpp_dec_float scaling
 
 How Boost's `cpp_dec_float` scales with precision — the data behind the ladder's
