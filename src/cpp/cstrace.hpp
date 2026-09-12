@@ -193,7 +193,11 @@ struct Tracer {
     R bigR, K, fourR2;
     double cf[3], nf[2], rf, in2;
   };
-  using Wall = std::variant<Revolution, Polygon, Torus>;
+  struct Funnel {
+    R cx, cy, r0, r02, ag, bg, af, bf, z0;
+    double cxf, cyf, r0f, agf, bgf, aff, bff, z0f, in_mult;
+  };
+  using Wall = std::variant<Revolution, Polygon, Torus, Funnel>;
 
   // min((t for t in ts if float(t) > _EPS_T), key=float): ties keep the
   // first; exact mp order replaces the float key.
@@ -420,6 +424,66 @@ struct Tracer {
     V3 q = vsub(w2, vscale(w.nhat, s));
     R rho = vnorm(q);
     V3 n = vadd(vscale(q, (rho - w.bigR) / rho), vscale(w.nhat, s));
+    return Hit{*t, point, vunit(n)};
+  }
+
+  // wall_funnel.FunnelWall
+  static bool inside(const Funnel &w, double xf, double yf, double zf) {
+    double zr = zf - w.z0f;
+    double gg = 1.0 + zr * (w.agf + zr * w.bgf);
+    double ff = 1.0 + zr * (w.aff + zr * w.bff);
+    double u = xf - w.cxf * gg;
+    double v = yf - w.cyf * gg;
+    double r = w.r0f * ff;
+    return u * u + v * v < r * r * w.in_mult;
+  }
+
+  static OptHit hit(const Funnel &w, const V3 &O, const V3 &d,
+                    const R &t_exit) {
+    R zr0 = O.z - w.z0;
+    R G0 = 1 + zr0 * (w.ag + zr0 * w.bg);
+    R G1 = (w.ag + 2 * w.bg * zr0) * d.z;
+    R G2 = w.bg * d.z * d.z;
+    R F0 = 1 + zr0 * (w.af + zr0 * w.bf);
+    R F1 = (w.af + 2 * w.bf * zr0) * d.z;
+    R F2 = w.bf * d.z * d.z;
+    R u0 = O.x - w.cx * G0, u1 = d.x - w.cx * G1, u2 = -(w.cx * G2);
+    R v0 = O.y - w.cy * G0, v1 = d.y - w.cy * G1, v2 = -(w.cy * G2);
+    R h0 = w.r0 * F0, h1 = w.r0 * F1, h2 = w.r0 * F2;
+    std::array<R, 5> c = {u2 * u2 + v2 * v2 - h2 * h2,
+                          2 * (u1 * u2 + v1 * v2 - h1 * h2),
+                          u1 * u1 + v1 * v1 - h1 * h1 +
+                              2 * (u0 * u2 + v0 * v2 - h0 * h2),
+                          2 * (u0 * u1 + v0 * v1 - h0 * h1),
+                          u0 * u0 + v0 * v0 - h0 * h0};
+    // wall_funnel._poly_first: exact-zero leading coefficients (structural
+    // degeneracies) shift out, the tail pads with zeros — q(t)*t^k keeps
+    // every t>0 root and the padded t=0 roots sit below kEpsT.
+    int lead = 0;
+    while (lead < 4 && c[lead] == 0) {
+      ++lead;
+    }
+    std::array<R, 5> m;
+    for (int i = lead; i < 5; ++i) {
+      m[i - lead] = c[i] / c[lead];
+    }
+    for (int i = 5 - lead; i < 5; ++i) {
+      m[i] = 0;
+    }
+    std::optional<R> t =
+        quartic_first(m, to_double(t_exit) * (1.0 + kTcapTol) + kEpsT);
+    if (!t) {
+      return std::nullopt;
+    }
+    V3 point = vadd(O, vscale(d, *t));
+    R zr = point.z - w.z0;
+    R gg = 1 + zr * (w.ag + zr * w.bg);
+    R gp = w.ag + 2 * w.bg * zr;
+    R ff = 1 + zr * (w.af + zr * w.bf);
+    R fp = w.af + 2 * w.bf * zr;
+    R u = point.x - w.cx * gg;
+    R v = point.y - w.cy * gg;
+    V3 n = {u, v, -((u * w.cx + v * w.cy) * gp + w.r02 * ff * fp)};
     return Hit{*t, point, vunit(n)};
   }
 

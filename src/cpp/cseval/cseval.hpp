@@ -15,7 +15,7 @@
 #include "../csconstants.hpp"
 
 /**
- * Arbitrary-precision arithmetic.
+ * Multiprecision arithmetic.
  */
 template <unsigned N>
 using mp_real =

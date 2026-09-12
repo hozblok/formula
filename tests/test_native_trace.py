@@ -16,11 +16,11 @@ import pytest
 from formula import _formula
 from formula.capsysred.native import (compile_optic, make_tracer,
                                       trace_ray_native)
-from formula.capsysred.nums import lift, vadd, vdot, vscale, vsub, vunit
+from formula.capsysred.shared.nums import lift, vadd, vdot, vscale, vsub, vunit
 from formula.capsysred.surfaces import CapillaryBundle, Mirror
 from formula.capsysred.trace import trace_ray
-from formula.capsysred.wall_revolution import RevolutionWall
-from formula.capsysred.wall_torus import _dk_roots, _quartic_first
+from formula.capsysred.walls.wall_revolution import RevolutionWall
+from formula.capsysred.walls.wall_torus import _dk_roots, _quartic_first
 from formula.formula import Number
 
 PRECISIONS = (16, 30)          # storage 16 and 32
@@ -638,14 +638,21 @@ def test_native_deterministic():
 
 TINY = {
     "precision": 26,
-    "source": {"n_modes": 2, "n_rays": 60, "size": 3e-7, "shape": "gaussian"},
     "screen": {"nx": 9, "ny": 1},
-    "lloyd": {"source": {"n_modes": 2, "n_rays": 40}, "screen": {"nx": 11}},
+    "free": {"source": {
+        "shape": "gaussian", "size": 3e-7,
+        "position": [0.0, 0.0, -0.08],
+        "n_modes": 2, "n_rays": 60,
+    }},
     "capillary": {
         "bores": [{"center": [0.0, 0.0], "radius": 6.0e-6},
                   {"center": [1.5e-5, 0.0], "radius": 6.0e-6,
                    "bend": {"radius": 0.5, "toward": [1.0, 0.0]}}],
-        "source": {"n_modes": 2, "n_rays": 24},
+        "source": {
+            "shape": "gaussian", "size": 3e-7,
+            "position": [0.0, 0.0, -0.01],
+            "n_modes": 2, "n_rays": 24,
+        },
         "screen": {"nx": 7, "ny": 7},
     },
 }
@@ -653,15 +660,26 @@ TINY = {
 
 def test_simulation_native_equals_python(tmp_path, monkeypatch):
     from formula.capsysred import Simulation
+    import yaml
+    from formula.capsysred import rays_v3
+    from formula.capsysred.trace_v3 import trace as trace_v3
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text(yaml.safe_dump(TINY, sort_keys=False), encoding="utf-8")
     sim_native = Simulation.from_dict(TINY)
-    sim_native.run(str(tmp_path / "native"), stages=[2, 4, 6])
+    trace_v3(str(cfg), str(tmp_path / "native" / "rays-modes"), jobs=1, level=6,
+             log=lambda m: None, scenes="all")
+    sim_native.run(str(tmp_path / "native"), stages=[2, 6])
     monkeypatch.setenv("CAPSYSRED_PYTHON_TRACE", "1")
     sim_python = Simulation.from_dict(TINY)
-    sim_python.run(str(tmp_path / "python"), stages=[2, 4, 6])
+    trace_v3(str(cfg), str(tmp_path / "python" / "rays-modes"), jobs=1, level=6,
+             log=lambda m: None, scenes="all")
+    sim_python.run(str(tmp_path / "python"), stages=[2, 6])
     p = TINY["precision"]
-    def ray_rows(sub):  # skip the v2 meta line and scene trailers
-        lines = (tmp_path / sub / "rays.jsonl").read_text().splitlines()
-        return [row for row in map(json.loads, lines) if "stage" in row]
+    def ray_rows(sub):
+        archive = str(tmp_path / sub / "rays-modes")
+        index = rays_v3.load_index(archive)
+        return [json.loads(line) for scene in ("free", "capillary")
+                for line in rays_v3.scene_lines(archive, index, scene)]
 
     n_rows, p_rows = ray_rows("native"), ray_rows("python")
     assert n_rows and len(n_rows) == len(p_rows)
@@ -672,7 +690,7 @@ def test_simulation_native_equals_python(tmp_path, monkeypatch):
         assert len(rn["sins"]) == len(rp["sins"])
         for sn, sp in zip(rn["sins"], rp["sins"]):
             assert_close(Number(sp, p), Number(sn, p), TRACE_TOL)
-    for stage in ("free", "lloyd", "capillary"):
+    for stage in ("free", "capillary"):
         rn, rp = sim_native.results[stage], sim_python.results[stage]
         assert rn["stats"] == rp["stats"]
         for name in ("mu", "intensity", "density"):

@@ -1,12 +1,10 @@
-🇬🇧 **English** · [🇷🇺 Русский](derivatives.ru.md)
-
 # Differentiation in `formula`: the mechanism and its domain of applicability
 
 ## 1. What is computed
 
 `get_derivative` returns a single number — the partial derivative `∂f/∂x` of the
 parsed expression `f` with respect to one named variable `x`, evaluated at one
-supplied point, in arbitrary precision.
+supplied point, in multiprecision.
 
 ```python
 from formula import Formula, Solver

@@ -1,5 +1,3 @@
-🇬🇧 **English** · [🇷🇺 Русский](ray-surface-design.ru.md)
-
 # RaySurface: design & decisions
 
 **Status:** shipped &middot; **See also:**
@@ -24,7 +22,7 @@ misses.
 A ray `r(t) = O + t·d` substituted into `F = 0` collapses the surface to a
 single-variable `g(t) = F(O + t·d)`, so "all intersections" ≡ "all real roots of
 `g` on `[t_min, t_max]`". `formula` already evaluates `F` and its partials
-symbolically at arbitrary precision, so `g(t)` and `g'(t) = ∇F·d` are built
+symbolically in multiprecision, so `g(t)` and `g'(t) = ∇F·d` are built
 straight from `Solver.evaluate` / `get_derivative` — no new symbolic machinery.
 That reduction is the whole design: everything else is univariate root-finding
 behind one contract, `find_all(func, t_min, t_max, precision, **opts)`.
@@ -33,7 +31,7 @@ behind one contract, `find_all(func, t_min, t_max, precision, **opts)`.
 ## Design decisions
 
 - **Sturm over companion/colleague-matrix eigenvalues** for the algebraic path —
-  no arbitrary-precision eigensolver exists in this project; Sturm stays inside
+  no multiprecision eigensolver exists in this project; Sturm stays inside
   `formula`'s precision world and gives a *provable* real-root count. The price is
   recovering the polynomial by interpolation, well-conditioned only to moderate
   degree.
@@ -63,7 +61,7 @@ src/formula/_roots/
   chebyshev.py               self-validating spectral backend
   subdivision.py             derivative-bound exclusion backend
   sampling.py                reference/oracle backend
-  _poly.py                   arbitrary-precision polynomial ops (eval, divmod, gcd, square-free, interpolate)
+  _poly.py                   multiprecision polynomial ops (eval, divmod, gcd, square-free, interpolate)
   _isolate.py                shared Sturm chain / variations / isolate / isolate_roots / bisect / rtsafe
 ```
 

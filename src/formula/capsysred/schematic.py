@@ -7,19 +7,20 @@ scales — both get a scale bar and every length is dimensioned. Multi-bore /
 faceted / bent optics also get a transverse (x–y) inset; a single in-plane
 bent bore gets a bore-relative (unrolled) panel.
 
-Used by stage 1 (01a-scheme-traced.svg) and the exp/schematic.py CLI.
+Used by stage 1 (01a-scheme-traced.svg).
 """
 
 import math
 import random
 from xml.sax.saxutils import escape
 
-from .nums import lift, vunit
-from .surfaces import CapillaryBundle, Mirror, entrance_disk
+from .shared.nums import lift, vunit
+from .source import Source
+from .surfaces import CapillaryBundle, ImplicitWall, entrance_disk
 from .trace import trace_ray
-
-UM, MM = 1e6, 1e3
+from .shared.units import m_to_mm, m_to_nm, m_to_um, rad_to_mrad
 N_RAYS = 10
+AXIS_EPS = 1e-9      # m, bore centre counts as on-axis below this
 GREEN, BLUE, WALL, AXIS = "#2ca02c", "#3060c0", "#5a7a94", "#bbbbbb"
 INK, DIM = "#222", "#333"
 
@@ -73,10 +74,10 @@ def eng(v, unit="auto"):
         return "0"
     a = abs(v)
     if a >= 1e-3 * (1 - 1e-9):                      # epsilon: dodge float-subtraction noise
-        return f"{v*MM:.4g} mm"
+        return f"{m_to_mm(v):.4g} mm"
     if a >= 1e-7 * (1 - 1e-9):
-        return f"{v*UM:.4g} µm"
-    return f"{v*1e9:.4g} nm"
+        return f"{m_to_um(v):.4g} µm"
+    return f"{m_to_nm(v):.4g} nm"
 
 
 # ---------------------------------------------------------------- dimensions
@@ -106,7 +107,76 @@ def r_of_z(bore, zf):
         return math.sqrt(max(c0 + zf * (c1 + zf * c2), 0.0))
     if kind == "polygon":
         return float(bore["radius"])            # apothem: y=0 faces sit here
+    if kind == "implicit":
+        return float(bore["aim_radius"])        # fallback; spans use the probe
     return float(bore["radius"])
+
+
+_IMPL_PROBE = {}                                # id(bore) -> [wall, last_z, mid]
+
+
+def implicit_span(bore, zf):
+    """(x_lo, x_hi) of a generic bore on the y = 0 line at height z: scan
+    inside() for the sign-change bracket nearest the tracked run, bisect the
+    two walls. Falls back to an aim_radius tube when the scan finds nothing."""
+    st = _IMPL_PROBE.get(id(bore))
+    if st is None:
+        st = [ImplicitWall(bore["surface"], bore["center"],
+                           bore["aim_radius"]), None, None]
+        _IMPL_PROBE[id(bore)] = st
+    wall, last_z, mid = st
+    cx = float(bore["center"][0])
+    a = float(bore["aim_radius"])
+    if last_z is None or zf < last_z:
+        mid = cx                                # new monotone sweep
+    lo, hi = mid - 10 * a - 0.4 * abs(mid), mid + 10 * a + 0.4 * abs(mid)
+    n = 300
+    pts = [lo + (hi - lo) * i / n for i in range(n + 1)]
+    ins = [wall.inside(x, 0.0, zf) for x in pts]
+    runs = []
+    i = 0
+    while i <= n:
+        if ins[i]:
+            j = i
+            while j < n and ins[j + 1]:
+                j += 1
+            runs.append((i, j))
+            i = j + 1
+        else:
+            i += 1
+    if not runs:
+        return cx - a, cx + a
+    i, j = min(runs, key=lambda r: abs((pts[r[0]] + pts[r[1]]) / 2 - mid))
+
+    def bisect(x_out, x_in):
+        for _ in range(40):
+            xm = (x_out + x_in) / 2
+            if wall.inside(xm, 0.0, zf):
+                x_in = xm
+            else:
+                x_out = xm
+        return (x_out + x_in) / 2
+
+    x_lo = bisect(pts[i - 1], pts[i]) if i > 0 else pts[0]
+    x_hi = bisect(pts[j + 1], pts[j]) if j < n else pts[n]
+    st[1], st[2] = zf, (x_lo + x_hi) / 2
+    return x_lo, x_hi
+
+
+def wall_span(b, z0, zf):
+    """(x_lo, x_hi) silhouette of a bore at height z for the side view."""
+    if b.get("kind") == "implicit":
+        return implicit_span(b, zf)
+    if b.get("kind") == "funnel":
+        zr = zf - z0
+        ag, bg = (float(v) for v in b["g"])
+        af, bf = (float(v) for v in b["f"])
+        ax = float(b["center"][0]) * (1 + zr * (ag + zr * bg))
+        r = float(b["radius"]) * (1 + zr * (af + zr * bf))
+        return ax - r, ax + r
+    ax = torus_axis(b, z0, zf) if b.get("kind") == "torus" else float(b["center"][0])
+    r = r_of_z(b, zf)
+    return ax - r, ax + r
 
 
 def torus_axis(bore, z0f, zf):
@@ -124,27 +194,27 @@ def build_geometry(cfg, mode: str, bores=None):
     bores overrides cfg.capillary.bores (typed twin of an implicit config)."""
     p = cfg.precision
     G = {"mode": mode, "cfg": cfg}
-    if mode == "lloyd":
-        o = cfg.lloyd
-        src, scr = o.source, o.screen
-        G.update(z0=float(o.z0), z1=float(o.z1), height=float(o.height),
-                 optic=Mirror(o.z0, o.z1), bores=None)
-    elif mode == "free":
+    if mode == "free":
         src, scr = cfg.free_source, cfg.free_screen
         G.update(z0=None, z1=None, optic=None, bores=None)
-    else:
+    elif mode == "capillary":
         o = cfg.capillary
         src, scr = o.source, o.screen
         bores = bores or o.bores
         G.update(z0=float(o.z0), z1=float(o.z1),
-                 optic=CapillaryBundle(bores, o.z0, o.z1, cfg.engine_method),
+                 optic=CapillaryBundle(bores, o.z0, o.z1),
                  bores=bores)
+    else:
+        raise ValueError(f"unsupported schematic mode: {mode!r}")
     G["src"] = {"z": float(src.position[2]), "x": float(src.position[0]),
                 "size": float(src.size), "shape": src.shape}
     G["scr"] = {"z": float(scr.z), "cx": float(scr.center[0]),
                 "hx": float(scr.edge_x) / 2, "hy": float(scr.edge_y) / 2,
                 "nx": scr.nx, "ny": scr.ny,
                 "ref": scr.reference[0] if scr.reference else None}
+    G["scr_extra"] = [{"z": float(s.z), "cx": float(s.center[0]),
+                       "hx": float(s.edge_x) / 2}
+                      for s in (cfg.capillary.screens if mode == "capillary" else ())]
     G["cfg_src"], G["cfg_scr"] = src, scr
     G["rays"] = trace_rays(G, p, n=cfg.schematic_rays)
     return G
@@ -158,15 +228,21 @@ def trace_rays(G, p, n=N_RAYS, seed=7):
     if mode == "capillary":
         z0f = G["z0"]
         disks = [entrance_disk(b, z0f) for b in G["bores"]
-                 if abs(float(b["center"][1])) < 1e-9] or \
+                 if abs(float(b["center"][1])) < AXIS_EPS] or \
                 [entrance_disk(b, z0f) for b in G["bores"]]
         mb = int(G["cfg"].max_bounces)
     else:
-        mb = int(G["cfg"].max_bounces) if mode == "lloyd" else 4
-    screen_z = lift(scr["z"], p)
+        mb = 4
+    # rays fly on to the farthest screen so every plane is crossed on the scheme
+    screen_z = lift(max([scr["z"]] + [s["z"] for s in G["scr_extra"]]), p)
+    grid_source = Source(G["cfg_src"], rng) if src["shape"] == "grid" else None
     rays = []
-    for i in range(n):
-        if src["shape"] == "point" or src["size"] <= 0:
+    for _ in range(n):
+        if grid_source is not None:
+            # The schematic is an x-z projection: sample the real weighted
+            # lattice, then project its two-dimensional origin onto x.
+            xo = float(grid_source.mode_origin()[0])
+        elif src["shape"] == "point" or src["size"] <= 0:
             xo = src["x"]
         elif src["shape"] == "gaussian":
             xo = src["x"] + rng.gauss(0, src["size"])
@@ -177,22 +253,6 @@ def trace_rays(G, p, n=N_RAYS, seed=7):
             cx, cy, a = disks[rng.randrange(len(disks))]
             tx = cx + a * (2 * rng.random() - 1)
             d = vunit((lift(tx - xo, p), lift(0.0, p), lift(G["z0"] - sz, p)))
-        elif mode == "lloyd":
-            # alternate: direct rays into the window / reflected rays into the
-            # window via the virtual source, mirror hit kept within [z0, z1]
-            D = scr["z"] - sz
-            x_lo, x_hi = scr["cx"] - scr["hx"], scr["cx"] + scr["hx"]
-            if i % 2 == 0:
-                tx = x_lo + (x_hi - x_lo) * rng.random()
-                m = (tx - xo) / D
-            else:
-                lo = max((x_lo + xo) / D, xo / (G["z1"] - sz))
-                hi = min((x_hi + xo) / D, xo / (G["z0"] - sz)) if G["z0"] > sz \
-                    else (x_hi + xo) / D
-                if lo >= hi:
-                    lo, hi = (x_lo + xo) / D, (x_hi + xo) / D
-                m = -(lo + (hi - lo) * rng.random())
-            d = vunit((lift(m, p), lift(0.0, p), lift(1.0, p)))
         else:
             tx = scr["cx"] + scr["hx"] * (2 * rng.random() - 1)
             d = vunit((lift(tx - xo, p), lift(0.0, p), lift(scr["z"] - sz, p)))
@@ -224,22 +284,22 @@ class View:
 def side_view(G):
     mode = G["mode"]
     src, scr = G["src"], G["scr"]
-    za, zb = src["z"], scr["z"]
+    za = src["z"]
+    zb = max([scr["z"]] + [s["z"] for s in G["scr_extra"]])
     zpad = 0.03 * (zb - za)
     zr = (za - zpad, zb + zpad)
     # x extent from the features only (source, optic, window); stray rays clip
     xs = [src["x"] - src["size"], src["x"] + src["size"],
           scr["cx"] - scr["hx"], scr["cx"] + scr["hx"]]
-    if mode == "lloyd":
-        xs += [0.0, G["height"], -G["height"]]
+    for s in G["scr_extra"]:
+        xs += [s["cx"] - s["hx"], s["cx"] + s["hx"]]
     if mode == "capillary":
         for b in G["bores"]:
-            cx, cy = float(b["center"][0]), float(b["center"][1])
-            if abs(cy) < 1e-9:
+            cy = float(b["center"][1])
+            if abs(cy) < AXIS_EPS:
                 for k in range(13):
                     zf = G["z0"] + (G["z1"] - G["z0"]) * k / 12
-                    ax = torus_axis(b, G["z0"], zf) if b.get("kind") == "torus" else cx
-                    xs += [ax + r_of_z(b, zf), ax - r_of_z(b, zf)]
+                    xs += list(wall_span(b, G["z0"], zf))
     xlo, xhi = min(xs), max(xs)
     xm = 0.12 * (xhi - xlo or 1e-6)
     xr = (xlo - xm, xhi + xm)
@@ -247,7 +307,7 @@ def side_view(G):
     W = 1080
     top, bot = 62, 352
     box = (96, top, W - 210, bot)
-    H = bot + (104 if mode == "lloyd" else 74)
+    H = bot + 74
     v = View(zr, xr, box)
     e = [RECT(box[0], box[1], box[2] - box[0], box[3] - box[1], "white", "#ccc")]
     ax_y = v.py(0.0)
@@ -277,46 +337,41 @@ def draw_optic(G, v, box):
     e = []
     if mode == "free":
         return e
-    if mode == "lloyd":
-        z0, z1 = G["z0"], G["z1"]
-        y0 = v.py(0.0)
-        e.append(L(v.px(z0), y0, v.px(z1), y0, "#37474f", 2.4))
-        for xx in range(int(v.px(z0)), int(v.px(z1)), 13):     # glass hatching below
-            e.append(L(xx, y0, xx + 9, min(box[3], y0 + 11), "#90a4ae", 0.7))
-        e.append(T((v.px(z0) + v.px(z1)) / 2, y0 + 26, "mirror (glass x<0)",
-                  11, "middle", "#37474f"))
-        return e
     # capillary walls
     zs = [G["z0"] + (G["z1"] - G["z0"]) * k / 60 for k in range(61)]
     for b in G["bores"]:
         cy = float(b["center"][1])
-        if abs(cy) > 1e-9:
+        if abs(cy) > AXIS_EPS:
             continue
-        kind = b.get("kind", "cylinder")
         top, bot = [], []
         for zf in zs:
-            ax = torus_axis(b, G["z0"], zf) if kind == "torus" else float(b["center"][0])
-            r = r_of_z(b, zf)
-            top.append(v.pt(zf, ax + r))
-            bot.append(v.pt(zf, ax - r))
+            x_lo, x_hi = wall_span(b, G["z0"], zf)
+            top.append(v.pt(zf, x_hi))
+            bot.append(v.pt(zf, x_lo))
         poly = top + bot[::-1]
         fill = "#eaf2f8"
         e.append(f'<polygon points="{" ".join(f"{x:.2f},{y:.2f}" for x,y in poly)}" '
                  f'fill="{fill}" stroke="none" opacity="0.6"/>')
         e.append(POLY(top, WALL, 1.6))
         e.append(POLY(bot, WALL, 1.6))
-        e.append(L(*v.pt(G["z0"], float(b["center"][0]) + r_of_z(b, G["z0"])),
-                   *v.pt(G["z0"], float(b["center"][0]) - r_of_z(b, G["z0"])),
-                   WALL, 1.2))
+        x_lo, x_hi = wall_span(b, G["z0"], G["z0"])
+        e.append(L(*v.pt(G["z0"], x_hi), *v.pt(G["z0"], x_lo), WALL, 1.2))
+    spans = [wall_span(b, G["z0"], G["z0"]) for b in G["bores"]
+             if abs(float(b["center"][1])) < AXIS_EPS]
+    if spans:
+        # absorbing front face: rays that miss the bore aperture end on it
+        px0 = v.px(G["z0"])
+        e.append(L(px0, box[1], px0, v.py(max(hi for _, hi in spans)), WALL, 1.2))
+        e.append(L(px0, v.py(min(lo for lo, _ in spans)), px0, box[3], WALL, 1.2))
     for b in G["bores"]:                           # bend geometry, once
-        if b.get("kind") == "torus" and abs(float(b["center"][1])) < 1e-9:
+        if b.get("kind") == "torus" and abs(float(b["center"][1])) < AXIS_EPS:
             R = float(b["bend"]["radius"])
             th = math.asin((G["z1"] - G["z0"]) / R)
             sag = R * (1.0 - math.cos(th))
             zm = (G["z0"] + G["z1"]) / 2
             apex = torus_axis(b, G["z0"], zm) + r_of_z(b, zm)
             e.append(T(v.px(zm), v.py(apex) - 8,
-                      f"bend R = {R:g} m,  θ = {th*1e3:.2f} mrad", 10.5,
+                      f"bend R = {R:g} m,  θ = {rad_to_mrad(th):.2f} mrad", 10.5,
                       "end", "#37474f"))
             cx = float(b["center"][0])
             e += arrow_v(v.px(G["z1"]) + 14, v.py(cx),
@@ -342,12 +397,6 @@ def draw_source(G, v):
     if not point:
         tag = "σ = " if src["shape"] == "gaussian" else "r = "
         e.append(T(px + 9, py + 8, tag + eng(sz), 10.5, "start", "#186a18"))
-    if G["mode"] == "lloyd":                       # mirror image behind x=0
-        vx, vy = v.pt(z, -G["height"])
-        e.append(CIRC(vx, vy, 4.5, "none", "#186a18", 1.2))
-        e.append(f'<circle cx="{vx:.1f}" cy="{vy:.1f}" r="4.5" fill="none" '
-                 f'stroke="#186a18" stroke-dasharray="3,2"/>')
-        e.append(T(vx + 9, vy + 4, "virtual source", 10.5, "start", "#7a9a7a"))
     return e
 
 
@@ -363,6 +412,16 @@ def draw_screen(G, v, box):
         ry = v.py(scr["ref"])
         e.append(CIRC(px, ry, 3.5, "none", "#d62728", 1.4))
         e.append(T(px - 8, ry + 4, "P_ref", 10, "end", "#d62728"))
+    used = [px]
+    for i, s in enumerate(G["scr_extra"], 1):
+        pxs = v.px(s["z"])
+        lo, hi = v.py(s["cx"] - s["hx"]), v.py(s["cx"] + s["hx"])
+        e.append(L(pxs, max(box[1], hi), pxs, min(box[3], lo), BLUE, 2.0, "7,4"))
+        # screens sharing one z: stack the labels instead of overprinting
+        drop = 26 * sum(1 for u in used if abs(pxs - u) < 60)
+        used.append(pxs)
+        e.append(T(pxs - 4, box[1] - 6 + drop, f"screen {i}", 11.5, "end", BLUE))
+        e.append(T(pxs - 4, box[1] + 9 + drop, "z = " + eng(s["z"]), 10, "end", BLUE))
     return e
 
 
@@ -378,17 +437,13 @@ def dimensions(G, v, box):
         else:
             e.extend(arrow_h(v.px(z0), v.px(z1), yb, label))
 
-    if mode in ("capillary", "lloyd"):
+    if mode == "capillary":
         zspan(src["z"], G["z0"], "d₀ = " + eng(G["z0"] - src["z"]))
         zspan(G["z0"], G["z1"], "L = " + eng(G["z1"] - G["z0"]))
         zspan(G["z1"], scr["z"], "d₂ = " + eng(scr["z"] - G["z1"]))
-    if mode == "lloyd":
-        e += arrow_h(v.px(src["z"]), v.px(scr["z"]), yb + 30, "D = " + eng(scr["z"] - src["z"]))
     if mode == "free":
         e += arrow_h(v.px(src["z"]), v.px(scr["z"]), yb, "D = " + eng(scr["z"] - src["z"]))
 
-    if mode == "lloyd":                            # source height above the mirror plane
-        e += arrow_v(v.px(src["z"]) + 12, v.py(0.0), v.py(G["height"]), "r₀ = " + eng(G["height"]))
     if mode == "capillary":                        # bore diameter, right margin
         b0 = G["bores"][0]
         r0, r1 = r_of_z(b0, G["z0"]), r_of_z(b0, G["z1"])
@@ -424,9 +479,9 @@ def scale_bars(G, v, box):
 def legend(G, box):
     items = [("source", GREEN), ("screen", BLUE)]
     if G["optic"] is not None:
-        items.append(("mirror" if G["mode"] == "lloyd" else "wall", WALL))
+        items.append(("wall", WALL))
     items.append(("rays", hsv(3, 10)))
-    y = box[3] + (92 if G["mode"] == "lloyd" else 60)      # below the z-dimensions
+    y = box[3] + 60                              # below the z-dimensions
     x = box[0]
     e = []
     for lab, col in items:
@@ -534,7 +589,7 @@ def need_unrolled(G):
     """Bore-relative panel: one in-plane bent bore whose sag dwarfs its radius."""
     return (G["mode"] == "capillary" and len(G["bores"]) == 1
             and G["bores"][0].get("kind") == "torus"
-            and abs(float(G["bores"][0]["center"][1])) < 1e-9)
+            and abs(float(G["bores"][0]["center"][1])) < AXIS_EPS)
 
 
 def unrolled(G):

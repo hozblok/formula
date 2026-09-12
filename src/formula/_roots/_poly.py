@@ -1,4 +1,4 @@
-"""Arbitrary-precision univariate polynomial utilities over Number.
+"""Multiprecision univariate polynomial utilities over Number.
 
 A polynomial is a list of Number coefficients, index = power:
 p[0] + p[1]*t + ... + p[n]*t**n. Used by the Sturm backend.
