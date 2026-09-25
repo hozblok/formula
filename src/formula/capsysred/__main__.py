@@ -18,10 +18,9 @@ def main(argv=None) -> int:
     parser.add_argument("-o", "--out", default="capsysred-out",
                         help="output directory (default ./capsysred-out)")
     parser.add_argument("--stages", default=None,
-                        help="which stages to run, e.g. 1,2,3 (default core "
-                             "stages of the configured scenes; 3 requires 2, "
-                             "which is added automatically; 10 and 14 are "
-                             "separate opt-in jackknife estimators)")
+                        help="which stages to run, e.g. 1,2,3 (default: 1, "
+                             "2+3 for a free scene, 14 for a capillary scene; "
+                             "3 requires 2, which is added automatically)")
     parser.add_argument("--replay", metavar="ARCHIVE", default=None,
                         nargs="+",
                         help="rays recording(s) to re-evaluate with the spectrum and "

@@ -63,8 +63,8 @@ DEFAULTS = {
     # (E0-truncation would bias other energies) and apply the threshold after
     # the per-line amplitudes are known.
     # lean_rays: drop refl and write opl/sins as float64 in the rays file —
-    # stage 10/rescreen read floats anyway (bit-identical); the file cannot
-    # feed the Number-path replay (stages 2/6) or the beamlet stage.
+    # the estimators read floats anyway (bit-identical); the file cannot
+    # feed the beamlet stage.
     "trace": {"max_bounces": 200, "amplitude_min": 1.0e-6,
               "rays_jsonl": True, "lean_rays": False},
     # stage 1: rays traced onto the to-scale schematic (01a-scheme-traced.svg)
@@ -301,7 +301,7 @@ class CapillaryCfg:
         if float(self.screen.z) < float(self.z1):
             raise ValueError(f"capillary screen: z = {float(self.screen.z)} "
                              f"is inside the optic (z1 = {float(self.z1)})")
-        # extra screens (stage 10): re-binned from the same trace, each merged
+        # extra screens (stages 11, 14): re-binned from the same trace, each merged
         # onto the main capillary screen; must sit past the exit (straight flight)
         self.screens = [ScreenCfg(_merge(base, s), p) for s in raw.get("screens", ())]
         for i, s in enumerate(self.screens):

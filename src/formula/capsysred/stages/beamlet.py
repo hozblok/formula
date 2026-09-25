@@ -12,8 +12,8 @@ bounces are flat (the scalar-q model of stage 11a).
 
 The estimator is honest — no ray self-pair subtraction: the mode field is a
 true coherent sum of beamlet fields, mu = |W| / sqrt(I*I_ref) with
-I = sum_m w_m |g_m|^2 as is. The rng stream matches _mc_stage, so the rays
-are the stage-2/6 rays.
+I = sum_m w_m |g_m|^2 as is. The rng stream matches the other estimators,
+so the rays are the stage-2/14 rays.
 """
 
 import cmath

@@ -1,10 +1,10 @@
 """Stage 7: alternative coherence estimators on one shared ray stream.
 
-Three estimators are fed IDENTICAL rays (same rng stream as stages 2/6), so map
+Three estimators are fed IDENTICAL rays (same rng stream as stage 2), so map
 differences are estimator effects, not statistics:
 
-  pairwise  — the reference W(P, P_ref) estimator, float mirror of
-              coherence.CoherenceAccumulator (baseline);
+  pairwise  — the reference W(P, P_ref) estimator, self-pairs dropped
+              (baseline);
   fullw     — axis C: the complete Hermitian W(x1, x2) matrix from per-mode
               fields; whole mu map, no reference-pixel choice;
   wigner    — axis D: phase-space histogram B(x, u) of ray hits and exit

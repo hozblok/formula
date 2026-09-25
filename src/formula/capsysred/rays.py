@@ -10,14 +10,13 @@ a {"scene_end": scene, "rows": n} trailer per completed scene. Metadata is
 stored exclusively in the adjacent rays-fingerprint.yaml; the preamble's
 contents are never interpreted. Screen-fate
 rows add x, y, dx, dy and the refl bounce points in float64 (enough for the
-float estimators, stages 7/8/10/11); opl/sins stay full-precision strings for
-the Number path (--replay of stages 2/10). The file is gzipped
-(rays.jsonl.gz).
+float estimators, stages 2/7/8/11/14); opl/sins stay full-precision strings.
+The file is gzipped (rays.jsonl.gz).
 
 trace.lean_rays writes opl/sins as float64 json numbers and drops refl
-(meta gains "lean": true): stage 10 and rescreen are bit-identical (they
-float() these fields anyway), the file shrinks ~4x on bounce-heavy scenes;
-the Number path and the beamlet stage refuse such a file (require_full_rows).
+(meta gains "lean": true): the estimators and rescreen are bit-identical
+(they float() these fields anyway), the file shrinks ~4x on bounce-heavy
+scenes; the beamlet stage refuses such a file (require_full_rows).
 
 rays_v3 is the per-mode layout (a directory: fingerprint, index, one gzip
 section per mode and ray range); RaysReader and Stage 14 accept either.
@@ -50,8 +49,8 @@ class SceneSeed(enum.IntEnum):
     """Per-scene rng-stream tag: its lowercase name keys the lattice streams;
     the integer is only used to replay legacy (sequential-v2) recordings,
     added to cfg.seed*_SCENE_SEED_STRIDE."""
-    FREE = 2         # no-optics scene (stages 2, 7, 8, 11, 12)
-    CAPILLARY = 4    # capillary (stages 6, 7, 8, 10, 11)
+    FREE = 2         # no-optics scene (stages 2, 7, 8, 11)
+    CAPILLARY = 4    # capillary (stages 7, 8, 11, 14)
     CAPILLARY_TOPUP = 6   # legacy-archive tail substreams of topup_trace
     VALIDATE = 9     # stage 9 hit-method cross-check
 
