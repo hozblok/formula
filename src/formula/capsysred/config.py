@@ -58,15 +58,10 @@ DEFAULTS = {
         "ny": 1,
         "reference": None,            # [x, y] of the reference point; None -> window center
     },
-    # rays_jsonl: full-precision per-ray records (rays.jsonl.gz, replay
-    # input). Records/multi-line runs trace with the amplitude_min kill off
-    # (E0-truncation would bias other energies) and apply the threshold after
-    # the per-line amplitudes are known.
     # lean_rays: drop refl and write opl/sins as float64 in the rays file —
     # the estimators read floats anyway (bit-identical); the file cannot
     # feed the beamlet stage.
-    "trace": {"max_bounces": 200, "amplitude_min": 1.0e-6,
-              "rays_jsonl": True, "lean_rays": False},
+    "trace": {"max_bounces": 200, "amplitude_min": 1.0e-6, "lean_rays": False},
     # stage 1: rays traced onto the to-scale schematic (01a-scheme-traced.svg)
     "schematic": {"n_rays": 10},
     # stage 8: number of sketch probe vectors (r ~ n99 modes, see methods §8)
@@ -378,7 +373,6 @@ class Config:
             if self.capillary else 0.0)
         self.max_bounces = int(cfg["trace"]["max_bounces"])
         self.amplitude_min = float(cfg["trace"]["amplitude_min"])
-        self.rays_jsonl = bool(cfg["trace"]["rays_jsonl"])
         self.lean_rays = bool(cfg["trace"]["lean_rays"])
         if ("per_line_fresnel" in (raw or {}).get("spectrum", {})
                 and cfg["spectrum"]["mode"] == "monochromatic"):
