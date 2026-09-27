@@ -338,7 +338,9 @@ def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
             for field, dz, st in planes:
                 st["emitted"] += 1
                 if dz == 0.0:
-                    xi, yi, opl_i, segs_i, pix = x, y, opl, segs, rec.pixel
+                    xi, yi, opl_i, segs_i = x, y, opl, segs
+                    # rec.pixel indexes the recording screen: re-bin here
+                    pix = field.grid.pixel((x, y))
                 else:
                     step = dz / dzf
                     xi, yi = x + dxf * step, y + dyf * step
