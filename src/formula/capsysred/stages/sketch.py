@@ -7,9 +7,9 @@ materialized, which is what makes 2D screens (ny > 1) affordable. Nystrom
 reconstruction gives any μ(P, P_ref) column in O(M·r) and the coherent-mode
 spectrum λ_n (N_eff, n99) of the transmitted field from the r×r core.
 
-A pairwise reference column (same algebra as coherence.CoherenceAccumulator,
-self-pairs dropped) accumulates alongside on the same rays: the sketch column
-must match it within the Nystrom tail error.
+A pairwise reference column (self-pairs dropped) accumulates alongside on
+the same rays: the sketch column must match it within the Nystrom tail
+error.
 
 float64 like stage 7 (the maps are statistical estimators, noise >> 1e-15);
 numpy is imported lazily — stage 8 is opt-in and the core stages stay

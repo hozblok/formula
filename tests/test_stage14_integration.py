@@ -74,10 +74,6 @@ def _write_controlled_rays(path, raw, signs):
     return target, ref
 
 
-def _flatten(grid):
-    return [value for row in grid for value in row]
-
-
 def _rewrite_gzip_lines(path, transform):
     with gzip.open(path, "rt", encoding="utf-8", newline="") as fh:
         lines = list(fh)
@@ -86,7 +82,7 @@ def _rewrite_gzip_lines(path, transform):
         fh.writelines(lines)
 
 
-def test_stage14_cache_hit_schema_and_stage10_projection(tmp_path, monkeypatch):
+def test_stage14_cache_hit_schema(tmp_path, monkeypatch):
     raw = _config()
     rays_dir = tmp_path / "recording"
     rays_dir.mkdir()
@@ -94,8 +90,6 @@ def test_stage14_cache_hit_schema_and_stage10_projection(tmp_path, monkeypatch):
     target, ref = _write_controlled_rays(
         rays, raw, [1, 1, 1, 1, 1, 1, -1, -1, -1, -1])
 
-    old = Simulation.from_dict(raw)
-    old.replay(str(rays), str(tmp_path / "stage10"), stages=[10])
     modern = Simulation.from_dict(raw)
     result = modern.replay(str(rays), str(tmp_path / "stage14"), stages=[14])
     new = modern.results["stage14:capillary"]
@@ -113,14 +107,6 @@ def test_stage14_cache_hit_schema_and_stage10_projection(tmp_path, monkeypatch):
     thresholds = FlagThresholds(**modern.cfg.stage14_flag_thresholds)
     for row in new["rows"]:
         validate_pixel_row(row, thresholds)
-
-    old_maps = old.results["jack:capillary"]["maps"]
-    assert _flatten(old_maps["density"]) == _flatten(new["maps"]["density"])
-    assert _flatten(old_maps["intensity"]) == pytest.approx(
-        _flatten(new["maps"]["intensity"]), rel=1e-13, abs=1e-13)
-    assert old_maps["solid"][0][target] == 1.0
-    assert old_maps["mu"][0][target] == pytest.approx(
-        min(new["rows"][target]["mu_raw"], 1.0), rel=1e-12, abs=1e-12)
 
     expected = {
         "meta.json", "mu-jack.jsonl", "14-capillary-jack-mu.svg",

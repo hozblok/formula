@@ -1,20 +1,18 @@
-"""Stage 10: the stage-6 estimator with per-mode rows and jackknife errors.
+"""Stage 2: pairwise |mu| estimator with per-mode rows and jackknife errors.
 
-Float64 port of doc/mu28_legacy_fixed3_renamed.py brought back to running
-sums: per mode s the sparse per-line fields g, sq fold into per-mode rows
-W_s = sum_m w_m (g g*_ref - sq|_ref), Ic_s = sum_m w_m (|g|^2 - sq) instead
-of summing in place. The totals reproduce the stage-6 |mu| (same rays,
-float64 vs Number); the stored rows add what running sums cannot emit — a
-delete-one-mode jackknife standard error for every pixel. 1D and 2D screens
-(sparse pixel dicts throughout); memory O(n_modes * lit pixels).
+Per mode s the sparse per-line fields g, sq fold into per-mode rows
+W_s = sum_m w_m (g g*_ref - sq|_ref), Ic_s = sum_m w_m (|g|^2 - sq); the
+stored rows yield a delete-one-mode jackknife standard error for every
+pixel. 1D and 2D screens (sparse pixel dicts throughout); memory
+O(n_modes * lit pixels).
 
 Pixels that never see two rays of one mode have Ic = 0 by construction — a
 float residual decides the sign, and mu degenerates to a coin flip between 0
-and the 1.0 clamp (the isolated bright pixels of the stage-6 map). Stage 10
-masks them: mu = err = 0, the "solid" map marks the estimable pixels. On top
-of that the "dubious" map marks solid pixels whose estimate cannot be
-trusted: sigma > 1 (nearly single-mode), every leave-one-out value pinned at
-the 1.0 clamp (sigma = 0 is a lie), no usable jackknife, or Ic <= 0.
+and the 1.0 clamp. They are masked: mu = err = 0, the "solid" map marks the
+estimable pixels. On top of that the "dubious" map marks solid pixels whose
+estimate cannot be trusted: sigma > 1 (nearly single-mode), every
+leave-one-out value pinned at the 1.0 clamp (sigma = 0 is a lie), no usable
+jackknife, or Ic <= 0.
 """
 
 import cmath
@@ -148,20 +146,18 @@ class JackknifeCoherence:
 
 
 def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
-                   seed_offset: int, screen_cfg=None):
-    """The stage-6 estimator over the scene's ray records — from the shared
-    rays file when it matches, else traced (the stage-2/6 rng stream).
-    screen_cfg re-bins the scr_cfg-plane records onto another screen."""
+                   seed_offset: int):
+    """The jackknife estimator over the scene's ray records from the rays
+    file."""
     cfg = sim.cfg
-    target = screen_cfg or scr_cfg
-    screen = ScreenGrid(target)
-    scat = ScatterRaster(target)
+    screen = ScreenGrid(scr_cfg)
+    scat = ScatterRaster(scr_cfg)
     n_modes, n_rays = src_cfg.budget()
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
-    jack = JackknifeCoherence(sim.lines, screen.ref_pixel(target.reference))
+    jack = JackknifeCoherence(sim.lines, screen.ref_pixel(scr_cfg.reference))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
                                       aim_factory, seed_offset)
-    if screen_cfg is not None or getattr(sim.rays, "readonly", False):
+    if getattr(sim.rays, "readonly", False):
         # --replay records may carry pixel ids of a different grid — re-bin
         records = rescreen(records, float(scr_cfg.z), screen)
     stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,

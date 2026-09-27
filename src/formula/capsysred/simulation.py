@@ -1,10 +1,10 @@
 """CAPSYSred stages on the Number engine.
 
-Stage 2 (free space) pushes the same ray stream through the stage-10 jackknife
-estimator (optic = None), stage 12 keeps its pairwise Number ancestor, and
-stage 6 traces capillaries. Stage 3 is the deterministic free-space reference.
-Every optical stage cross-checks its analytic Number hit against the RaySurface
-root-finding engine and the Fresnel factor against xray.reflect_amplitude.
+Stage 2 (free space) pushes the ray stream through the jackknife estimator
+(optic = None); stage 3 is the deterministic free-space reference; stage 14
+is the disk-backed jackknife of the capillary scene. Every optical stage
+cross-checks its analytic Number hit against the RaySurface root-finding
+engine and the Fresnel factor against xray.reflect_amplitude.
 """
 
 import json
@@ -20,7 +20,6 @@ from . import render, schematic
 from .stages import analytic
 from .stages.altcoh import run_alt_stage
 from .stages.beamlet import run_beamlet_stage
-from .stages.coherence import CoherenceAccumulator
 from .shared.common import log as _log
 from .stages.jackknife import run_jack_stage
 from .stages.sketch import run_sketch_stage
@@ -28,8 +27,6 @@ from .stages.stage14 import preflight_stage14_output, run_stage14
 from .stages.validate import METHOD_LABELS, run_validate_stage
 from .config import Config, load
 from .shared.nums import lift, solver, vunit
-from .shared.progress import Progress
-from .screen import ScreenGrid
 from .source import aim_disk_direction, slope_direction
 from .spectrum import spectral_lines, wavelength_m
 from .surfaces import CapillaryBundle, engine_hit_t, entrance_disk
@@ -38,8 +35,7 @@ from .fresnel import FresnelAmplitude
 from . import rays_v3
 from .rays import (RNG_SCHEME, MultiRaysReader, RaysReader, SceneSeed,
                    _validate_stream_metadata, geometry_core, geometry_metadata,
-                   metadata_equal, metadata_path, read_metadata,
-                   require_full_rows, scene_stream)
+                   metadata_equal, metadata_path, read_metadata)
 from .shared.types import HitMethod
 from .shared.utils import flat as _flat
 from .shared import format
@@ -48,7 +44,7 @@ from .shared.physics_constants import FRESNEL_PROBE_THETA
 from .shared.units import (
     m_to_angstrom, m_to_um, rad_to_mrad, rad_to_urad)
 
-KNOWN_STAGES = (1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 14)
+KNOWN_STAGES = (1, 2, 3, 7, 8, 9, 11, 14)
 
 
 class Simulation:
@@ -175,70 +171,6 @@ class Simulation:
             f"{perf['estimated_peak_rss_bytes'] / (1024 ** 3):.2f} GiB",
         ]
 
-    # ------------------------------------------------------------- MC driver
-
-    def _mc_stage(self, stage: str, label: str, src_cfg, scr_cfg, optic,
-                  aim_factory, seed_offset: int):
-        cfg = self.cfg
-        p = cfg.precision
-        screen = ScreenGrid(scr_cfg)
-        n_modes, n_rays = src_cfg.budget()
-        acc = CoherenceAccumulator(self.lines, screen.ref_pixel(scr_cfg.reference),
-                                   cfg.precision)
-        records, rays_from = scene_stream(self, stage, src_cfg, scr_cfg, optic,
-                                          aim_factory, seed_offset)
-        require_full_rows(self.rays, rays_from,
-                          "Number-path estimator (full-precision opl/sins)")
-        stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
-                 "off_window": 0, "reflected_rays": 0, "reflections": 0,
-                 "bounce_hist": {}}
-        progress = Progress(label, n_modes * n_rays)
-        t0 = time.time()
-        mode_cur = None
-        for rec in records:
-            if rec.mode != mode_cur:
-                if mode_cur is not None:
-                    acc.fold_mode()
-                acc.new_mode()
-                mode_cur = rec.mode
-            if not isinstance(rec.opl, Number):
-                # file records carry strings; full-precision round-trip is exact
-                rec = rec._replace(opl=Number(rec.opl, p),
-                                   sins=tuple(Number(s, p) for s in rec.sins))
-            stats["emitted"] += 1
-            nb = len(rec.sins)
-            fate, amps = rec.fate, None
-            if fate == "screen":
-                # geometry is energy-free; Fresnel enters here, per line or at E0
-                amps = (self.line_amps(rec.sins) if self.per_line
-                        else self.fresnel.product(rec.sins))
-                if cfg.amplitude_min > 0.0:
-                    peak = (max(float(abs(a)) for a in amps) if self.per_line
-                            else float(abs(amps)))
-                    if peak < cfg.amplitude_min:
-                        fate = "absorbed"    # below threshold on every line
-            if nb:
-                stats["reflected_rays"] += 1
-                stats["reflections"] += nb
-                stats["bounce_hist"][nb] = stats["bounce_hist"].get(nb, 0) + 1
-            if fate == "screen":
-                if rec.pixel is None:
-                    stats["off_window"] += 1
-                else:
-                    acc.add_ray(rec, amps)
-                    stats["screen"] += 1
-            else:
-                stats[fate] += 1
-            progress.step()
-        if mode_cur is not None:
-            acc.fold_mode()
-        maps = acc.finalize(screen.nx, screen.ny)
-        progress.finish(f"on screen {stats['screen']:,}")
-        result = {"maps": maps, "stats": stats, "screen": screen,
-                  "rays_from": rays_from, "n_modes": n_modes, "n_rays": n_rays,
-                  "seconds": time.time() - t0, "src_cfg": src_cfg}
-        return result
-
     # ------------------------------------------------------------- aiming
 
     def _aim_free(self, source, screen, rng):
@@ -332,8 +264,7 @@ class Simulation:
     # ------------------------------------------------------------- stage 2+3
 
     def _stage2(self, out_dir):
-        """Free space through the stage-10 jackknife estimator: the same
-        algorithm and outputs, optic = None."""
+        """Free space through the jackknife estimator, optic = None."""
         res = run_jack_stage(self, "2 without optics (MC)", "free",
                              self.cfg.free_source, self.cfg.free_screen,
                              None, self._aim_free, SceneSeed.FREE)
@@ -382,66 +313,11 @@ class Simulation:
             f"- RMS(|μ|_MC − |μ|_vCZ) = {rms:.4f}" + (f", ξ = {m_to_um(xi):.3f} µm" if src.shape == "gaussian" else ""),
         ]
 
-    # ------------------------------------------------------------- stage 6
-
-    def _stage6(self, out_dir):
-        cap = self.cfg.capillary
-        bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
-        check = self._capillary_engine_check(bundle)
-        res = self._mc_stage("capillary", "6/6 capillary (MC)", cap.source,
-                             cap.screen, bundle, self._aim_capillary, SceneSeed.CAPILLARY)
-        self.results["capillary"] = res
-        screen, maps = res["screen"], res["maps"]
-        st = res["stats"]
-        ref_xy = screen.pixel_xy(maps["ref_pixel"])
-        extent = (m_to_um(screen.x0f), m_to_um(screen.x0f + screen.exf),
-                  m_to_um(screen.y0f), m_to_um(screen.y0f + screen.eyf))
-        limit = 1.0 / math.sqrt(res["n_modes"])
-        sub = (f"{res['n_modes']} modes × {res['n_rays']} rays; transmitted {st['screen']:,}; "
-               f"absorbed {st['absorbed']:,}; reflections {st['reflections']:,}")
-        sub_mu = (f"{res['n_modes']} modes × {res['n_rays']} rays; statistical limit |μ| ≈ {limit:.2f}; "
-                  "isolated bright pixels — low statistics")
-        if screen.ny > 1:
-            mu_fig = render.heatmap(maps["mu"], extent,
-                                    "Capillary: degree of coherence |μ(P, P_ref)|",
-                                    "x, µm", "y, µm", sub_mu, "|μ|",
-                                    mark=(m_to_um(ref_xy[0]), m_to_um(ref_xy[1])), vmax=1.0,
-                                    w=640)
-            int_fig = render.heatmap(maps["intensity"], extent,
-                                     "Capillary: intensity on screen",
-                                     "x, µm", "y, µm", sub, "I, arb. units", w=640)
-        else:
-            xs_um = [m_to_um(x) for x in screen.xs()]
-            row = 0
-            mu_fig = render.line_chart(
-                [{"xs": xs_um, "ys": maps["mu"][row], "label": "MC |μ|"}],
-                "Capillary: degree of coherence", "x, µm", "|μ|", sub)
-            imax = max(maps["intensity"][row]) or 1.0
-            int_fig = render.line_chart(
-                [{"xs": xs_um, "ys": [v / imax for v in maps["intensity"][row]],
-                  "label": "intensity"}],
-                "Capillary: intensity", "x, µm", "I, arb. units", sub)
-        self._save(out_dir, "06-capillary-mc-coherence.svg", mu_fig)
-        self._save(out_dir, "06a-capillary-mc-intensity.svg", int_fig)
-        bh = ", ".join(f"{k}×: {v:,}" for k, v in sorted(st["bounce_hist"].items()))
-        mean_b = (st["reflections"] / st["reflected_rays"]
-                  if st["reflected_rays"] else 0.0)
-        self.report += [
-            "## Stage 6 — capillary (MC)",
-            f"- {res['n_modes']} modes × {res['n_rays']} rays; transmitted to the screen {st['screen']:,} "
-            f"({100.0 * st['screen'] / st['emitted']:.1f}%); absorbed {st['absorbed']:,}",
-            f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
-            f"- reflections: total {st['reflections']:,}; per ray: {bh or 'none'}; mean {mean_b:.2f} per reflected ray",
-            f"- {check}",
-            f"- time: {res['seconds']:.1f} s",
-        ]
-        return res
-
     # ------------------------------------------------------------- stage 7
 
     def _stage7(self, out_dir):
         """Alternative estimators (full W — axis C, Wigner — axis D) on the
-        same ray streams as stages 2/6 (same seed offsets)."""
+        same ray streams as stage 2 (same seed offsets)."""
         cap = self.cfg.capillary
         scenes = []
         if self.cfg.free_source is not None:
@@ -551,7 +427,7 @@ class Simulation:
             self.results[f"sketch:{stage}"] = res
             maps, screen, st = res["maps"], res["screen"], res["stats"]
             rms_engine = None
-            num = self.results.get(stage)   # stage 2/6 Number maps, same rays
+            num = self.results.get("free") if stage == "free" else None   # stage 2, same rays
             if num is not None:
                 mask = _flat(maps["solid"])   # knife pixels: junk either way
                 pairs = [(a, b) for a, b, s in zip(_flat(maps["mu_pair"]),
@@ -610,7 +486,7 @@ class Simulation:
                 f"- rank r = {maps['rank']}; RMS(|μ|_pair − |μ|_sketch) = {maps['rms_pair_sketch']:.4f} "
                 f"on {maps['solid_px']} solid px (dark: {maps['dark_px']})",
                 f"- mode spectrum: N_eff = {maps['neff']:.2f}, 99% of energy in {maps['n99']} modes",
-            ] + ([f"- RMS(|μ|_pair − |μ|_stage{'2' if stage == 'free' else '6'}_Number) = {rms_engine:.2e} (same rays, solid px)"]
+            ] + ([f"- RMS(|μ|_pair − |μ|_stage2) = {rms_engine:.2e} (same rays, solid px)"]
                  if rms_engine is not None else []) + [
                 f"- time: {res['seconds']:.1f} s",
             ]
@@ -711,36 +587,8 @@ class Simulation:
         self.report.append(f"- time: {res['seconds']:.1f} s")
         return res
 
-    # ------------------------------------------------------------- stage 10
-
-    def _stage10(self, out_dir):
-        """Stage-6 alternative (doc/mu28_legacy_fixed3_renamed.py, running-sum
-        form): same capillary rays, |mu| plus a delete-one-mode jackknife map."""
-        cap = self.cfg.capillary
-        bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
-        res = run_jack_stage(self, "10 jackknife capillary (MC)", "capillary",
-                             cap.source, cap.screen, bundle,
-                             self._aim_capillary, SceneSeed.CAPILLARY)
-        self.results["jack:capillary"] = res
-        self._jack_outputs(out_dir, "10", "capillary", res,
-                           vs=self.results.get("capillary"))
-        # extra screens: the same records re-binned onto each plane
-        for i, scr in enumerate(cap.screens, 1):
-            res_i = run_jack_stage(self, f"10 jackknife capillary s{i} (MC)",
-                                   "capillary", cap.source, cap.screen, bundle,
-                                   self._aim_capillary, SceneSeed.CAPILLARY,
-                                   screen_cfg=scr)
-            self.results[f"jack:capillary-s{i}"] = res_i
-            self._jack_outputs(out_dir, "10", f"capillary-s{i}", res_i,
-                               note=f"screen {i}: z = {mm(scr.z)}, "
-                                    f"window {um(scr.edge_x)} × {um(scr.edge_y)}, "
-                                    f"{scr.nx}×{scr.ny} px")
-        return res
-
-    def _jack_outputs(self, out_dir, tag, scene, res, vs=None, note=None):
-        """Jackknife scene outputs shared by stages 2 and 10: figures, report
-        section, mu-jack.jsonl rows; vs = same-rays stage-6 result for Δμ;
-        note = extra-screen geometry line for the report."""
+    def _jack_outputs(self, out_dir, tag, scene, res):
+        """Jackknife scene outputs: figures, report section, mu-jack.jsonl rows."""
         maps, screen, st = res["maps"], res["screen"], res["stats"]
         nx, ny = screen.nx, screen.ny
         n_lit = sum(1 for d in _flat(maps["density"]) if d > 0)
@@ -750,10 +598,6 @@ class Simulation:
         errs = [flat_err[i] for i in solid]
         med_err = sorted(errs)[len(errs) // 2] if errs else 0.0
         limit = 1.0 / math.sqrt(res["n_modes"])
-        rms6 = None
-        if vs is not None and solid:
-            a, b = _flat(maps["mu"]), _flat(vs["maps"]["mu"])
-            rms6 = analytic.rms_diff([a[i] for i in solid], [b[i] for i in solid])
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
         sub = (f"{res['n_modes']} modes × {res['n_rays']} rays; "
                f"σ_jack median {med_err:.3f}; statistical limit |μ| ≈ {limit:.2f}; "
@@ -821,16 +665,6 @@ class Simulation:
                                               res["scatter"].extent_um(),
                                               f"{scene}: ray locations on screen",
                                               "x, µm", "y, µm", sub))
-            if rms6 is not None:
-                diff = [[abs(a - b) for a, b in zip(ra, rb)]
-                        for ra, rb in zip(maps["mu"], vs["maps"]["mu"])]
-                fig = render.heatmap(diff, extent,
-                                     "|μ_jack − μ_pairwise| (same rays)",
-                                     "x, µm", "y, µm",
-                                     f"RMS on solid px {rms6:.2e}; bright isolated px = "
-                                     "pairless residuals of the pairwise estimator, masked by the jackknife",
-                                     "Δ", w=640)
-                self._save(out_dir, f"{tag}c-{scene}-jack-vs6.svg", fig)
         else:
             xs_um = [m_to_um(x) for x in screen.xs()]
             row_mu, row_err = maps["mu"][0], maps["mu_err"][0]
@@ -838,9 +672,6 @@ class Simulation:
             series = [{"xs": xs_um, "ys": row_mu, "label": "jackknife |μ| ± σ_jack",
                        "lo": [max(m - e, 0.0) for m, e in zip(row_mu, row_err)],
                        "hi": [min(m + e, 1.0) for m, e in zip(row_mu, row_err)]}]
-            if vs is not None:
-                series.append({"xs": xs_um, "ys": vs["maps"]["mu"][0],
-                               "label": "pairwise (Number)", "dash": "6,4"})
             if dub_i:
                 series.append({"xs": [xs_um[i] for i in dub_i],
                                "ys": [row_mu[i] for i in dub_i],
@@ -871,17 +702,6 @@ class Simulation:
                   "label": "rays / max", "dash": "6,4"}],
                 "intensity and ray density", "x, µm", "normalized", sub)
             self._save(out_dir, f"{tag}b-{scene}-jack-intensity.svg", fig)
-            if rms6 is not None:
-                fig = render.line_chart(
-                    [{"xs": xs_um,
-                      "ys": [a - b for a, b in zip(row_mu, vs["maps"]["mu"][0])],
-                      "label": "μ_jack − μ_pairwise",
-                      "lo": [-e for e in row_err], "hi": list(row_err)}],
-                    "jackknife vs pairwise: Δμ with the ±σ_jack band", "x, µm", "Δμ",
-                    f"RMS on solid px {rms6:.2e}; spikes = the pairwise estimator's "
-                    "pairless residuals, masked by the jackknife",
-                    vlines=[(m_to_um(ref_xy[0]), "ref")], w=760, y_zero=False)
-                self._save(out_dir, f"{tag}c-{scene}-jack-vs6.svg", fig)
         xs_um_all = [m_to_um(x) for x in screen.xs()]
         ys_um_all = [m_to_um(y) for y in screen.ys()]
         for iy in range(ny):
@@ -903,27 +723,16 @@ class Simulation:
         _log("  → mu-jack.jsonl")
         below = (100.0 * sum(1 for e in errs if e < limit) / len(errs)
                  if errs else 0.0)
-        refl = []
-        if scene != "free":
-            bh = ", ".join(f"{k}×: {v:,}" for k, v in sorted(st["bounce_hist"].items()))
-            mean_b = (st["reflections"] / st["reflected_rays"]
-                      if st["reflected_rays"] else 0.0)
-            refl = [f"- reflections: total {st['reflections']:,}; per ray: {bh or 'none'}; "
-                    f"mean {mean_b:.2f} per reflected ray"]
         self.report += [
             f"## Stage {int(tag)} — jackknife estimator [{scene}]",
-        ] + ([f"- {note}"] if note else []) + [
             f"- {res['n_modes']} modes × {res['n_rays']} rays; on screen {st['screen']:,} of {st['emitted']:,}",
             f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
-        ] + refl + [
             f"- solid pixels (≥2 same-mode rays, |μ| estimable): {len(solid)} of {n_lit} lit; "
             "the rest are masked to μ = σ_jack = 0",
             f"- don't-trust estimates on solid px (σ_jack > 1, pinned at |μ| = 1 with σ_jack = 0, "
             f"or no usable jackknife/cross data): {n_dub} of {len(solid)}",
             f"- σ_jack on solid pixels: median {med_err:.4f}, max {max(errs, default=0.0):.4f}; "
             f"{below:.0f}% below the 1/√N limit ({limit:.3f})",
-        ] + ([f"- RMS(|μ|_jack − |μ|_stage6) = {rms6:.2e} (same rays, solid pixels)"]
-             if rms6 is not None else []) + [
             f"- time: {res['seconds']:.1f} s",
         ]
 
@@ -933,8 +742,7 @@ class Simulation:
         """Beamlet estimator:
         elliptic Gaussian phase spots instead of point bins, the 2x2 Gamma
         tensor through the bounces (general astigmatism), honest mu with no
-        self-pair subtraction. Free scene validates against vCZ; the
-        capillary scene compares to stage 6 on the same rays; extra
+        self-pair subtraction. Free scene validates against vCZ; extra
         capillary screens re-bin the same records onto each plane."""
         cap = self.cfg.capillary
         rows = []
@@ -976,8 +784,7 @@ class Simulation:
                                     SceneSeed.CAPILLARY,
                                     extra_screens=cap.screens)
             self.results["beamlet:capillary"] = res
-            self._beamlet_outputs(out_dir, "capillary", res, rows,
-                                  vs=self.results.get("capillary"))
+            self._beamlet_outputs(out_dir, "capillary", res, rows)
             for i, (scr, res_i) in enumerate(zip(cap.screens, res["extras"]), 1):
                 self.results[f"beamlet:capillary-s{i}"] = res_i
                 self._beamlet_outputs(
@@ -1000,10 +807,9 @@ class Simulation:
                 f"w₀ = {m_to_um(self.cfg.beamlet_w0):.2f} µm{aniso}, "
                 f"mean w on screen = {m_to_um(res['maps']['w_mean']):.2f} µm")
 
-    def _beamlet_outputs(self, out_dir, tag, res, rows, vs=None, note=None,
-                         extra=()):
+    def _beamlet_outputs(self, out_dir, tag, res, rows, note=None, extra=()):
         """Beamlet scene outputs: report section, figures (capillary tags),
-        mu-beamlet.jsonl rows; vs = same-rays pairwise result for Δμ."""
+        mu-beamlet.jsonl rows."""
         maps, screen, st = res["maps"], res["screen"], res["stats"]
         nx, ny = screen.nx, screen.ny
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
@@ -1065,34 +871,6 @@ class Simulation:
                       "label": "beamlet intensity"}],
                     "beamlet intensity", "x, µm", "I, arb. units", sub)
                 self._save(out_dir, f"11a-{tag}-beamlet-intensity.svg", fig)
-            lit = ([i for i, d in enumerate(_flat(vs["maps"]["density"]))
-                    if d > 0] if vs is not None else [])
-            if lit:
-                a, b = _flat(maps["mu"]), _flat(vs["maps"]["mu"])
-                rms6 = analytic.rms_diff([a[i] for i in lit],
-                                         [b[i] for i in lit])
-                sub6 = (f"RMS on lit px {rms6:.3f}; same rays, different "
-                        "estimators: pairwise subtracts ray self-pairs, "
-                        "beamlets smear the field")
-                if ny > 1:
-                    diff = [[abs(x - y) for x, y in zip(ra, rb)]
-                            for ra, rb in zip(maps["mu"], vs["maps"]["mu"])]
-                    fig = render.heatmap(diff, extent,
-                                         "|μ_beamlet − μ_pairwise| (same rays)",
-                                         "x, µm", "y, µm", sub6, "Δ", w=640)
-                else:
-                    fig = render.line_chart(
-                        [{"xs": xs_um,
-                          "ys": [x - y for x, y in
-                                 zip(maps["mu"][0], vs["maps"]["mu"][0])],
-                          "label": "μ_beamlet − μ_pairwise"}],
-                        "beamlets vs pairwise: Δμ (same rays)", "x, µm", "Δμ",
-                        sub6, w=760, y_zero=False)
-                self._save(out_dir, f"11b-{tag}-beamlet-vs6.svg", fig)
-                report.append(
-                    f"- RMS(|μ|_beamlet − |μ|_stage6) = {rms6:.4f} on "
-                    f"{len(lit)} lit px (same rays; estimators differ — "
-                    "stage 6 subtracts self-pairs, beamlets do not)")
         if ny > 1:
             extent = (m_to_um(screen.x0f), m_to_um(screen.x0f + screen.exf),
                       m_to_um(screen.y0f), m_to_um(screen.y0f + screen.eyf))
@@ -1115,49 +893,6 @@ class Simulation:
                              "n_rays": int(maps["density"][iy][ix])})
         report.append(f"- time: {res['seconds']:.1f} s")
         self.report += report
-
-    # ------------------------------------------------------------- stage 12
-
-    def _stage12(self, out_dir):
-        """The pre-jackknife stage 2: pairwise Number estimator on the free
-        scene (same rays as stage 2, no σ_jack), kept for cross-checks."""
-        res = self._mc_stage("free", "12 pairwise free (MC)", self.cfg.free_source,
-                             self.cfg.free_screen, None, self._aim_free, SceneSeed.FREE)
-        self.results["pairwise:free"] = res
-        screen, maps = res["screen"], res["maps"]
-        xs_um = [m_to_um(x) for x in screen.xs()]
-        ref_xy = screen.pixel_xy(maps["ref_pixel"])
-        sub = (f"{res['n_modes']} modes × {res['n_rays']} rays, {self._spectrum_note()}, "
-               f"x_ref = {m_to_um(ref_xy[0]):.2f} µm")
-        row = screen.ny // 2
-        limit = 1.0 / math.sqrt(res["n_modes"])
-        mu_fig = render.line_chart(
-            [{"xs": xs_um, "ys": maps["mu"][row], "label": "MC |μ(x, x_ref)|"},
-             {"xs": xs_um, "ys": [limit] * len(xs_um), "color": "#999",
-              "dash": "2,4", "width": 1.0,
-              "label": f"statistical limit 1/√N modes ≈ {limit:.2f}"}],
-            "Degree of coherence without optics (pairwise Number)",
-            "x on screen, µm", "|μ|", sub,
-            vlines=[(m_to_um(ref_xy[0]), "ref")], w=640)
-        imax = max(max(r) for r in maps["intensity"]) or 1.0
-        dmax = max(max(r) for r in maps["density"]) or 1.0
-        int_fig = render.line_chart(
-            [{"xs": xs_um, "ys": [v / imax for v in maps["intensity"][row]],
-              "label": "intensity"},
-             {"xs": xs_um, "ys": [v / dmax for v in maps["density"][row]],
-              "label": "ray density", "dash": "4,3"}],
-            "Intensity and density (sampling check)",
-            "x on screen, µm", "arb. units", sub, w=640)
-        self._save(out_dir, "12-free-mc-coherence.svg",
-                   render.hstack([mu_fig, int_fig]))
-        st = res["stats"]
-        self.report += [
-            "## Stage 12 — |μ| without optics (pairwise MC)",
-            f"- modes: {res['n_modes']}, rays/mode: {res['n_rays']}, on screen: {st['screen']:,} of {st['emitted']:,}",
-            f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
-            f"- time: {res['seconds']:.1f} s",
-        ]
-        return res
 
     def _capillary_engine_check(self, bundle) -> str:
         cap = self.cfg.capillary
@@ -1190,7 +925,7 @@ class Simulation:
         if self.cfg.free_source is not None:
             wanted.update((2, 3))
         if self.cfg.capillary is not None:
-            wanted.add(6)
+            wanted.add(14)
         return wanted
 
     def _validate_stage_scenes(self, wanted: set[int]) -> None:
@@ -1198,12 +933,12 @@ class Simulation:
         if 1 in wanted and (self.cfg.free_source is None
                             and self.cfg.capillary is None):
             raise ValueError("stage 1 requires a free or capillary scene")
-        free_stages = sorted(wanted & {2, 3, 12})
+        free_stages = sorted(wanted & {2, 3})
         if free_stages and self.cfg.free_source is None:
             raise ValueError(
                 f"stages {free_stages} require a configured free.source"
             )
-        capillary_stages = sorted(wanted & {6, 9, 10, 14})
+        capillary_stages = sorted(wanted & {9, 14})
         if capillary_stages and self.cfg.capillary is None:
             raise ValueError(
                 f"stages {capillary_stages} require a configured "
@@ -1315,7 +1050,7 @@ class Simulation:
             self.rays = None
         else:
             self.rays = None
-            if wanted & {2, 6, 7, 8, 10, 11, 12, 14}:
+            if wanted & {2, 7, 8, 11, 14}:
                 local = self._local_recording(out_dir)
                 if local is None:
                     raise ValueError(
@@ -1324,7 +1059,7 @@ class Simulation:
                         "or pass --replay"
                     )
                 self.report.insert(-1, f"- rays from {local} (no tracing)")
-                if wanted & {2, 6, 7, 8, 10, 11, 12}:
+                if wanted & {2, 7, 8, 11}:
                     try:
                         self.rays = RaysReader(local)
                     except (OSError, EOFError, zlib.error, UnicodeError, ValueError,
@@ -1346,9 +1081,6 @@ class Simulation:
             if 3 in wanted:
                 _log("Stage 3: van Cittert–Zernike analytics")
                 self._stage3(out_dir, res_free)
-            if 6 in wanted:
-                _log("Stage 6: capillary (MC)")
-                self._stage6(out_dir)
             if 7 in wanted:
                 _log("Stage 7: alternative estimators — full W (axis C) + Wigner (axis D)")
                 self._stage7(out_dir)
@@ -1360,15 +1092,9 @@ class Simulation:
                      f"{', '.join(self.cfg.validate_methods)} vs "
                      f"{self.cfg.validate_reference} reference")
                 self._stage9(out_dir)
-            if 10 in wanted:
-                _log("Stage 10: stage-6 estimator + delete-one-mode jackknife errors")
-                self._stage10(out_dir)
             if 11 in wanted:
                 _log("Stage 11: beamlet estimator — elliptic phase spots (Γ tensor, general astigmatism)")
                 self._stage11(out_dir)
-            if 12 in wanted:
-                _log("Stage 12: pairwise Number estimator without optics (the pre-jackknife stage 2)")
-                self._stage12(out_dir)
         finally:
             if self.rays is not None:
                 self.rays.close()
@@ -1451,18 +1177,19 @@ class Simulation:
     def replay(self, records_path, out_dir, stages=None) -> dict:
         """Run stages from a recorded rays file — no tracing at all.
 
-        Any streaming stage replays (2, 6-8, 10-12 and 14, plus analytics 3; stage
-        9 validates live tracers and is refused); default = the Number stages
-        of the scenes present (free -> 2, capillary -> 6). The
-        spectrum and the material may differ from the recording — rays are
-        energy-free; the geometry, seed and budgets must match it.
+        Any streaming stage replays (2, 7, 8, 11 and 14, plus analytics 3;
+        stage 9 validates live tracers and is refused); default = the
+        jackknife stage of each scene present (free -> 2, capillary -> 14).
+        The spectrum and the material may differ from the recording — rays
+        are energy-free; the geometry, seed and budgets must match it.
         """
         paths = ([records_path] if isinstance(records_path, str)
                  else list(records_path))
+        reader = None
         if stages is None:
             reader = (RaysReader(paths[0]) if len(paths) == 1
                       else MultiRaysReader(paths))
-            per_scene = {"free": 2, "capillary": 6}
+            per_scene = {"free": 2, "capillary": 14}
             configured = set()
             if self.cfg.free_source is not None:
                 configured.add("free")
@@ -1474,16 +1201,16 @@ class Simulation:
                 raise ValueError(
                     f"no replayable configured scenes in {records_path!r}"
                 )
-            return self.run(out_dir, stages=stages, rays_src=reader)
         wanted = set(stages)
-        if 14 in wanted and wanted == {14}:
+        if wanted == {14}:
             # No RaysReader: its constructor scans the whole gzip.  The
             # Stage-14 builder validates/deposits in one strict pass, while a
             # cache hit does not open the ray archive at all.
             return self.run(out_dir, stages=stages,
                             stage14_paths=paths)
-        reader = (RaysReader(paths[0]) if len(paths) == 1
-                  else MultiRaysReader(paths))
+        if reader is None:
+            reader = (RaysReader(paths[0]) if len(paths) == 1
+                      else MultiRaysReader(paths))
         return self.run(out_dir, stages=stages, rays_src=reader,
                         stage14_paths=paths if 14 in wanted else None)
 

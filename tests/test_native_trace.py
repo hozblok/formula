@@ -668,12 +668,12 @@ def test_simulation_native_equals_python(tmp_path, monkeypatch):
     sim_native = Simulation.from_dict(TINY)
     trace_v3(str(cfg), str(tmp_path / "native" / "rays-modes"), jobs=1, level=6,
              log=lambda m: None, scenes="all")
-    sim_native.run(str(tmp_path / "native"), stages=[2, 6])
+    sim_native.run(str(tmp_path / "native"), stages=[2, 11])
     monkeypatch.setenv("CAPSYSRED_PYTHON_TRACE", "1")
     sim_python = Simulation.from_dict(TINY)
     trace_v3(str(cfg), str(tmp_path / "python" / "rays-modes"), jobs=1, level=6,
              log=lambda m: None, scenes="all")
-    sim_python.run(str(tmp_path / "python"), stages=[2, 6])
+    sim_python.run(str(tmp_path / "python"), stages=[2, 11])
     p = TINY["precision"]
     def ray_rows(sub):
         archive = str(tmp_path / sub / "rays-modes")
@@ -690,7 +690,7 @@ def test_simulation_native_equals_python(tmp_path, monkeypatch):
         assert len(rn["sins"]) == len(rp["sins"])
         for sn, sp in zip(rn["sins"], rp["sins"]):
             assert_close(Number(sp, p), Number(sn, p), TRACE_TOL)
-    for stage in ("free", "capillary"):
+    for stage in ("free", "beamlet:capillary"):
         rn, rp = sim_native.results[stage], sim_python.results[stage]
         assert rn["stats"] == rp["stats"]
         for name in ("mu", "intensity", "density"):

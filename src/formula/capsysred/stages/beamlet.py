@@ -12,8 +12,8 @@ bounces are flat (the scalar-q model of stage 11a).
 
 The estimator is honest — no ray self-pair subtraction: the mode field is a
 true coherent sum of beamlet fields, mu = |W| / sqrt(I*I_ref) with
-I = sum_m w_m |g_m|^2 as is. The rng stream matches _mc_stage, so the rays
-are the stage-2/6 rays.
+I = sum_m w_m |g_m|^2 as is. The rng stream matches the other estimators,
+so the rays are the stage-2/14 rays.
 """
 
 import cmath
@@ -338,7 +338,9 @@ def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
             for field, dz, st in planes:
                 st["emitted"] += 1
                 if dz == 0.0:
-                    xi, yi, opl_i, segs_i, pix = x, y, opl, segs, rec.pixel
+                    xi, yi, opl_i, segs_i = x, y, opl, segs
+                    # rec.pixel indexes the recording screen: re-bin here
+                    pix = field.grid.pixel((x, y))
                 else:
                     step = dz / dzf
                     xi, yi = x + dxf * step, y + dyf * step
