@@ -19,7 +19,7 @@ from .. import xray
 from . import render, schematic
 from .stages import analytic
 from .stages.altcoh import run_alt_stage
-from .stages.beamlet import run_beamlet_stage
+from .stages.beamlet import recorded_plane, run_beamlet_stage
 from .shared.common import log as _log
 from .stages.jackknife import run_jack_stage
 from .stages.sketch import run_sketch_stage
@@ -744,8 +744,11 @@ class Simulation:
         tensor through the bounces (general astigmatism), honest mu with no
         self-pair subtraction. Free scene validates against vCZ; extra
         capillary screens re-bin the same records onto each plane."""
+        self.cfg.validate_beamlet()
         cap = self.cfg.capillary
         rows = []
+        if cap is not None and self.rays is not None:
+            recorded_plane(self, "capillary", cap.screen)   # fail before the free pass
         if self.cfg.free_source is not None:
             res = run_beamlet_stage(self, "11 beamlet free (MC)", "free",
                                     self.cfg.free_source, self.cfg.free_screen,
@@ -801,7 +804,7 @@ class Simulation:
 
     def _beamlet_sub(self, res):
         w0t = res.get("w0_t", self.cfg.beamlet_w0)
-        aniso = (f" (sag) / {m_to_um(w0t):.2f} µm (tang)"
+        aniso = (f" (y) / {m_to_um(w0t):.2f} µm (x)"
                  if w0t != self.cfg.beamlet_w0 else "")
         return (f"{res['n_modes']} modes × {res['n_rays']} rays; "
                 f"w₀ = {m_to_um(self.cfg.beamlet_w0):.2f} µm{aniso}, "
@@ -820,9 +823,11 @@ class Simulation:
                   f"{st['screen']:,} of {st['emitted']:,} (tails off window: {st['off_window']:,})",
                   f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
                   f"- w₀ = {m_to_um(self.cfg.beamlet_w0):.2f} µm"
-                  + (f" (sagittal), {m_to_um(res['w0_t']):.2f} µm (tangential)"
+                  + (f" (y), {m_to_um(res['w0_t']):.2f} µm (x)"
                      if res.get("w0_t", self.cfg.beamlet_w0)
                      != self.cfg.beamlet_w0 else "")
+                  + ("" if self.cfg.beamlet_waist_z is None else
+                     f", waist at z = {mm(self.cfg.beamlet_waist_z)}")
                   + f"; mean spot width on screen "
                   f"= {m_to_um(maps['w_mean']):.2f} µm; Γ-tensor deposit; honest |μ| "
                   "(no self-pair subtraction)"]

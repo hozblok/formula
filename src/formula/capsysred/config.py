@@ -74,9 +74,12 @@ DEFAULTS = {
         "methods": ["cpp-closed-form", "subdivision"],
     },
     # stage 11: beamlet launch waists [m] and deposit window radius in beam
-    # widths. w0 is the sagittal (channel) waist; w0_t the tangential one:
-    # null = isotropic (= w0), "auto" = the scene's Fresnel scale
-    # sqrt(lam*L/pi) of the source->screen flight, or an explicit number.
+    # widths. w0 is the waist along y, w0_t along x: null = isotropic (= w0),
+    # "auto" = the scene's Fresnel scale sqrt(lam*L/pi) of the
+    # source->screen flight, or an explicit number. waist_z [m]: the launch
+    # beam's free-space waist lies waist_z - z_source along the ray past the
+    # source (the plane z = waist_z when walls before it are flat), null = at
+    # the source.
     "beamlet": {"w0": 5.0e-7, "w0_t": None, "window_sigmas": 3.0},
     # stage 14: exact disk-backed delete-one-mode jackknife taxonomy.
     "stage14": {"flag_thresholds": {
@@ -409,6 +412,7 @@ class Config:
             raise ValueError(f"beamlet w0_t: null, \"auto\" or a number, got {w0t!r}")
         self.beamlet_w0_t = float(w0t) if isinstance(w0t, (int, float)) else w0t
         self.beamlet_ns = float(cfg["beamlet"]["window_sigmas"])
+        self.beamlet_waist_z = cfg["beamlet"].get("waist_z")
         stage14 = cfg.get("stage14")
         if not isinstance(stage14, dict):
             raise ValueError("stage14 must be a mapping")
@@ -453,6 +457,23 @@ class Config:
             raise ValueError(
                 "stage14.flag_thresholds.min_coherent_fraction must be finite and in (0, 1]"
             )
+
+    def validate_beamlet(self):
+        """Stage-11-only checks; other stages retain the legacy YAML parser."""
+        def finite(v):
+            return (isinstance(v, (int, float)) and not isinstance(v, bool)
+                    and math.isfinite(v))
+
+        beamlet = self.raw["beamlet"]
+        w0, w0t, wz = beamlet["w0"], beamlet.get("w0_t"), beamlet.get("waist_z")
+        if not (finite(w0) and w0 > 0):
+            raise ValueError(f"beamlet w0: a positive number, got {w0!r}")
+        if not (w0t is None or w0t == "auto" or finite(w0t) and w0t > 0):
+            raise ValueError(f"beamlet w0_t: null, \"auto\" or a positive number, got {w0t!r}")
+        if not (wz is None or finite(wz)):
+            raise ValueError(f"beamlet waist_z: null or a number, got {wz!r}")
+        self.beamlet_waist_z = None if wz is None else float(wz)
+
 
 def load(path_or_dict: str | os.PathLike | dict) -> Config:
     """Build Config from a YAML file path or an already-parsed dict."""

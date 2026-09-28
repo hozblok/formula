@@ -5,6 +5,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <cmath>
 #include <complex>
 #include <memory>
 #include <string>
@@ -168,15 +169,19 @@ class BeamletGrid {
   void add(size_t m, double x, double y, std::complex<double> pref, double tx,
            double ty, std::complex<double> hxx, std::complex<double> hxy,
            std::complex<double> hyy, double rx, double ry) {
-    const long ix_lo = std::max(0L, long(std::floor((x - rx - x0_) / dx_)));
-    const long ix_hi =
-        std::min(nx_ - 1, long(std::floor((x + rx - x0_) / dx_)));
-    const long iy_lo = std::max(0L, long(std::floor((y - ry - y0_) / dy_)));
-    const long iy_hi =
-        std::min(ny_ - 1, long(std::floor((y + ry - y0_) / dy_)));
-    if (ix_lo > ix_hi || iy_lo > iy_hi) {
+    // clamp in double: a blown-up spot overflows a 32-bit long
+    const double fx_lo = std::floor((x - rx - x0_) / dx_);
+    const double fx_hi = std::floor((x + rx - x0_) / dx_);
+    const double fy_lo = std::floor((y - ry - y0_) / dy_);
+    const double fy_hi = std::floor((y + ry - y0_) / dy_);
+    if (!(fx_hi >= 0.0 && fx_lo <= double(nx_ - 1) && fy_hi >= 0.0 &&
+          fy_lo <= double(ny_ - 1))) {
       return;
     }
+    const long ix_lo = fx_lo < 0.0 ? 0L : long(fx_lo);
+    const long ix_hi = fx_hi > double(nx_ - 1) ? nx_ - 1 : long(fx_hi);
+    const long iy_lo = fy_lo < 0.0 ? 0L : long(fy_lo);
+    const long iy_hi = fy_hi > double(ny_ - 1) ? ny_ - 1 : long(fy_hi);
     auto &g = g_.at(m);
     // exp arg as an analytic function of t = dx_off: c2*t^2 + b*t + a
     // with c2 = i*conj(hxx) (complex(quad.imag, quad.real) == i*conj(quad))
@@ -194,8 +199,9 @@ class BeamletGrid {
       // stays <= 1 in magnitude (an edge start overflows on tail rays)
       const double vp =
           hxx.imag() == 0.0 ? 0.0 : -hxy.imag() * dy_off / hxx.imag();
-      const long ip = std::max(
-          ix_lo, std::min(ix_hi, long(std::floor((vp + x - x0_) / dx_))));
+      const long ip = long(std::max(
+          double(ix_lo),
+          std::min(double(ix_hi), std::floor((vp + x - x0_) / dx_))));
       const double tp = x0_ + (ip + 0.5) * ex_ / nx_ - x;
       const std::complex<double> v0 =
           pref * std::exp(a + b * tp + c2 * (tp * tp));
@@ -219,14 +225,17 @@ class BeamletGrid {
   }
 
   // Whole-ray deposit: gamma.propagate + the spot per line, one call per
-  // ray. lenses is flat [(phi, 1/f_t, 1/f_s), ...]; returns (spot width of
+  // ray. lenses is flat [(phi, pxx, pxy, pyy), ...]; returns (spot width of
   // line 0, geometric mean of the axes; -1 when skipped) and the number of
   // lines whose Im(G) lost negative-definiteness (not deposited).
   py::tuple add_ray(double x, double y, double dxf, double dyf, double opl,
                     double psi, const std::vector<double> &segs,
                     const std::vector<double> &lenses,
                     const std::vector<std::complex<double>> &amps) {
-    const size_t n_lens = lenses.size() / 3;
+    const size_t n_lens = lenses.size() / 4;
+    if (segs.empty() || lenses.size() != 4 * (segs.size() - 1)) {
+      throw std::invalid_argument("add_ray: lenses must be 4*(len(segs)-1)");
+    }
     double w_spot = -1.0;
     long bad = 0;
     for (size_t m = 0; m < kms_.size(); ++m) {
@@ -264,23 +273,34 @@ class BeamletGrid {
         qxx += segs[j];
         qyy += segs[j];
         if (j < n_lens) {
-          const double phi = lenses[3 * j], ift = lenses[3 * j + 1],
-                       ifs = lenses[3 * j + 2];
-          if (ift == 0.0 && ifs == 0.0) {
+          // gamma.reflect twin: Gamma -= P, then the mirror M Q M; phi NaN
+          // = unknown wall normal (no flip, no lens)
+          const double phi = lenses[4 * j], pxx = lenses[4 * j + 1],
+                       pxy = lenses[4 * j + 2], pyy = lenses[4 * j + 3];
+          if (std::isnan(phi)) {
             continue;
           }
+          if (pxx != 0.0 || pxy != 0.0 || pyy != 0.0) {
+            std::complex<double> det = qxx * qyy - qxy * qxy;
+            const std::complex<double> gxx = qyy / det - pxx;
+            const std::complex<double> gxy = -qxy / det - pxy;
+            const std::complex<double> gyy = qxx / det - pyy;
+            det = gxx * gyy - gxy * gxy;
+            qxx = gyy / det;
+            qxy = -gxy / det;
+            qyy = gxx / det;
+          }
           const double c = std::cos(phi), sn = std::sin(phi);
-          const double pxx = ift * c * c + ifs * sn * sn;
-          const double pxy = (ift - ifs) * c * sn;
-          const double pyy = ift * sn * sn + ifs * c * c;
-          std::complex<double> det = qxx * qyy - qxy * qxy;
-          const std::complex<double> gxx = qyy / det - pxx;
-          const std::complex<double> gxy = -qxy / det - pxy;
-          const std::complex<double> gyy = qxx / det - pyy;
-          det = gxx * gyy - gxy * gxy;
-          qxx = gyy / det;
-          qxy = -gxy / det;
-          qyy = gxx / det;
+          const double c2 = c * c - sn * sn, s2 = 2.0 * c * sn;
+          const std::complex<double> fxx =
+              c2 * c2 * qxx + 2.0 * c2 * s2 * qxy + s2 * s2 * qyy;
+          const std::complex<double> fxy =
+              c2 * s2 * (qxx - qyy) + (s2 * s2 - c2 * c2) * qxy;
+          const std::complex<double> fyy =
+              s2 * s2 * qxx - 2.0 * c2 * s2 * qxy + c2 * c2 * qyy;
+          qxx = fxx;
+          qxy = fxy;
+          qyy = fyy;
         }
       }
       const std::complex<double> det = qxx * qyy - qxy * qxy;
@@ -361,12 +381,14 @@ class BeamletGrid {
     const size_t nf = fi_.size();
     std::vector<double> loo;
     loo.reserve(nf);
-    if (i_ref > 0.0) {
+    if (!(i_ref > 0.0)) {
+      // unlit reference: no pixel is estimable
+      for (size_t p = 0; p < npix; ++p) {
+        dub[p] = I_[p] > 0.0 ? 1 : 0;
+      }
+    } else {
       for (size_t p = 0; p < npix; ++p) {
         const std::complex<double> w = W_[p];
-        if (w == std::complex<double>(0.0, 0.0)) {
-          continue;
-        }
         const double i_pix = I_[p];
         if (i_pix <= 0.0) {
           continue;
@@ -398,7 +420,7 @@ class BeamletGrid {
                              double(loo.size()));
         }
         if (err[p] > 1.0 || loo.size() < 2 ||
-            (mu[p] >= 1.0 && err[p] == 0.0)) {
+            ((mu[p] >= 1.0 - eps_rel || mu[p] == 0.0) && err[p] <= eps_rel)) {
           dub[p] = 1;
         }
       }
@@ -477,7 +499,8 @@ void register_trace(py::module_ &m) {
            "W (complex128) and I (float64) fold totals as bytes.")
       .def("at", &BeamletGrid::at, "Cell value: (line, pixel) -> complex.")
       .def("items", &BeamletGrid::items,
-           "Nonzero cells of one line: [(pixel, complex), ...].");
+           "Nonzero cells of one line: [(pixel, complex), ...].")
+      .attr("lens_stride") = 4;
 
   py::class_<NativeOptic>(m, "NativeOptic")
       .def_readonly("precision", &NativeOptic::precision)

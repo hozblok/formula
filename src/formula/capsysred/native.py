@@ -119,7 +119,7 @@ def make_beamlet_grid(nx: int, ny: int, x0: float, y0: float, ex: float,
     when the .so predates BeamletGrid — the Python path is the reference and
     the fallback."""
     cls = getattr(_formula, "BeamletGrid", None)
-    if cls is None or not hasattr(cls, "jackknife"):   # stale .so: old API
+    if cls is None or getattr(cls, "lens_stride", 3) != 4:   # stale .so: old API
         return None
     try:
         return cls(nx, ny, x0, y0, ex, ey, kms, zrs, zrs_t, ns)
