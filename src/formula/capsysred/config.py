@@ -88,6 +88,25 @@ DEFAULTS = {
     }},
 }
 
+# stage 16 (`wave_estimator`): merged lazily by Config.validate_wave_estimator(),
+# so a YAML without the section keeps its raw config unchanged for every other stage.
+WAVE_DEFAULTS = {
+    "provider": "auto",             # auto | uisk (regular-polygon bores) | free
+    "observable": "coherent_cell",  # coherent_cell (|integral_cell E|^2, as stage 14) | point
+    "source_mode": "quadrature",    # quadrature (positive rule over `source`) | recorded_origins
+    "target_error": 0.002,          # declared numerical budget on complex mu; recorded, not enforced
+    "source_nodes": 768,            # rule size: disk 4 n_r^2 >= this, gaussian n^2 >= this
+    "grid_dx": None,                # lattice step [m]; null -> lambda / (2 theta_max angle_margin)
+    "angle_margin": 2.0,
+    "pad": 1.0,                     # box margin in units of theta_max L + 4 sqrt(lambda L)
+    "max_bounces": 2,               # image families up to this reflection order
+    "mask_supersample": 4,          # polygon masks: fractional coverage from an SxS sub-lattice
+    "pixel_subsamples": 3,          # I_pixel: SxS points per cell
+    "intensity_floor": 1.0e-6,      # trusted: I and I_ref >= floor * max I
+    "workers": None,                # scipy.fft threads; null = all cores
+    "cache_gb": 2.0,                # transfer-function cache budget
+}
+
 
 def _merge(base: dict, override: dict) -> dict:
     out = copy.deepcopy(base)
@@ -473,6 +492,55 @@ class Config:
         if not (wz is None or finite(wz)):
             raise ValueError(f"beamlet waist_z: null or a number, got {wz!r}")
         self.beamlet_waist_z = None if wz is None else float(wz)
+
+    def validate_wave_estimator(self) -> dict:
+        """Stage-16-only checks; returns the `wave_estimator` section merged with WAVE_DEFAULTS."""
+        raw = self.raw.get("wave_estimator")
+        if raw is None:
+            raw = {}
+        if not isinstance(raw, dict):
+            raise ValueError("wave_estimator must be a mapping")
+        unknown = raw.keys() - WAVE_DEFAULTS.keys()
+        if unknown:
+            raise ValueError(f"wave_estimator has unknown keys {sorted(unknown)}")
+        w = _merge(WAVE_DEFAULTS, raw)
+
+        def num(key, lo=None, hi=None, integer=False, optional=False, strict=False):
+            v = w[key]
+            if v is None and optional:
+                return None
+            if integer:
+                ok = isinstance(v, int) and not isinstance(v, bool)
+            else:
+                ok = (isinstance(v, (int, float)) and not isinstance(v, bool)
+                      and math.isfinite(v))
+            if ok and lo is not None:
+                ok = v > lo if strict else v >= lo
+            if ok and hi is not None:
+                ok = v <= hi
+            if not ok:
+                raise ValueError(f"wave_estimator.{key}: invalid value {v!r}")
+            return v if integer else float(v)
+
+        for key, choices in (("provider", ("auto", "uisk", "free")),
+                             ("observable", ("coherent_cell", "point")),
+                             ("source_mode", ("quadrature", "recorded_origins"))):
+            if w[key] not in choices:
+                raise ValueError(
+                    f"wave_estimator.{key}: expected one of {choices}, got {w[key]!r}")
+        w["target_error"] = num("target_error", lo=0.0, strict=True)
+        w["source_nodes"] = num("source_nodes", lo=1, integer=True)
+        w["grid_dx"] = num("grid_dx", lo=0.0, strict=True, optional=True)
+        w["angle_margin"] = num("angle_margin", lo=1.0)
+        w["pad"] = num("pad", lo=0.0)
+        w["max_bounces"] = num("max_bounces", lo=0, integer=True)
+        w["mask_supersample"] = num("mask_supersample", lo=1, integer=True)
+        w["pixel_subsamples"] = num("pixel_subsamples", lo=1, integer=True)
+        w["intensity_floor"] = num("intensity_floor", lo=0.0, hi=1.0)
+        w["workers"] = num("workers", lo=1, integer=True, optional=True)
+        w["cache_gb"] = num("cache_gb", lo=0.0)
+        self.wave = w
+        return w
 
 
 def load(path_or_dict: str | os.PathLike | dict) -> Config:

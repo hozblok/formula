@@ -25,6 +25,7 @@ from .stages.jackknife import run_jack_stage
 from .stages.sketch import run_sketch_stage
 from .stages.stage14 import preflight_stage14_output, run_stage14
 from .stages.validate import METHOD_LABELS, run_validate_stage
+from .stages.wave import preflight_wave_inputs, preflight_wave_output, run_wave_stage
 from .config import Config, load
 from .shared.nums import lift, solver, vunit
 from .source import aim_disk_direction, slope_direction
@@ -44,7 +45,7 @@ from .shared.physics_constants import FRESNEL_PROBE_THETA
 from .shared.units import (
     m_to_angstrom, m_to_um, rad_to_mrad, rad_to_urad)
 
-KNOWN_STAGES = (1, 2, 3, 7, 8, 9, 11, 14)
+KNOWN_STAGES = (1, 2, 3, 7, 8, 9, 11, 14, 16)
 
 
 class Simulation:
@@ -899,6 +900,27 @@ class Simulation:
         report.append(f"- time: {res['seconds']:.1f} s")
         self.report += report
 
+    # ------------------------------------------------------------- stage 16
+
+    def _stage16(self, out_dir, rays_src=None, stage14_paths=None):
+        """Wave estimator; the `wave_estimator` section is validated here only."""
+        wave = self.cfg.validate_wave_estimator()
+        rays_paths = None
+        if wave["source_mode"] == "recorded_origins":
+            # every replayed archive, like Stage 14: a joined reader exposes its parts
+            if stage14_paths:
+                rays_paths = list(stage14_paths)
+            elif rays_src is not None:
+                parts = getattr(rays_src, "parts", None)
+                rays_paths = [p.path for p in parts] if parts else [rays_src.path]
+            else:
+                local = self._local_recording(out_dir)
+                rays_paths = [local] if local else None
+        res = run_wave_stage(self, out_dir, wave, rays_paths=rays_paths, log=_log)
+        self.results["wave"] = res["results"]
+        self.files += res["files"]
+        self.report += res["report"]
+
     def _capillary_engine_check(self, bundle) -> str:
         cap = self.cfg.capillary
         p = self.cfg.precision
@@ -949,7 +971,7 @@ class Simulation:
                 f"stages {capillary_stages} require a configured "
                 "capillary.source"
             )
-        mixed_stages = sorted(wanted & {7, 8, 11})
+        mixed_stages = sorted(wanted & {7, 8, 11, 16})
         if (mixed_stages and self.cfg.free_source is None
                 and self.cfg.capillary is None):
             raise ValueError(
@@ -1024,6 +1046,10 @@ class Simulation:
         if 14 in wanted:
             # Fail before a fresh trace or a many-hour cache build.
             preflight_stage14_output(out_dir)
+        if 16 in wanted:
+            # cheap input checks before any other stage does heavy work
+            preflight_wave_inputs(self, self.cfg.validate_wave_estimator())
+            preflight_wave_output(out_dir)
         t0 = time.time()
         _log(f"CAPSYSred: stages {sorted(wanted)}, output to {out_dir}"
              + (f", rays from {rays_src.path}" if rays_src is not None else
@@ -1166,6 +1192,9 @@ class Simulation:
             ]
             for extra_result in res14.get("extra_results", []):
                 self._record_stage14_result(extra_result)
+        if 16 in wanted:
+            _log("Stage 16: wave estimator — positive source quadrature, joint W/I")
+            self._stage16(out_dir, rays_src, stage14_paths)
         report_name = format.report_name(out_dir, "report")
         self.report += ["", "## Files", ""]
         self.report += [f"- {name}" for name in self.files + [report_name]]
@@ -1207,10 +1236,11 @@ class Simulation:
                     f"no replayable configured scenes in {records_path!r}"
                 )
         wanted = set(stages)
-        if wanted == {14}:
+        if wanted <= {14, 16}:
             # No RaysReader: its constructor scans the whole gzip.  The
             # Stage-14 builder validates/deposits in one strict pass, while a
-            # cache hit does not open the ray archive at all.
+            # cache hit does not open the ray archive at all; Stage 16 reads
+            # only the per-mode origins.
             return self.run(out_dir, stages=stages,
                             stage14_paths=paths)
         if reader is None:
