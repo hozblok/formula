@@ -3,12 +3,12 @@
 Each ray becomes a Gaussian beamlet: the central ray is
 the engine trace; the complex 2x2 beam tensor Q = Gamma^-1 rides the
 segments and bounces by tensor ABCD (gamma.py, Arnaud-Kogelnik general
-astigmatism — grazing bounces focus sagittally f_s = R/(2 sin) and, on
-curved walls, meridionally f_t = R sin/2; skew rays rotate the azimuth and
-couple the planes). On the screen the beamlet deposits an elliptic phase
-spot over the pixels inside the window_sigmas ellipse's bounding box
-instead of one bin. Implicit bores carry no closed-form curvature: their
-bounces are flat (the scalar-q model of stage 11a).
+astigmatism — a bounce is the wall's projected curvature tensor plus the
+mirror flip; skew bounces couple the planes). On the screen the beamlet
+deposits an elliptic phase spot over the pixels inside the window_sigmas
+ellipse's bounding box instead of one bin. Implicit bores carry no
+closed-form curvature or normal: their bounces are no-ops (the scalar-q
+model of stage 11a, exact for an isotropic launch on flat walls).
 
 The estimator is honest — no ray self-pair subtraction: the mode field is a
 true coherent sum of beamlet fields, mu = |W| / sqrt(I*I_ref) with
@@ -17,6 +17,7 @@ so the rays are the stage-2/14 rays.
 """
 
 import cmath
+import copy
 import math
 import time
 from array import array
@@ -25,7 +26,8 @@ from .altcoh import FloatLineAmplitudes
 from ..gamma import EXACT_KINDS, bounce_lenses, inv2, propagate
 from ..native import make_beamlet_grid
 from ..shared.progress import Progress
-from ..rays import require_full_rows, scene_stream
+from ..rays import (geometry_metadata, metadata_equal, require_full_rows,
+                    scene_stream)
 from ..screen import ScreenGrid
 from ..shared.utils import zeros
 
@@ -35,20 +37,30 @@ class BeamletField:
 
     def __init__(self, lines, screen: ScreenGrid, ref_pixel: int,
                  w0: float, n_sigmas: float, optic=None, use_native=True,
-                 w0_t=None):
+                 w0_t=None, waist_dz=0.0):
         self.kms = [float(l.k) for l in lines]
-        self.wfs = [l.weight for l in lines]
+        # a beamlet fan sums to lambda * (point-source field): (k/k0)^2
+        # restores the configured line weights in W and I
+        self.wfs = [l.weight * (k / self.kms[0]) ** 2
+                    for l, k in zip(lines, self.kms)]
         self.nl = len(self.kms)
         self.zrs = [0.5 * w0 * w0 * k for k in self.kms]   # z_R = w0^2*k/2
         self.w0, self.ns = w0, n_sigmas
-        # anisotropic launch: tangential waist may differ from the sagittal
-        # one (the channel wants the matched mode, the free flight the
-        # Fresnel scale); the ellipse is oriented per ray, see add_ray
+        # anisotropic launch: w0_t along x, w0 along y, the same for every ray
         self.w0_t = w0 if w0_t is None else float(w0_t)
         self.zrt = [0.5 * self.w0_t * self.w0_t * k for k in self.kms]
+        # waist plane waist_dz past the source: a virtual drift -waist_dz
+        # before the first segment; its on-axis factor is divided out
+        self.waist_dz = float(waist_dz)
+        self.vfix = [(cmath.sqrt(1 + 1j * self.waist_dz / zt)
+                      * cmath.sqrt(1 + 1j * self.waist_dz / zs)).conjugate()
+                     for zt, zs in zip(self.zrt, self.zrs)]
         self.optic = optic
-        self.flat_walls = any(w.kind not in EXACT_KINDS
-                              for w in getattr(optic, "walls", ()))
+        walls = getattr(optic, "walls", None)
+        self.flat_walls = optic is not None and (
+            walls is None or any(w.kind not in EXACT_KINDS for w in walls))
+        self.curved = any(w.kind in EXACT_KINDS and w.kind != "polygon"
+                          for w in walls or ())
         self.ref = ref_pixel
         self.grid = screen
         # delete-one cut: float32 rows leave ~nl*2^-24 relative residue
@@ -86,10 +98,12 @@ class BeamletField:
         else:
             self._g = [{} for _ in range(self.nl)]
 
-    def prep(self, rec):
-        """The shared per-record work: floats, segments to THIS plane, wall
-        lenses, ellipse azimuth. Extra planes shift the result arithmetically
-        (straight final flight) instead of re-doing it."""
+    def prep(self, rec, zf=None):
+        """The shared per-record work: floats, segments to the plane zf (the
+        recorded arrival plane; default this one), wall lenses. Extra planes
+        shift the result arithmetically (straight final flight) instead of
+        re-doing it."""
+        zf = self.zf if zf is None else zf
         opl = float(rec.opl)
         x, y = float(rec.point[0]), float(rec.point[1])
         dxf, dyf = float(rec.direction[0]), float(rec.direction[1])
@@ -97,16 +111,20 @@ class BeamletField:
         pts = [tuple(float(c) for c in p) for p in rec.refl]
         if pts:
             segs = [math.dist(a, b) for a, b in zip(pts, pts[1:])]
-            segs.append(math.dist(pts[-1], (x, y, self.zf)))
+            segs.append(math.dist(pts[-1], (x, y, zf)))
             segs.insert(0, max(opl - sum(segs), 0.0))
-            lenses = bounce_lenses(self.optic, pts,
-                                   [float(s) for s in rec.sins])
+            # outgoing direction per bounce (curved walls only): toward the
+            # next hit, the last one the recorded final direction
+            outs = [None] * len(pts)
+            if self.curved:
+                outs = [tuple(q - p for p, q in zip(a, b))
+                        for a, b in zip(pts, pts[1:])]
+                outs.append((dxf, dyf, dzf))
+            lenses = bounce_lenses(self.optic, pts, outs)
         else:
             segs, lenses = [opl], []
-        # ellipse orientation: the channel frame of the first bounce, or the
-        # ray's own transverse azimuth when it never touches a wall
-        psi = lenses[0][0] if lenses else math.atan2(dyf, dxf)
-        return x, y, dxf, dyf, dzf, opl, psi, segs, lenses
+        # one launch frame for every ray: GBS needs a ray-independent Q0
+        return x, y, dxf, dyf, dzf, opl, 0.0, segs, lenses
 
     def add_ray(self, rec, amps):
         """Deposit one beamlet; rec.pixel None = tail only (the center lies
@@ -121,6 +139,10 @@ class BeamletField:
     def deposit(self, x, y, dxf, dyf, opl, psi, segs, lenses, amps, pixel):
         if pixel is not None:
             self.density[pixel] = self.density.get(pixel, 0) + 1
+        if self.waist_dz:
+            segs = [-self.waist_dz] + segs
+            lenses = [(math.nan, 0.0, 0.0, 0.0)] + lenses
+            amps = [a * f for a, f in zip(amps, self.vfix)]
         if self.native is not None:
             w_spot, bad = self.native.add_ray(
                 x, y, dxf, dyf, opl, psi, segs,
@@ -205,8 +227,8 @@ class BeamletField:
         """Row-major [iy][ix] maps: mu, mu_err (delete-one-mode jackknife),
         dubious, intensity, density. No self-pair subtraction, so I itself
         is the mu denominator and every lit pixel is estimable; the trust
-        flags are sigma > 1, pinned at the |mu| = 1 clamp with sigma = 0,
-        or fewer than 2 usable leave-one-out modes."""
+        flags are sigma > 1, |mu| pinned at 1 or 0 with sigma below loo_eps,
+        fewer than 2 usable leave-one-out modes, or an unlit reference."""
         if self.native is not None:
             return self._finalize_native(nx, ny)
         n_modes = len(self.Ws)
@@ -220,12 +242,17 @@ class BeamletField:
         for pixel, count in self.density.items():
             iy, ix = divmod(pixel, nx)
             density[iy][ix] = float(count)
-        Ws, Is, i_refs = self.Ws, self.Is, self.i_refs
-        if i_ref > 0.0:
-            for pixel, w in W.items():
-                i_pix = I.get(pixel, 0.0)
+        Ws, Is, i_refs, eps = self.Ws, self.Is, self.i_refs, self.loo_eps
+        if not i_ref > 0.0:   # unlit reference: no pixel is estimable
+            for pixel, i_pix in I.items():
+                if i_pix > 0.0:
+                    iy, ix = divmod(pixel, nx)
+                    dubious[iy][ix] = 1.0
+        else:
+            for pixel, i_pix in I.items():
                 if i_pix <= 0.0:
                     continue
+                w = W.get(pixel, 0j)
                 iy, ix = divmod(pixel, nx)
                 mu[iy][ix] = min(abs(w) / math.sqrt(i_pix * i_ref), 1.0)
                 wr, wi = w.real, w.imag
@@ -247,7 +274,8 @@ class BeamletField:
                         sum((v - mean) ** 2 for v in loo)
                         * (len(loo) - 1) / len(loo))
                 if (err[iy][ix] > 1.0 or len(loo) < 2
-                        or (mu[iy][ix] >= 1.0 and err[iy][ix] == 0.0)):
+                        or ((mu[iy][ix] >= 1.0 - eps or mu[iy][ix] == 0.0)
+                            and err[iy][ix] <= eps)):
                     dubious[iy][ix] = 1.0
         w_mean = self.w_sum / self.w_n if self.w_n else 0.0
         return {"mu": mu, "mu_err": err, "dubious": dubious,
@@ -279,42 +307,84 @@ class BeamletField:
                 "flat_walls": self.flat_walls}
 
 
+def _reference_pixel(grid, reference):
+    xy = reference if reference else (grid.cxf, grid.cyf)
+    pix = grid.pixel(xy)
+    if pix is None:
+        raise ValueError(f"screen reference {tuple(xy)} lies outside the window")
+    return pix
+
+
+def _scene_core(geometry: dict, scene: str) -> dict:
+    """A scene's recorded source and bores, without screens and budgets."""
+    core = copy.deepcopy(geometry.get(scene) or {})
+    core.pop("screen", None)
+    core.pop("screens", None)
+    source = core.get("source")
+    if isinstance(source, dict):
+        source.pop("n_modes", None)
+        source.pop("n_rays", None)
+    return core
+
+
+def recorded_plane(sim, scene, scr_cfg) -> float:
+    """z of the recorded arrival plane. Every recorded part's scene geometry
+    must match the config (screens, budgets and precision may differ), and
+    the parts of a union must share one plane."""
+    want = _scene_core(geometry_metadata(sim.cfg), scene)
+    planes = set()
+    for part in getattr(sim.rays, "parts", [sim.rays]):
+        geo = part.meta.get("geometry", {})
+        if scene in geo and not metadata_equal(_scene_core(geo, scene), want):
+            raise ValueError(f"{part.path}: {scene} trace geometry differs "
+                             "from the config")
+        rec = {**geo.get("screen", {}), **(geo.get(scene) or {}).get("screen", {})}
+        planes.add(float(rec.get("z", scr_cfg.z)))
+    if len(planes) != 1:
+        raise ValueError(f"{sim.rays.path}: union parts recorded {scene} "
+                         f"arrivals on different planes {sorted(planes)}")
+    return planes.pop()
+
+
 def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
                       seed_offset: int, extra_screens=()):
     """The beamlet deposit over the scene's ray records — from the shared
     rays file when it matches, else traced (the stage-2/6 rng stream).
 
     ONE pass serves every screen: the per-record prep (parse, segments, wall
-    lenses, azimuth) is shared, and each extra plane only shifts the straight
-    final flight — arrival x + dx*s, opl + s, last segment + s with
-    s = (z_i - z_main)/dz. The launch waist is resolved once from the main
-    flight (one beamlet, one launch). Returns the main-plane result with the
-    extra planes under "extras"."""
+    lenses) is shared, and each plane only shifts the straight final flight
+    from the recorded arrival plane — arrival x + dx*s, opl + s, last
+    segment + s with s = (z_i - z_rec)/dz. The launch is the same for every
+    ray: waist w0 (w0_t along x) at z = beamlet.waist_z, the source plane by
+    default. Returns the main-plane result with the extra planes under
+    "extras"."""
     cfg = sim.cfg
-    screen = ScreenGrid(scr_cfg)
+    cfg.validate_beamlet()
     n_modes, n_rays = src_cfg.budget()
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
+    z_src = float(src_cfg.position[2])
     w0_t = cfg.beamlet_w0_t
     if w0_t == "auto":   # Fresnel scale of the scene's source->screen flight
-        flight = float(scr_cfg.z) - float(src_cfg.position[2])
-        w0_t = math.sqrt(float(sim.lam) * flight / math.pi)
+        w0_t = math.sqrt(float(sim.lam) * (float(scr_cfg.z) - z_src) / math.pi)
+    waist_dz = 0.0 if cfg.beamlet_waist_z is None else cfg.beamlet_waist_z - z_src
 
     def make(scr):
         grid = ScreenGrid(scr)
-        return BeamletField(sim.lines, grid, grid.ref_pixel(scr.reference),
-                            cfg.beamlet_w0, cfg.beamlet_ns, optic, w0_t=w0_t)
+        return BeamletField(sim.lines, grid, _reference_pixel(grid, scr.reference),
+                            cfg.beamlet_w0, cfg.beamlet_ns, optic, w0_t=w0_t,
+                            waist_dz=waist_dz)
 
     def blank():
         return {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
                 "off_window": 0}
 
-    planes = [(make(scr_cfg), 0.0, blank())]
-    for scr in extra_screens:
-        field = make(scr)
-        planes.append((field, float(field.zf) - float(screen.z), blank()))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
                                       aim_factory, seed_offset)
     require_full_rows(sim.rays, rays_from, "beamlet stage (refl segments)")
+    z_rec = recorded_plane(sim, scene, scr_cfg)
+    # every plane, the main one included, shifts from the recorded arrivals
+    planes = [(field, float(field.zf) - z_rec, blank())
+              for field in map(make, (scr_cfg, *extra_screens))]
     progress = Progress(label, n_modes * n_rays)
     t0 = time.time()
     mode_cur = None
@@ -334,7 +404,8 @@ def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
                 fate = "absorbed"
         if fate == "screen":
             # tail beamlets (center outside a window) still deposit there
-            x, y, dxf, dyf, dzf, opl, psi, segs, lenses = planes[0][0].prep(rec)
+            x, y, dxf, dyf, dzf, opl, psi, segs, lenses = planes[0][0].prep(
+                rec, z_rec)
             for field, dz, st in planes:
                 st["emitted"] += 1
                 if dz == 0.0:
