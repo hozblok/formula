@@ -229,6 +229,14 @@ def differential_outputs(tmp_path_factory):
                               str(scratch / label)], cwd=scratch, env=env,
                              capture_output=True, text=True, timeout=240)
         assert run.returncode == 0, run.stdout + run.stderr
+    # both sides must have loaded the native library they were given
+    import hashlib
+    expected = {"baseline": hashlib.sha256(baseline_native.read_bytes()).hexdigest(),
+                "current": hashlib.sha256(current_native.read_bytes()).hexdigest()}
+    for label, digest in expected.items():
+        runtime = json.loads((scratch / label / "runtime.json").read_text(encoding="utf-8"))
+        assert runtime["extension_sha256"] == digest, (
+            f"{label} loaded another native library: {runtime['extension']}")
     print(f"\nDifferential evidence: {scratch}")
     return scratch
 

@@ -230,17 +230,20 @@ def sub_offsets(h, supersample):
     return ((np.arange(supersample) + 0.5) / supersample - 0.5) * h
 
 
-def sub_lattice_mask(xs, ys, center, normals, a, supersample):
+def sub_lattice_mask(xs, ys, center, normals, a, supersample, strip=256):
     """Indicator of the convex polygon (p - center).n_k <= a on the S x S sub-lattice,
-    shape (nx, S, ny, S)."""
+    shape (nx, S, ny, S); built in x-strips so the float temporaries stay small."""
     h = xs[1] - xs[0] if len(xs) > 1 else (ys[1] - ys[0] if len(ys) > 1 else 1.0)
     off = sub_offsets(h, supersample)
-    X = (xs[:, None] + off[None, :]).reshape(-1)
     Y = (ys[:, None] + off[None, :]).reshape(-1)
-    inside = np.ones((X.size, Y.size), dtype=bool)
-    for n in normals:
-        inside &= ((X[:, None] - center[0]) * n[0] + (Y[None, :] - center[1]) * n[1]) <= a
-    return inside.reshape(len(xs), supersample, len(ys), supersample)
+    out = np.empty((len(xs), supersample, len(ys), supersample), dtype=bool)
+    for i0 in range(0, len(xs), strip):
+        X = (xs[i0:i0 + strip, None] + off[None, :]).reshape(-1)
+        inside = np.ones((X.size, Y.size), dtype=bool)
+        for n in normals:
+            inside &= ((X[:, None] - center[0]) * n[0] + (Y[None, :] - center[1]) * n[1]) <= a
+        out[i0:i0 + strip] = inside.reshape(-1, supersample, len(ys), supersample)
+    return out
 
 
 def coverage(xs, ys, center, normals, a, supersample):

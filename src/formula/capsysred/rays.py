@@ -356,6 +356,11 @@ class RaysReader:
                 )
         self.path, self.meta, self.done = path, meta, done
 
+    @property
+    def index(self):
+        """The v3 section index; None for a legacy single-file recording."""
+        return self._index
+
     def scene_records(self, scene):
         if self._index is not None:
             return rays_v3.scene_records(self.path, self._index, scene)
