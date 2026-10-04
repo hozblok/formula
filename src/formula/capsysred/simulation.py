@@ -29,7 +29,6 @@ from .stages.jackknife import run_jack_stage
 from .stages.sketch import run_sketch_stage
 from .stages.stage14 import preflight_stage14_output, run_stage14
 from .stages.validate import METHOD_LABELS, run_validate_stage
-from .stages.wave import preflight_wave_inputs, preflight_wave_output, run_wave_stage
 from .config import Config, load
 from .shared.nums import lift, solver, vunit
 from .source import aim_disk_direction, slope_direction
@@ -50,6 +49,19 @@ from .shared.units import (
     m_to_angstrom, m_to_um, rad_to_mrad, rad_to_urad)
 
 KNOWN_STAGES = (1, 2, 3, 7, 8, 9, 11, 14, 16)
+
+
+def _wave_backend():
+    """Load optional dependencies only for an explicitly selected Stage 16."""
+    try:
+        from .stages import wave
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"numpy", "scipy"}:
+            raise
+        raise ValueError(
+            f"Stage 16 requires NumPy and SciPy; missing dependency: {exc.name}"
+        ) from exc
+    return wave
 
 
 def _open_jsonl(path: str):
@@ -992,7 +1004,8 @@ class Simulation:
             else:
                 local = self._local_recording(out_dir)
                 rays_paths = [local] if local else None
-        res = run_wave_stage(self, out_dir, wave, rays_paths=rays_paths, log=_log)
+        res = _wave_backend().run_wave_stage(
+            self, out_dir, wave, rays_paths=rays_paths, log=_log)
         self.results["wave"] = res["results"]
         self.files += res["files"]
         self.report += res["report"]
@@ -1118,14 +1131,14 @@ class Simulation:
         if (rays_src is not None or stage14_paths is not None) and 9 in wanted:
             raise ValueError("stage 9 validates the tracers themselves and "
                              "cannot run from a rays file")
+        if 16 in wanted:
+            backend = _wave_backend()
+            backend.preflight_wave_inputs(self, self.cfg.validate_wave_estimator())
+            backend.preflight_wave_output(out_dir)
         os.makedirs(out_dir, exist_ok=True)
         if 14 in wanted:
             # Fail before a fresh trace or a many-hour cache build.
             preflight_stage14_output(out_dir)
-        if 16 in wanted:
-            # cheap input checks before any other stage does heavy work
-            preflight_wave_inputs(self, self.cfg.validate_wave_estimator())
-            preflight_wave_output(out_dir)
         t0 = time.time()
         _log(f"CAPSYSred: stages {sorted(wanted)}, output to {out_dir}"
              + (f", rays from {rays_src.path}" if rays_src is not None else
@@ -1312,6 +1325,8 @@ class Simulation:
                     f"no replayable configured scenes in {records_path!r}"
                 )
         wanted = set(stages)
+        if 16 in wanted:
+            _wave_backend()
         if wanted <= {14, 16}:
             # No RaysReader: its constructor scans the whole gzip.  The
             # Stage-14 builder validates/deposits in one strict pass, while a
