@@ -20,7 +20,9 @@ def main(argv=None) -> int:
     parser.add_argument("--stages", default=None,
                         help="which stages to run, e.g. 1,2,3 (default: 1, "
                              "2+3 for a free scene, 14 for a capillary scene; "
-                             "3 requires 2, which is added automatically)")
+                             "3 requires 2, which is added automatically); "
+                             "17: experimental archive phase checks or canonical coherence map; "
+                             "18: experimental archive contour coherence map")
     parser.add_argument("--replay", metavar="ARCHIVE", default=None,
                         nargs="+",
                         help="rays recording(s) to re-evaluate with the spectrum and "

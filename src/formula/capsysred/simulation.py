@@ -48,7 +48,7 @@ from .shared.physics_constants import FRESNEL_PROBE_THETA
 from .shared.units import (
     m_to_angstrom, m_to_um, rad_to_mrad, rad_to_urad)
 
-KNOWN_STAGES = (1, 2, 3, 7, 8, 9, 11, 14, 16)
+KNOWN_STAGES = (1, 2, 3, 7, 8, 9, 11, 14, 16, 17, 18)
 
 
 def _wave_backend():
@@ -62,6 +62,32 @@ def _wave_backend():
             f"Stage 16 requires NumPy and SciPy; missing dependency: {exc.name}"
         ) from exc
     return wave
+
+
+def _b5_backend():
+    """Load optional dependencies only for an explicitly selected Stage 17."""
+    try:
+        from .stages import stage17
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"numpy", "scipy"}:
+            raise
+        raise ValueError(
+            f"Stage 17 requires NumPy and SciPy; missing dependency: {exc.name}"
+        ) from exc
+    return stage17
+
+
+def _b9_backend():
+    """Load optional dependencies only for an explicitly selected Stage 18."""
+    try:
+        from .stages import stage18
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"numpy", "scipy"}:
+            raise
+        raise ValueError(
+            f"Stage 18 requires NumPy and SciPy; missing dependency: {exc.name}"
+        ) from exc
+    return stage18
 
 
 def _open_jsonl(path: str):
@@ -1010,6 +1036,38 @@ class Simulation:
         self.files += res["files"]
         self.report += res["report"]
 
+    def _stage17(self, out_dir, rays_src=None, stage14_paths=None):
+        """Experimental archive phase audit or canonical coherence reconstruction."""
+        opts = self.cfg.validate_b5_estimator()
+        if stage14_paths:
+            paths = list(stage14_paths)
+        elif rays_src is not None:
+            parts = getattr(rays_src, "parts", None)
+            paths = [part.path for part in parts] if parts else [rays_src.path]
+        else:
+            local = self._local_recording(out_dir)
+            paths = [local] if local else None
+        res = _b5_backend().run_b5_stage(self, out_dir, opts, rays_paths=paths, log=_log)
+        self.results["b5"] = res["results"]
+        self.files += res["files"]
+        self.report += res["report"]
+
+    def _stage18(self, out_dir, rays_src=None, stage14_paths=None):
+        """Experimental archive reconstruction with finite contour elements."""
+        opts = self.cfg.validate_b9_estimator()
+        if stage14_paths:
+            paths = list(stage14_paths)
+        elif rays_src is not None:
+            parts = getattr(rays_src, "parts", None)
+            paths = [part.path for part in parts] if parts else [rays_src.path]
+        else:
+            local = self._local_recording(out_dir)
+            paths = [local] if local else None
+        res = _b9_backend().run_b9_stage(self, out_dir, opts, rays_paths=paths, log=_log)
+        self.results["b9"] = res["results"]
+        self.files += res["files"]
+        self.report += res["report"]
+
     def _capillary_engine_check(self, bundle) -> str:
         cap = self.cfg.capillary
         p = self.cfg.precision
@@ -1054,7 +1112,7 @@ class Simulation:
             raise ValueError(
                 f"stages {free_stages} require a configured free.source"
             )
-        capillary_stages = sorted(wanted & {9, 14})
+        capillary_stages = sorted(wanted & {9, 14, 17, 18})
         if capillary_stages and self.cfg.capillary is None:
             raise ValueError(
                 f"stages {capillary_stages} require a configured "
@@ -1135,6 +1193,14 @@ class Simulation:
             backend = _wave_backend()
             backend.preflight_wave_inputs(self, self.cfg.validate_wave_estimator())
             backend.preflight_wave_output(out_dir)
+        if 17 in wanted:
+            backend = _b5_backend()
+            backend.preflight_b5_inputs(self, self.cfg.validate_b5_estimator())
+            backend.preflight_b5_output(out_dir)
+        if 18 in wanted:
+            backend = _b9_backend()
+            backend.preflight_b9_inputs(self, self.cfg.validate_b9_estimator())
+            backend.preflight_b9_output(out_dir)
         os.makedirs(out_dir, exist_ok=True)
         if 14 in wanted:
             # Fail before a fresh trace or a many-hour cache build.
@@ -1284,6 +1350,12 @@ class Simulation:
         if 16 in wanted:
             _log("Stage 16: wave estimator — positive source quadrature, joint W/I")
             self._stage16(out_dir, rays_src, stage14_paths)
+        if 17 in wanted:
+            _log("Stage 17: experimental archive B5 reconstruction")
+            self._stage17(out_dir, rays_src, stage14_paths)
+        if 18 in wanted:
+            _log("Stage 18: experimental archive B9 contour reconstruction")
+            self._stage18(out_dir, rays_src, stage14_paths)
         report_name = format.report_name(out_dir, "report")
         self.report += ["", "## Files", ""]
         self.report += [f"- {name}" for name in self.files + [report_name]]
@@ -1327,11 +1399,15 @@ class Simulation:
         wanted = set(stages)
         if 16 in wanted:
             _wave_backend()
-        if wanted <= {14, 16}:
+        if 17 in wanted:
+            _b5_backend()
+        if 18 in wanted:
+            _b9_backend()
+        if wanted <= {14, 16, 17, 18}:
             # No RaysReader: its constructor scans the whole gzip.  The
             # Stage-14 builder validates/deposits in one strict pass, while a
             # cache hit does not open the ray archive at all; Stage 16 reads
-            # only the per-mode origins.
+            # only the per-mode origins; Stages 17/18 sample selected modes.
             return self.run(out_dir, stages=stages,
                             stage14_paths=paths)
         if reader is None:
@@ -1339,4 +1415,3 @@ class Simulation:
                       else MultiRaysReader(paths))
         return self.run(out_dir, stages=stages, rays_src=reader,
                         stage14_paths=paths if 14 in wanted else None)
-

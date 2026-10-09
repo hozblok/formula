@@ -107,6 +107,61 @@ WAVE_DEFAULTS = {
     "cache_gb": 2.0,                # transfer-function cache budget
 }
 
+B5_DEFAULTS = {
+    "provider": "archive_phase",
+    "patch_space": "entrance",
+    "charts": "adaptive",
+    "max_modes": 4,
+    "rays_per_mode": 20000,
+    "degree": 4,
+    "neighbors": 96,
+    "min_neighbors": 48,
+    "patches_per_family": 4,
+    "phase_tolerance": 0.05,
+    "max_condition": 1.0e8,
+    "screen_index": 0,             # primary screen, then capillary.screens
+    "seed": 17,
+    "widths_m": [1.0e-6],
+    "map_stride": 4,
+    "map_jobs": 1,
+    "map_ray_budgets": [],
+    "map_snapshots": [],
+}
+
+B9_DEFAULTS = {
+    "provider": "archive_contour",
+    "carrier_groups": 0,
+    "field_representation": "contour_p1",
+    "phase_degree": 2,
+    "triangle_quadrature_order": 8,
+    "max_quadrature_nodes_per_batch": 500000,
+    "phase_backend": "type3",
+    "receiver_channels_per_batch": 4,
+    "quadrature_safety": 1.5,
+    "quadrature_max_order": 512,
+    "cylinder_retrace": None,
+    "adaptive_retrace": None,
+    "curved_retrace": None,
+    "max_missing_area_fraction": None,
+    "amplitude_mode": "point_jacobian",
+    "mode_start": 0,
+    "max_modes": 4,
+    "rays_per_mode": 20000,
+    "screen_index": 0,
+    "map_stride": 4,
+    "map_jobs": 1,
+    "map_ray_budgets": [],
+    "map_snapshots": [],
+    "phase_subdivisions": [1, 2],
+    "edge_order": 8,
+    "pixel_order": 4,
+    "nufft_eps": 1.0e-9,
+    "nufft_threads": 1,
+    "max_triangles_per_batch": 40000,
+    "holdout_stride": 5,
+    "determinant_floor": 1.0e-10,
+}
+
 
 def _merge(base: dict, override: dict) -> dict:
     out = copy.deepcopy(base)
@@ -541,6 +596,222 @@ class Config:
         w["cache_gb"] = num("cache_gb", lo=0.0)
         self.wave = w
         return w
+
+    def validate_b5_estimator(self) -> dict:
+        """Stage-17-only contract for experimental archive phase-operator validation."""
+        raw = self.raw.get("b5_estimator")
+        if raw is None:
+            raw = {}
+        if not isinstance(raw, dict):
+            raise ValueError("b5_estimator must be a mapping")
+        unknown = raw.keys() - B5_DEFAULTS.keys()
+        if unknown:
+            raise ValueError(f"b5_estimator has unknown keys {sorted(unknown)}")
+        b5 = _merge(B5_DEFAULTS, raw)
+        for key, choices in (("provider", ("archive_phase", "archive_canonical")),
+                             ("patch_space", ("entrance", "screen")),
+                             ("charts", ("screen", "adaptive"))):
+            if b5[key] not in choices:
+                raise ValueError(f"b5_estimator.{key}: expected one of {choices}")
+        for key, minimum in (("max_modes", 1), ("rays_per_mode", 1), ("degree", 2),
+                             ("neighbors", 24), ("min_neighbors", 24),
+                               ("patches_per_family", 1), ("screen_index", 0), ("seed", 0),
+                               ("map_stride", 1), ("map_jobs", 1)):
+            value = b5[key]
+            if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+                raise ValueError(f"b5_estimator.{key}: expected an integer >= {minimum}")
+        if b5["degree"] > 5:
+            raise ValueError("b5_estimator.degree must be from 2 through 5")
+        if b5["min_neighbors"] > b5["neighbors"]:
+            raise ValueError("b5_estimator.min_neighbors must not exceed neighbors")
+        widths = b5["widths_m"]
+        if (not isinstance(widths, list) or not widths or any(
+                isinstance(v, bool) or not isinstance(v, (float, int))
+                or not math.isfinite(v) or v <= 0 for v in widths)):
+            raise ValueError("b5_estimator.widths_m must contain finite positive widths")
+        if len(set(widths)) != len(widths):
+            raise ValueError("b5_estimator.widths_m must not contain duplicates")
+        for key, limit in (("map_ray_budgets", b5["rays_per_mode"]),
+                           ("map_snapshots", b5["max_modes"])):
+            values = b5[key]
+            if (not isinstance(values, list) or any(isinstance(v, bool) or not isinstance(v, int)
+                    or v < 1 or v > limit for v in values) or len(set(values)) != len(values)):
+                raise ValueError(f"b5_estimator.{key}: invalid unique positive integer list")
+        for key in ("phase_tolerance", "max_condition"):
+            value = b5[key]
+            if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                    or not math.isfinite(value) or value <= 0.0):
+                raise ValueError(f"b5_estimator.{key}: expected a finite positive number")
+            b5[key] = float(value)
+        self.b5 = b5
+        return b5
+
+    def validate_b9_estimator(self) -> dict:
+        """Stage-18-only options for experimental archive contour maps."""
+        raw = self.raw.get("b9_estimator")
+        if raw is None:
+            raw = {}
+        if not isinstance(raw, dict):
+            raise ValueError("b9_estimator must be a mapping")
+        unknown = raw.keys() - B9_DEFAULTS.keys()
+        if unknown:
+            raise ValueError(f"b9_estimator has unknown keys {sorted(unknown)}")
+        b9 = _merge(B9_DEFAULTS, raw)
+        if b9["provider"] != "archive_contour":
+            raise ValueError("b9_estimator.provider: expected archive_contour")
+        if b9["amplitude_mode"] not in ("point_jacobian", "tube_flux", "shared_flux"):
+            raise ValueError("b9_estimator.amplitude_mode: expected point_jacobian, tube_flux or shared_flux")
+        if b9["field_representation"] not in ("contour_p1", "phase_quadrature", "curved_tubes"):
+            raise ValueError("b9_estimator.field_representation: expected contour_p1, phase_quadrature or curved_tubes")
+        if b9["phase_backend"] not in ("type3", "regular", "regular_mixed"):
+            raise ValueError("b9_estimator.phase_backend: expected type3, regular or regular_mixed")
+        if b9["phase_backend"] != "type3" and b9["field_representation"] not in ("phase_quadrature", "curved_tubes"):
+            raise ValueError("b9_estimator.phase_backend=regular/regular_mixed requires phase_quadrature")
+        for key, minimum in (("mode_start", 0), ("max_modes", 1), ("rays_per_mode", 3),
+                             ("screen_index", 0), ("map_stride", 1), ("map_jobs", 1),
+                             ("edge_order", 2), ("pixel_order", 1), ("nufft_threads", 1),
+                             ("max_triangles_per_batch", 1), ("carrier_groups", 0),
+                             ("phase_degree", 1), ("triangle_quadrature_order", 2),
+                             ("max_quadrature_nodes_per_batch", 1),
+                             ("receiver_channels_per_batch", 1),
+                             ("quadrature_max_order", 2),
+                             ("holdout_stride", 0)):
+            value = b9[key]
+            if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+                raise ValueError(f"b9_estimator.{key}: expected an integer >= {minimum}")
+        if b9["holdout_stride"] == 1:
+            raise ValueError("b9_estimator.holdout_stride: expected 0 or an integer >= 2")
+        for key, limit in (("map_ray_budgets", b9["rays_per_mode"]),
+                           ("map_snapshots", b9["max_modes"]), ("phase_subdivisions", None)):
+            values = b9[key]
+            if (not isinstance(values, list)
+                    or (key == "phase_subdivisions" and not values)
+                    or any(isinstance(v, bool) or not isinstance(v, int)
+                           or v < (3 if key == "map_ray_budgets" else 1)
+                           or (limit is not None and v > limit) for v in values)
+                    or len(set(values)) != len(values)):
+                raise ValueError(f"b9_estimator.{key}: invalid unique positive integer list")
+        for key in ("nufft_eps", "determinant_floor"):
+            value = b9[key]
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(value) or value < 0):
+                raise ValueError(f"b9_estimator.{key}: expected a finite non-negative number")
+            b9[key] = float(value)
+        if not 0 < b9["nufft_eps"] < 1:
+            raise ValueError("b9_estimator.nufft_eps: expected a number strictly between 0 and 1")
+        if b9["phase_degree"] not in (1, 2):
+            raise ValueError("b9_estimator.phase_degree: expected 1 or 2")
+        safety = b9["quadrature_safety"]
+        if (isinstance(safety, bool) or not isinstance(safety, (int, float))
+                or not math.isfinite(safety) or safety <= 0):
+            raise ValueError("b9_estimator.quadrature_safety: expected a finite positive number")
+        b9["quadrature_safety"] = float(safety)
+        if b9["phase_backend"] == "regular_mixed" and b9["quadrature_max_order"] < b9["triangle_quadrature_order"]:
+            raise ValueError("b9_estimator.quadrature_max_order must be at least triangle_quadrature_order")
+        if b9["field_representation"] in ("phase_quadrature", "curved_tubes"):
+            if b9["carrier_groups"] or b9["phase_subdivisions"] != [1]:
+                raise ValueError("b9_estimator.phase_quadrature requires carrier_groups=0 and phase_subdivisions=[1]")
+            if b9["max_quadrature_nodes_per_batch"] < b9["triangle_quadrature_order"]**2:
+                raise ValueError("b9_estimator.max_quadrature_nodes_per_batch must fit one triangle rule")
+        retrace = b9["cylinder_retrace"]
+        if retrace is not None:
+            defaults = dict(bores=[], angles=256, inner_rings=16, outer_rings=8,
+                            boundary_relative_gap=1e-6, entrance_relative_inset=2e-6, precision=64)
+            if not isinstance(retrace, dict) or retrace.keys()-defaults.keys():
+                raise ValueError("b9_estimator.cylinder_retrace: invalid mapping or unknown keys")
+            retrace = {**defaults, **retrace}
+            ids = retrace["bores"]
+            if (not isinstance(ids, list) or not ids
+                    or any(isinstance(i, bool) or not isinstance(i, int) or i < 0 for i in ids)
+                    or len(set(ids)) != len(ids)):
+                raise ValueError("b9_estimator.cylinder_retrace.bores: expected unique nonnegative indices")
+            for key, minimum in (("angles", 8), ("inner_rings", 1), ("outer_rings", 1), ("precision", 32)):
+                value = retrace[key]
+                if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+                    raise ValueError(f"b9_estimator.cylinder_retrace.{key}: expected integer >= {minimum}")
+            for key in ("boundary_relative_gap", "entrance_relative_inset"):
+                value = retrace[key]
+                if (isinstance(value, bool) or not isinstance(value, (int, float))
+                        or not math.isfinite(value) or not 0 < value < .01):
+                    raise ValueError(f"b9_estimator.cylinder_retrace.{key}: expected 0 < value < 0.01")
+                retrace[key] = float(value)
+            b9["cylinder_retrace"] = retrace
+        adaptive = b9["adaptive_retrace"]
+        if adaptive is not None:
+            if b9["field_representation"] != "phase_quadrature" or b9["phase_degree"] != 2:
+                raise ValueError("b9_estimator.adaptive_retrace requires phase_quadrature with phase_degree=2; its probes test that phase model")
+            defaults = dict(bores=[], angles=128, radial_rings=4, max_depth=16, max_nodes=12000,
+                            phase_tolerance_rad=.05, amplitude_relative_tolerance=.05,
+                            fresnel_relative_tolerance=.05, geometry_relative_tolerance=.002,
+                            flux_relative_tolerance=.05,
+                            precision=64, entrance_relative_inset=2e-6)
+            if not isinstance(adaptive, dict) or adaptive.keys()-defaults.keys():
+                raise ValueError("b9_estimator.adaptive_retrace: invalid mapping or unknown keys")
+            adaptive = {**defaults, **adaptive}
+            ids = adaptive["bores"]
+            if (not isinstance(ids, list) or not ids
+                    or any(isinstance(i, bool) or not isinstance(i, int) or i < 0 for i in ids)
+                    or len(set(ids)) != len(ids)):
+                raise ValueError("b9_estimator.adaptive_retrace.bores: expected unique nonnegative indices")
+            if set(ids) & set((b9["cylinder_retrace"] or {}).get("bores", [])):
+                raise ValueError("b9_estimator: adaptive_retrace and cylinder_retrace bore sets must be disjoint")
+            for key, minimum in (("angles", 8), ("radial_rings", 1), ("max_depth", 1),
+                                 ("max_nodes", 7), ("precision", 32)):
+                value = adaptive[key]
+                if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+                    raise ValueError(f"b9_estimator.adaptive_retrace.{key}: expected integer >= {minimum}")
+            for key in ("phase_tolerance_rad", "amplitude_relative_tolerance", "fresnel_relative_tolerance",
+                          "geometry_relative_tolerance", "flux_relative_tolerance", "entrance_relative_inset"):
+                value = adaptive[key]
+                if (isinstance(value, bool) or not isinstance(value, (int, float))
+                        or not math.isfinite(value) or value <= 0):
+                    raise ValueError(f"b9_estimator.adaptive_retrace.{key}: expected finite positive number")
+                adaptive[key] = float(value)
+            if adaptive["entrance_relative_inset"] >= .01:
+                raise ValueError("b9_estimator.adaptive_retrace.entrance_relative_inset: expected < 0.01")
+            b9["adaptive_retrace"] = adaptive
+        curved = b9["curved_retrace"]
+        if (curved is not None) != (b9["field_representation"] == "curved_tubes"):
+            raise ValueError("b9_estimator.curved_retrace requires field_representation=curved_tubes and vice versa")
+        if curved is not None:
+            if b9["phase_degree"] != 2 or b9["phase_backend"] != "regular_mixed" or b9["amplitude_mode"] != "point_jacobian":
+                raise ValueError("b9_estimator.curved_tubes requires phase_degree=2, phase_backend=regular_mixed and amplitude_mode=point_jacobian")
+            if adaptive is not None:
+                raise ValueError("b9_estimator.curved_retrace and adaptive_retrace cannot be combined")
+            defaults = dict(bores=[], angles=128, radial_rings=4, max_depth=16, max_nodes=20000,
+                phase_tolerance_rad=.05, density_relative_tolerance=.02, geometry_phase_tolerance_rad=.05,
+                fresnel_relative_tolerance=.05, precision=64, entrance_relative_inset=2e-6)
+            if not isinstance(curved, dict) or curved.keys()-defaults.keys():
+                raise ValueError("b9_estimator.curved_retrace: invalid mapping or unknown keys")
+            curved = {**defaults, **curved}
+            ids = curved["bores"]
+            if (not isinstance(ids, list) or not ids
+                    or any(isinstance(i, bool) or not isinstance(i, int) or i < 0 for i in ids)
+                    or len(ids) != len(set(ids))):
+                raise ValueError("b9_estimator.curved_retrace.bores: expected unique nonnegative indices")
+            if set(ids) & set((b9["cylinder_retrace"] or {}).get("bores", [])):
+                raise ValueError("b9_estimator: curved_retrace and cylinder_retrace bore sets must be disjoint")
+            for key, minimum in (("angles", 8), ("radial_rings", 1), ("max_depth", 1), ("max_nodes", 10), ("precision", 32)):
+                value = curved[key]
+                if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+                    raise ValueError(f"b9_estimator.curved_retrace.{key}: expected integer >= {minimum}")
+            for key in ("phase_tolerance_rad", "density_relative_tolerance", "geometry_phase_tolerance_rad",
+                        "fresnel_relative_tolerance", "entrance_relative_inset"):
+                value = curved[key]
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                    raise ValueError(f"b9_estimator.curved_retrace.{key}: expected finite positive number")
+                curved[key] = float(value)
+            if curved["entrance_relative_inset"] >= .01:
+                raise ValueError("b9_estimator.curved_retrace.entrance_relative_inset: expected < 0.01")
+            b9["curved_retrace"] = curved
+        missing = b9["max_missing_area_fraction"]
+        if missing is not None:
+            if (isinstance(missing, bool) or not isinstance(missing, (int, float))
+                    or not math.isfinite(missing) or not 0 <= missing < 1):
+                raise ValueError("b9_estimator.max_missing_area_fraction: expected null or a number in [0,1)")
+            b9["max_missing_area_fraction"] = float(missing)
+        self.b9 = b9
+        return b9
 
 
 def load(path_or_dict: str | os.PathLike | dict) -> Config:
