@@ -172,6 +172,78 @@ def _source_batches(indices, positions, phase, density, determinant, origin, kap
         yield points, coefficients
 
 
+class _Receiver:
+    """Regular type-1 lattice receiver: per-Gauss-node carriers, chirps and the coherent
+    square-cell mean; `add` accumulates weighted point sources (coefficients already carry
+    the source phase and the half-chirp about `origin`)."""
+
+    def __init__(self, *, k, distance, x, y, cell_width, pixel_order, eps, nthreads, channels_per_batch, origin):
+        import finufft
+        self.x, self.cx, self.dx, self.x_defect = _axis(x, 'x')
+        self.y, self.cy, self.dy, self.y_defect = _axis(y, 'y')
+        self.kappa, self.origin = k/distance, np.asarray(origin, float)
+        pixel_q = pixel_order if cell_width else 1
+        self.channel_count = pixel_q**2
+        self.channels = min(channels_per_batch, self.channel_count)
+        if cell_width:
+            gauss, weights = np.polynomial.legendre.leggauss(pixel_order)
+            gauss, weights = gauss*cell_width/2, weights/2
+        else:
+            gauss, weights = np.array([0.]), np.array([1.])
+        self.offsets = np.array([(a, b) for b in gauss for a in gauss])
+        self.receiver_weights = np.array([a*b for b in weights for a in weights])
+        self.carrier = self.kappa*(np.array([self.cx, self.cy])-self.origin+self.offsets)
+        if not np.isfinite(self.carrier).all():
+            raise ValueError('receiver carriers are not finite')
+        self.plan = finufft.Plan(1, (len(self.x), len(self.y)), n_trans=self.channels, eps=eps,
+                                 isign=-1, dtype='complex128', nthreads=nthreads, modeord=0)
+        self.effective_pixel_order = pixel_q
+        self.maximum_local_position = np.zeros(2)
+
+    def add(self, points, coefficients, field, stats):
+        x, y, kappa, channels = self.x, self.y, self.kappa, self.channels
+        self.maximum_local_position = np.maximum(self.maximum_local_position, abs(points).max(axis=0))
+        theta = points*(kappa*np.array([self.dx, self.dy]))
+        if not np.isfinite(theta).all():
+            raise ValueError('type1 source coordinates are not finite')
+        theta = np.remainder(theta+np.pi, 2*np.pi)-np.pi
+        self.plan.setpts(np.ascontiguousarray(theta[:, 0]), np.ascontiguousarray(theta[:, 1]))
+        stats['source_batches'] += 1
+        stats['maximum_source_batch'] = max(stats['maximum_source_batch'], len(points))
+        for begin in range(0, self.channel_count, channels):
+            end = min(begin+channels, self.channel_count)
+            physical_phase = self.carrier[begin:end]@points.T
+            if not np.isfinite(physical_phase).all():
+                raise ValueError('type1 carrier phase is not finite')
+            strengths = np.zeros((channels, len(points)), complex)
+            strengths[:end-begin] = coefficients*np.exp(-1j*physical_phase)
+            spectrum = self.plan.execute(strengths)
+            if channels == 1:
+                spectrum = np.asarray(spectrum).reshape(1, len(x), len(y))
+            stats['transform_calls'] += 1
+            stats['padded_channel_transforms'] += channels-(end-begin)
+            for local, channel in enumerate(range(begin, end)):
+                rx, ry = x-self.origin[0]+self.offsets[channel, 0], y-self.origin[1]+self.offsets[channel, 1]
+                chirp = .5*kappa*(rx[None, :]**2+ry[:, None]**2)
+                if not np.isfinite(chirp).all():
+                    raise ValueError('receiver chirp is not finite')
+                field += self.receiver_weights[channel]*(kappa/(2j*np.pi))*np.exp(1j*chirp)*spectrum[local].T
+
+    def lattice_defect_bound(self):
+        return float(self.kappa*np.sum(self.maximum_local_position*[self.x_defect, self.y_defect]))
+
+
+def _receiver_arguments(k, distance, cell_width, pixel_order, eps, nthreads, max_nodes_per_batch, receiver_channels_per_batch):
+    k, distance = _real(k, 'k'), _real(distance, 'distance')
+    cell_width, eps = _real(cell_width, 'cell_width', zero=True), _real(eps, 'eps')
+    if eps >= 1:
+        raise ValueError('eps must be smaller than one')
+    pixel_order, nthreads = _integer(pixel_order, 'pixel_order'), _integer(nthreads, 'nthreads')
+    max_nodes_per_batch = _integer(max_nodes_per_batch, 'max_nodes_per_batch')
+    receiver_channels_per_batch = _integer(receiver_channels_per_batch, 'receiver_channels_per_batch')
+    return k, distance, cell_width, eps, pixel_order, nthreads, max_nodes_per_batch, receiver_channels_per_batch
+
+
 def curved_phase_field(mesh, *, k, distance, x, y, cell_width=0., pixel_order=4,
                         min_order=8, safety=1.5, max_order=512, eps=1e-10, nthreads=1,
                         max_nodes_per_batch=500000, receiver_channels_per_batch=4,
@@ -191,13 +263,9 @@ def curved_phase_field(mesh, *, k, distance, x, y, cell_width=0., pixel_order=4,
     included, matching stage18. Quadrature and model convergence remain needed.
     """
     started = time.perf_counter()
-    k, distance = _real(k, 'k'), _real(distance, 'distance')
-    cell_width, eps = _real(cell_width, 'cell_width', zero=True), _real(eps, 'eps')
-    if eps >= 1:
-        raise ValueError('eps must be smaller than one')
-    pixel_order, nthreads = _integer(pixel_order, 'pixel_order'), _integer(nthreads, 'nthreads')
-    max_nodes_per_batch = _integer(max_nodes_per_batch, 'max_nodes_per_batch')
-    receiver_channels_per_batch = _integer(receiver_channels_per_batch, 'receiver_channels_per_batch')
+    (k, distance, cell_width, eps, pixel_order, nthreads, max_nodes_per_batch,
+     receiver_channels_per_batch) = _receiver_arguments(k, distance, cell_width, pixel_order, eps, nthreads,
+                                                         max_nodes_per_batch, receiver_channels_per_batch)
     x, cx, dx, x_defect = _axis(x, 'x')
     y, cy, dy, y_defect = _axis(y, 'y')
     entrance, positions, phase, density, determinant = _curved_mesh(mesh)
@@ -223,56 +291,77 @@ def curved_phase_field(mesh, *, k, distance, x, y, cell_width=0., pixel_order=4,
     if not len(entrance):
         stats['seconds'] = time.perf_counter()-started
         return (field, stats) if return_stats else field
-    import finufft
     origin = positions.min(axis=(0, 1))/2+positions.max(axis=(0, 1))/2
     stats['coordinate_origin'] = origin.tolist()
-    if cell_width:
-        gauss, weights = np.polynomial.legendre.leggauss(pixel_order)
-        gauss, weights = gauss*cell_width/2, weights/2
-    else:
-        gauss, weights = np.array([0.]), np.array([1.])
-    offsets = np.array([(a, b) for b in gauss for a in gauss])
-    receiver_weights = np.array([a*b for b in weights for a in weights])
-    carrier = kappa*(np.array([cx, cy])-origin+offsets)
-    if not np.isfinite(carrier).all():
-        raise ValueError('receiver carriers are not finite')
-    plan = finufft.Plan(1, (len(x), len(y)), n_trans=channels, eps=eps,
-                       isign=-1, dtype='complex128', nthreads=nthreads, modeord=0)
+    receiver = _Receiver(k=k, distance=distance, x=x, y=y, cell_width=cell_width, pixel_order=pixel_order,
+                         eps=eps, nthreads=nthreads, channels_per_batch=receiver_channels_per_batch, origin=origin)
     stats['plans'] = 1
     executed = selection['orders'].max(axis=1)
-    maximum_local_position = np.zeros(2)
     for order in np.unique(executed):
         indices = np.flatnonzero(executed == order)
         for points, coefficients in _source_batches(indices, positions, phase, density, determinant,
                 origin, kappa, int(order), max_nodes_per_batch):
-            maximum_local_position = np.maximum(maximum_local_position, abs(points).max(axis=0))
-            theta = points*(kappa*np.array([dx, dy]))
-            if not np.isfinite(theta).all():
-                raise ValueError('type1 source coordinates are not finite')
-            theta = np.remainder(theta+np.pi, 2*np.pi)-np.pi
-            plan.setpts(np.ascontiguousarray(theta[:, 0]), np.ascontiguousarray(theta[:, 1]))
-            stats['source_batches'] += 1
-            stats['maximum_source_batch'] = max(stats['maximum_source_batch'], len(points))
-            for begin in range(0, channel_count, channels):
-                end = min(begin+channels, channel_count)
-                physical_phase = carrier[begin:end]@points.T
-                if not np.isfinite(physical_phase).all():
-                    raise ValueError('type1 carrier phase is not finite')
-                strengths = np.zeros((channels, len(points)), complex)
-                strengths[:end-begin] = coefficients*np.exp(-1j*physical_phase)
-                spectrum = plan.execute(strengths)
-                if channels == 1:
-                    spectrum = np.asarray(spectrum).reshape(1, len(x), len(y))
-                stats['transform_calls'] += 1
-                stats['padded_channel_transforms'] += channels-(end-begin)
-                for local, channel in enumerate(range(begin, end)):
-                    rx, ry = x-origin[0]+offsets[channel, 0], y-origin[1]+offsets[channel, 1]
-                    chirp = .5*kappa*(rx[None, :]**2+ry[:, None]**2)
-                    if not np.isfinite(chirp).all():
-                        raise ValueError('receiver chirp is not finite')
-                    field += receiver_weights[channel]*(kappa/(2j*np.pi))*np.exp(1j*chirp)*spectrum[local].T
+            receiver.add(points, coefficients, field, stats)
     if not np.isfinite(field).all():
         raise ValueError('curved propagated field is not finite')
-    stats['sampled_lattice_fourier_phase_defect_bound_rad'] = float(kappa*np.sum(maximum_local_position*[x_defect, y_defect]))
+    stats['sampled_lattice_fourier_phase_defect_bound_rad'] = receiver.lattice_defect_bound()
     stats['seconds'] = time.perf_counter()-started
     return (field, stats) if return_stats else field
+
+
+def curved_residual_fields(mesh, *, k, distance, x, y, cell_width=0., pixel_order=4, eps=1e-10, nthreads=1,
+                           max_nodes_per_batch=500000, receiver_channels_per_batch=4, return_stats=False):
+    """Fields of the stratified residual samples, one per batch.
+
+    Batch b sums A_T rho(q_Tb) exp(i phi(q_Tb)) K(P, X(q_Tb)) over the unresolved
+    faces T with the receiver of curved_phase_field; samples of zero density
+    (non-screen fate, invalid transport) contribute nothing. The batch mean is
+    the stratified estimate of the omitted integral; the spread of the batches
+    is its sampling error, not a GO-model error.
+    """
+    started = time.perf_counter()
+    (k, distance, cell_width, eps, pixel_order, nthreads, max_nodes_per_batch,
+     receiver_channels_per_batch) = _receiver_arguments(k, distance, cell_width, pixel_order, eps, nthreads,
+                                                         max_nodes_per_batch, receiver_channels_per_batch)
+    batches = _integer(mesh.get('residual_batches', 0), 'residual_batches', 0)
+    x, cx, dx, x_defect = _axis(x, 'x')
+    y, cy, dy, y_defect = _axis(y, 'y')
+    fields = np.zeros((batches, len(y), len(x)), complex)
+    stats = dict(method='stratified residual samples propagated as weighted point sources on the regular type1 receiver',
+                 batches=batches, faces=0, source_batches=0, maximum_source_batch=0, transform_calls=0,
+                 padded_channel_transforms=0, plans=0, zero_weight_samples=0)
+    if not batches:
+        stats['seconds'] = time.perf_counter()-started
+        return (fields, stats) if return_stats else fields
+    area = _real_array(mesh['residual_area'], 'residual_area')
+    points = _real_array(mesh['residual_points'], 'residual_points')
+    phase = _real_array(mesh['residual_phase'], 'residual_phase')
+    density = np.asarray(mesh['residual_density'], dtype=complex)
+    count = len(area)
+    if points.shape != (batches, count, 2) or phase.shape != (batches, count) or density.shape != (batches, count):
+        raise ValueError('residual arrays must have shapes (B,N,2), (B,N), (B,N) for N residual faces')
+    if np.any(area < 0) or not np.isfinite(density).all():
+        raise ValueError('residual areas must be nonnegative and densities finite')
+    stats['faces'] = count
+    if not count:
+        stats['seconds'] = time.perf_counter()-started
+        return (fields, stats) if return_stats else fields
+    kappa = k/distance
+    origin = points.reshape(-1, 2).min(axis=0)/2+points.reshape(-1, 2).max(axis=0)/2
+    stats['coordinate_origin'] = origin.tolist()
+    receiver = _Receiver(k=k, distance=distance, x=x, y=y, cell_width=cell_width, pixel_order=pixel_order,
+                         eps=eps, nthreads=nthreads, channels_per_batch=receiver_channels_per_batch, origin=origin)
+    stats['plans'] = 1
+    for b in range(batches):
+        coefficients = area*density[b]*np.exp(1j*phase[b])
+        keep = coefficients != 0
+        stats['zero_weight_samples'] += int(np.sum(~keep))
+        local = points[b][keep]-origin
+        weights = coefficients[keep]*np.exp(.5j*kappa*np.sum(local*local, axis=1))
+        for start in range(0, len(local), max_nodes_per_batch):
+            receiver.add(local[start:start+max_nodes_per_batch], weights[start:start+max_nodes_per_batch], fields[b], stats)
+    if not np.isfinite(fields).all():
+        raise ValueError('residual propagated fields are not finite')
+    stats['sampled_lattice_fourier_phase_defect_bound_rad'] = receiver.lattice_defect_bound()
+    stats['seconds'] = time.perf_counter()-started
+    return (fields, stats) if return_stats else fields

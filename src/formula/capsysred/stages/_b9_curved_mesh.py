@@ -135,13 +135,19 @@ def curved_exit_mesh(source_origin_decimal, bore, z0, z1, k, delta, beta, *,
                      max_nodes=12000, max_depth=16, phase_tolerance_rad=.05,
                      density_relative_tolerance=.02, geometry_phase_tolerance_rad=.05,
                      fresnel_relative_tolerance=.05, precision=64, determinant_floor=1e-10,
-                     entrance_relative_inset=2e-6):
+                     entrance_relative_inset=2e-6, residual_batches=0, residual_seed=0):
     """Return P2 position, OPL and pullback density on accepted entrance faces.
 
     Ten rays per face supply six fitting nodes and four independent holdouts.
     Endpoint GO caustics remain excluded; the chart is not a uniform wave model.
+    With residual_batches >= 2 every unresolved face also receives one uniform
+    MP sample per batch (exit position, phase, pullback density) for a
+    stratified quadrature of the omitted area with an empirical variance.
     """
     started = perf_counter()
+    batches, seed = _integer(residual_batches, "residual_batches", 0), _integer(residual_seed, "residual_seed", 0)
+    if batches == 1:
+        raise ValueError("residual_batches must be 0 or at least 2")
     angles, rings = _integer(angles, "angles", 8), _integer(radial_rings, "radial_rings")
     depth_limit, node_limit = _integer(max_depth, "max_depth", 0), _integer(max_nodes, "max_nodes", 3)
     precision = _integer(precision, "precision", 32)
@@ -210,6 +216,8 @@ def curved_exit_mesh(source_origin_decimal, bore, z0, z1, k, delta, beta, *,
     a, b = all_q[:, 1]-all_q[:, 0], all_q[:, 2]-all_q[:, 0]
     areas = .5*abs(a[:, 0]*b[:, 1]-a[:, 1]*b[:, 0])
     fit_ids = np.asarray([leaf["fit"] if leaf.get("fit") is not None else [-1]*6 for leaf in leaves])
+    residual, residual_stats = _residual_samples(source_origin_decimal, regular, mp, z0, z1, k, delta, beta,
+                                                 precision, floor, all_q[~accepted], areas[~accepted], batches, seed)
     nodes = cache.arrays()
     density = pullback_density(nodes)
     aperture_area = np.pi*regular["radius"]**2
@@ -246,7 +254,8 @@ def curved_exit_mesh(source_origin_decimal, bore, z0, z1, k, delta, beta, *,
             area_closure_relative=float((areas.sum()+missing-aperture_area)/aperture_area),
             unresolved_primary_reason_area_m2=dict(primary), unresolved_each_reason_area_m2=dict(by_reason),
             reason_convention="Primary reasons are disjoint; each-reason areas overlap and cannot be added."),
-        accepted_probe_maxima=maxima, budget_reached=budget_reached, seconds=perf_counter()-started,
+        accepted_probe_maxima=maxima, budget_reached=budget_reached, residual=residual_stats,
+        seconds=perf_counter()-started,
         limitations=["Four interior holdouts are independent of the six fitting nodes; finite probes do not certify unsampled structure.",
             "The kernel geometry defect is tested over the whole requested receiver bounding box including native cell widths.",
             "The outer polygon deficit and unresolved entrance faces contribute no field and remain explicitly reported.",
@@ -257,6 +266,7 @@ def curved_exit_mesh(source_origin_decimal, bore, z0, z1, k, delta, beta, *,
         total_entrance_area_m2=aperture_area, accepted_entrance_area_m2=float(areas[accepted].sum()),
         accepted_entrance_area_fraction=float(areas[accepted].sum()/aperture_area),
         accepted_entrance_area_by_bore_m2=[float(areas[accepted].sum())], curved_controls=diagnostic,
+        residual_batches=batches, residual_area_fraction=float(areas[~accepted].sum()/aperture_area),
         node_order=["v0", "v1", "v2", "m01", "m12", "m20"],
         density_convention="Fresnel/r*sqrt(uz0/uzexit)*sqrt(abs(detQ))*exp(-i*pi*Maslov/2); excludes exp(i*OPLphase); measure d2q.")
     ids = fit_ids[accepted]
@@ -269,4 +279,49 @@ def curved_exit_mesh(source_origin_decimal, bore, z0, z1, k, delta, beta, *,
         partition_probe_indices=np.asarray([leaf["probes"] if leaf["probes"] is not None else [-1]*4 for leaf in leaves]),
         traced_entrance_points=np.asarray(cache.coordinates), trace_nodes=nodes,
         partition_probe_metrics={name: np.asarray([leaf.get(name, np.nan) for leaf in leaves]) for name in _METRICS})
+    if batches:
+        mesh.update(residual_batches=batches, residual_entrance_triangles=all_q[~accepted], residual_area=areas[~accepted],
+                    residual_points=residual["points"], residual_phase=residual["phase"],
+                    residual_density=residual["density"], residual_valid=residual["valid"])
     return mesh, diagnostic
+
+
+def _residual_samples(source_origin_decimal, regular, mp, z0, z1, k, delta, beta, precision, floor,
+                      triangles, areas, batches, seed):
+    """One uniform MP ray per unresolved face and batch: exit position, optical phase and
+    pullback density (zero for non-screen fates or invalid transport); equal face weights."""
+    count = len(triangles)
+    out = dict(points=np.zeros((batches, count, 2)), phase=np.zeros((batches, count)),
+               density=np.zeros((batches, count), complex), valid=np.zeros((batches, count), bool))
+    stats = dict(batches=batches, faces=count, area_m2=float(areas.sum()), seed=seed, emitted=0,
+                 fate_counts={}, screen_invalid_transport=0, trace_seconds=0., transport_seconds=0.,
+                 method="stratified Monte Carlo: one uniform point in every unresolved entrance face per batch, weight = face area",
+                 limitations=["Samples the prescribed GO exit integral on the omitted faces; no caustic uniformization.",
+                              "Non-screen fates and invalid transport contribute zero and are counted, not renormalized.",
+                              "The batch mean is unbiased for the face integral; its variance is estimated from the batches."])
+    if not batches or not count:
+        return out, stats
+    for b, child in enumerate(np.random.SeedSequence(seed).spawn(batches)):
+        uv = np.random.default_rng(child).random((count, 2))
+        root = np.sqrt(uv[:, 0])
+        bary = np.column_stack((1-root, root*(1-uv[:, 1]), root*uv[:, 1]))
+        q = np.einsum("ni,nij->nj", bary, triangles)
+        cache = _TraceCache(source_origin_decimal, regular, mp, z0, z1, k, delta, beta, precision, floor, count)
+        ids = cache.get(q)
+        nodes = cache.arrays()
+        fates = np.asarray([r["fate"] for r in cache.records])[ids]
+        valid = (fates == "screen") & nodes["valid"][ids]
+        density = np.zeros(count, complex)
+        if valid.any():
+            density[valid] = pullback_density({key: nodes[key][ids][valid] for key in
+                                               ("fresnel", "source_distance", "uz0", "uzexit", "determinant", "maslov")})
+        if not np.isfinite(density).all() or not np.isfinite(nodes["phase"][ids][valid]).all():
+            raise ValueError("residual samples produced non-finite density or phase")
+        out["points"][b], out["phase"][b], out["density"][b], out["valid"][b] = nodes["points"][ids], nodes["phase"][ids], density, valid
+        stats["emitted"] += count
+        for fate, n in Counter(fates.tolist()).items():
+            stats["fate_counts"][fate] = stats["fate_counts"].get(fate, 0)+n
+        stats["screen_invalid_transport"] += int(np.sum((fates == "screen") & ~nodes["valid"][ids]))
+        stats["trace_seconds"] += cache.tracing_seconds
+        stats["transport_seconds"] += cache.transport_seconds
+    return out, stats

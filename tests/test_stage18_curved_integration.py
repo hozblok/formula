@@ -88,3 +88,32 @@ def test_curved_replay_traces_each_source_and_accumulates_fields(tmp_path, monke
     with np.load(folder/'mesh-mode0-bore0.npz', allow_pickle=False) as saved:
         assert saved['position_nodes'].shape[1:] == (6, 2)
         assert saved['partition_accepted'].sum() == len(saved['position_nodes'])
+
+
+def test_curved_residual_replay_corrects_intensity_and_cross_terms(tmp_path):
+    pytest.importorskip('finufft')
+    raw = curved_scene()
+    raw['b9_estimator']['curved_retrace'].update(max_nodes=400, residual_batches=2, residual_seed=5)
+    raw['b9_estimator'].update(max_modes=1, map_snapshots=[1])
+    sim = Simulation.from_dict(raw)
+    archive, output = tmp_path/'archive', tmp_path/'result'
+    make_archive(sim, archive)
+    sim.replay(str(archive), str(output), stages=[18])
+    folder = output/'stage18'
+    meta = json.loads((folder/'meta.json').read_text())
+    assert meta['residual_quadrature']['batches'] == 2
+    record = meta['modes'][0]
+    residual = record['variants'][0]['residual']
+    assert residual['batches'] == 2 and residual['faces'] == record['meshes']['36']['curved_retrace']['0']['residual']['faces']
+    field_file = next(folder.glob('field-*-mode0.npz'))
+    with np.load(field_file) as data:
+        field, variance, covariance = data['field'], data['residual_variance'], data['residual_reference_covariance']
+        ref = tuple(data['ref_index'])
+    assert variance.shape == field.shape and np.all(variance >= 0)
+    np.testing.assert_allclose(covariance[ref].imag, 0, atol=1e-12*abs(field).max()**2)
+    with np.load(next(folder.glob('map-*-m1.npz'))) as data:
+        assert bool(data['residual_variance_corrected'])
+        np.testing.assert_allclose(data['I'], abs(field)**2-variance, rtol=1e-12, atol=1e-12*abs(field).max()**2)
+        np.testing.assert_allclose(data['W'], field*field[ref].conjugate()-covariance, rtol=1e-12, atol=1e-12*abs(field).max()**2)
+    if residual['faces']:
+        assert residual['mean_norm_over_mesh_field'] is not None and np.any(variance > 0)

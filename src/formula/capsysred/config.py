@@ -802,7 +802,8 @@ class Config:
                 raise ValueError("b9_estimator.curved_retrace and adaptive_retrace cannot be combined")
             defaults = dict(bores=[], angles=128, radial_rings=4, max_depth=16, max_nodes=20000,
                 phase_tolerance_rad=.05, density_relative_tolerance=.02, geometry_phase_tolerance_rad=.05,
-                fresnel_relative_tolerance=.05, precision=64, entrance_relative_inset=2e-6)
+                fresnel_relative_tolerance=.05, precision=64, entrance_relative_inset=2e-6,
+                residual_batches=0, residual_seed=0)
             if not isinstance(curved, dict) or curved.keys()-defaults.keys():
                 raise ValueError("b9_estimator.curved_retrace: invalid mapping or unknown keys")
             curved = {**defaults, **curved}
@@ -825,6 +826,12 @@ class Config:
                 curved[key] = float(value)
             if curved["entrance_relative_inset"] >= .01:
                 raise ValueError("b9_estimator.curved_retrace.entrance_relative_inset: expected < 0.01")
+            for key in ("residual_batches", "residual_seed"):
+                value = curved[key]
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    raise ValueError(f"b9_estimator.curved_retrace.{key}: expected integer >= 0")
+            if curved["residual_batches"] == 1:
+                raise ValueError("b9_estimator.curved_retrace.residual_batches: expected 0 or at least 2 batches")
             b9["curved_retrace"] = curved
         missing = b9["max_missing_area_fraction"]
         if missing is not None:

@@ -170,7 +170,31 @@ def _replace_curved(mesh, nodes, flat_replacements, curved_replacements, cap, k)
         cylinder_retrace={str(i): stats for i, (_, stats) in flat_replacements.items()},
         curved_retrace={str(i): stats for i, (_, stats) in curved_replacements.items()},
         scope="P2 entrance ray maps on selected curved bores; other retained flat exit models are converted by an exact change of integration coordinates, without altering their prescribed fields")
+    residual = [item[0] for item in curved_replacements.values() if item[0].get("residual_batches")]
+    if residual:
+        batches = {int(m["residual_batches"]) for m in residual}
+        if len(batches) != 1:
+            raise ValueError("stage 18 curved bores must share residual_batches")
+        for key in ("residual_entrance_triangles", "residual_area"):
+            result[key] = np.concatenate([m[key] for m in residual])
+        for key in ("residual_points", "residual_phase", "residual_density", "residual_valid"):
+            result[key] = np.concatenate([m[key] for m in residual], axis=1)
+        result["residual_batches"] = batches.pop()
+        result["metadata"]["residual_sampled_area_m2"] = float(result["residual_area"].sum())
+        result["metadata"]["residual_sampled_area_fraction"] = float(result["residual_area"].sum()/total)
     return result
+
+
+def _residual_correction(batch_fields, reference):
+    """Batch mean, the empirical variance of that mean and its complex covariance with the
+    reference cell (unbiased over the batches); subtracting them from |E|^2 and E conj E_ref
+    removes the Monte-Carlo bias of the sampled residual."""
+    count = len(batch_fields)
+    mean = batch_fields.mean(axis=0)
+    deviation = batch_fields-mean
+    variance = np.sum(abs(deviation)**2, axis=0)/(count*(count-1))
+    covariance = np.sum(deviation*deviation[(slice(None), *reference)].conjugate()[:, None, None], axis=0)/(count*(count-1))
+    return dict(mean=mean, variance=variance, reference_covariance=covariance)
 
 
 def _save_adaptive_mesh(folder, mode, bore, mesh):
@@ -316,6 +340,7 @@ def _mode_job(job):
             raise ValueError(f"stage 18 mode {mode['mode']} has no regular exit triangles")
         for subdivisions in opts["phase_subdivisions"]:
             groups = opts.get("carrier_groups", 0)
+            residual = None
             if opts.get("field_representation") == "curved_tubes":
                 from ._b9_curved import curved_phase_field
 
@@ -329,6 +354,22 @@ def _mode_job(job):
                     receiver_channels_per_batch=opts["receiver_channels_per_batch"], return_stats=True)
                 diagnostics["representation"] = "P2 entrance ray map, action and pullback density; positive Duffy quadrature"
                 diagnostics["timing_scope"] = "phase-order selection, curved source quadrature, Fourier propagation and coherent receiver integration"
+                if mesh.get("residual_batches"):
+                    from ._b9_curved import curved_residual_fields
+
+                    batch_fields, residual_stats = curved_residual_fields(mesh,
+                        k=job["k"], distance=job["target_z"]-cap.z1, x=grid["x"], y=grid["y"],
+                        cell_width=grid["cell_width"], pixel_order=opts["pixel_order"], eps=opts["nufft_eps"],
+                        nthreads=opts["nufft_threads"], max_nodes_per_batch=opts["max_quadrature_nodes_per_batch"],
+                        receiver_channels_per_batch=opts["receiver_channels_per_batch"], return_stats=True)
+                    residual = _residual_correction(batch_fields, grid["ref_index"])
+                    norm = float(np.linalg.norm(field))
+                    residual_stats.update(mean_norm_over_mesh_field=float(np.linalg.norm(residual["mean"])/norm) if norm else None,
+                        standard_error_norm_over_mesh_field=float(np.sqrt(residual["variance"].sum())/norm) if norm else None,
+                        sampled_area_fraction=mesh["metadata"].get("residual_sampled_area_fraction"),
+                        estimator="field += batch mean; I -= variance of the mean; W -= covariance with the reference cell")
+                    diagnostics["residual"] = residual_stats
+                    field = field+residual["mean"]
             elif opts.get("field_representation") == "phase_quadrature":
                 from ._b9_phase import phase_field
 
@@ -387,7 +428,8 @@ def _mode_job(job):
                 raise ValueError("stage 18 produced a non-finite complex field")
             diagnostics["seconds"] = time.perf_counter()-field_start
             diagnostics["carrier_groups"] = groups
-            variants[(budget, subdivisions)] = dict(field=field, diagnostics=diagnostics)
+            variants[(budget, subdivisions)] = dict(field=field, diagnostics=diagnostics,
+                residual=residual if "residual" in diagnostics else None)
             if not groups and opts.get("field_representation", "contour_p1") == "contour_p1":
                 del tri, values
     if implementation_hashes() != job["implementation"]:
@@ -411,6 +453,7 @@ def _snapshot(folder, states, matched_states, grid, count, *, carrier_groups=0, 
             mu_err=error, jackknife_valid_modes=valid, ref_index=np.array(grid["ref_index"]),
             receiver_width_m=np.array(grid["cell_width"]), n_modes=np.array(count),
             accuracy_validated=np.array(False),
+            residual_variance_corrected=np.array(bool((options.get("curved_retrace") or {}).get("residual_batches"))),
             emitted_rays_per_mode=np.array(budget), phase_subdivisions=np.array(subdivisions),
             carrier_groups=np.array(carrier_groups),
             **_representation_metadata(options),
@@ -492,6 +535,11 @@ def run_b9_stage(sim, out_dir, options, *, rays_paths=None, log=None):
             "Cylinder retracing addresses only selected straight 0/1-reflection bores; residual boundary bands and curved edges have measured nonzero area.",
             "Polynomial phase quadrature requires independent order and mesh convergence; it is not a caustic regularization."],
         modes=[], outputs=[], field_outputs=[])
+    if (options.get("curved_retrace") or {}).get("residual_batches"):
+        result["residual_quadrature"] = dict(batches=options["curved_retrace"]["residual_batches"],
+            seed=options["curved_retrace"]["residual_seed"],
+            estimator="unresolved curved faces enter as the mean of stratified Monte-Carlo batches; the variance of that mean is subtracted from I and its covariance with the reference cell from W",
+            limitation="removes the sampling bias of |E|^2 and E conj E_ref, not the GO-model error of the sampled faces; negative corrected intensities in dark cells are reported as nonpositive")
     if options.get("field_representation") == "curved_tubes":
         result["status"] = "experimental-curved-GO-ray-tube-diffraction"
         result["field_model"] = "P2 entrance-to-exit ray map, P2 optical action and P2 complex pullback density on selected bores; retained flat models converted exactly; Fresnel diffraction of the resulting GO branches"
@@ -510,6 +558,9 @@ def run_b9_stage(sim, out_dir, options, *, rays_paths=None, log=None):
                 field = item["field"]
                 intensity = abs(field)**2
                 cross = field*field[grid["ref_index"]].conjugate()
+                if item.get("residual") is not None:
+                    intensity = intensity-item["residual"]["variance"]
+                    cross = cross-item["residual"]["reference_covariance"]
                 state = states[key]
                 state["rowsI"].append(intensity)
                 state["rowsW"].append(cross)
@@ -518,10 +569,16 @@ def run_b9_stage(sim, out_dir, options, *, rays_paths=None, log=None):
                 record["variants"].append({**item["diagnostics"], "rays": key[0], "subdivisions": key[1]})
                 if completed_count == 1:
                     name = f"field-{_variant_name(key[0], key[1], options)}-mode{completed['mode']}.npz"
+                    extra = {}
+                    if item.get("residual") is not None:
+                        extra = dict(residual_variance=item["residual"]["variance"],
+                                     residual_reference_covariance=item["residual"]["reference_covariance"],
+                                     residual_batches=np.array(len(item["residual"]["variance"]) and
+                                                               (options.get("curved_retrace") or {}).get("residual_batches", 0)))
                     _atomic_npz(partial/name, field=field, x=grid["x"], y=grid["y"],
                         receiver_width_m=np.array(grid["cell_width"]), ref_index=np.array(grid["ref_index"]),
                         carrier_groups=np.array(groups), phase_subdivisions=np.array(key[1]),
-                        **_representation_metadata(options))
+                        **_representation_metadata(options), **extra)
                     result["field_outputs"].append(dict(file=name, mode=completed["mode"], sha256=_hash(partial/name)))
             for budget, item in completed["matched"].items():
                 for name in ("I", "W", "ray_count"):
