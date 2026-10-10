@@ -10,6 +10,7 @@ engine and the Fresnel factor against xray.reflect_amplitude.
 import json
 import math
 import os
+import shutil
 import time
 import zlib
 
@@ -19,7 +20,10 @@ from .. import xray
 from . import render, schematic
 from .stages import analytic
 from .stages.altcoh import run_alt_stage
-from .stages.beamlet import run_beamlet_stage
+from .stages.beamlet import (STAGING_PREFIX, PeakSampler, _peak_rss,
+                             preflight_stage11, publish_stage11, recorded_plane,
+                             refuse_stage11_leftovers, run_beamlet_stage)
+from .env import Env
 from .shared.common import log as _log
 from .stages.jackknife import run_jack_stage
 from .stages.sketch import run_sketch_stage
@@ -44,7 +48,56 @@ from .shared.physics_constants import FRESNEL_PROBE_THETA
 from .shared.units import (
     m_to_angstrom, m_to_um, rad_to_mrad, rad_to_urad)
 
-KNOWN_STAGES = (1, 2, 3, 7, 8, 9, 11, 14)
+KNOWN_STAGES = (1, 2, 3, 7, 8, 9, 11, 14, 16, 17, 18)
+
+
+def _wave_backend():
+    """Load optional dependencies only for an explicitly selected Stage 16."""
+    try:
+        from .stages import wave
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"numpy", "scipy"}:
+            raise
+        raise ValueError(
+            f"Stage 16 requires NumPy and SciPy; missing dependency: {exc.name}"
+        ) from exc
+    return wave
+
+
+def _b5_backend():
+    """Load optional dependencies only for an explicitly selected Stage 17."""
+    try:
+        from .stages import stage17
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"numpy", "scipy"}:
+            raise
+        raise ValueError(
+            f"Stage 17 requires NumPy and SciPy; missing dependency: {exc.name}"
+        ) from exc
+    return stage17
+
+
+def _b9_backend():
+    """Load optional dependencies only for an explicitly selected Stage 18."""
+    try:
+        from .stages import stage18
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"numpy", "scipy"}:
+            raise
+        raise ValueError(
+            f"Stage 18 requires NumPy and SciPy; missing dependency: {exc.name}"
+        ) from exc
+    return stage18
+
+
+def _open_jsonl(path: str):
+    """The staged mu-beamlet.jsonl writer (a seam for failure injection)."""
+    return open(path, "w", encoding="utf-8")
+
+
+def _make_sampler():
+    """The whole-stage memory sampler (a seam for tests)."""
+    return PeakSampler()
 
 
 class Simulation:
@@ -744,72 +797,122 @@ class Simulation:
         tensor through the bounces (general astigmatism), honest mu with no
         self-pair subtraction. Free scene validates against vCZ; extra
         capillary screens re-bin the same records onto each plane."""
+        self.cfg.validate_beamlet()
         cap = self.cfg.capillary
-        rows = []
-        if self.cfg.free_source is not None:
-            res = run_beamlet_stage(self, "11 beamlet free (MC)", "free",
-                                    self.cfg.free_source, self.cfg.free_screen,
-                                    None, self._aim_free, SceneSeed.FREE)
-            self.results["beamlet:free"] = res
-            maps, screen = res["maps"], res["screen"]
-            ref_xy = screen.pixel_xy(maps["ref_pixel"])
-            row = screen.ny // 2
-            xs_um = [m_to_um(x) for x in screen.xs()]
-            src = self.cfg.free_source
-            dist = float(screen.z) - float(src.position[2])
-            mu_th = [analytic.vcz_mu(x - ref_xy[0], src.shape, float(src.size),
-                                     float(self.lam), dist)
-                     for x in screen.xs()]
-            rms = analytic.rms_diff(maps["mu"][row], mu_th)
-            fig = render.line_chart(
-                [{"xs": xs_um, "ys": maps["mu"][row],
-                  "label": "beamlets |μ|"},
-                 {"xs": xs_um, "ys": mu_th,
-                  "label": "van Cittert–Zernike analytics", "dash": "6,4"}],
-                "beamlet |μ| vs vCZ analytics [free]",
-                "x, µm", "|μ|",
-                f"RMS(beamlets − vCZ) = {rms:.3f};  {self._beamlet_sub(res)}",
-                vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
-            self._save(out_dir, "11-free-beamlet-mu.svg", fig)
-            self._beamlet_outputs(
-                out_dir, "free", res, rows,
-                extra=[f"- RMS(|μ|_beamlet − |μ|_vCZ) = {rms:.4f}"])
-        if cap is not None:
-            bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
-            # one pass over the records deposits the main and every extra
-            # screen together (the shared prep feeds all planes)
-            res = run_beamlet_stage(self, "11 beamlet capillary (MC)",
-                                    "capillary", cap.source, cap.screen,
-                                    bundle, self._aim_capillary,
-                                    SceneSeed.CAPILLARY,
-                                    extra_screens=cap.screens)
-            self.results["beamlet:capillary"] = res
-            self._beamlet_outputs(out_dir, "capillary", res, rows)
-            for i, (scr, res_i) in enumerate(zip(cap.screens, res["extras"]), 1):
-                self.results[f"beamlet:capillary-s{i}"] = res_i
+        jobs = Env.stage11_jobs()
+        t_stage = time.time()
+        refuse_stage11_leftovers(out_dir)
+        for est in preflight_stage11(self, out_dir, jobs):
+            _log(f"  stage 11 {est['scene']}: jobs {est['jobs']}; estimated peak "
+                 f"RAM {est['ram'] / 2 ** 30:.2f} GiB, disk {est['disk'] / 2 ** 30:.2f} GiB")
+        if cap is not None and self.rays is not None:
+            recorded_plane(self, "capillary", cap.screen)   # fail before the free pass
+        # every output of the stage is staged and published together; the
+        # memory sampler covers the whole stage, workers announce themselves
+        sampler = _make_sampler()
+        sampler.start()
+        staging = os.path.join(
+            out_dir, f"{STAGING_PREFIX}{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}")
+        first_file = len(self.files)
+        jsonl = None
+        try:
+            os.makedirs(staging)
+            jsonl = _open_jsonl(os.path.join(staging, "mu-beamlet.jsonl"))
+            sink = lambda row: jsonl.write(json.dumps(row) + "\n")
+            if self.cfg.free_source is not None:
+                res = run_beamlet_stage(self, "11 beamlet free (MC)", "free",
+                                        self.cfg.free_source, self.cfg.free_screen,
+                                        None, self._aim_free, SceneSeed.FREE,
+                                        work_dir=out_dir, jobs=jobs, sampler=sampler)
+                self.results["beamlet:free"] = res
+                maps, screen = res["maps"], res["screen"]
+                ref_xy = screen.pixel_xy(maps["ref_pixel"])
+                row = screen.ny // 2
+                xs_um = [m_to_um(x) for x in screen.xs()]
+                src = self.cfg.free_source
+                dist = float(screen.z) - float(src.position[2])
+                mu_th = [analytic.vcz_mu(x - ref_xy[0], src.shape, float(src.size),
+                                         float(self.lam), dist)
+                         for x in screen.xs()]
+                rms = analytic.rms_diff(maps["mu"][row], mu_th)
+                fig = render.line_chart(
+                    [{"xs": xs_um, "ys": maps["mu"][row],
+                      "label": "beamlets |μ|"},
+                     {"xs": xs_um, "ys": mu_th,
+                      "label": "van Cittert–Zernike analytics", "dash": "6,4"}],
+                    "beamlet |μ| vs vCZ analytics [free]",
+                    "x, µm", "|μ|",
+                    f"RMS(beamlets − vCZ) = {rms:.3f};  {self._beamlet_sub(res)}",
+                    vlines=[(m_to_um(ref_xy[0]), "ref")], w=760)
+                self._save(staging, "11-free-beamlet-mu.svg", fig)
                 self._beamlet_outputs(
-                    out_dir, f"capillary-s{i}", res_i, rows,
-                    note=f"- screen {i}: z = {mm(scr.z)}, "
-                         f"window {um(scr.edge_x)} × {um(scr.edge_y)}, "
-                         f"{scr.nx}×{scr.ny} px")
-        path = os.path.join(out_dir, "mu-beamlet.jsonl")
-        with open(path, "w", encoding="utf-8") as fh:
-            for row in rows:
-                fh.write(json.dumps(row) + "\n")
+                    staging, "free", res, sink,
+                    extra=[f"- RMS(|μ|_beamlet − |μ|_vCZ) = {rms:.4f}"])
+            if cap is not None:
+                bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+                # one pass over the records deposits the main and every extra
+                # screen together (the shared prep feeds all planes)
+                res = run_beamlet_stage(self, "11 beamlet capillary (MC)",
+                                        "capillary", cap.source, cap.screen,
+                                        bundle, self._aim_capillary,
+                                        SceneSeed.CAPILLARY,
+                                        extra_screens=cap.screens,
+                                        work_dir=out_dir, jobs=jobs, sampler=sampler)
+                self.results["beamlet:capillary"] = res
+                self._beamlet_outputs(staging, "capillary", res, sink)
+                for i, (scr, res_i) in enumerate(zip(cap.screens, res["extras"]), 1):
+                    self.results[f"beamlet:capillary-s{i}"] = res_i
+                    self._beamlet_outputs(
+                        staging, f"capillary-s{i}", res_i, sink,
+                        note=f"- screen {i}: z = {mm(scr.z)}, "
+                             f"window {um(scr.edge_x)} × {um(scr.edge_y)}, "
+                             f"{scr.nx}×{scr.ny} px")
+            jsonl.close()
+            jsonl = None
+        except BaseException as exc:
+            # a second failure (the buffered JSONL failing again on close, a
+            # locked staging file) must not skip the cleanup: it is recorded
+            # on the original error instead
+            if jsonl is not None:
+                try:
+                    jsonl.close()
+                except Exception as err:
+                    exc.add_note(f"secondary error while closing the staged JSONL: {err!r}")
+            try:
+                shutil.rmtree(staging)
+            except OSError as err:
+                exc.add_note(f"secondary error while removing {staging}: {err!r}")
+            sampler.stop()
+            raise
         self.files.append("mu-beamlet.jsonl")
+        t_publish = time.time()
+        try:
+            publish_stage11(staging, out_dir, self.files[first_file:])
+        finally:
+            sampler.stop()
+        publish_seconds = time.time() - t_publish
         _log("  → mu-beamlet.jsonl")
+        worker_peaks = [r["diagnostics"]["peak_rss"]["worker_max"]
+                        for key, r in self.results.items()
+                        if key.startswith("beamlet:") and "diagnostics" in r]
+        self.report.append(
+            f"- stage 11 wall: {time.time() - t_stage:.1f} s (publication "
+            f"{publish_seconds:.1f} s); peak RSS master {_peak_rss() / 2 ** 30:.2f} GiB "
+            f"(whole stage), workers max {max(worker_peaks, default=0) / 2 ** 30:.2f} GiB "
+            f"(self-reported), sampled total max {sampler.max_total / 2 ** 30:.2f} GiB, "
+            f"sampled worker max {sampler.max_workers / 2 ** 30:.2f} GiB")
 
     def _beamlet_sub(self, res):
         w0t = res.get("w0_t", self.cfg.beamlet_w0)
-        aniso = (f" (sag) / {m_to_um(w0t):.2f} µm (tang)"
+        aniso = (f" (y) / {m_to_um(w0t):.2f} µm (x)"
                  if w0t != self.cfg.beamlet_w0 else "")
         return (f"{res['n_modes']} modes × {res['n_rays']} rays; "
                 f"w₀ = {m_to_um(self.cfg.beamlet_w0):.2f} µm{aniso}, "
                 f"mean w on screen = {m_to_um(res['maps']['w_mean']):.2f} µm")
 
-    def _beamlet_outputs(self, out_dir, tag, res, rows, note=None, extra=()):
+    def _beamlet_outputs(self, out_dir, tag, res, sink, note=None, extra=()):
         """Beamlet scene outputs: report section, figures (capillary tags),
-        mu-beamlet.jsonl rows."""
+        mu-beamlet.jsonl rows streamed through sink(row)."""
         maps, screen, st = res["maps"], res["screen"], res["stats"]
         nx, ny = screen.nx, screen.ny
         ref_xy = screen.pixel_xy(maps["ref_pixel"])
@@ -820,9 +923,11 @@ class Simulation:
                   f"{st['screen']:,} of {st['emitted']:,} (tails off window: {st['off_window']:,})",
                   f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
                   f"- w₀ = {m_to_um(self.cfg.beamlet_w0):.2f} µm"
-                  + (f" (sagittal), {m_to_um(res['w0_t']):.2f} µm (tangential)"
+                  + (f" (y), {m_to_um(res['w0_t']):.2f} µm (x)"
                      if res.get("w0_t", self.cfg.beamlet_w0)
                      != self.cfg.beamlet_w0 else "")
+                  + ("" if self.cfg.beamlet_waist_z is None else
+                     f", waist at z = {mm(self.cfg.beamlet_waist_z)}")
                   + f"; mean spot width on screen "
                   f"= {m_to_um(maps['w_mean']):.2f} µm; Γ-tensor deposit; honest |μ| "
                   "(no self-pair subtraction)"]
@@ -884,15 +989,84 @@ class Simulation:
         ys_um = [m_to_um(y) for y in screen.ys()]
         for iy in range(ny):
             for ix in range(nx):
-                rows.append({"stage": tag, "pixel": iy * nx + ix,
-                             "x_um": xs_um[ix], "y_um": ys_um[iy],
-                             "mu": maps["mu"][iy][ix],
-                             "mu_err": maps["mu_err"][iy][ix],
-                             "dubious": bool(maps["dubious"][iy][ix]),
-                             "I": maps["intensity"][iy][ix],
-                             "n_rays": int(maps["density"][iy][ix])})
+                sink({"stage": tag, "pixel": iy * nx + ix,
+                      "x_um": xs_um[ix], "y_um": ys_um[iy],
+                      "mu": maps["mu"][iy][ix],
+                      "mu_err": maps["mu_err"][iy][ix],
+                      "dubious": bool(maps["dubious"][iy][ix]),
+                      "I": maps["intensity"][iy][ix],
+                      "n_rays": int(maps["density"][iy][ix])})
+        boundary = maps.get("loo_boundary")
+        if boundary is not None:   # deterministic: part of the scientific result
+            report.append(
+                f"- LOO-threshold boundary pixels (band {boundary['band_rel']:.3e}·I): "
+                f"{boundary['count']}"
+                + (f"; first {boundary['pixels']}" if boundary["count"] else ""))
+        diag = res.get("diagnostics")
+        if diag:   # run diagnostics: not part of the scientific result
+            t, pk = diag["timers"], diag["peak_rss"]
+            report.append(
+                f"- jobs: {diag['jobs']}; scene wall {t['scene']:.1f} s (allocation "
+                f"{t['allocation']:.1f} s, deposit {t['deposit']:.1f} s, merge "
+                f"{t['merge']:.1f} s, jackknife {t['jackknife']:.1f} s); peak RSS master "
+                f"so far {pk['master'] / 2 ** 30:.2f} GiB, worker max "
+                f"{pk['worker_max'] / 2 ** 30:.2f} GiB (self-reported)")
         report.append(f"- time: {res['seconds']:.1f} s")
         self.report += report
+
+    # ------------------------------------------------------------- stage 16
+
+    def _stage16(self, out_dir, rays_src=None, stage14_paths=None):
+        """Wave estimator; the `wave_estimator` section is validated here only."""
+        wave = self.cfg.validate_wave_estimator()
+        rays_paths = None
+        if wave["source_mode"] == "recorded_origins":
+            # every replayed archive, like Stage 14: a joined reader exposes its parts
+            if stage14_paths:
+                rays_paths = list(stage14_paths)
+            elif rays_src is not None:
+                parts = getattr(rays_src, "parts", None)
+                rays_paths = [p.path for p in parts] if parts else [rays_src.path]
+            else:
+                local = self._local_recording(out_dir)
+                rays_paths = [local] if local else None
+        res = _wave_backend().run_wave_stage(
+            self, out_dir, wave, rays_paths=rays_paths, log=_log)
+        self.results["wave"] = res["results"]
+        self.files += res["files"]
+        self.report += res["report"]
+
+    def _stage17(self, out_dir, rays_src=None, stage14_paths=None):
+        """Experimental archive phase audit or canonical coherence reconstruction."""
+        opts = self.cfg.validate_b5_estimator()
+        if stage14_paths:
+            paths = list(stage14_paths)
+        elif rays_src is not None:
+            parts = getattr(rays_src, "parts", None)
+            paths = [part.path for part in parts] if parts else [rays_src.path]
+        else:
+            local = self._local_recording(out_dir)
+            paths = [local] if local else None
+        res = _b5_backend().run_b5_stage(self, out_dir, opts, rays_paths=paths, log=_log)
+        self.results["b5"] = res["results"]
+        self.files += res["files"]
+        self.report += res["report"]
+
+    def _stage18(self, out_dir, rays_src=None, stage14_paths=None):
+        """Experimental archive reconstruction with finite contour elements."""
+        opts = self.cfg.validate_b9_estimator()
+        if stage14_paths:
+            paths = list(stage14_paths)
+        elif rays_src is not None:
+            parts = getattr(rays_src, "parts", None)
+            paths = [part.path for part in parts] if parts else [rays_src.path]
+        else:
+            local = self._local_recording(out_dir)
+            paths = [local] if local else None
+        res = _b9_backend().run_b9_stage(self, out_dir, opts, rays_paths=paths, log=_log)
+        self.results["b9"] = res["results"]
+        self.files += res["files"]
+        self.report += res["report"]
 
     def _capillary_engine_check(self, bundle) -> str:
         cap = self.cfg.capillary
@@ -938,13 +1112,13 @@ class Simulation:
             raise ValueError(
                 f"stages {free_stages} require a configured free.source"
             )
-        capillary_stages = sorted(wanted & {9, 14})
+        capillary_stages = sorted(wanted & {9, 14, 17, 18})
         if capillary_stages and self.cfg.capillary is None:
             raise ValueError(
                 f"stages {capillary_stages} require a configured "
                 "capillary.source"
             )
-        mixed_stages = sorted(wanted & {7, 8, 11})
+        mixed_stages = sorted(wanted & {7, 8, 11, 16})
         if (mixed_stages and self.cfg.free_source is None
                 and self.cfg.capillary is None):
             raise ValueError(
@@ -1015,6 +1189,18 @@ class Simulation:
         if (rays_src is not None or stage14_paths is not None) and 9 in wanted:
             raise ValueError("stage 9 validates the tracers themselves and "
                              "cannot run from a rays file")
+        if 16 in wanted:
+            backend = _wave_backend()
+            backend.preflight_wave_inputs(self, self.cfg.validate_wave_estimator())
+            backend.preflight_wave_output(out_dir)
+        if 17 in wanted:
+            backend = _b5_backend()
+            backend.preflight_b5_inputs(self, self.cfg.validate_b5_estimator())
+            backend.preflight_b5_output(out_dir)
+        if 18 in wanted:
+            backend = _b9_backend()
+            backend.preflight_b9_inputs(self, self.cfg.validate_b9_estimator())
+            backend.preflight_b9_output(out_dir)
         os.makedirs(out_dir, exist_ok=True)
         if 14 in wanted:
             # Fail before a fresh trace or a many-hour cache build.
@@ -1161,6 +1347,15 @@ class Simulation:
             ]
             for extra_result in res14.get("extra_results", []):
                 self._record_stage14_result(extra_result)
+        if 16 in wanted:
+            _log("Stage 16: wave estimator — positive source quadrature, joint W/I")
+            self._stage16(out_dir, rays_src, stage14_paths)
+        if 17 in wanted:
+            _log("Stage 17: experimental archive B5 reconstruction")
+            self._stage17(out_dir, rays_src, stage14_paths)
+        if 18 in wanted:
+            _log("Stage 18: experimental archive B9 contour reconstruction")
+            self._stage18(out_dir, rays_src, stage14_paths)
         report_name = format.report_name(out_dir, "report")
         self.report += ["", "## Files", ""]
         self.report += [f"- {name}" for name in self.files + [report_name]]
@@ -1202,10 +1397,17 @@ class Simulation:
                     f"no replayable configured scenes in {records_path!r}"
                 )
         wanted = set(stages)
-        if wanted == {14}:
+        if 16 in wanted:
+            _wave_backend()
+        if 17 in wanted:
+            _b5_backend()
+        if 18 in wanted:
+            _b9_backend()
+        if wanted <= {14, 16, 17, 18}:
             # No RaysReader: its constructor scans the whole gzip.  The
             # Stage-14 builder validates/deposits in one strict pass, while a
-            # cache hit does not open the ray archive at all.
+            # cache hit does not open the ray archive at all; Stage 16 reads
+            # only the per-mode origins; Stages 17/18 sample selected modes.
             return self.run(out_dir, stages=stages,
                             stage14_paths=paths)
         if reader is None:
@@ -1213,4 +1415,3 @@ class Simulation:
                       else MultiRaysReader(paths))
         return self.run(out_dir, stages=stages, rays_src=reader,
                         stage14_paths=paths if 14 in wanted else None)
-

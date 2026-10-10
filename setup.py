@@ -86,6 +86,7 @@ EXT_MODULES = [
 ]
 
 CAPSYSRED_DEPS = ["PyYAML"]
+CAPSYSRED_B9_DEPS = CAPSYSRED_DEPS + ["numpy", "scipy", "finufft>=2.5,<3"]
 TEST_DEPS = ["pytest"] + CAPSYSRED_DEPS
 
 README_PATH = os.path.join(CURRENT_DIR, "README.md")
@@ -118,6 +119,7 @@ setup(
     ext_modules=EXT_MODULES,
     extras_require={
         "capsysred": CAPSYSRED_DEPS,
+        "capsysred-b9": CAPSYSRED_B9_DEPS,
         "test": TEST_DEPS,
         "dev": TEST_DEPS,
     },

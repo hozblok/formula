@@ -119,9 +119,32 @@ def make_beamlet_grid(nx: int, ny: int, x0: float, y0: float, ex: float,
     when the .so predates BeamletGrid — the Python path is the reference and
     the fallback."""
     cls = getattr(_formula, "BeamletGrid", None)
-    if cls is None or not hasattr(cls, "jackknife"):   # stale .so: old API
+    if cls is None or getattr(cls, "lens_stride", 3) != 4:   # stale .so: old API
         return None
     try:
         return cls(nx, ny, x0, y0, ex, ey, kms, zrs, zrs_t, ns)
     except TypeError:      # stale .so without the anisotropic launch
         return None
+
+
+def _stage11_native(name: str):
+    attr = getattr(_formula, name, None)
+    if attr is None:
+        raise RuntimeError(
+            f"the built _formula extension lacks {name}; rebuild it "
+            "(pip install -e .) for the Stage-11 shared path")
+    return attr
+
+
+def exact_accumulator(npix: int):
+    """Exact order-free W/I totals and density counts (fixed-point, native)."""
+    return _stage11_native("ExactAccumulator")(npix)
+
+
+def jackknife_tile(w_tot, i_tot, i_ref, w_rows, i_rows, irefs, eps_rel,
+                   band_rel=0.0):
+    """Native delete-one-mode jackknife of one pixel tile: (mu, sigma,
+    dubious, boundary) bytes; boundary marks pixels whose LOO mask lies
+    within band_rel of a threshold."""
+    return _stage11_native("jackknife_tile")(w_tot, i_tot, i_ref, w_rows,
+                                             i_rows, irefs, eps_rel, band_rel)

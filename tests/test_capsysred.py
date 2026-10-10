@@ -1,5 +1,6 @@
 """Smoke and physics checks for the CAPSYSred package (tiny ray budgets)."""
 
+import cmath
 import gzip
 import json
 import os
@@ -1420,6 +1421,32 @@ def test_extra_screen_inside_optic_rejected():
         Simulation.from_dict({**TINY, "capillary": cap})
 
 
+def _lens(phi, inv_ft, inv_fs):
+    # meridional lens tuple: P diagonal in the (n, t) frame of azimuth phi
+    c, s = math.cos(phi), math.sin(phi)
+    return (phi, inv_ft * c * c + inv_fs * s * s, (inv_ft - inv_fs) * c * s,
+            inv_ft * s * s + inv_fs * c * c)
+
+
+def _merid_out(phi, rp, s):
+    # outgoing direction of a meridional bounce, grazing sine s, on a wall
+    # whose radius at azimuth phi grows as rp along z
+    q = math.hypot(1.0, rp)
+    n = (math.cos(phi) / q, math.sin(phi) / q, -rp / q)
+    t = (rp * math.cos(phi) / q, rp * math.sin(phi) / q, 1.0 / q)
+    c = math.sqrt(1.0 - s * s)
+    return tuple(c * ti - s * ni for ti, ni in zip(t, n))
+
+
+def _merid_lens(phi, rp, s, k_m, r):
+    # P = 2|N.u| II(d_i, d_j) of that bounce: meridional curvature k_m,
+    # radius r; the old diagonal values are its s -> 0, rp -> 0 limit
+    q2 = 1.0 + rp * rp
+    c = math.sqrt(1.0 - s * s)
+    return _lens(phi, 2.0 * k_m * (c - s * rp) ** 2 / (s * q2),
+                 2.0 * s / (r * math.sqrt(q2)))
+
+
 def test_gamma_free_drift_reduces_to_scalar_q():
     # no bounces: Q = (q0+L)*I, no coupling, amplitude = q0/q (w0/w, Gouy)
     import cmath
@@ -1443,7 +1470,8 @@ def test_gamma_meridional_reduces_to_two_scalar_q():
     zr = 0.5 * (5e-7) ** 2 * k
     segs = [0.01, 0.006, 0.002]
     inv_fs = 1.0 / 1.5e-3
-    q, _ = propagate(zr, segs, [(0.0, 0.0, inv_fs), (math.pi, 0.0, inv_fs)])
+    q, _ = propagate(zr, segs, [_lens(0.0, 0.0, inv_fs),
+                                 _lens(math.pi, 0.0, inv_fs)])
     assert abs(q[1]) < 1e-12 * abs(q[0])       # sin(pi) float noise only
 
     def scalar(inv_f):
@@ -1464,7 +1492,7 @@ def test_gamma_skew_bounces_couple_planes():
     zr = 0.5 * (5e-7) ** 2 * k
     inv_fs = 1.0 / 1.5e-3
     q, _ = propagate(zr, [0.01, 0.006, 0.002],
-                     [(0.0, 0.0, inv_fs), (math.pi / 3, 0.0, inv_fs)])
+                     [_lens(0.0, 0.0, inv_fs), _lens(math.pi / 3, 0.0, inv_fs)])
     assert abs(q[1]) > 0.0
 
 
@@ -1475,7 +1503,7 @@ def test_gamma_normal_incidence_isotropic():
     zr = 0.5 * (5e-7) ** 2 * k
     inv_f = 2.0 / 0.01
     import cmath
-    outs = [propagate(zr, [0.01, 0.02], [(phi, inv_f, inv_f)])[0]
+    outs = [propagate(zr, [0.01, 0.02], [_lens(phi, inv_f, inv_f)])[0]
             for phi in (0.0, 0.7, 2.0)]
     for q in outs[1:]:
         assert cmath.isclose(q[0], outs[0][0], rel_tol=1e-12)
@@ -1491,10 +1519,10 @@ def test_bounce_lenses_cylinder_wall():
     bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
     a = float(cap.bores[0]["radius"])
     s = 2.0e-3
-    [(phi, inv_ft, inv_fs)] = bounce_lenses(bundle, [(0.0, a, 0.02)], [s])
+    [(phi, *p)] = bounce_lenses(bundle, [(0.0, a, 0.02)],
+                                [_merid_out(math.pi / 2, 0.0, s)])
     assert phi == pytest.approx(math.pi / 2)
-    assert inv_ft == 0.0
-    assert inv_fs == pytest.approx(2.0 * s / a)
+    assert p == pytest.approx(_lens(phi, 0.0, 2.0 * s / a)[1:], abs=1e-9 * s / a)
 
 
 def test_bounce_lenses_funnel_wall():
@@ -1506,9 +1534,10 @@ def test_bounce_lenses_funnel_wall():
                       "funnel": {"g": [0.0, 0.0]}}])
     bundle = CapillaryBundle(flat.cfg.capillary.bores, flat.cfg.capillary.z0,
                              flat.cfg.capillary.z1)
-    [(phi, ift, ifs)] = bounce_lenses(bundle, [(0.0, r0, z)], [s])
+    [(phi, *p)] = bounce_lenses(bundle, [(0.0, r0, z)],
+                                [_merid_out(math.pi / 2, 0.0, s)])
     assert phi == pytest.approx(math.pi / 2)
-    assert ift == 0.0 and ifs == pytest.approx(2.0 * s / r0)
+    assert p == pytest.approx(_lens(phi, 0.0, 2.0 * s / r0)[1:], abs=1e-9 * s / r0)
 
     bf = -2.0e2                       # r(z) = r0*(1 + bf*z^2): waist profile
     para = _cap_sim([{"center": [0.0, 0.0], "radius": r0,
@@ -1518,19 +1547,25 @@ def test_bounce_lenses_funnel_wall():
     ff = 1.0 + bf * z * z
     rp = r0 * 2.0 * bf * z
     rpp = 2.0 * r0 * bf
-    [(phi, ift, ifs)] = bounce_lenses(bundle, [(r0 * ff, 0.0, z)], [s])
+    k_m = -rpp / (1.0 + rp * rp) ** 1.5
+    [(phi, ift, pxy, ifs)] = bounce_lenses(bundle, [(r0 * ff, 0.0, z)],
+                                           [_merid_out(0.0, rp, s)])
     assert phi == pytest.approx(0.0)
-    assert ifs == pytest.approx(2.0 * s / (r0 * ff))
-    assert ift == pytest.approx(-2.0 * rpp / ((1.0 + rp * rp) ** 1.5 * s))
+    assert (ift, pxy, ifs) == pytest.approx(
+        _merid_lens(0.0, rp, s, k_m, r0 * ff)[1:], rel=1e-9, abs=1e-9 * ifs)
+    assert ifs == pytest.approx(2.0 * s / (r0 * ff), rel=1e-5)
+    assert ift == pytest.approx(-2.0 * rpp / ((1.0 + rp * rp) ** 1.5 * s), rel=1e-5)
     assert ift > 0.0                  # waist wall curves toward the ray: focusing
 
 
 def test_bounce_lenses_unknown_kind_falls_flat():
-    # future wall kinds must degrade to the flat (scalar-q) model, not crash
+    # future wall kinds must degrade to the flat (scalar-q) model, not crash;
+    # their normal is unknown (NaN azimuth: no mirror flip)
     from formula.capsysred.gamma import bounce_lenses
     wall = type("OddWall", (), {"kind": "odd", "_cxf": 0.0, "_cyf": 0.0})()
     optic = type("Optic", (), {"walls": [wall]})()
-    assert bounce_lenses(optic, [(1e-6, 0.0, 0.01)], [1e-3]) == [(0.0, 0.0, 0.0)]
+    [(phi, *p)] = bounce_lenses(optic, [(1e-6, 0.0, 0.01)], [(0.0, 0.0, 1.0)])
+    assert math.isnan(phi) and p == [0.0, 0.0, 0.0]
 
 
 _IMPLICIT_PAIR = [
@@ -1548,7 +1583,9 @@ def test_bounce_lenses_implicit_multibore_flat():
     cap = _cap_sim(_IMPLICIT_PAIR).cfg.capillary
     bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
     pts = [(3.0e-6, 0.0, 0.01), (1.5e-5, 0.0, 0.02)]
-    assert bounce_lenses(bundle, pts, [2.0e-3, 2.0e-3]) == [(0.0, 0.0, 0.0)] * 2
+    lenses = bounce_lenses(bundle, pts, [(0.0, 0.0, 1.0)] * 2)
+    assert len(lenses) == 2
+    assert all(math.isnan(l[0]) and l[1:] == (0.0, 0.0, 0.0) for l in lenses)
 
 
 def test_bounce_lenses_mixed_kinds_nearest_center():
@@ -1559,11 +1596,12 @@ def test_bounce_lenses_mixed_kinds_nearest_center():
     cap = _cap_sim([{"center": [0.0, 0.0], "radius": a},
                     _IMPLICIT_PAIR[1]]).cfg.capillary
     bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
-    (phi, ift, ifs), flat = bounce_lenses(
-        bundle, [(0.0, a, 0.01), (1.5e-5, 0.0, 0.02)], [s, s])
+    (phi, *p), flat = bounce_lenses(
+        bundle, [(0.0, a, 0.01), (1.5e-5, 0.0, 0.02)],
+        [_merid_out(math.pi / 2, 0.0, s), (0.0, 0.0, 1.0)])
     assert phi == pytest.approx(math.pi / 2)
-    assert ift == 0.0 and ifs == pytest.approx(2.0 * s / a)
-    assert flat == (0.0, 0.0, 0.0)
+    assert p == pytest.approx(_lens(phi, 0.0, 2.0 * s / a)[1:], abs=1e-9 * s / a)
+    assert math.isnan(flat[0]) and flat[1:] == (0.0, 0.0, 0.0)
 
 
 def test_beamlet_deposit_implicit_multibore():
@@ -1730,7 +1768,7 @@ def test_gamma_amp_through_focus_matches_scalar_ratios():
     zr = 0.5 * (2.0e-7) ** 2 * k
     f = 5.0e-3
     segs, inv_f = [0.01, 0.02], 1.0 / f
-    q, amp = propagate(zr, segs, [(0.7, inv_f, inv_f)])
+    q, amp = propagate(zr, segs, [_lens(0.7, inv_f, inv_f)])
     qs, expected = complex(0.0, zr), complex(1.0, 0.0)
     for seg, invf in zip(segs, [inv_f, 0.0]):
         expected *= qs / (qs + seg)
@@ -1752,7 +1790,7 @@ def test_gamma_marginal_channel_hundred_bounces_stays_physical():
     a, theta = 6.0e-6, 2.0e-3
     seg = 2.0 * a / math.tan(theta)
     inv_fs = 2.0 * math.sin(theta) / a
-    lenses = [(0.0 if i % 2 else math.pi, 0.0, inv_fs) for i in range(100)]
+    lenses = [_lens(0.0 if i % 2 else math.pi, 0.0, inv_fs) for i in range(100)]
     q, amp = propagate(zr, [seg] * 101, lenses)
     gm = inv2(q)
     mean = 0.5 * (gm[0].imag + gm[2].imag)
@@ -1836,11 +1874,11 @@ def test_funnel_linear_taper_equals_revolution_twin():
                          rev.cfg.capillary.z1)
     for z in (0.005, 0.02, 0.04):
         pt = (r0 * (1.0 + af * z), 0.0, z)
-        (pf, tf, sf), = bounce_lenses(bf, [pt], [s])
-        (pr, tr, sr), = bounce_lenses(br, [pt], [s])
+        out = _merid_out(0.0, r0 * af, s)
+        (pf, *lf), = bounce_lenses(bf, [pt], [out])
+        (pr, *lr), = bounce_lenses(br, [pt], [out])
         assert pf == pr == pytest.approx(0.0)
-        assert tf == pytest.approx(tr, rel=1e-12)
-        assert sf == pytest.approx(sr, rel=1e-12)
+        assert lf == pytest.approx(lr, rel=1e-12, abs=1e-12 * lr[2])
 
 
 def test_funnel_bent_axis_matches_torus_arc():
@@ -1858,15 +1896,22 @@ def test_funnel_bent_axis_matches_torus_arc():
                          tor.cfg.capillary.z1)
     bfu = CapillaryBundle(fun.cfg.capillary.bores, fun.cfg.capillary.z0,
                           fun.cfg.capillary.z1)
-    xc_t = R - math.sqrt(R * R - z * z)            # torus centerline at z
+    ct = math.sqrt(R * R - z * z)
     xc_f = c * (1.0 + z * z / (2.0 * c * R))       # funnel axis at z
     for side in (-1.0, +1.0):                      # outer (-x) / inner (+x)
-        (_, tt, ts), = bounce_lenses(bt, [(xc_t + side * a, 0.0, z)], [s])
-        (_, ft, fs), = bounce_lenses(bfu, [(xc_f + side * a, 0.0, z)], [s])
+        phi = 0.0 if side > 0 else math.pi
+        # torus wall point: centerline (R - ct, 0, z) minus side*a*radial unit
+        pt = (R - ct + side * a * ct / R, 0.0, z - side * a * z / R)
+        (_, tt, _, ts), = bounce_lenses(
+            bt, [pt], [_merid_out(phi, side * z / ct, s)])
+        (_, ft, _, fs), = bounce_lenses(
+            bfu, [(xc_f + side * a, 0.0, z)], [_merid_out(phi, side * z / R, s)])
         expected = -side * 2.0 / (R * s)
         assert tt == pytest.approx(expected, rel=1e-3)
         assert ft == pytest.approx(expected, rel=1e-3)
-        assert ts == fs == pytest.approx(2.0 * s / a)
+        assert ts == pytest.approx(2.0 * s / a)
+        # the sheared funnel bore: its horizontal circle tilts by the axis slope
+        assert fs == pytest.approx(2.0 * s / (a * math.hypot(1.0, z / R)))
 
 
 def test_funnel_azimuth_from_local_axis():
@@ -1879,21 +1924,22 @@ def test_funnel_azimuth_from_local_axis():
     b = CapillaryBundle(fun.cfg.capillary.bores, fun.cfg.capillary.z0,
                         fun.cfg.capillary.z1)
     axis_x = c * (1.0 + 500.0 * z * z)
-    (phi, _, _), = bounce_lenses(b, [(axis_x, r0, z)], [2.0e-3])
+    (phi, *_), = bounce_lenses(b, [(axis_x, r0, z)],
+                               [_merid_out(math.pi / 2, 0.0, 2.0e-3)])
     assert phi == pytest.approx(math.pi / 2)
 
 
 def test_funnel_true_cone_has_no_meridional_lens():
-    # straight generatrix r = r0*(1 + af*z): f'' = 0 exactly -> 1/f_t = 0
+    # straight generatrix r = r0*(1 + af*z): f'' = 0 -> 1/f_t = 0 to rounding
     from formula.capsysred.gamma import bounce_lenses
     r0, af = 5.0e-6, -6.0
     fun = _cap_sim([{"center": [0.0, 0.0], "radius": r0,
                      "funnel": {"g": [0.0, 0.0], "f": [af, 0.0]}}])
     b = CapillaryBundle(fun.cfg.capillary.bores, fun.cfg.capillary.z0,
                         fun.cfg.capillary.z1)
-    (_, inv_ft, _), = bounce_lenses(b, [(r0 * (1.0 + af * 0.03), 0.0, 0.03)],
-                                    [1.0e-3])
-    assert inv_ft == 0.0
+    (_, inv_ft, _, inv_fs), = bounce_lenses(
+        b, [(r0 * (1.0 + af * 0.03), 0.0, 0.03)], [_merid_out(0.0, r0 * af, 1.0e-3)])
+    assert abs(inv_ft) <= 1e-12 * inv_fs
 
 
 def test_funnel_multibore_picks_nearest_axis():
@@ -1906,7 +1952,8 @@ def test_funnel_multibore_picks_nearest_axis():
                      "funnel": {"g": [0.0, 0.0]}}])
     b = CapillaryBundle(sim.cfg.capillary.bores, sim.cfg.capillary.z0,
                         sim.cfg.capillary.z1)
-    (phi, _, ifs), = bounce_lenses(b, [(4.0e-6 - r0, 0.0, z)], [1.0e-3])
+    (phi, _, _, ifs), = bounce_lenses(b, [(4.0e-6 - r0, 0.0, z)],
+                                      [_merid_out(math.pi, 0.0, 1.0e-3)])
     assert phi == pytest.approx(math.pi)
     assert ifs == pytest.approx(2.0 * 1.0e-3 / r0)
 
@@ -2266,31 +2313,85 @@ def test_beamlet_aniso_free_widths_match_gaussian():
     assert wy == pytest.approx(w0s * math.hypot(1.0, L / zrs), rel=0.05)
 
 
-def test_beamlet_aniso_ellipse_follows_direction_azimuth():
-    # a bounce-free ray at azimuth 45 deg carries its launch ellipse with it:
-    # the far field is wide along the anti-diagonal (the narrow sagittal
-    # launch axis) and narrow along the diagonal
+def _point_source_fan(w0_t=None, waist_dz=0.0, use_native=True, kev="8.0",
+                      w0=5.0e-7):
+    # beamlet sum of a point source at the origin on a 41x41 window at
+    # z = 0.1 m: a 91x91 slope lattice, step 1e-5 (1 um on the screen)
     from types import SimpleNamespace
     from formula.capsysred.stages.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
-    scr = ScreenGrid(SimpleNamespace(z=0.06, nx=61, ny=61, center=[0.0, 0.0],
-                                     edge_x=4.0e-5, edge_y=4.0e-5))
-    field = BeamletField(lines, scr, scr.ref_pixel(None), 5.0e-7, 3.0, None,
-                         w0_t=3.0e-6)
+    D = 0.1
+    lines = spectral_lines({"mode": "monochromatic"}, Number(kev, 32))
+    scr = ScreenGrid(SimpleNamespace(z=D, nx=41, ny=41, center=[0.0, 0.0],
+                                     edge_x=4.0e-6, edge_y=4.0e-6))
+    field = BeamletField(lines, scr, scr.ref_pixel(None), w0, 3.0, None,
+                         use_native=use_native, w0_t=w0_t, waist_dz=waist_dz)
     field.new_mode()
-    d = 7.0e-5
-    field.add_ray(RayRecord(0, 0, "screen", scr.ref_pixel(None),
-                            (0.0, 0.0, 0.06), (d, d, 1.0), 0.06, (), ()),
-                  [1.0 + 0j])
-    field.fold_mode()
-    maps = field.finalize(61, 61)
-    r = 4.0e-6 / math.sqrt(2.0)
-    at = lambda x, y: maps["intensity"][
-        min(range(61), key=lambda i: abs(scr.ys()[i] - y))][
-        min(range(61), key=lambda i: abs(scr.xs()[i] - x))]
-    assert at(-r, r) > 3.0 * at(r, r)      # anti-diagonal wide, diagonal narrow
+    for i in range(-45, 46):
+        for j in range(-45, 46):
+            mx, my = i * 1.0e-5, j * 1.0e-5
+            n = math.sqrt(1.0 + mx * mx + my * my)
+            field.add_ray(RayRecord(0, 0, "screen", None, (mx * D, my * D, D),
+                                    (mx / n, my / n, 1.0 / n), D * n, (), ()),
+                          [1.0 + 0j])
+    if use_native:
+        g = [field.native.at(0, p) for p in range(41 * 41)]
+    else:
+        g = [field._g[0].get(p, 0j) for p in range(41 * 41)]
+    k = float(lines[0].k)
+    exact = [cmath.exp(1j * k * math.sqrt(D * D + x * x + y * y))
+             for y in scr.ys() for x in scr.xs()]
+    return g, exact
+
+
+def _max_rel_dev(a, b):
+    # max |a/b / (a/b at the window center) - 1|
+    r = [u / v for u, v in zip(a, b)]
+    c = r[len(r) // 2]
+    return max(abs(v / c - 1.0) for v in r), c
+
+
+def test_beamlet_aniso_launch_reconstructs_point_source():
+    # one fixed elliptic launch sums to the same point-source field as the
+    # isotropic one: GBS of an unbounded fan does not depend on Q0
+    g_iso, exact = _point_source_fan()
+    g_ani, _ = _point_source_fan(w0_t=2.0e-6)
+    dev_iso, _ = _max_rel_dev(g_iso, exact)
+    dev_ani, c = _max_rel_dev(g_ani, g_iso)
+    assert dev_iso < 1e-3 and dev_ani < 1e-3
+    assert abs(c - 1.0) < 1e-3
+
+
+def test_beamlet_waist_plane_keeps_point_source_and_normalisation():
+    # moving the waist plane (virtual drift, factor divided out) leaves the
+    # unbounded fan's field unchanged: at the screen and midway (the screen
+    # spot must exceed the 1-um arrival spacing)
+    g0, exact = _point_source_fan(w0=3.0e-6)
+    for dz, native in ((0.1, True), (0.05, True), (0.05, False)):
+        g, _ = _point_source_fan(waist_dz=dz, use_native=native, w0=3.0e-6)
+        dev, _ = _max_rel_dev(g, exact)
+        dev0, c = _max_rel_dev(g, g0)
+        assert dev < 1e-3 and dev0 < 1e-3 and abs(c - 1.0) < 1e-3
+
+
+def test_beamlet_line_weights_are_wavelength_free():
+    # a fan's field scales as lambda; the fold weights w_l (k_l/k_0)^2 undo
+    # it, so the configured spectrum is what W and I see
+    from types import SimpleNamespace
+    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.screen import ScreenGrid
+    g8, _ = _point_source_fan(kev="8.0")
+    g12, _ = _point_source_fan(kev="12.0")
+    ratio = abs(g12[len(g12) // 2]) ** 2 / abs(g8[len(g8) // 2]) ** 2
+    assert ratio == pytest.approx((8.0 / 12.0) ** 2, rel=2e-3)
+    k0 = 4.0e10
+    two = [SimpleNamespace(k=k0, weight=1.0), SimpleNamespace(k=1.5 * k0, weight=1.0)]
+    scr = ScreenGrid(SimpleNamespace(z=0.1, nx=3, ny=3, center=[0.0, 0.0],
+                                     edge_x=1e-6, edge_y=1e-6))
+    f = BeamletField(two, scr, 4, 5.0e-7, 3.0, None)
+    assert f.wfs[1] / f.wfs[0] == pytest.approx(1.5 ** 2)
+    assert ratio * f.wfs[1] / f.wfs[0] * (12.0 / 8.0 / 1.5) ** 2 == pytest.approx(1.0, rel=2e-3)
 
 
 def test_gamma_aniso_amp_squared_is_per_axis_product():
@@ -2301,7 +2402,7 @@ def test_gamma_aniso_amp_squared_is_per_axis_product():
     k = 2.0 * math.pi / 1.55e-10
     zrt, zrs = 0.5 * (2.0e-6) ** 2 * k, 0.5 * (3.0e-7) ** 2 * k
     segs, ift, ifs = [0.01, 0.02], 1.0 / 0.04, 1.0 / 0.004
-    q, amp = propagate((zrt, zrs, 0.0), segs, [(0.0, ift, ifs)])
+    q, amp = propagate((zrt, zrs, 0.0), segs, [_lens(0.0, ift, ifs)])
 
     def chain(zr0, inv_f):
         qs, prod = complex(0.0, zr0), complex(1.0, 0.0)
@@ -2319,17 +2420,18 @@ def test_gamma_aniso_amp_squared_is_per_axis_product():
     assert cmath.isclose(amp * amp, px * py, rel_tol=1e-9)
 
 
-def test_stage11_aniso_auto_shrinks_spot_and_reports_sigma(tmp_path):
-    # w0_t auto narrows the mean deposited spot vs the isotropic default,
-    # and the jackknife maps ride along in maps and mu-beamlet.jsonl
+def test_stage11_aniso_auto_shrinks_free_spot_and_reports_sigma(tmp_path):
+    # w0_t auto (a lab-x waist) narrows the free scene's mean spot vs the
+    # isotropic default; the jackknife maps ride along in maps and
+    # mu-beamlet.jsonl
     iso = Simulation.from_dict(TINY)
     _record(iso, str(tmp_path / "iso"))
     iso.run(str(tmp_path / "iso"), stages=[11])
     aniso = Simulation.from_dict(dict(TINY, beamlet={"w0_t": "auto"}))
     _record(aniso, str(tmp_path / "aniso"))
     aniso.run(str(tmp_path / "aniso"), stages=[11])
-    w_iso = iso.results["beamlet:capillary"]["maps"]["w_mean"]
-    w_ani = aniso.results["beamlet:capillary"]["maps"]["w_mean"]
+    w_iso = iso.results["beamlet:free"]["maps"]["w_mean"]
+    w_ani = aniso.results["beamlet:free"]["maps"]["w_mean"]
     assert w_ani < w_iso
     maps = aniso.results["beamlet:capillary"]["maps"]
     flat = [v for row in maps["mu_err"] for v in row]
@@ -2394,7 +2496,7 @@ def test_gamma_amp_closed_form_matches_dense_reference():
     from formula.capsysred.gamma import propagate
     cases = [
         ((0.2, 0.004, 0.6), [0.05, 0.03, 0.4],
-         [(0.3, 1.0 / 0.02, 1.0 / 0.008), (1.2, 0.0, 1.0 / 0.01)]),
+         [_lens(0.3, 1.0 / 0.02, 1.0 / 0.008), _lens(1.2, 0.0, 1.0 / 0.01)]),
         ((0.5, 0.005, 0.3), [0.5], []),
     ]
     for zr, segs, lenses in cases:
@@ -2409,7 +2511,7 @@ def test_gamma_amp_tight_focus_keeps_the_branch():
     # lens focus (the whole beamlet flipped sign); the closed form must not
     from formula.capsysred.gamma import propagate
     zr, segs = (2.0e-4, 2.0e-4, 0.0), [0.01, 0.5]
-    lenses = [(0.7, 1.0 / 0.005, 1.0 / 0.005)]
+    lenses = [_lens(0.7, 1.0 / 0.005, 1.0 / 0.005)]
     _, amp = propagate(zr, segs, lenses)
     _, amp_ref = _dense_amp_reference(zr, segs, lenses, n=200000)
     assert abs(amp - amp_ref) <= 1e-6 * abs(amp_ref)
@@ -2420,8 +2522,8 @@ def test_gamma_amp_segment_split_invariant():
     # when the split points straddle a focus
     from formula.capsysred.gamma import propagate
     zr = (0.3, 0.002, 0.9)
-    lens = (0.4, 1.0 / 0.05, 1.0 / 0.006)
-    none = (0.0, 0.0, 0.0)
+    lens = _lens(0.4, 1.0 / 0.05, 1.0 / 0.006)
+    none = (0.0, 0.0, 0.0, 0.0)
     q1, a1 = propagate(zr, [0.03, 0.5], [lens])
     q2, a2 = propagate(zr, [0.03, 0.1, 0.15, 0.25], [lens, none, none])
     assert abs(a1 - a2) <= 1e-12 * abs(a1)
@@ -2444,8 +2546,10 @@ def test_bounce_lenses_tapered_bundle_picks_the_true_bore():
     bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
     z, s = 0.049, 2.0e-3
     gg = 1.0 - 12.0 * z
-    hit = (4.0e-5 * gg + 2.0e-6, 0.0, z)     # on the outer bore, phi = 0
-    [(phi, _, ifs)] = bounce_lenses(bundle, [hit], [s])
+    hit = ((4.0e-5 + 2.0e-6) * gg, 0.0, z)   # on the outer bore, phi = 0
+    # wall x = (4e-5 + 2e-6)*g(z): radius slope -12*4.2e-5 at phi = 0
+    [(phi, _, _, ifs)] = bounce_lenses(bundle, [hit],
+                                       [_merid_out(0.0, -12.0 * 4.2e-5, s)])
     assert phi == pytest.approx(0.0)
     # radius follows the taper (f defaults to g): r = r0*gg — and NOT the
     # 3 um neighbour's 2s/(3e-6*gg) the entrance-center pick would give
@@ -2601,8 +2705,8 @@ def test_beamlet_native_lensed_bounces_match_python():
     for bundle, mode_refls in cases:
         # premise: these hits really produce nonzero lenses
         lens = bounce_lenses(bundle, list(mode_refls[0]),
-                             [2.0e-3] * len(mode_refls[0]))
-        assert all(ifs != 0.0 for _, _, ifs in lens)
+                             [(5.0e-5, -3.0e-5, 1.0)] * len(mode_refls[0]))
+        assert all(pxx != 0.0 and pyy != 0.0 for _, pxx, _, pyy in lens)
         maps = []
         for use_native in (True, False):
             field = BeamletField(lines, scr, 52, 5.0e-7, 3.0, bundle,
@@ -2995,3 +3099,1140 @@ def test_stage9_subdivision_root_pair_hex_grazing():
     t_sub = _engine_t(rs, scale, O, d, t_exit, HitMethod.SUBDIVISION)
     assert t_sub is not None, "subdivision dropped the root pair (known bug)"
     assert abs(float((t_sub - t_ref) / t_ref)) < 1e-25
+
+
+def test_gamma_flat_bounce_mirrors_the_beam():
+    # a flat face with normal at 45 deg swaps the ellipse axes: Q -> M Q M
+    from formula.capsysred.gamma import propagate
+    k = 2.0 * math.pi / 1.55e-10
+    zrt, zrs = 0.5 * (2.0e-6) ** 2 * k, 0.5 * (3.0e-7) ** 2 * k
+    q, amp = propagate((zrt, zrs, 0.0), [0.01, 0.02],
+                       [(math.pi / 4, 0.0, 0.0, 0.0)])
+    assert cmath.isclose(q[0], complex(0.03, zrs), rel_tol=1e-12)
+    assert cmath.isclose(q[2], complex(0.03, zrt), rel_tol=1e-12)
+    assert abs(q[1]) < 1e-15
+    _, amp0 = propagate((zrt, zrs, 0.0), [0.03], [])
+    assert cmath.isclose(amp, amp0, rel_tol=1e-12)
+    q_nan, _ = propagate((zrt, zrs, 0.0), [0.01, 0.02], [(math.nan, 0.0, 0.0, 0.0)])
+    assert q_nan == propagate((zrt, zrs, 0.0), [0.03], [])[0]
+
+
+def test_beamlet_native_matches_python_through_a_mirrored_lens():
+    # aniso launch, a curved skew-azimuth bounce: native == Python deposit
+    from types import SimpleNamespace
+    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.screen import ScreenGrid
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=0.1, nx=21, ny=21, center=[0.0, 0.0],
+                                     edge_x=2.0e-5, edge_y=2.0e-5))
+    out = []
+    for native in (True, False):
+        f = BeamletField(lines, scr, 220, 5.0e-7, 3.0, None,
+                         use_native=native, w0_t=2.0e-6)
+        f.new_mode()
+        f.deposit(1.0e-6, -2.0e-6, 1.0e-5, -2.0e-5, 0.1, 0.0,
+                  [0.03, 0.03, 0.04], [_lens(0.7, 5.0, 40.0), (2.1, 0.0, 0.0, 0.0)],
+                  [0.9 + 0.1j], None)
+        out.append([f.native.at(0, p) for p in range(441)] if native
+                   else [f._g[0].get(p, 0j) for p in range(441)])
+    top = max(abs(v) for v in out[1])
+    assert top > 0.0
+    assert max(abs(a - b) for a, b in zip(*out)) < 1e-9 * top
+
+
+def test_beamlet_flags_unshared_and_unlit_reference_pixels():
+    # a pixel no mode shares with the reference is mu = 0, sigma = 0:
+    # flagged; an unlit reference flags every lit pixel
+    from types import SimpleNamespace
+    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.screen import ScreenGrid
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=0.1, nx=41, ny=3, center=[0.0, 0.0],
+                                     edge_x=4.0e-5, edge_y=3.0e-6))
+    for native in (True, False):
+        for ref, lit_ref in ((41 + 5, True), (41 + 20, False)):
+            f = BeamletField(lines, scr, ref, 1.0e-6, 3.0, None,
+                             use_native=native, waist_dz=0.1)
+            for x in (-1.45e-5, 1.45e-5, -1.45e-5):
+                f.new_mode()
+                f.deposit(x, 0.0, 0.0, 0.0, 0.1, 0.0, [0.1], [], [1.0 + 0j], None)
+                f.fold_mode()
+            maps = f.finalize(41, 3)
+            far = maps["dubious"][1][35]
+            assert maps["intensity"][1][35] > 0.0 and far == 1.0
+            if not lit_ref:
+                assert all(d == 1.0 for row_i, row_d in
+                           zip(maps["intensity"], maps["dubious"])
+                           for i, d in zip(row_i, row_d) if i > 0.0)
+
+
+def test_beamlet_reference_outside_window_raises():
+    from types import SimpleNamespace
+    from formula.capsysred.screen import ScreenGrid
+    from formula.capsysred.stages.beamlet import _reference_pixel
+    scr = ScreenGrid(SimpleNamespace(z=0.1, nx=4, ny=4, center=[0.0, 0.0],
+                                     edge_x=1.0e-6, edge_y=1.0e-6))
+    assert scr.ref_pixel((0.0, 0.0)) == scr.pixel((0.0, 0.0))
+    assert scr.ref_pixel((2.0e-6, 0.0)) == 11
+    with pytest.raises(ValueError):
+        _reference_pixel(scr, (2.0e-6, 0.0))
+
+
+def test_native_beamlet_box_clamps_a_huge_spot():
+    # a spot far wider than 2^31 pixels still deposits, clipped to the grid
+    from formula.capsysred.native import make_beamlet_grid
+    k = 4.0e10
+    g = make_beamlet_grid(5, 5, -1e-6, -1e-6, 2e-6, 2e-6, [k], [1.0], [1.0], 3.0)
+    g.add(0, 0.0, 0.0, 1.0 + 0j, 0.0, 0.0, complex(0.0, -1e-3), 0j,
+          complex(0.0, -1e-3), 1.0e6, 1.0e6)
+    assert all(abs(g.at(0, p)) > 0.0 for p in range(25))
+
+
+# ------------------------------------------------ stage-11 skew wall lens
+
+
+def _cyl_trace(a, p, u, z_end):
+    # straight-line + specular trace inside x^2 + y^2 = a^2 up to z = z_end:
+    # (hits, arrival point, final direction, path length)
+    hits, opl = [], 0.0
+    while True:
+        qa = u[0] * u[0] + u[1] * u[1]
+        qb = 2.0 * (p[0] * u[0] + p[1] * u[1])
+        qc = p[0] * p[0] + p[1] * p[1] - a * a
+        t = (-qb + math.sqrt(qb * qb - 4.0 * qa * qc)) / (2.0 * qa)
+        if p[2] + t * u[2] >= z_end:
+            t = (z_end - p[2]) / u[2]
+            return hits, [c + t * v for c, v in zip(p, u)], u, opl + t
+        p = [c + t * v for c, v in zip(p, u)]
+        opl += t
+        hits.append(tuple(p))
+        un = (p[0] * u[0] + p[1] * u[1]) / (a * a)
+        u = [u[0] - 2.0 * un * p[0], u[1] - 2.0 * un * p[1], u[2]]
+
+
+def _cyl_launch(a, v, z_end):
+    # v = (x, y, dx/dz, dy/dz) at z = 0
+    n = math.sqrt(v[2] * v[2] + v[3] * v[3] + 1.0)
+    return _cyl_trace(a, [v[0], v[1], 0.0], [v[2] / n, v[3] / n, 1.0 / n],
+                      z_end)
+
+
+def test_beamlet_skew_cylinder_chain_matches_ray_bundle_abcd():
+    # five skew bounces: G from the stage-11 chain (record -> prep ->
+    # propagate) vs Q = (A Q0 + B)(C Q0 + D)^-1 of the central-difference
+    # lab (x, y, dx/dz, dy/dz) ABCD of the exact trace; the residual is the
+    # O(|u_perp|^2) lab-frame paraxial error
+    from types import SimpleNamespace
+    from formula.capsysred.gamma import inv2, propagate
+    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.screen import ScreenGrid
+    from formula.capsysred.shared.types import RayRecord
+    a, z_end, h = 6.0e-6, 0.026, 1.0e-11
+    v0 = (0.0, -3.0e-6, 2.0e-3, 0.0)
+    hits, end, u, opl = _cyl_launch(a, v0, z_end)
+    assert len(hits) == 5
+    cols = []
+    for j in range(4):
+        out = []
+        for sgn in (1.0, -1.0):
+            v = list(v0)
+            v[j] += sgn * h
+            hj, e, uj, _ = _cyl_launch(a, v, z_end)
+            assert len(hj) == 5
+            out.append((e[0], e[1], uj[0] / uj[2], uj[1] / uj[2]))
+        cols.append([(p - m) / (2.0 * h) for p, m in zip(*out)])
+    M = [[cols[j][i] for j in range(4)] for i in range(4)]
+    cap = _cap_sim([{"center": [0.0, 0.0], "radius": a}]).cfg.capillary
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=z_end, nx=3, ny=3, center=[0.0, 0.0],
+                                     edge_x=1.0e-5, edge_y=1.0e-5))
+    field = BeamletField(lines, scr, 4, 3.8e-6, 3.0, bundle, use_native=False,
+                         w0_t=7.6e-6)
+    rec = RayRecord(0, 0, "screen", None, (end[0], end[1], z_end), tuple(u),
+                    opl, (1.0e-3,) * 5, tuple(hits))
+    *_, segs, lenses = field.prep(rec)
+    zrt, zrs = field.zrt[0], field.zrs[0]
+    g = inv2(propagate((zrt, zrs, 0.0), segs, lenses)[0])
+    # G = (C Q0 + D)(A Q0 + B)^-1, Q0 = diag(i zrt, i zrs)
+    q0 = (1j * zrt, 1j * zrs)
+    X = [[M[i][j] * q0[j] + M[i][j + 2] for j in range(2)] for i in range(2)]
+    Y = [[M[i + 2][j] * q0[j] + M[i + 2][j + 2] for j in range(2)]
+         for i in range(2)]
+    det = X[0][0] * X[1][1] - X[0][1] * X[1][0]
+    Xi = [[X[1][1] / det, -X[0][1] / det], [-X[1][0] / det, X[0][0] / det]]
+    gt = [[sum(Y[i][k] * Xi[k][j] for k in range(2)) for j in range(2)]
+          for i in range(2)]
+    assert abs(gt[0][1]) > 0.1 * abs(gt[0][0])          # the chain is skew
+    err = math.sqrt(sum(abs(p - q) ** 2 for p, q in
+                        zip((g[0], g[1], g[1], g[2]),
+                            (gt[0][0], gt[0][1], gt[1][0], gt[1][1]))))
+    norm = math.sqrt(sum(abs(q) ** 2 for row in gt for q in row))
+    assert err < 2.0e-5 * norm
+
+
+def test_beamlet_native_matches_python_on_skew_curved_chains():
+    # every curved kind, skew bounces (twisted P), anisotropic launch and a
+    # waist plane past the source: the C++ lens stride and flip == Python
+    from types import SimpleNamespace
+    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.gamma import bounce_lenses
+    from formula.capsysred.native import make_beamlet_grid
+    from formula.capsysred.screen import ScreenGrid
+    from formula.capsysred.shared.types import RayRecord
+    if make_beamlet_grid(1, 1, 0.0, 0.0, 1.0, 1.0, [1.0], [1.0], [1.0],
+                         3.0) is None:
+        pytest.skip("BeamletGrid missing from the built .so")
+    lines = spectral_lines({"mode": "gaussian", "rel_fwhm": 1.0e-3,
+                            "n_lines": 2, "n_sigma": 2.0}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=0.06, nx=21, ny=5, center=[0.0, 0.0],
+                                     edge_x=1.2e-5, edge_y=6.0e-6))
+    a, c = 6.0e-6, 2.0e-4
+    hits, _, _, _ = _cyl_launch(a, (0.0, -3.0e-6, 2.0e-3, 0.0), 0.05)
+    rev = lambda z: math.sqrt(2.5e-11 - 3.5e-10 * z + 1.625e-9 * z * z)
+    fg = lambda z: (1.0 + z * (2.0 + 10.0 * z), 1.0 + z * (-2.0 + 5.0 * z))
+    kinds = [
+        ([{"center": [0.0, 0.0], "radius": a}], hits[:4]),
+        ([{"center": [0.0, 0.0], "r2_poly": [2.5e-11, -3.5e-10, 1.625e-9]}],
+         [(rev(z) * math.cos(f), rev(z) * math.sin(f), z)
+          for z, f in ((0.01, 0.4), (0.02, 2.6), (0.035, -1.9))]),
+        ([{"center": [c, 0.0], "radius": a,
+           "funnel": {"g": [2.0, 10.0], "f": [-2.0, 5.0]}}],
+         [(c * fg(z)[0] + a * fg(z)[1] * math.cos(f),
+           a * fg(z)[1] * math.sin(f), z)
+          for z, f in ((0.01, 1.1), (0.025, -2.0), (0.04, 0.3))]),
+        ([{"center": [0.0, 0.0], "radius": a,
+           "bend": {"radius": 20.0, "toward": [1.0, 0.0]}}],
+         [(z * z / 40.0 + a * math.cos(f), a * math.sin(f), z)
+          for z, f in ((0.012, 2.2), (0.027, -0.5), (0.041, 1.6))]),
+    ]
+    for bores, refl in kinds:
+        cap = _cap_sim(bores).cfg.capillary
+        bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+        outs = [tuple(q - p for p, q in zip(u, v))
+                for u, v in zip(refl, refl[1:])] + [(5.0e-5, -3.0e-5, 1.0)]
+        lens = bounce_lenses(bundle, list(refl), outs)
+        assert all(abs(pxy) > 0.0 for _, _, pxy, _ in lens)   # twisted P
+        maps = []
+        for use_native in (True, False):
+            field = BeamletField(lines, scr, 52, 5.0e-7, 3.0, bundle,
+                                 use_native=use_native, w0_t=2.5e-6,
+                                 waist_dz=0.02)
+            field.new_mode()
+            for i, (x, y) in enumerate(((1.0e-6, 0.0), (-2.0e-6, 1.0e-6))):
+                rec = RayRecord(0, i, "screen", scr.pixel((x, y)),
+                                (x, y, 0.06), (5.0e-5, -3.0e-5, 1.0), 0.0612,
+                                (2.0e-3,) * len(refl), tuple(refl))
+                field.add_ray(rec, [1.0 + 0.5j, 0.8 - 0.1j])
+            field.fold_mode()
+            maps.append(field.finalize(21, 5))
+        nat, ref = maps
+        imax = max(max(r) for r in ref["intensity"])
+        assert imax > 0.0
+        for key, scale in (("mu", 1.0), ("intensity", imax)):
+            diff = max(abs(p - q) for rp, rq in zip(nat[key], ref[key])
+                       for p, q in zip(rp, rq))
+            assert diff <= 1e-9 * scale, key
+
+
+def test_stage11_replay_reprojects_from_the_recorded_plane(tmp_path):
+    # a replay onto a screen at another z equals the recording run's extra
+    # plane at that z: arrivals re-project from the recorded plane
+    extra = {"z": 0.06, "edge_x": 4.0e-5, "edge_y": 4.0e-5, "nx": 9, "ny": 9}
+    rec = Simulation.from_dict(dict(TINY, capillary=dict(TINY["capillary"],
+                                                         screens=[extra])))
+    _record(rec, str(tmp_path / "rec"))
+    rec.run(str(tmp_path / "rec"), stages=[11])
+    rep = Simulation.from_dict(dict(TINY, capillary=dict(TINY["capillary"],
+                                                         screen=extra)))
+    rep.replay(str(tmp_path / "rec" / "rays-modes"), str(tmp_path / "rep"),
+               stages=[11])
+    a = rec.results["beamlet:capillary-s1"]["maps"]
+    b = rep.results["beamlet:capillary"]["maps"]
+    for key in ("mu", "mu_err", "intensity", "density", "dubious"):
+        assert a[key] == b[key]
+
+
+def test_stage11_replay_refuses_foreign_capillary_geometry(tmp_path):
+    _record(Simulation.from_dict(TINY), str(tmp_path / "rec"))
+    other = dict(TINY, capillary=dict(TINY["capillary"], z1=0.0505))
+    with pytest.raises(ValueError, match="trace geometry"):
+        Simulation.from_dict(other).replay(
+            str(tmp_path / "rec" / "rays-modes"), str(tmp_path / "rep"),
+            stages=[11])
+
+
+def test_recorded_plane_checks_every_union_part():
+    # unions: each part's geometry is checked, and one plane is required
+    from types import SimpleNamespace
+    from formula.capsysred.rays import geometry_metadata
+    from formula.capsysred.stages.beamlet import recorded_plane
+    sim = Simulation.from_dict(TINY)
+    geo = geometry_metadata(sim.cfg)
+
+    def part(z, z1=None):
+        g = json.loads(json.dumps(geo))
+        g["capillary"]["screen"]["z"] = z
+        if z1 is not None:
+            g["capillary"]["z1"] = z1
+        return SimpleNamespace(path=f"p{z}", meta={"geometry": g})
+    scr = sim.cfg.capillary.screen
+    sim.rays = SimpleNamespace(path="u", parts=[part(0.051), part(0.051)])
+    assert recorded_plane(sim, "capillary", scr) == 0.051
+    sim.rays.parts = [part(0.051), part(0.052)]
+    with pytest.raises(ValueError, match="different planes"):
+        recorded_plane(sim, "capillary", scr)
+    sim.rays.parts = [part(0.051), part(0.051, z1=0.0505)]
+    with pytest.raises(ValueError, match="trace geometry"):
+        recorded_plane(sim, "capillary", scr)
+
+
+def test_beamlet_config_waist_z_parsing_and_report(tmp_path):
+    sim = Simulation.from_dict(dict(TINY, beamlet={"waist_z": 0.02}))
+    assert sim.cfg.beamlet_waist_z == 0.02
+    for bad in ("x", True, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="waist_z"):
+            Simulation.from_dict(dict(TINY, beamlet={"waist_z": bad}))._stage11(tmp_path)
+    with pytest.raises(ValueError, match="w0_t"):
+        Simulation.from_dict(dict(TINY, beamlet={"w0_t": True}))._stage11(tmp_path)
+    # a waist at the source plane is the default launch
+    src_z = TINY["capillary"]["source"]["position"][2]
+    at_src = Simulation.from_dict(dict(TINY, beamlet={"waist_z": src_z}))
+    _record(at_src, str(tmp_path / "a"))
+    at_src.run(str(tmp_path / "a"), stages=[11])
+    base = Simulation.from_dict(TINY)
+    _record(base, str(tmp_path / "b"))
+    base.run(str(tmp_path / "b"), stages=[11])
+    assert (at_src.results["beamlet:capillary"]["maps"]["mu"]
+            == base.results["beamlet:capillary"]["maps"]["mu"])
+    report = "".join(p.read_text(encoding="utf-8")
+                     for p in (tmp_path / "a").glob("report-*.md"))
+    assert "waist at z =" in report
+
+
+def test_beamlet_coherent_scene_flags_match_native_and_python():
+    # one ray per mode, amplitudes differ: |mu| = 1 with no spread -> every
+    # lit pixel pinned and flagged on both paths
+    from types import SimpleNamespace
+    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.screen import ScreenGrid
+    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    scr = ScreenGrid(SimpleNamespace(z=0.1, nx=15, ny=15, center=[0.0, 0.0],
+                                     edge_x=1.0e-5, edge_y=1.0e-5))
+    out = []
+    for native in (True, False):
+        f = BeamletField(lines, scr, 112, 3.0e-6, 3.0, None, use_native=native)
+        for amp in (1.0, 0.7 + 0.2j, 1.3j):
+            f.new_mode()
+            f.deposit(1.0e-7, -2.0e-7, 1.0e-6, 0.0, 0.1, 0.0, [0.1], [],
+                      [amp], None)
+            f.fold_mode()
+        out.append(f.finalize(15, 15))
+    for maps in out:
+        lit = [(i, d) for ri, rd in zip(maps["intensity"], maps["dubious"])
+               for i, d in zip(ri, rd) if i > 0.0]
+        assert lit and all(d == 1.0 for _, d in lit)
+    assert out[0]["dubious"] == out[1]["dubious"]
+
+
+# ------------------------------------------------- stage 11: shared any-jobs path
+
+
+def _grid2(nl=1):
+    """2-pixel, 1-row unit grid with nl lines; skips when the extension is stale."""
+    from formula.capsysred.native import make_beamlet_grid
+    g = make_beamlet_grid(2, 1, 0.0, 0.0, 2.0, 1.0, [1.0] * nl, [1.0] * nl,
+                          [1.0] * nl, 3.0)
+    if g is None or not hasattr(g, "fold_export"):
+        pytest.skip("BeamletGrid.fold_export missing from the built extension")
+    return g
+
+
+def _put(g, line, pixel, value):
+    if value != 0:
+        g.add(line, pixel + 0.5, 0.5, complex(value), 0.0, 0.0, 0j, 0j, 0j, 0.0, 0.0)
+
+
+def _oracle_vs_shared(modes, nl):
+    """Oracle (fold + retained rows + native jackknife) against the shared
+    path (fold_export + ExactAccumulator + jackknife_tile) on two pixels,
+    reference = pixel 0. Returns ((W, I, (mu, err, dub)) old, same new)."""
+    from array import array
+    from formula.capsysred.native import exact_accumulator, jackknife_tile
+    old, new = _grid2(nl), _grid2(nl)
+    acc = exact_accumulator(2)
+    w_rows, i_rows, irefs = b"", b"", []
+    for fields in modes:
+        old.clear()
+        new.clear()
+        for pixel, per_line in fields.items():
+            for line, v in enumerate(per_line):
+                _put(old, line, pixel, v)
+                _put(new, line, pixel, v)
+        iref_old = old.fold([1.0] * nl, 0)
+        w_row, i_row, dw, di, iref_new = new.fold_export([1.0] * nl, 0)
+        assert iref_new == iref_old
+        w_rows += w_row
+        i_rows += i_row
+        irefs.append(iref_new)
+        acc.add(dw, di, array("I", [0, 0]).tobytes())
+    # nothing accumulates inside the exporting grid
+    assert set(array("d", new.totals()[0])) == {0.0}
+    assert set(array("d", new.totals()[1])) == {0.0}
+    eps = (16 + nl) * 2.0 ** -24
+    w_old, i_old = (array("d", b) for b in old.totals())
+    w_new, i_new = (array("d", b) for b in acc.totals())
+    jk_old = tuple(bytes(b) for b in old.jackknife(0, eps))
+    jk_new = tuple(bytes(b) for b in jackknife_tile(
+        w_new.tobytes(), i_new.tobytes(), i_new[0], w_rows, i_rows, irefs, eps)[:3])
+    return (list(w_old), list(i_old), jk_old), (list(w_new), list(i_new), jk_new)
+
+
+def test_stage11_fold_export_equals_fold_on_dyadic_scenes():
+    # dyadic amplitudes make the old left fold exact, so the shared
+    # path must reproduce totals, mu, sigma and flags byte for byte; the
+    # cases cover a dark reference, a sole-mode pixel and n_loo < 2
+    scenes = [
+        [{0: [1.0], 1: [0.5]}, {0: [0.25], 1: [2.0]}, {0: [1.0], 1: [-0.5]},
+         {0: [0.5], 1: [0.125]}],                                    # plain
+        [{0: [0.0], 1: [0.5]}, {0: [0.0], 1: [0.25]}],              # dark reference
+        [{0: [1.0], 1: [0.5]}, {0: [1.0], 1: [0.0]}, {0: [1.0], 1: [0.0]}],  # sole-mode pixel
+        [{0: [1.0], 1: [0.5]}],                                     # n_loo < 2
+        [{0: [1.0, 0.5], 1: [0.25, -0.5]}, {0: [0.5, 0.5], 1: [1.0, 0.125]}],  # two lines
+    ]
+    for modes in scenes:
+        nl = len(next(iter(modes[0].values())))
+        old, new = _oracle_vs_shared(modes, nl)
+        assert old == new, modes
+
+
+def test_stage11_fold_export_s2_cancellation_and_random_band():
+    # the S2 scene (per-line float32 cancellation) and random 41-line modes:
+    # i_ref agrees exactly, totals within the M*L*eps left-fold bound
+    import random
+    a = math.sqrt(1e-5)
+    s2 = [{0: [1, 1, 1], 1: [1, 2.0 ** -25, -1]},
+          {0: [a, 0, 0], 1: [1j * a, 0, 0]},
+          {0: [a, 0, 0], 1: [-1j * a, 0, 0]}]
+    old, new = _oracle_vs_shared(s2, 3)
+    assert old[2] == new[2]          # identical rows: identical jackknife
+    rng = random.Random(7)
+    modes = [{0: [complex(rng.uniform(-1, 1), rng.uniform(-1, 1)) for _ in range(41)],
+              1: [complex(rng.uniform(-1, 1), rng.uniform(-1, 1)) for _ in range(41)]}
+             for _ in range(5)]
+    old, new = _oracle_vs_shared(modes, 41)
+    bound = 5 * 41 * 2.0 ** -53
+    for p in range(2):
+        assert abs(old[1][p] - new[1][p]) <= 3 * bound * abs(new[1][p])
+        assert abs(old[0][p] - new[0][p]) <= 3 * bound * math.sqrt(new[1][p] * new[1][0])
+
+
+def test_stage11_exact_accumulator_is_exact_and_order_free():
+    # spread/cancellation examples under permutations, the
+    # math.fsum / Fraction oracles, subnormals, ties-to-even, overflow, NaN
+    import random
+    from array import array
+    from fractions import Fraction
+    from formula.capsysred.native import exact_accumulator
+
+    def total(values, npix=1):
+        acc = exact_accumulator(npix)
+        for v in values:
+            acc.add(array("d", [v, -v] * npix).tobytes(),
+                    array("d", [v] * npix).tobytes(),
+                    array("I", [1] * npix).tobytes())
+        w_b, i_b = acc.totals()
+        w, i = array("d", w_b), array("d", i_b)
+        dens = array("Q", acc.density())
+        assert w[0] == i[0] and w[1] == -i[0]
+        assert dens[0] == len(values) == acc.n_terms
+        return i[0]
+
+    rng = random.Random(3)
+    five = [2.0 ** 100, 2.0 ** 44, 2.0 ** -12, 2.0 ** -68, 2.0 ** -124]
+    cancel = five + [-t for t in five[:-1]]
+    for _ in range(20):
+        rng.shuffle(cancel)
+        assert total(cancel) == 2.0 ** -124
+    eleven = [2.0 ** (-100 * k) for k in range(11)]
+    cancel = eleven + [-p for p in eleven[:-1]]
+    for _ in range(20):
+        rng.shuffle(cancel)
+        assert total(cancel) == 2.0 ** -1000
+    for _ in range(10):
+        values = [rng.uniform(-1, 1) * 10.0 ** rng.randint(-40, 40) for _ in range(300)]
+        values += [-v for v in values[:150]]
+        assert total(values) == math.fsum(values)
+        exact = sum(Fraction(v) for v in values)
+        assert Fraction(total(values)) == Fraction(float(exact)) or total(values) == math.fsum(values)
+    assert total([5e-324] * 3) == 1.5e-323
+    assert total([1.0, 2.0 ** -53]) == 1.0                       # tie -> even
+    assert total([1.0 + 2.0 ** -52, 2.0 ** -53]) == 1.0 + 2.0 ** -51   # tie -> even (up)
+    mx = 1.7976931348623157e308
+    assert total([mx, mx, -mx]) == mx                           # fsum would overflow
+    with pytest.raises(OverflowError):
+        total([mx, mx])
+    with pytest.raises(ValueError):
+        total([float("inf")])
+    with pytest.raises(ValueError):
+        total([float("nan")])
+    assert total([-1.0, -2.0, 0.5]) == -2.5
+    acc = exact_accumulator(3)
+    with pytest.raises(ValueError):
+        acc.add(b"\0" * 16, b"\0" * 8, b"\0" * 4)   # wrong sizes
+
+
+def test_stage11_loo_boundary_scene_is_order_free():
+    # a four-mode LOO-mask boundary case: the shared path gives
+    # one answer (the correctly rounded total) whatever the mode order
+    from array import array
+    from formula.capsysred.native import exact_accumulator, jackknife_tile
+    vals = [1.0, 0.00032400501314366664, 0.0005270135523230406, 0.000794076479340319]
+    eps = 17 * 2.0 ** -24
+
+    def run(order):
+        g = _grid2(1)
+        acc = exact_accumulator(2)
+        rows_w, rows_i, irefs = [None] * 4, [None] * 4, [None] * 4
+        for s in order:
+            g.clear()
+            _put(g, 0, 0, 1.0)
+            _put(g, 0, 1, vals[s])
+            w_row, i_row, dw, di, iref = g.fold_export([1.0], 0)
+            rows_w[s], rows_i[s], irefs[s] = w_row, i_row, iref
+            acc.add(dw, di, array("I", [0, 0]).tobytes())
+        w_b, i_b = acc.totals()
+        i = array("d", i_b)
+        band = (4 * 1 + 1) * 2.0 ** -53          # (M*L + 1)*eps
+        mu, err, dub, bnd = jackknife_tile(w_b, i_b, i[0], b"".join(rows_w),
+                                           b"".join(rows_i), irefs, eps, band)
+        return i[1], array("d", err)[1], bytes(dub), bytes(bnd)
+
+    results = {run(order) for order in ([0, 1, 2, 3], [3, 2, 1, 0], [2, 0, 3, 1])}
+    assert len(results) == 1
+    i_pix, sigma, _, boundary = results.pop()
+    assert i_pix == 1.000001013279988
+    assert sigma == pytest.approx(0.00015708582338239672, rel=1e-12)
+    assert boundary == b"\x00\x01"       # exactly the boundary pixel
+
+
+def _stage11_artifacts(out):
+    names = sorted(p.name for p in out.iterdir()
+                   if p.name == "mu-beamlet.jsonl" or (p.name.startswith("11") and p.suffix == ".svg"))
+    return {name: (out / name).read_bytes() for name in names}
+
+
+def _stage11_report_science(out):
+    """Stage-11 report lines without the run diagnostics (jobs, time)."""
+    report = sorted(out.glob("report-*.md"))[-1].read_text(encoding="utf-8")
+    lines, keep = [], False
+    for line in report.splitlines():
+        if line.startswith("## "):
+            keep = line.startswith("## Stage 11")
+        if keep and not line.startswith(("- jobs:", "- time:", "- stage 11 wall:")):
+            lines.append(line)
+    assert lines
+    return lines
+
+
+def _run_stage11(cfg, out, jobs, monkeypatch, record=True, replay=None):
+    sim = Simulation.from_dict(cfg)
+    if record:
+        _record(sim, str(out))
+    monkeypatch.setenv("CAPSYSRED_STAGE11_JOBS", str(jobs))
+    if replay is None:
+        sim.run(str(out), stages=[11])
+    else:
+        sim.replay(replay, str(out), stages=[11])
+    assert not [p for p in out.iterdir() if p.name.startswith(("stage11-tmp-", "stage11-staging-"))]
+    return sim
+
+
+def _band(cfg):
+    out = dict(cfg)
+    out["spectrum"] = {"mode": "gaussian", "rel_fwhm": 1.0e-3, "n_lines": 3, "n_sigma": 2.0}
+    return out
+
+
+@pytest.mark.parametrize("variant", ["tiny", "band", "torus-extra-aniso"])
+def test_stage11_jobs_byte_identical(tmp_path, monkeypatch, variant):
+    # the scientific artifacts do not depend on the number of workers
+    cfg = dict(TINY)
+    if variant == "band":
+        cfg = _band(cfg)
+    elif variant == "torus-extra-aniso":
+        cfg["capillary"] = dict(TINY["capillary"],
+                                bores=[{"center": [0.0, 0.0], "radius": 6e-6,
+                                        "bend": {"radius": 1000.0, "toward": [1.0, 0.0]}}],
+                                screens=[{"z": 0.06, "edge_x": 4.0e-5, "edge_y": 4.0e-5}])
+        cfg["beamlet"] = {"w0": 5.0e-7, "w0_t": "auto", "window_sigmas": 3.0,
+                          "waist_z": -0.005}
+    runs = {}
+    for jobs in (1, 3, 10):
+        out = tmp_path / f"jobs{jobs}"
+        _run_stage11(cfg, out, jobs, monkeypatch)
+        runs[jobs] = (_stage11_artifacts(out), _stage11_report_science(out))
+    assert "mu-beamlet.jsonl" in runs[1][0] and any(n.endswith(".svg") for n in runs[1][0])
+    assert runs[1] == runs[3] == runs[10]
+    # repeat run: the same bytes again
+    out = tmp_path / "again"
+    _run_stage11(cfg, out, 3, monkeypatch)
+    assert (_stage11_artifacts(out), _stage11_report_science(out)) == runs[1]
+
+
+def test_stage11_jobs_byte_identical_multisection_and_union(tmp_path, monkeypatch):
+    # a top-up makes every mode two sections; a union of two recordings
+    # doubles the modes with offsets — both must be worker-count independent
+    small = dict(TINY)
+    small["capillary"] = dict(TINY["capillary"],
+                              source=dict(CAPILLARY_SOURCE, n_rays=20))
+    small["free"] = {"source": dict(FREE_SOURCE, n_rays=120)}
+    out = tmp_path / "topup"
+    _record(Simulation.from_dict(small), str(out))
+    _record(Simulation.from_dict(TINY), str(out))          # top-up to the TINY budgets
+    from formula.capsysred import rays_v3
+    index = rays_v3.load_index(str(out / "rays-modes"))
+    assert all(len(sections) == 2 for sections in index.modes("capillary"))
+    runs = []
+    for jobs in (1, 2):
+        sub = tmp_path / f"topup-jobs{jobs}"
+        sub.mkdir()
+        _run_stage11(TINY, sub, jobs, monkeypatch, record=False,
+                     replay=str(out / "rays-modes"))
+        runs.append((_stage11_artifacts(sub), _stage11_report_science(sub)))
+    assert runs[0] == runs[1]
+    # union: two identical recordings, the config budgets doubled
+    parts = []
+    for name in ("a", "b"):
+        part = tmp_path / name
+        _record(Simulation.from_dict(TINY), str(part))
+        parts.append(str(part / "rays-modes"))
+    double = dict(TINY)
+    double["free"] = {"source": dict(FREE_SOURCE, n_modes=2 * FREE_SOURCE["n_modes"])}
+    double["capillary"] = dict(TINY["capillary"],
+                               source=dict(CAPILLARY_SOURCE,
+                                           n_modes=2 * CAPILLARY_SOURCE["n_modes"]))
+    runs = []
+    for jobs in (1, 3):
+        sub = tmp_path / f"union-jobs{jobs}"
+        sub.mkdir()
+        _run_stage11(double, sub, jobs, monkeypatch, record=False, replay=parts)
+        runs.append((_stage11_artifacts(sub), _stage11_report_science(sub)))
+    assert runs[0] == runs[1]
+
+
+def _oracle_maps(sim, archive, scene, src_cfg, scr_cfg, optic, extra_screens=()):
+    """The retired sequential path (fold + retained native rows + native
+    jackknife) over the same records: the migration reference."""
+    from formula.capsysred.rays import RaysReader
+    from formula.capsysred.screen import ScreenGrid
+    from formula.capsysred.stages.altcoh import FloatLineAmplitudes
+    from formula.capsysred.stages.beamlet import (BeamletField, _reference_pixel,
+                                                   recorded_plane)
+    cfg = sim.cfg
+    sim.rays = RaysReader(archive)
+    amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
+    z_src = float(src_cfg.position[2])
+    w0_t = cfg.beamlet_w0_t
+    if w0_t == "auto":
+        w0_t = math.sqrt(float(sim.lam) * (float(scr_cfg.z) - z_src) / math.pi)
+    waist_dz = 0.0 if cfg.beamlet_waist_z is None else cfg.beamlet_waist_z - z_src
+    z_rec = recorded_plane(sim, scene, scr_cfg)
+    fields = []
+    for scr in (scr_cfg, *extra_screens):
+        grid = ScreenGrid(scr)
+        fields.append(BeamletField(sim.lines, grid, _reference_pixel(grid, scr.reference),
+                                   cfg.beamlet_w0, cfg.beamlet_ns, optic, w0_t=w0_t,
+                                   waist_dz=waist_dz))
+    dzs = [float(f.zf) - z_rec for f in fields]
+    mode_cur = None
+    for rec in sim.rays.scene_records(scene):
+        if rec.mode != mode_cur:
+            if mode_cur is not None:
+                for f in fields:
+                    f.fold_mode()
+            for f in fields:
+                f.new_mode()
+            mode_cur = rec.mode
+        fate, amps = rec.fate, None
+        if fate == "screen":
+            amps = amps_of([float(s) for s in rec.sins])
+            if cfg.amplitude_min > 0.0 and max(abs(a) for a in amps) < cfg.amplitude_min:
+                fate = "absorbed"
+        if fate != "screen":
+            continue
+        x, y, dxf, dyf, dzf, opl, psi, segs, lenses = fields[0].prep(rec, z_rec)
+        for f, dz in zip(fields, dzs):
+            if dz == 0.0:
+                xi, yi, opl_i, segs_i = x, y, opl, segs
+                pix = f.grid.pixel((x, y))
+            else:
+                step = dz / dzf
+                xi, yi = x + dxf * step, y + dyf * step
+                opl_i = opl + step
+                segs_i = ([opl_i] if not lenses and len(segs) == 1
+                          else segs[:-1] + [segs[-1] + step])
+                pix = f.grid.pixel((xi, yi))
+            f.deposit(xi, yi, dxf, dyf, opl_i, psi, segs_i, lenses, amps, pix)
+    if mode_cur is not None:
+        for f in fields:
+            f.fold_mode()
+    return [f.finalize(f.nx, f.ny) for f in fields]
+
+
+@pytest.mark.parametrize("variant", ["tiny", "band"])
+def test_stage11_shared_path_matches_retired_sequential_path(tmp_path, monkeypatch, variant):
+    # rounding bounds: totals differ from the old left fold by at most
+    # the M*L*eps rounding budget; rows are identical, so sigma and flags
+    # agree wherever no LOO mask sits on its threshold (none expected here)
+    from formula.capsysred.surfaces import CapillaryBundle
+    cfg = _band(TINY) if variant == "band" else dict(TINY)
+    out = tmp_path / "run"
+    sim = _run_stage11(cfg, out, 2, monkeypatch)
+    archive = str(out / "rays-modes")
+    eps_mach = 2.0 ** -53
+    nl = len(sim.lines)
+    checks = []
+    cap = sim.cfg.capillary
+    oracle = Simulation.from_dict(cfg)
+    checks.append((sim.results["beamlet:free"]["maps"],
+                   _oracle_maps(oracle, archive, "free", oracle.cfg.free_source,
+                                oracle.cfg.free_screen, None)[0],
+                   FREE_SOURCE["n_modes"]))
+    bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    checks.append((sim.results["beamlet:capillary"]["maps"],
+                   _oracle_maps(oracle, archive, "capillary", oracle.cfg.capillary.source,
+                                oracle.cfg.capillary.screen, bundle)[0],
+                   CAPILLARY_SOURCE["n_modes"]))
+    for new, old, n_modes in checks:
+        bound = n_modes * nl * eps_mach
+        loo_eps = (16 + nl) * 2.0 ** -24
+        assert new["density"] == old["density"]
+        assert new["gamma_bad"] == old["gamma_bad"]
+        assert abs(new["i_ref"] - old["i_ref"]) <= 10 * bound * abs(old["i_ref"])
+        imax = max(max(r) for r in old["intensity"])
+        for key, tol in (("mu", 30 * bound), ("mu_err", 10 * bound / loo_eps)):
+            for ra, rb in zip(new[key], old[key]):
+                for a, b in zip(ra, rb):
+                    assert abs(a - b) <= tol, key
+        for ra, rb in zip(new["intensity"], old["intensity"]):
+            for a, b in zip(ra, rb):
+                assert abs(a - b) <= 10 * bound * max(abs(b), loo_eps * imax)
+        assert new["dubious"] == old["dubious"]
+        # boundary count: no LOO mask within (M*L+1)*eps of a threshold
+        assert new["loo_boundary"]["count"] == 0, new["loo_boundary"]
+        assert new["loo_boundary"]["band_rel"] == (n_modes * nl + 1) * eps_mach
+
+
+def test_stage11_corrupt_or_truncated_section_fails_clean(tmp_path, monkeypatch):
+    # a damaged late section surfaces as a clear error from the reading
+    # worker; nothing is published, tmp and staging are gone (handles closed)
+    import gzip
+    from formula.capsysred import rays_v3
+    for jobs, damage in ((1, "truncate"), (2, "corrupt")):
+        out = tmp_path / f"{damage}-{jobs}"
+        sim = Simulation.from_dict(TINY)
+        _record(sim, str(out))
+        archive = str(out / "rays-modes")
+        index = rays_v3.load_index(archive)
+        entry = index.sections("capillary", CAPILLARY_SOURCE["n_modes"] - 1)[-1]
+        path = rays_v3.section_path(archive, entry)
+        data = open(path, "rb").read()
+        if damage == "truncate":
+            open(path, "wb").write(data[: len(data) // 2])
+        else:
+            bad = bytearray(data)
+            bad[len(bad) // 2] ^= 0xFF
+            open(path, "wb").write(bytes(bad))
+        monkeypatch.setenv("CAPSYSRED_STAGE11_JOBS", str(jobs))
+        with pytest.raises(ValueError) as info:
+            sim.run(str(out), stages=[11])
+        assert "section" in str(info.value) or entry.file in str(info.value)
+        left = sorted(p.name for p in out.iterdir())
+        assert not any(n.startswith(("11", "stage11-", "mu-beamlet")) for n in left), left
+
+
+def test_stage11_failure_after_free_scene_publishes_nothing(tmp_path, monkeypatch):
+    # the free scene succeeds, the capillary scene is missing from the
+    # recording: no stage-11 file reaches the output directory
+    out = tmp_path / "half"
+    sim = Simulation.from_dict(TINY)
+    _record(sim, str(out), scenes=("free",))
+    monkeypatch.setenv("CAPSYSRED_STAGE11_JOBS", "2")
+    with pytest.raises(ValueError):
+        Simulation.from_dict(TINY).run(str(out), stages=[11])
+    left = sorted(p.name for p in out.iterdir())
+    assert not any(n.startswith(("11", "stage11-", "mu-beamlet")) for n in left), left
+
+
+def test_stage11_refuses_leftovers_and_removes_nothing(tmp_path):
+    # any backup/staging/tmp remnant stops the stage, even with a complete
+    # (possibly mixed) set of final names present
+    from formula.capsysred.stages.beamlet import refuse_stage11_leftovers
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "11-capillary-beamlet-mu.svg").write_bytes(b"new-a")
+    (out / "mu-beamlet.jsonl").write_bytes(b"old-b")
+    (out / "11-capillary-beamlet-mu.svg.prev").write_bytes(b"old-a")
+    before = {p.name: p.read_bytes() for p in out.iterdir()}
+    with pytest.raises(ValueError) as info:
+        refuse_stage11_leftovers(str(out))
+    assert "11-capillary-beamlet-mu.svg.prev" in str(info.value)
+    assert {p.name: p.read_bytes() for p in out.iterdir()} == before
+    (out / "11-capillary-beamlet-mu.svg.prev").unlink()
+    refuse_stage11_leftovers(str(out))          # clean: passes
+    (out / "stage11-staging-x").mkdir()
+    with pytest.raises(ValueError):
+        refuse_stage11_leftovers(str(out))
+    sim = Simulation.from_dict(TINY)
+    _record(sim, str(out))
+    with pytest.raises(ValueError):
+        sim.run(str(out), stages=[11])
+    assert (out / "stage11-staging-x").exists()
+
+
+def _publication_fixture(tmp_path):
+    out, staging = tmp_path / "out", tmp_path / "staging"
+    out.mkdir()
+    staging.mkdir()
+    names = ["a.svg", "b.svg", "mu-beamlet.jsonl"]
+    for name in names:
+        (out / name).write_bytes(b"old-" + name.encode())
+        (staging / name).write_bytes(b"new-" + name.encode())
+    old = {n: (out / n).read_bytes() for n in names}
+    new = {n: (staging / n).read_bytes() for n in names}
+    return out, staging, names, old, new
+
+
+@pytest.mark.parametrize("fail_at", [2, 6])
+def test_stage11_publication_rolls_back_before_the_boundary(tmp_path, fail_at):
+    # the 2nd rename (a backup) and the last rename (the final install)
+    # fail: the previous set is restored byte for byte, staging removed
+    from formula.capsysred.stages.beamlet import publish_stage11
+    out, staging, names, old, _ = _publication_fixture(tmp_path)
+    calls = []
+
+    def replace(src, dst):
+        calls.append((src, dst))
+        if len(calls) == fail_at:
+            raise PermissionError(f"injected failure at rename {fail_at}")
+        os.replace(src, dst)
+
+    with pytest.raises(ValueError) as info:
+        publish_stage11(str(staging), str(out), names, replace=replace)
+    assert "previous result was restored" in str(info.value)
+    assert {p.name: p.read_bytes() for p in out.iterdir()} == old
+    assert not staging.exists()
+
+
+def test_stage11_publication_cleanup_failure_keeps_the_new_set(tmp_path, monkeypatch):
+    # after the boundary a failing backup removal is reported, never rolled
+    # back: the new set stays complete, the leftover backup is named, and the
+    # next start refuses to touch it
+    from formula.capsysred.stages.beamlet import (publish_stage11,
+                                                   refuse_stage11_leftovers)
+    out, staging, names, _, new = _publication_fixture(tmp_path)
+    real_remove = os.remove
+
+    def remove(path):
+        if str(path).endswith("a.svg.prev"):
+            raise PermissionError("injected cleanup failure")
+        real_remove(path)
+
+    monkeypatch.setattr(os, "remove", remove)
+    with pytest.raises(ValueError) as info:
+        publish_stage11(str(staging), str(out), names)
+    assert "published completely" in str(info.value) and "a.svg.prev" in str(info.value)
+    assert all((out / n).read_bytes() == new[n] for n in names)
+    assert (out / "a.svg.prev").read_bytes() == b"old-a.svg"
+    assert not (out / "b.svg.prev").exists()
+    monkeypatch.undo()
+    with pytest.raises(ValueError):
+        refuse_stage11_leftovers(str(out))
+    assert (out / "a.svg.prev").read_bytes() == b"old-a.svg"
+
+
+def test_stage11_publication_succeeds_and_cleans(tmp_path):
+    from formula.capsysred.stages.beamlet import publish_stage11
+    out, staging, names, _, new = _publication_fixture(tmp_path)
+    publish_stage11(str(staging), str(out), names)
+    assert {p.name: p.read_bytes() for p in out.iterdir()} == new
+    assert not staging.exists()
+
+
+def test_stage11_part_queue_is_bounded_with_a_slow_merger(tmp_path, monkeypatch):
+    # fast workers against a deliberately slowed merger never leave
+    # more than 2*jobs .part files per screen in the tmp directory
+    import time as _time
+    from formula.capsysred.stages import beamlet
+    cfg = dict(TINY)
+    cfg["free"] = {"source": dict(FREE_SOURCE, n_modes=12, n_rays=24)}
+    cfg["capillary"] = dict(TINY["capillary"], source=dict(CAPILLARY_SOURCE, n_modes=12, n_rays=8))
+    out = tmp_path / "queue"
+    sim = Simulation.from_dict(cfg)
+    _record(sim, str(out))
+    seen = []
+    real_remove = os.remove
+
+    def slow_remove(path):
+        if str(path).endswith(".part"):
+            folder = os.path.dirname(path)
+            parts = [n for n in os.listdir(folder) if n.endswith(".part")]
+            seen.append(len(parts))
+            _time.sleep(0.15)
+        real_remove(path)
+
+    monkeypatch.setattr(os, "remove", slow_remove)
+    monkeypatch.setenv("CAPSYSRED_STAGE11_JOBS", "2")
+    sim.run(str(out), stages=[11])
+    assert seen and max(seen) <= 2 * 2 * 1 + 0, seen   # one screen per scene: <= Q = 4
+    assert beamlet._peak_rss() >= 0
+
+
+def test_stage11_env_is_read_only_by_stage11(tmp_path, monkeypatch):
+    # CAPSYSRED_STAGE11_JOBS does not touch other stages; an invalid
+    # value is refused only when stage 11 runs
+    from formula.capsysred.env import Env
+    monkeypatch.setenv("CAPSYSRED_STAGE11_JOBS", "x")
+    with pytest.raises(ValueError):
+        Env.stage11_jobs()
+    monkeypatch.setenv("CAPSYSRED_STAGE11_JOBS", "")
+    assert Env.stage11_jobs() == 1
+    out = tmp_path / "s14"
+    sim = Simulation.from_dict(TINY)
+    _record(sim, str(out))
+    monkeypatch.setenv("CAPSYSRED_STAGE11_JOBS", "not-a-number")
+    sim.run(str(out), stages=[14])        # other stages ignore the variable
+    assert "stage14:capillary" in sim.results
+    with pytest.raises(ValueError):
+        Simulation.from_dict(TINY).run(str(out), stages=[11])
+
+
+def test_stage11_export_and_accumulator_memory_do_not_grow_with_modes():
+    # fold_export retains nothing and the fixed-point accumulator has a
+    # fixed size, so the peak working set stops growing after the first modes
+    from array import array
+    from formula.capsysred.native import exact_accumulator, make_beamlet_grid
+    from formula.capsysred.stages.beamlet import _peak_rss
+    if _peak_rss() == 0:
+        pytest.skip("peak working set unavailable on this platform")
+    nx = ny = 101
+    g = make_beamlet_grid(nx, ny, -1e-4, -1e-4, 2e-4, 2e-4, [1.0, 1.1], [1.0, 1.0],
+                          [1.0, 1.0], 3.0)
+    if g is None or not hasattr(g, "fold_export"):
+        pytest.skip("BeamletGrid.fold_export missing from the built extension")
+    acc = exact_accumulator(nx * ny)
+    dens = array("I", [1] * (nx * ny)).tobytes()
+
+    def one_mode(k):
+        g.clear()
+        for j in range(20):
+            g.add(j % 2, 1e-6 * ((k * 7 + j * 13) % 180) - 9e-5,
+                  1e-6 * ((k * 11 + j * 5) % 180) - 9e-5, complex(1.0, 0.5),
+                  100.0 * j, -50.0 * j, complex(-2e9, 1e8), complex(0.0, 0.0),
+                  complex(-2e9, 1e8), 6e-6, 6e-6)
+        w_row, i_row, dw, di, i_ref = g.fold_export([1.0, 0.5], nx * ny // 2)
+        acc.add(dw, di, dens)
+        return len(w_row) + len(i_row)
+
+    for k in range(20):
+        one_mode(k)
+    warm = _peak_rss()
+    for k in range(20, 220):
+        one_mode(k)
+    assert acc.n_terms == 220
+    assert _peak_rss() - warm < 16 << 20, (warm, _peak_rss())
+
+
+def test_stage11_write_error_in_staging_publishes_nothing(tmp_path, monkeypatch):
+    # an output write failure during the stage leaves no stage file,
+    # no staging and no tmp behind
+    from formula.capsysred import render
+    out = tmp_path / "werr"
+    sim = Simulation.from_dict(TINY)
+    _record(sim, str(out))
+    real_save = render.save
+
+    def failing_save(path, fig):
+        if "capillary" in os.path.basename(path):
+            raise OSError("injected write failure")
+        real_save(path, fig)
+
+    monkeypatch.setattr(render, "save", failing_save)
+    with pytest.raises(OSError):
+        sim.run(str(out), stages=[11])
+    left = sorted(p.name for p in out.iterdir())
+    assert not any(n.startswith(("11", "stage11-", "mu-beamlet")) for n in left), left
+
+
+def test_stage11_refuses_config_drift_between_raw_and_typed(tmp_path, monkeypatch):
+    # the workers rebuild the configuration from cfg.raw and compare
+    # the Stage-11 contract with the parent's typed config; a programmatic
+    # drift is refused identically for jobs 1 and for a pool
+    out = tmp_path / "drift"
+    sim = Simulation.from_dict(TINY)
+    _record(sim, str(out))
+    sim.cfg.beamlet_w0 = 2.0 * sim.cfg.beamlet_w0      # typed config changed, raw kept
+    for jobs in (1, 2):
+        monkeypatch.setenv("CAPSYSRED_STAGE11_JOBS", str(jobs))
+        with pytest.raises(ValueError) as info:
+            sim.run(str(out), stages=[11])
+        assert "contract" in str(info.value)
+        left = sorted(p.name for p in out.iterdir())
+        assert not any(n.startswith(("11", "stage11-", "mu-beamlet")) for n in left), left
+
+
+def test_stage11_failed_jsonl_open_leaves_no_staging(tmp_path, monkeypatch):
+    # a failure while opening the staged JSONL (the first allocation
+    # of the stage) leaves neither staging nor outputs behind
+    from formula.capsysred import simulation as simmod
+    out = tmp_path / "jsonl"
+    sim = Simulation.from_dict(TINY)
+    _record(sim, str(out))
+
+    def failing_open(path):
+        raise OSError("injected open failure")
+
+    monkeypatch.setattr(simmod, "_open_jsonl", failing_open)
+    with pytest.raises(OSError):
+        sim.run(str(out), stages=[11])
+    left = sorted(p.name for p in out.iterdir())
+    assert not any(n.startswith(("11", "stage11-", "mu-beamlet")) for n in left), left
+    monkeypatch.undo()
+    sim.run(str(out), stages=[11])                       # a clean rerun succeeds
+    assert (out / "mu-beamlet.jsonl").exists()
+
+
+def test_stage11_failed_accumulator_allocation_leaves_no_tmp(tmp_path, monkeypatch):
+    # an allocation failure right after the tmp directory and the row
+    # store were created removes them (and the staging) before the error
+    from formula.capsysred.stages import beamlet
+    out = tmp_path / "alloc"
+    sim = Simulation.from_dict(TINY)
+    _record(sim, str(out))
+
+    def failing_accumulator(npix):
+        raise MemoryError("injected allocation failure")
+
+    monkeypatch.setattr(beamlet, "exact_accumulator", failing_accumulator)
+    monkeypatch.setenv("CAPSYSRED_STAGE11_JOBS", "2")
+    with pytest.raises(MemoryError):
+        sim.run(str(out), stages=[11])
+    left = sorted(p.name for p in out.iterdir())
+    assert not any(n.startswith(("11", "stage11-", "mu-beamlet")) for n in left), left
+
+
+def test_stage11_report_has_stage_wall_publication_and_boundary_lines(tmp_path, monkeypatch):
+    # the report carries the whole-stage wall-clock with the
+    # publication time, per-scene timers by phase, and the boundary count
+    out = tmp_path / "report"
+    sim = Simulation.from_dict(TINY)
+    _record(sim, str(out))
+    monkeypatch.setenv("CAPSYSRED_STAGE11_JOBS", "2")
+    sim.run(str(out), stages=[11])
+    report = sorted(out.glob("report-*.md"))[-1].read_text(encoding="utf-8")
+    wall = [line for line in report.splitlines() if line.startswith("- stage 11 wall:")]
+    assert len(wall) == 1 and "publication" in wall[0] and "sampled total max" in wall[0]
+    scenes = [line for line in report.splitlines() if line.startswith("- jobs: 2; scene wall")]
+    assert len(scenes) == 2 and all("allocation" in line and "jackknife" in line for line in scenes)
+    boundary = [line for line in report.splitlines()
+                if line.startswith("- LOO-threshold boundary pixels")]
+    assert len(boundary) == 2 and all(line.endswith(": 0") for line in boundary)
+    diag = sim.results["beamlet:capillary"]["diagnostics"]
+    assert diag["timers"]["scene"] >= diag["timers"]["deposit"] + diag["timers"]["merge"]
+    assert diag["peak_rss"]["worker_max"] > 0
+
+
+def test_stage11_peak_sampler_discovers_announced_workers(tmp_path):
+    # workers announce their pid in the tmp directory; the sampler
+    # picks them up on its next tick, not after their first finished mode
+    from formula.capsysred.stages.beamlet import PID_PREFIX, PeakSampler, _peak_rss
+    if _peak_rss() == 0:
+        pytest.skip("working-set queries unavailable on this platform")
+    sampler = PeakSampler()
+    sampler.watch_dir(str(tmp_path))
+    (tmp_path / f"{PID_PREFIX}{os.getpid()}").write_text("")
+    sampler.sample()
+    assert os.getpid() in sampler.pids and sampler.max_total > 0
+    (tmp_path / f"{PID_PREFIX}not-a-pid").write_text("")
+    sampler.sample()                                   # junk markers are ignored
+
+
+def test_stage11_tile_buffers_allocated_once_and_tiling_is_invisible(tmp_path, monkeypatch):
+    # the row-store scan allocates one buffer pair for the whole run;
+    # a nearly full last tile reuses it through prefix views (no second pair),
+    # and the tile boundaries do not change mu, sigma, flags or the boundary count
+    from array import array
+    from formula.capsysred.stages import beamlet
+    n_modes, npix = 40, 2237
+    monkeypatch.setattr(beamlet, "_TILE_BYTES", 12 * n_modes * 1119)   # tile 1119, remainder 1118
+    rows = tmp_path / "s0.rows"
+    with open(rows, "wb") as fh:                      # zero rows: every LOO masked out
+        fh.truncate(12 * n_modes * npix)
+    w_b = array("d", [1.0, 0.0] * npix).tobytes()
+    i_b = array("d", [1.0] * npix).tobytes()
+    irefs = [0.0] * n_modes
+    eps, band = 17 * 2.0 ** -24, (n_modes + 1) * 2.0 ** -53
+    sizes = []
+    real_bytearray = bytearray
+
+    def counting_bytearray(*args):
+        out = real_bytearray(*args)
+        sizes.append(len(out))
+        return out
+
+    monkeypatch.setattr(beamlet, "bytearray", counting_bytearray, raising=False)
+    tiled = beamlet._tile_jackknife(str(rows), n_modes, npix, w_b, i_b, 1.0, irefs, eps, band)
+    big = [s for s in sizes if s >= 4 * n_modes * 1119]
+    assert sorted(big) == [4 * n_modes * 1119, 8 * n_modes * 1119], sizes
+    monkeypatch.setattr(beamlet, "_TILE_BYTES", 12 * n_modes * npix)   # one tile covers all
+    whole = beamlet._tile_jackknife(str(rows), n_modes, npix, w_b, i_b, 1.0, irefs, eps, band)
+    assert [bytes(x) for x in tiled] == [bytes(x) for x in whole]
+    assert all(flag == 1 for flag in tiled[2])        # n_loo < 2 everywhere: dubious
+
+
+def test_stage11_repeated_jsonl_write_failure_still_cleans_up(tmp_path, monkeypatch):
+    # the staged JSONL fails on write and again on close (ENOSPC-like);
+    # staging and tmp are still removed, the sampler is stopped, and both
+    # errors reach the caller (the second one as a note on the first)
+    import errno
+    import io
+    from formula.capsysred import simulation as simmod
+    from formula.capsysred.stages.beamlet import PeakSampler
+    out = tmp_path / "enospc"
+    sim = Simulation.from_dict(TINY)
+    _record(sim, str(out))
+
+    class FullDisk(io.RawIOBase):
+        # every write fails, and so does the final flush/close of the stream
+        def writable(self):
+            return True
+
+        def write(self, data):
+            raise OSError(errno.ENOSPC, "injected: no space left on device")
+
+        def close(self):
+            try:
+                raise OSError(errno.ENOSPC, "injected: no space left on close")
+            finally:
+                super().close()
+
+    def failing_open(path):
+        return io.TextIOWrapper(io.BufferedWriter(FullDisk(), buffer_size=64), encoding="utf-8")
+
+    samplers = []
+
+    def make_sampler():
+        samplers.append(PeakSampler())
+        return samplers[-1]
+
+    monkeypatch.setattr(simmod, "_open_jsonl", failing_open)
+    monkeypatch.setattr(simmod, "_make_sampler", make_sampler)
+    monkeypatch.setenv("CAPSYSRED_STAGE11_JOBS", "2")
+    with pytest.raises(OSError) as info:
+        sim.run(str(out), stages=[11])
+    assert info.value.errno == errno.ENOSPC
+    assert any("secondary error while closing" in note for note in getattr(info.value, "__notes__", []))
+    left = sorted(p.name for p in out.iterdir())
+    assert not any(n.startswith(("11", "stage11-", "mu-beamlet")) for n in left), left
+    assert samplers and not samplers[0].is_alive()

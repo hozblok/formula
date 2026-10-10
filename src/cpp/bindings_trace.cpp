@@ -5,8 +5,13 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <algorithm>
+#include <cmath>
 #include <complex>
+#include <cstdint>
+#include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -129,6 +134,64 @@ const typename cstrace::Tracer<P>::Bundle &bundle_of(const NativeOptic &nat) {
   return *b;
 }
 
+template <typename T>
+py::bytes as_bytes(const std::vector<T> &v) {
+  return py::bytes(reinterpret_cast<const char *>(v.data()),
+                   v.size() * sizeof(T));
+}
+
+// One pixel of the delete-one-mode jackknife, shared by BeamletGrid::jackknife
+// (rows retained in C++) and jackknife_tile (rows from the disk store):
+// mu = min(|W|/sqrt(I*I_ref), 1); LOO over the modes whose removal leaves
+// i_s > eps*I and iref_s > eps*I_ref; sigma from the centered LOO values;
+// the don't-trust flag as in the Python fallback. row_w(s) -> const float*
+// (re, im), row_i(s) -> float. With a boundary pointer, the pixel is marked
+// when some mode's mask quantity lies within band_rel*I (resp. band_rel*I_ref)
+// of its threshold: pixels whose LOO membership is rounding-sensitive.
+template <typename RowW, typename RowI>
+inline void jackknife_pixel(std::complex<double> w, double i_pix, double i_ref,
+                            size_t nf, RowW row_w, RowI row_i,
+                            const double *irefs, double eps_rel,
+                            std::vector<double> &loo, double &mu, double &err,
+                            unsigned char &dub, double band_rel = 0.0,
+                            unsigned char *boundary = nullptr) {
+  mu = std::min(std::abs(w) / std::sqrt(i_pix * i_ref), 1.0);
+  const double eps_i = eps_rel * i_pix, eps_r = eps_rel * i_ref;
+  loo.clear();
+  for (size_t s = 0; s < nf; ++s) {
+    const double i_s = i_pix - row_i(s);
+    const double iref_s = i_ref - irefs[s];
+    if (boundary && (std::fabs(i_s - eps_i) <= band_rel * i_pix ||
+                     std::fabs(iref_s - eps_r) <= band_rel * i_ref)) {
+      *boundary = 1;
+    }
+    if (i_s > eps_i && iref_s > eps_r) {
+      const float *wr = row_w(s);
+      const double dr = w.real() - wr[0];
+      const double di = w.imag() - wr[1];
+      loo.push_back(
+          std::min(std::hypot(dr, di) / std::sqrt(i_s * iref_s), 1.0));
+    }
+  }
+  err = 0.0;
+  if (loo.size() > 1) {
+    double mean = 0.0;
+    for (const double v : loo) {
+      mean += v;
+    }
+    mean /= double(loo.size());
+    double ss = 0.0;
+    for (const double v : loo) {
+      ss += (v - mean) * (v - mean);
+    }
+    err = std::sqrt(ss * double(loo.size() - 1) / double(loo.size()));
+  }
+  dub = (err > 1.0 || loo.size() < 2 ||
+         ((mu >= 1.0 - eps_rel || mu == 0.0) && err <= eps_rel))
+            ? 1
+            : 0;
+}
+
 // Stage-11 beamlet deposit: the hot window loop of BeamletField.add_ray,
 // pure double (the beamlet field is float64 physics by design — no mp_real,
 // no precision dispatch). One dense complex grid per spectral line.
@@ -168,15 +231,19 @@ class BeamletGrid {
   void add(size_t m, double x, double y, std::complex<double> pref, double tx,
            double ty, std::complex<double> hxx, std::complex<double> hxy,
            std::complex<double> hyy, double rx, double ry) {
-    const long ix_lo = std::max(0L, long(std::floor((x - rx - x0_) / dx_)));
-    const long ix_hi =
-        std::min(nx_ - 1, long(std::floor((x + rx - x0_) / dx_)));
-    const long iy_lo = std::max(0L, long(std::floor((y - ry - y0_) / dy_)));
-    const long iy_hi =
-        std::min(ny_ - 1, long(std::floor((y + ry - y0_) / dy_)));
-    if (ix_lo > ix_hi || iy_lo > iy_hi) {
+    // clamp in double: a blown-up spot overflows a 32-bit long
+    const double fx_lo = std::floor((x - rx - x0_) / dx_);
+    const double fx_hi = std::floor((x + rx - x0_) / dx_);
+    const double fy_lo = std::floor((y - ry - y0_) / dy_);
+    const double fy_hi = std::floor((y + ry - y0_) / dy_);
+    if (!(fx_hi >= 0.0 && fx_lo <= double(nx_ - 1) && fy_hi >= 0.0 &&
+          fy_lo <= double(ny_ - 1))) {
       return;
     }
+    const long ix_lo = fx_lo < 0.0 ? 0L : long(fx_lo);
+    const long ix_hi = fx_hi > double(nx_ - 1) ? nx_ - 1 : long(fx_hi);
+    const long iy_lo = fy_lo < 0.0 ? 0L : long(fy_lo);
+    const long iy_hi = fy_hi > double(ny_ - 1) ? ny_ - 1 : long(fy_hi);
     auto &g = g_.at(m);
     // exp arg as an analytic function of t = dx_off: c2*t^2 + b*t + a
     // with c2 = i*conj(hxx) (complex(quad.imag, quad.real) == i*conj(quad))
@@ -194,8 +261,9 @@ class BeamletGrid {
       // stays <= 1 in magnitude (an edge start overflows on tail rays)
       const double vp =
           hxx.imag() == 0.0 ? 0.0 : -hxy.imag() * dy_off / hxx.imag();
-      const long ip = std::max(
-          ix_lo, std::min(ix_hi, long(std::floor((vp + x - x0_) / dx_))));
+      const long ip = long(std::max(
+          double(ix_lo),
+          std::min(double(ix_hi), std::floor((vp + x - x0_) / dx_))));
       const double tp = x0_ + (ip + 0.5) * ex_ / nx_ - x;
       const std::complex<double> v0 =
           pref * std::exp(a + b * tp + c2 * (tp * tp));
@@ -219,14 +287,17 @@ class BeamletGrid {
   }
 
   // Whole-ray deposit: gamma.propagate + the spot per line, one call per
-  // ray. lenses is flat [(phi, 1/f_t, 1/f_s), ...]; returns (spot width of
+  // ray. lenses is flat [(phi, pxx, pxy, pyy), ...]; returns (spot width of
   // line 0, geometric mean of the axes; -1 when skipped) and the number of
   // lines whose Im(G) lost negative-definiteness (not deposited).
   py::tuple add_ray(double x, double y, double dxf, double dyf, double opl,
                     double psi, const std::vector<double> &segs,
                     const std::vector<double> &lenses,
                     const std::vector<std::complex<double>> &amps) {
-    const size_t n_lens = lenses.size() / 3;
+    const size_t n_lens = lenses.size() / 4;
+    if (segs.empty() || lenses.size() != 4 * (segs.size() - 1)) {
+      throw std::invalid_argument("add_ray: lenses must be 4*(len(segs)-1)");
+    }
     double w_spot = -1.0;
     long bad = 0;
     for (size_t m = 0; m < kms_.size(); ++m) {
@@ -264,23 +335,34 @@ class BeamletGrid {
         qxx += segs[j];
         qyy += segs[j];
         if (j < n_lens) {
-          const double phi = lenses[3 * j], ift = lenses[3 * j + 1],
-                       ifs = lenses[3 * j + 2];
-          if (ift == 0.0 && ifs == 0.0) {
+          // gamma.reflect twin: Gamma -= P, then the mirror M Q M; phi NaN
+          // = unknown wall normal (no flip, no lens)
+          const double phi = lenses[4 * j], pxx = lenses[4 * j + 1],
+                       pxy = lenses[4 * j + 2], pyy = lenses[4 * j + 3];
+          if (std::isnan(phi)) {
             continue;
           }
+          if (pxx != 0.0 || pxy != 0.0 || pyy != 0.0) {
+            std::complex<double> det = qxx * qyy - qxy * qxy;
+            const std::complex<double> gxx = qyy / det - pxx;
+            const std::complex<double> gxy = -qxy / det - pxy;
+            const std::complex<double> gyy = qxx / det - pyy;
+            det = gxx * gyy - gxy * gxy;
+            qxx = gyy / det;
+            qxy = -gxy / det;
+            qyy = gxx / det;
+          }
           const double c = std::cos(phi), sn = std::sin(phi);
-          const double pxx = ift * c * c + ifs * sn * sn;
-          const double pxy = (ift - ifs) * c * sn;
-          const double pyy = ift * sn * sn + ifs * c * c;
-          std::complex<double> det = qxx * qyy - qxy * qxy;
-          const std::complex<double> gxx = qyy / det - pxx;
-          const std::complex<double> gxy = -qxy / det - pxy;
-          const std::complex<double> gyy = qxx / det - pyy;
-          det = gxx * gyy - gxy * gxy;
-          qxx = gyy / det;
-          qxy = -gxy / det;
-          qyy = gxx / det;
+          const double c2 = c * c - sn * sn, s2 = 2.0 * c * sn;
+          const std::complex<double> fxx =
+              c2 * c2 * qxx + 2.0 * c2 * s2 * qxy + s2 * s2 * qyy;
+          const std::complex<double> fxy =
+              c2 * s2 * (qxx - qyy) + (s2 * s2 - c2 * c2) * qxy;
+          const std::complex<double> fyy =
+              s2 * s2 * qxx - 2.0 * c2 * s2 * qxy + c2 * c2 * qyy;
+          qxx = fxx;
+          qxy = fxy;
+          qyy = fyy;
         }
       }
       const std::complex<double> det = qxx * qyy - qxy * qxy;
@@ -350,6 +432,44 @@ class BeamletGrid {
     return i_ref;
   }
 
+  // One mode's export for the shared any-jobs path: the float32 delete-one
+  // rows exactly as fold builds them, the mode's float64 W/I contributions
+  // (left fold over the lines, from zero) and the float32 ref intensity.
+  // Nothing is retained; the totals stay untouched.
+  py::tuple fold_export(const std::vector<double> &wfs, long ref) const {
+    const size_t npix = size_t(nx_) * ny_;
+    std::vector<float> w_row(2 * npix, 0.0f);
+    std::vector<float> i_row(npix, 0.0f);
+    std::vector<std::complex<double>> dw(npix);
+    std::vector<double> di(npix, 0.0);
+    const std::complex<double> zero(0.0, 0.0);
+    for (size_t m = 0; m < g_.size(); ++m) {
+      const double wf = wfs.at(m);
+      const auto &g = g_.at(m);
+      const std::complex<double> g_ref = g.at(size_t(ref));
+      const bool has_ref = g_ref != zero;
+      const std::complex<double> ref_c = std::conj(g_ref);
+      for (size_t p = 0; p < npix; ++p) {
+        const std::complex<double> v = g[p];
+        if (v == zero) {
+          continue;
+        }
+        const double a2 = wf * std::norm(v);
+        di[p] += a2;
+        i_row[p] += a2;
+        if (has_ref) {
+          const std::complex<double> cross = v * ref_c;
+          dw[p] += wf * cross;
+          w_row[2 * p] += wf * cross.real();
+          w_row[2 * p + 1] += wf * cross.imag();
+        }
+      }
+    }
+    const double i_ref = i_row[size_t(ref)];
+    return py::make_tuple(as_bytes(w_row), as_bytes(i_row), as_bytes(dw),
+                          as_bytes(di), i_ref);
+  }
+
   // Delete-one-mode jackknife over the fold rows, mirroring the Python
   // fallback op-for-op: dense row-major (mu float64, sigma float64,
   // don't-trust uint8) as bytes.
@@ -361,54 +481,25 @@ class BeamletGrid {
     const size_t nf = fi_.size();
     std::vector<double> loo;
     loo.reserve(nf);
-    if (i_ref > 0.0) {
+    if (!(i_ref > 0.0)) {
+      // unlit reference: no pixel is estimable
       for (size_t p = 0; p < npix; ++p) {
-        const std::complex<double> w = W_[p];
-        if (w == std::complex<double>(0.0, 0.0)) {
-          continue;
-        }
+        dub[p] = I_[p] > 0.0 ? 1 : 0;
+      }
+    } else {
+      for (size_t p = 0; p < npix; ++p) {
         const double i_pix = I_[p];
         if (i_pix <= 0.0) {
           continue;
         }
-        mu[p] = std::min(std::abs(w) / std::sqrt(i_pix * i_ref), 1.0);
-        const double eps_i = eps_rel * i_pix, eps_r = eps_rel * i_ref;
-        loo.clear();
-        for (size_t s = 0; s < nf; ++s) {
-          const double i_s = i_pix - fi_[s][p];
-          const double iref_s = i_ref - irefs_[s];
-          if (i_s > eps_i && iref_s > eps_r) {
-            const double dr = w.real() - fw_[s][2 * p];
-            const double di = w.imag() - fw_[s][2 * p + 1];
-            loo.push_back(std::min(
-                std::hypot(dr, di) / std::sqrt(i_s * iref_s), 1.0));
-          }
-        }
-        if (loo.size() > 1) {
-          double mean = 0.0;
-          for (const double v : loo) {
-            mean += v;
-          }
-          mean /= double(loo.size());
-          double ss = 0.0;
-          for (const double v : loo) {
-            ss += (v - mean) * (v - mean);
-          }
-          err[p] = std::sqrt(ss * double(loo.size() - 1) /
-                             double(loo.size()));
-        }
-        if (err[p] > 1.0 || loo.size() < 2 ||
-            (mu[p] >= 1.0 && err[p] == 0.0)) {
-          dub[p] = 1;
-        }
+        jackknife_pixel(
+            W_[p], i_pix, i_ref, nf,
+            [&](size_t s) { return fw_[s].data() + 2 * p; },
+            [&](size_t s) { return fi_[s][p]; }, irefs_.data(), eps_rel, loo,
+            mu[p], err[p], dub[p]);
       }
     }
-    return py::make_tuple(
-        py::bytes(reinterpret_cast<const char *>(mu.data()),
-                  npix * sizeof(double)),
-        py::bytes(reinterpret_cast<const char *>(err.data()),
-                  npix * sizeof(double)),
-        py::bytes(reinterpret_cast<const char *>(dub.data()), npix));
+    return py::make_tuple(as_bytes(mu), as_bytes(err), as_bytes(dub));
   }
 
   // The run's W (complex128 interleaved) and I (float64) fold totals.
@@ -447,6 +538,252 @@ class BeamletGrid {
   std::vector<double> irefs_;
 };
 
+// Exact, order-free totals of the shared Stage-11 path: per pixel and
+// component (Re W, Im W, I) a 2176-bit two's-complement fixed-point integer
+// in units of 2^-1074 (34 words: every binary position of a finite double
+// plus 64 guard bits for up to 2^64 terms). Every finite double is added
+// exactly; rounding to the nearest double (ties to even) happens once, in
+// totals(). The density is an exact integer count.
+class ExactAccumulator {
+ public:
+  static constexpr size_t kWords = 34;
+
+  explicit ExactAccumulator(size_t npix)
+      : npix_(npix), acc_(3 * npix * kWords, 0), density_(npix, 0),
+        n_terms_(0) {}
+
+  // dw: complex128[npix], di: float64[npix], density: uint32[npix].
+  void add(py::buffer dw, py::buffer di, py::buffer density) {
+    const py::buffer_info bw = dw.request(), bi = di.request(),
+                          bd = density.request();
+    if (size_t(bw.size) * size_t(bw.itemsize) != 16 * npix_ ||
+        size_t(bi.size) * size_t(bi.itemsize) != 8 * npix_ ||
+        size_t(bd.size) * size_t(bd.itemsize) != 4 * npix_) {
+      throw std::invalid_argument(
+          "ExactAccumulator.add: buffer sizes do not match the pixel count");
+    }
+    if (n_terms_ == UINT64_MAX) {
+      throw std::overflow_error("ExactAccumulator: term counter exhausted");
+    }
+    const double *w = static_cast<const double *>(bw.ptr);
+    const double *i = static_cast<const double *>(bi.ptr);
+    const uint32_t *d = static_cast<const uint32_t *>(bd.ptr);
+    for (size_t p = 0; p < npix_; ++p) {
+      add_double(words(p, 0), w[2 * p]);
+      add_double(words(p, 1), w[2 * p + 1]);
+      add_double(words(p, 2), i[p]);
+      density_[p] += d[p];
+    }
+    ++n_terms_;
+  }
+
+  // W (complex128) and I (float64), each the correctly rounded exact sum.
+  py::tuple totals() const {
+    std::vector<std::complex<double>> W(npix_);
+    std::vector<double> I(npix_);
+    for (size_t p = 0; p < npix_; ++p) {
+      W[p] = std::complex<double>(round_to_double(words(p, 0)),
+                                  round_to_double(words(p, 1)));
+      I[p] = round_to_double(words(p, 2));
+    }
+    return py::make_tuple(as_bytes(W), as_bytes(I));
+  }
+
+  py::bytes density() const { return as_bytes(density_); }   // uint64[npix]
+  unsigned long long n_terms() const { return n_terms_; }
+  size_t npix() const { return npix_; }
+
+ private:
+  uint64_t *words(size_t p, size_t c) {
+    return acc_.data() + (3 * p + c) * kWords;
+  }
+  const uint64_t *words(size_t p, size_t c) const {
+    return acc_.data() + (3 * p + c) * kWords;
+  }
+
+  // x = m * 2^(shift - 1074) with m the 53-bit significand; add or subtract
+  // m << shift into the little-endian word array (carry/borrow out of the
+  // top word is the two's-complement wrap of a signed result).
+  static void add_double(uint64_t *a, double x) {
+    if (x == 0.0) {
+      return;
+    }
+    if (!std::isfinite(x)) {
+      throw std::invalid_argument(
+          "ExactAccumulator: non-finite contribution");
+    }
+    uint64_t bits;
+    std::memcpy(&bits, &x, sizeof(bits));
+    const bool neg = (bits >> 63) != 0;
+    const unsigned e = unsigned((bits >> 52) & 0x7FFu);
+    uint64_t m = bits & ((uint64_t(1) << 52) - 1);
+    unsigned shift = 0;
+    if (e != 0) {
+      m |= uint64_t(1) << 52;
+      shift = e - 1;
+    }
+    const size_t k = shift / 64;
+    const unsigned b = shift % 64;
+    const uint64_t lo = m << b;
+    const uint64_t hi = b ? (m >> (64 - b)) : 0;
+    if (!neg) {
+      uint64_t s = a[k] + lo;
+      uint64_t carry = s < lo ? 1 : 0;
+      a[k] = s;
+      size_t j = k + 1;
+      const uint64_t t = hi + carry;
+      s = a[j] + t;
+      carry = s < t ? 1 : 0;
+      a[j] = s;
+      for (++j; carry && j < kWords; ++j) {
+        a[j] += 1;
+        carry = a[j] == 0 ? 1 : 0;
+      }
+    } else {
+      uint64_t borrow = a[k] < lo ? 1 : 0;
+      a[k] -= lo;
+      size_t j = k + 1;
+      const uint64_t t = hi + borrow;
+      borrow = a[j] < t ? 1 : 0;
+      a[j] -= t;
+      for (++j; borrow && j < kWords; ++j) {
+        borrow = a[j] == 0 ? 1 : 0;
+        a[j] -= 1;
+      }
+    }
+  }
+
+  static bool bit_at(const uint64_t *v, long pos) {
+    return ((v[size_t(pos) / 64] >> (size_t(pos) % 64)) & 1u) != 0;
+  }
+
+  static bool any_below(const uint64_t *v, long pos) {
+    const size_t k = size_t(pos) / 64, b = size_t(pos) % 64;
+    for (size_t j = 0; j < k; ++j) {
+      if (v[j]) {
+        return true;
+      }
+    }
+    return b ? (v[k] & ((uint64_t(1) << b) - 1)) != 0 : false;
+  }
+
+  // 53 bits starting at bit pos (pos + 52 < 64 * kWords).
+  static uint64_t bits_at(const uint64_t *v, long pos) {
+    const size_t k = size_t(pos) / 64, b = size_t(pos) % 64;
+    uint64_t out = v[k] >> b;
+    if (b && k + 1 < kWords) {
+      out |= v[k + 1] << (64 - b);
+    }
+    return out & ((uint64_t(1) << 53) - 1);
+  }
+
+  static double round_to_double(const uint64_t *a) {
+    uint64_t v[kWords];
+    std::memcpy(v, a, sizeof(v));
+    const bool neg = (v[kWords - 1] >> 63) != 0;
+    if (neg) {
+      uint64_t carry = 1;
+      for (size_t j = 0; j < kWords; ++j) {
+        const uint64_t t = ~v[j];
+        v[j] = t + carry;
+        carry = (carry && t == UINT64_MAX) ? 1 : 0;
+      }
+    }
+    int top = -1;
+    for (int j = int(kWords) - 1; j >= 0; --j) {
+      if (v[j]) {
+        top = j;
+        break;
+      }
+    }
+    if (top < 0) {
+      return 0.0;
+    }
+    int msb = 63;
+    while (((v[top] >> msb) & 1u) == 0) {
+      --msb;
+    }
+    const long h = long(top) * 64 + msb;   // highest set bit
+    double mag;
+    if (h <= 52) {
+      mag = std::ldexp(double(v[0]), -1074);   // exact: fits 53 bits
+    } else {
+      uint64_t M = bits_at(v, h - 52);
+      const bool R = bit_at(v, h - 53);
+      const bool S = any_below(v, h - 53);
+      if (R && (S || (M & 1u))) {
+        ++M;
+      }
+      long hh = h;
+      if (M == (uint64_t(1) << 53)) {
+        M >>= 1;
+        ++hh;
+      }
+      if (hh > 2097) {
+        throw std::overflow_error(
+            "ExactAccumulator: exact sum exceeds the double range");
+      }
+      mag = std::ldexp(double(M), int(hh - 52 - 1074));
+    }
+    return neg ? -mag : mag;
+  }
+
+  size_t npix_;
+  std::vector<uint64_t> acc_;
+  std::vector<uint64_t> density_;
+  uint64_t n_terms_;
+};
+
+// Delete-one-mode jackknife for a pixel tile of the shared path: totals from
+// ExactAccumulator, rows from the disk store (mode-major float32: per mode
+// 2*npix re/im values, then npix intensities), the same pixel arithmetic as
+// BeamletGrid::jackknife. Returns (mu, sigma, dubious, boundary) bytes for the
+// tile; boundary marks pixels with a LOO mask quantity within band_rel of its
+// threshold (0 when band_rel <= 0).
+py::tuple jackknife_tile(py::buffer w_tot, py::buffer i_tot, double i_ref,
+                         py::buffer w_rows, py::buffer i_rows,
+                         const std::vector<double> &irefs, double eps_rel,
+                         double band_rel) {
+  const py::buffer_info bw = w_tot.request(), bi = i_tot.request(),
+                        brw = w_rows.request(), bri = i_rows.request();
+  const size_t npix = size_t(bi.size) * size_t(bi.itemsize) / 8;
+  const size_t nf = irefs.size();
+  if (size_t(bw.size) * size_t(bw.itemsize) != 16 * npix ||
+      size_t(brw.size) * size_t(brw.itemsize) != nf * 8 * npix ||
+      size_t(bri.size) * size_t(bri.itemsize) != nf * 4 * npix) {
+    throw std::invalid_argument(
+        "jackknife_tile: buffer sizes do not match the tile and mode count");
+  }
+  const auto *W = static_cast<const std::complex<double> *>(bw.ptr);
+  const double *I = static_cast<const double *>(bi.ptr);
+  const float *RW = static_cast<const float *>(brw.ptr);
+  const float *RI = static_cast<const float *>(bri.ptr);
+  std::vector<double> mu(npix, 0.0), err(npix, 0.0);
+  std::vector<unsigned char> dub(npix, 0), boundary(npix, 0);
+  std::vector<double> loo;
+  loo.reserve(nf);
+  if (!(i_ref > 0.0)) {
+    for (size_t p = 0; p < npix; ++p) {
+      dub[p] = I[p] > 0.0 ? 1 : 0;
+    }
+  } else {
+    for (size_t p = 0; p < npix; ++p) {
+      const double i_pix = I[p];
+      if (i_pix <= 0.0) {
+        continue;
+      }
+      jackknife_pixel(
+          W[p], i_pix, i_ref, nf,
+          [&](size_t s) { return RW + (s * npix + p) * 2; },
+          [&](size_t s) { return RI[s * npix + p]; }, irefs.data(), eps_rel,
+          loo, mu[p], err[p], dub[p], band_rel,
+          band_rel > 0.0 ? &boundary[p] : nullptr);
+    }
+  }
+  return py::make_tuple(as_bytes(mu), as_bytes(err), as_bytes(dub),
+                        as_bytes(boundary));
+}
+
 }  // namespace
 
 void register_trace(py::module_ &m) {
@@ -470,6 +807,10 @@ void register_trace(py::module_ &m) {
       .def("fold", &BeamletGrid::fold, py::arg("wfs"), py::arg("ref"),
            "Fold one mode into the W/I totals and delete-one rows; "
            "returns the mode's float32 ref intensity.")
+      .def("fold_export", &BeamletGrid::fold_export, py::arg("wfs"),
+           py::arg("ref"),
+           "One mode's (w_row f32, i_row f32, dW f64, dI f64, i_ref) without "
+           "retaining anything; the totals stay untouched.")
       .def("jackknife", &BeamletGrid::jackknife, py::arg("ref"),
            py::arg("eps_rel"),
            "Dense (mu, sigma, dubious) bytes from the fold rows.")
@@ -477,7 +818,27 @@ void register_trace(py::module_ &m) {
            "W (complex128) and I (float64) fold totals as bytes.")
       .def("at", &BeamletGrid::at, "Cell value: (line, pixel) -> complex.")
       .def("items", &BeamletGrid::items,
-           "Nonzero cells of one line: [(pixel, complex), ...].");
+           "Nonzero cells of one line: [(pixel, complex), ...].")
+      .attr("lens_stride") = 4;
+
+  py::class_<ExactAccumulator>(
+      m, "ExactAccumulator",
+      "Exact order-free fixed-point totals (Re W, Im W, I) and integer "
+      "density per pixel for the Stage-11 shared path.")
+      .def(py::init<size_t>(), py::arg("npix"))
+      .def("add", &ExactAccumulator::add, py::arg("dw"), py::arg("di"),
+           py::arg("density"),
+           "Add one mode: complex128 dW, float64 dI, uint32 density.")
+      .def("totals", &ExactAccumulator::totals,
+           "(W complex128, I float64) bytes: correctly rounded exact sums.")
+      .def("density", &ExactAccumulator::density, "uint64 counts as bytes.")
+      .def_property_readonly("n_terms", &ExactAccumulator::n_terms)
+      .def_property_readonly("npix", &ExactAccumulator::npix);
+  m.def("jackknife_tile", &jackknife_tile, py::arg("w_tot"), py::arg("i_tot"),
+        py::arg("i_ref"), py::arg("w_rows"), py::arg("i_rows"),
+        py::arg("irefs"), py::arg("eps_rel"), py::arg("band_rel") = 0.0,
+        "Delete-one-mode jackknife (mu, sigma, dubious, boundary) for one "
+        "pixel tile; boundary marks LOO masks within band_rel of a threshold.");
 
   py::class_<NativeOptic>(m, "NativeOptic")
       .def_readonly("precision", &NativeOptic::precision)
