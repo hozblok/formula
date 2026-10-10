@@ -53,6 +53,7 @@ def test_b5_custom_options_and_lazy_unknown_keys():
     {"max_modes": 0}, {"max_modes": True}, {"rays_per_mode": 0}, {"rays_per_mode": 2.5},
     {"degree": 1}, {"degree": 6}, {"degree": 4.0}, {"degree": True},
     {"neighbors": 23}, {"min_neighbors": 23}, {"neighbors": 24, "min_neighbors": 48},
+    {"reflection": "perfect"}, {"reflection": None}, {"reflection": True},
     {"patches_per_family": 0}, {"phase_tolerance": 0}, {"phase_tolerance": float("inf")},
     {"phase_tolerance": True}, {"max_condition": -1}, {"max_condition": float("nan")},
     {"screen_index": -1}, {"screen_index": 0.5}, {"seed": -1}, {"seed": False},
@@ -97,3 +98,10 @@ def test_stage17_requires_a_capillary_before_loading_backend(tmp_path):
     with pytest.raises(ValueError, match="capillary.source"):
         Simulation.from_dict(raw).run(str(tmp_path / "result"), stages=[17])
     assert not (tmp_path / "result").exists()
+
+
+def test_reflection_option_defaults_to_fresnel_and_accepts_ideal():
+    assert B5_DEFAULTS["reflection"] == "fresnel"
+    raw = _raw()
+    raw["b5_estimator"] = {"reflection": "ideal_minus_one"}
+    assert Config(raw).validate_b5_estimator()["reflection"] == "ideal_minus_one"

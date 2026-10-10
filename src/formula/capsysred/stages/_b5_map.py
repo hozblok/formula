@@ -86,7 +86,7 @@ def _mode_job(job):
     from ._b5_archive import read_sample
     from ._b5_field import reconstruct_field
     from ._b5_transport import transport_mode
-    from .stage17 import _fresnel_product
+    from .stage17 import _reflection_factor
 
     start = time.perf_counter()
     if _implementation_hashes() != job["implementation_hashes"]:
@@ -104,7 +104,7 @@ def _mode_job(job):
         raise ValueError("archive ray budget is smaller than the requested canonical map budget")
     cap = SimpleNamespace(**job["cap"])
     transport = transport_mode(mode, cap, job["target_z"]) if len(mode["points"]) else None
-    fresnel = _fresnel_product(mode["sins"], job["delta"], job["beta"])
+    fresnel = _reflection_factor(mode["sins"], job["delta"], job["beta"], job["reflection"])
     origin = np.asarray(mode["origin"])
     source_distance = float(cap.z0)-origin[2]
     if source_distance <= 0:
@@ -250,7 +250,7 @@ def run_canonical_map(sim, out_dir, options, *, rays_paths, log=None):
     area = sum(math.pi*float(bore["radius"])**2 for bore in cap.bores)
     implementation = _implementation_hashes()
     base_job = dict(archive=archive, cap=cap_data, max_rays=max(budgets), target_z=float(screen.z),
-                    k=float(sim.lines[0].k), delta=sim.delta_f, beta=sim.beta_f,
+                    k=float(sim.lines[0].k), delta=sim.delta_f, beta=sim.beta_f, reflection=options["reflection"],
                     fingerprint_sha256=fingerprint_hash, index_sha256=index_hash,
                     implementation_hashes=implementation, grid=grid, widths=widths, budgets=budgets, entrance_area=area)
     jobs = [dict(base_job, mode=mode) for mode in range(modes)]
@@ -265,6 +265,7 @@ def run_canonical_map(sim, out_dir, options, *, rays_paths, log=None):
     start = time.perf_counter()
     result = dict(provider="archive_canonical", status="experimental-semiclassical-coherence-map",
                   full_coherence_computed=True, accuracy_validated=False, options=options,
+                  reflection=options["reflection"],
                   source_mode_count=modes, archive_mode_count=archive_modes, archive_rays_per_mode=archive_rays,
                   screen_z_m=float(screen.z), distance_after_exit_m=float(screen.z)-float(cap.z1),
                   k_per_m=base_job["k"], delta=sim.delta_f, beta=sim.beta_f, entrance_area_m2=area,

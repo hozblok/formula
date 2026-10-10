@@ -116,3 +116,30 @@ def test_jackknife_requires_all_positive_leave_one_intensities():
     assert count[0] == 3
     assert np.isnan(error[1])
     assert count[1] == 1
+
+
+def test_reflection_factor_fresnel_default_and_ideal_minus_one():
+    from formula.capsysred.stages import stage17
+
+    sins = [[], [.01], [.01, .02], [.01, .02, .03]]
+    fresnel = stage17._reflection_factor(sins, 1e-5, 1e-7)
+    assert np.array_equal(fresnel, stage17._fresnel_product(sins, 1e-5, 1e-7))
+    ideal = stage17._reflection_factor(sins, 1e-5, 1e-7, "ideal_minus_one")
+    assert ideal.dtype == complex and ideal.tolist() == [1, -1, 1, -1]
+    with pytest.raises(ValueError, match="reflection"):
+        stage17._reflection_factor(sins, 1e-5, 1e-7, "x")
+
+
+def test_map_records_reflection_and_ideal_matches_default_without_reflections(tmp_path):
+    sim, archive = scene_and_archive(tmp_path)
+    sim.cfg.raw["b5_estimator"]["reflection"] = "ideal_minus_one"
+    out = tmp_path/"ideal"
+    maps.run_canonical_map(sim, out, sim.cfg.validate_b5_estimator(), rays_paths=[archive])
+    meta = json.loads((out/"stage17/meta.json").read_text())
+    assert meta["reflection"] == "ideal_minus_one" and meta["options"]["reflection"] == "ideal_minus_one"
+    sim.cfg.raw["b5_estimator"]["reflection"] = "fresnel"
+    out2 = tmp_path/"fresnel"
+    maps.run_canonical_map(sim, out2, sim.cfg.validate_b5_estimator(), rays_paths=[archive])
+    a = np.load(out/"stage17"/meta["outputs"][-1]["file"])
+    b = np.load(out2/"stage17"/meta["outputs"][-1]["file"])
+    assert np.array_equal(a["W"], b["W"])   # zero reflections: both factors are 1
