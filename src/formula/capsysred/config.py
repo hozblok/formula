@@ -108,9 +108,7 @@ WAVE_DEFAULTS = {
     # provider fb (Fourier-Bessel modes of circular / torus bores)
     "fb_jmax": None,                # basis cut j_mn < jmax; null -> ceil(k (a + Re ell) fb_theta_cut)
     "fb_theta_cut": 3.6e-4,         # modal angular cut [rad] behind the jmax rule
-    "fb_dz": 5.0e-4,                # split-step length [m]
-    "fb_propagator": "chebyshev",   # chebyshev (series of exp(-iHL), no z error) | split_step (pointwise potential, O(dz))
-    "fb_chebyshev_tol": 1.0e-12,    # Bessel-coefficient cutoff of the Chebyshev series
+    "fb_chebyshev_tol": 1.0e-12,    # Bessel-coefficient cutoff of the Chebyshev series of exp(-iHL)
     "fb_dr": 2.0e-8,                # fine radial table step [m] for the exit-field synthesis
     "fb_wall": "dir-ell",           # dir-ell (complex offset: phase + absorption) | dir-ell-real (no absorption)
     "fb_angle_margin": 1.1,         # lattice h = lambda / (2 (theta_modal + tilt) margin), rounded to pixel / b
@@ -593,7 +591,6 @@ class Config:
         for key, choices in (("provider", ("auto", "uisk", "fb", "free")),
                              ("observable", ("coherent_cell", "point")),
                              ("source_mode", ("quadrature", "recorded_origins")),
-                             ("fb_propagator", ("split_step", "chebyshev")),
                              ("fb_wall", ("dir-ell", "dir-ell-real")),
                              ("fb_grid_dtype", ("complex64", "complex128"))):
             if w[key] not in choices:
@@ -612,7 +609,6 @@ class Config:
         w["cache_gb"] = num("cache_gb", lo=0.0)
         w["fb_jmax"] = num("fb_jmax", lo=8, integer=True, optional=True)
         w["fb_theta_cut"] = num("fb_theta_cut", lo=0.0, strict=True)
-        w["fb_dz"] = num("fb_dz", lo=0.0, strict=True)
         w["fb_chebyshev_tol"] = num("fb_chebyshev_tol", lo=0.0, strict=True)
         w["fb_dr"] = num("fb_dr", lo=0.0, strict=True)
         w["fb_angle_margin"] = num("fb_angle_margin", lo=1.0)

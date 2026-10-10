@@ -4,8 +4,7 @@ Paraxial scalar wave in the co-moving frame of the bent axis c(z) = c0 + t z^2 /
 (t = unit vector toward the bend centre):  i d/dz psi = -(1/2k) Lap psi + (k/R) xi psi,
 xi along t; Dirichlet wall at r = a + Re(ell), ell = i / (k q0), q0 = sqrt(-2 delta + 2 i beta)
 (DIR-ell); Im(ell) enters as the first-order per-mode damping kappa^2 Im(ell) / (a k).
-Longitudinal step: Strang split-step (fb_dz) or a Chebyshev series of exp(-iHL) (no z
-error; z-independent H).  Exit field in the lab frame on a Cartesian lattice with the phase
+Longitudinal step: a Chebyshev series of exp(-iHL) (no z error; z-independent H).  Exit field in the lab frame on a Cartesian lattice with the phase
 exp(i k c'(L).x' + i g), g = k L^3 / (6 R^2); screens by angular-spectrum drift on the
 lattice and exact cell integrals of the band-limited field (Fourier box), reference cell as
 Stage 14.  Conventions as the uisk provider: W = <E(P) E*(P_ref)>, e^{-i omega t}, carrier
@@ -143,17 +142,15 @@ class FBChannel:
     """One circular bore: axis c(z) = c0 + t z^2/(2R) (t toward the bend centre; R None =
     straight); frame coordinates xi along t, eta along t_perp; potential k xi / R."""
 
-    def __init__(self, c0, t, rbend, disc, k, dz, gamma=None):
+    def __init__(self, c0, t, rbend, disc, k, gamma=None):
         self.c0 = np.asarray(c0, float)
         self.t = None if t is None else np.asarray(t, float) / np.linalg.norm(t)
         self.rb = None if rbend is None else float(rbend)
-        self.disc, self.k, self.dz = disc, float(k), float(dz)
+        self.disc, self.k = disc, float(k)
         xi = disc.r[:, None] * np.cos(disc.phi)[None, :]
         cpp = 0.0 if self.rb is None else 1.0 / self.rb
         self.pot = self.k * cpp * xi                                # V on the polar grid
-        self.pot_half = np.exp(-1j * self.pot * dz / 2.0)
         self.gamma = np.zeros_like(disc.kap2) if gamma is None else gamma
-        self.phase = np.exp(-1j * disc.kap2 / (2.0 * self.k) * dz - self.gamma * dz)
         self.h0 = disc.kap2 / (2.0 * self.k) - 1j * self.gamma     # diagonal part of H
         self.vscale = 0.0 if self.rb is None else self.k / (2.0 * self.rb)   # V = (k/R) r cos phi = vscale r (e^{i phi} + e^{-i phi})
 
@@ -185,24 +182,6 @@ class FBChannel:
 
     def entrance_modes(self, src_xy, z_in):
         return self.disc.to_modes(self.entrance_field(src_xy, z_in))
-
-    def propagate_split(self, c, L):
-        """Strang split-step over L (nz = round(L/dz) steps; dz adjusted to divide L)."""
-        d = self.disc
-        nz = max(1, int(round(L / self.dz)))
-        if abs(nz * self.dz - L) > 1e-12 * max(L, 1e-9):
-            dz = L / nz
-            pot_half = np.exp(-1j * self.pot * dz / 2.0)
-            phase = np.exp(-1j * d.kap2 / (2.0 * self.k) * dz - self.gamma * dz)
-        else:
-            pot_half, phase = self.pot_half, self.phase
-        G = d.to_grid(c)
-        for _ in range(nz):
-            G = G * pot_half
-            c = d.to_modes(G) * phase
-            G = d.to_grid(c)
-            G = G * pot_half
-        return d.to_modes(G)
 
     def apply_v(self, c):
         """Galerkin V c through the block-tridiagonal m -> m +- 1 matrices (no transforms)."""
@@ -420,8 +399,7 @@ def build_spec(sim, wave, lines):
     return {"z_in": z_in, "length": length, "z_exit": float(cap.z1), "bores": bores, "screens": scr, "aw": aw, "jmax": jmax,
             "theta_modal": theta_modal, "tilt": tilt, "h": h, "h_auto": h_auto, "half": half,
             "lines": [(float(k), float(wl), float(dl), float(bt)) for k, wl, dl, bt in lines],
-            "ells": [(e.real, e.imag) for e in ells], "dz": float(wave["fb_dz"]),
-            "propagator": wave["fb_propagator"], "cheb_tol": float(wave["fb_chebyshev_tol"]),
+            "ells": [(e.real, e.imag) for e in ells], "cheb_tol": float(wave["fb_chebyshev_tol"]),
             "dr": float(wave["fb_dr"]), "wall": wave["fb_wall"], "dtype": wave["fb_grid_dtype"],
             "observable": wave["observable"], "per_bore": wave["fb_per_bore_maps"],
             "workers": wave["workers"] or -1, "cache_gb": float(wave["cache_gb"])}
@@ -449,7 +427,7 @@ def _init_worker(spec):
     chans = {}
     for (k, wl, delta, beta), (er, ei) in zip(spec["lines"], spec["ells"]):
         gamma = disc.kap2 * (ei if spec["wall"] == "dir-ell" else 0.0) / (spec["aw"] * k)   # per-mode damping
-        chans[k] = [FBChannel(b["center"], b["toward"], b["rbend"], disc, k, spec["dz"], gamma) for b in spec["bores"]]
+        chans[k] = [FBChannel(b["center"], b["toward"], b["rbend"], disc, k, gamma) for b in spec["bores"]]
     lat = Lattice(spec["half"], spec["h"], dtype=dtype, workers=spec["workers"], edge0=spec["screens"][0]["center"][0] - spec["screens"][0]["edge_x"] / 2,
                   cache_bytes=spec["cache_gb"] * 2 ** 30)
     grids = [ScreenGrid(_PixelCfg(s)) for s in spec["screens"]]
@@ -468,11 +446,8 @@ def _node_fields(spec, k, chans, lat, xi, per_bore=True):
     out = []
     for ch in chans:
         c0 = ch.entrance_modes(xi, spec["z_in"])
-        if spec["propagator"] == "chebyshev":
-            cL, deg = ch.propagate_chebyshev(c0, spec["length"], spec["cheb_tol"])
-            _W["degrees"].append(deg)
-        else:
-            cL = ch.propagate_split(c0, spec["length"])
+        cL, deg = ch.propagate_chebyshev(c0, spec["length"], spec["cheb_tol"])
+        _W["degrees"].append(deg)
         cz = ch.axis(spec["length"])
         lo = np.searchsorted(lat.x, cz - ch.disc.aw - 2 * lat.h)
         hi = np.searchsorted(lat.x, cz + ch.disc.aw + 2 * lat.h)
@@ -522,7 +497,7 @@ def fb_capillary_scene(sim, wave, lines, rays_paths, log):
     nyq = spec["h"] <= spec["h_auto"] * (1.0 + 1e-12)
     log(f"  16 [capillary/fb]: {rule}; j_max {spec['jmax']} (theta_modal {spec['theta_modal']*1e3:.3f} mrad, "
         f"tilt {spec['tilt']*1e3:.3f} mrad), lattice h = {m_to_um(spec['h']):.4f} um (auto {m_to_um(spec['h_auto']):.4f}), "
-        f"half {m_to_um(spec['half']):.1f} um, {spec['propagator']}" + (f" dz {spec['dz']*1e3:.2f} mm" if spec['propagator'] == 'split_step' else "")
+        f"half {m_to_um(spec['half']):.1f} um, chebyshev"
         + f", wall {spec['wall']} ell = {spec['ells'][0][0]*1e9:.3f} + {spec['ells'][0][1]*1e9:.3f}i nm"
         + ("" if nyq else " — note: lattice coarser than the auto step"))
     t0 = time.time()
@@ -570,15 +545,14 @@ def fb_capillary_scene(sim, wave, lines, rays_paths, log):
                 "lattice_n": lat.n, "theta_modal_rad": spec["theta_modal"], "tilt_rad": spec["tilt"],
                 "sampling": {"nyquist_ratio": 2.0 * spec["h"] * (spec["theta_modal"] + spec["tilt"]) / (2.0 * math.pi / max(k for k, *_ in lines))},
                 "jmax": spec["jmax"], "n_modes": parts[0][4],
-                "propagator": spec["propagator"], "dz_m": spec["dz"] if spec["propagator"] == "split_step" else None,
-                "chebyshev_degree_median": (int(np.median(degrees)) if degrees else None),
+                "propagator": "chebyshev", "chebyshev_degree_median": (int(np.median(degrees)) if degrees else None),
                 "wall": spec["wall"], "wall_offset_nm": [[e[0] * 1e9, e[1] * 1e9] for e in spec["ells"]],
                 "aw_m": spec["aw"], "fresnel_numbers": nf, "distance_m": d, "bores": spec["bores"],
                 "per_bore_maps": per_bore, "jobs": jobs, "worker_init_s": max(p[2] for p in parts)}
         res = _finish(acc, smp, meta, wave, time.time() - t0)
         res["report"] = _report_lines(label, res, wave, [
             f"- provider fb: j_max = {spec['jmax']} (θ_modal = {spec['theta_modal']*1e3:.3f} mrad, tilt {spec['tilt']*1e3:.3f} mrad), "
-            f"{spec['propagator']}" + (f" dz = {spec['dz']*1e3:.2f} mm" if spec["propagator"] == "split_step" else f" degree ≈ {int(np.median(degrees)) if degrees else '?'}")
+            f"chebyshev degree ≈ {int(np.median(degrees)) if degrees else '?'}"
             + f"; wall DIR-ℓ, ℓ = {spec['ells'][0][0]*1e9:.3f} + {spec['ells'][0][1]*1e9:.3f}i nm"
             + ("" if spec["wall"] == "dir-ell" else " (absorption off)"),
             f"- lattice h = {m_to_um(spec['h']):.4f} µm (auto {m_to_um(spec['h_auto']):.4f}), half-width {m_to_um(spec['half']):.1f} µm, "

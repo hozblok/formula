@@ -1,5 +1,5 @@
 """Stage 16 provider fb (Fourier-Bessel modes of circular / torus bores): basis, free-space
-and Gaussian-beam oracles, wall damping, Chebyshev vs dense exponential vs split-step,
+and Gaussian-beam oracles, wall damping, Chebyshev vs dense exponential,
 bend limits and symmetry, bend frame against the tracer's torus and against a free beam,
 end-to-end two-bore run, provider resolution and config contract."""
 
@@ -37,8 +37,8 @@ def _scene(bores, z1=0.03, screen_z=None, nodes=1, jmax=40, extra=None, screens=
 def test_fb_config_and_provider_resolution():
     raw = _scene([{"center": [0.0, 0.0], "radius": 3e-6}])
     wave = Simulation.from_dict(raw).cfg.validate_wave_estimator()
-    assert wave["fb_propagator"] == "chebyshev" and wave["fb_wall"] == "dir-ell" and wave["fb_jmax"] == 40
-    for bad in ({"fb_propagator": "rk4"}, {"fb_wall": "robin"}, {"fb_dz": 0}, {"fb_jmax": 2}, {"fb_jobs": 0},
+    assert wave["fb_wall"] == "dir-ell" and wave["fb_jmax"] == 40
+    for bad in ({"fb_wall": "robin"}, {"fb_propagator": "split_step"}, {"fb_jmax": 2}, {"fb_jobs": 0},
                 {"fb_grid_dtype": "float32"}, {"fb_per_bore_maps": "yes"}, {"fb_angle_margin": 0.5}):
         r = _scene([{"center": [0.0, 0.0], "radius": 3e-6}], extra=bad)
         with pytest.raises(ValueError, match="wave_estimator"):
@@ -84,7 +84,7 @@ def test_free_space_point_source_sphere():
     aw, z_in, L = 20e-6, 0.5, 0.02
     d = FB.Disc(aw, 120)
     d.fine_table(20e-9)
-    ch = FB.FBChannel((0.0, 0.0), None, None, d, K, 5e-4)
+    ch = FB.FBChannel((0.0, 0.0), None, None, d, K)
     c0 = ch.entrance_modes((0.0, 0.0), z_in)
     cL, _ = ch.propagate_chebyshev(c0, L)
     x = np.arange(-8e-6, 8e-6, 0.2e-6)
@@ -104,7 +104,7 @@ def test_gaussian_beam_q_law():
     aw, L, w0 = 15e-6, 0.02, 2.5e-6
     d = FB.Disc(aw, 100)
     d.fine_table(20e-9)
-    ch = FB.FBChannel((0.0, 0.0), None, None, d, K, 5e-4)
+    ch = FB.FBChannel((0.0, 0.0), None, None, d, K)
     xi = d.r[:, None] * np.cos(d.phi)[None, :]
     eta = d.r[:, None] * np.sin(d.phi)[None, :]
     q0 = -1j * math.pi * w0 ** 2 / LAM
@@ -123,27 +123,24 @@ def test_unitarity_and_wall_damping():
     d = FB.Disc(aw, 30)
     ell = FB.wall_offset(K, DELTA, BETA)
     gamma = d.kap2 * ell.imag / (aw * K)
-    c0 = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 500.0, d, K, 2e-4).entrance_modes((0.2e-6, 0.0), 0.05)
-    lossless = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 500.0, d, K, 2e-4)
+    c0 = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 500.0, d, K).entrance_modes((0.2e-6, 0.0), 0.05)
+    lossless = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 500.0, d, K)
     assert d.norm(lossless.propagate_chebyshev(c0, 0.02)[0]) / d.norm(c0) == pytest.approx(1.0, abs=1e-12)
-    leak = 1.0 - d.norm(lossless.propagate_split(c0, 0.02)) / d.norm(c0)
-    assert 0.0 < leak < 1e-3                       # pointwise potential: projection leakage O(dz)
-    # straight bore: every mode decays as exp(-2 gamma L) in norm, both propagators
-    lossy = FB.FBChannel((0.0, 0.0), None, None, d, K, 2e-4, gamma)
+    # straight bore: every mode decays as exp(-2 gamma L) in norm
+    lossy = FB.FBChannel((0.0, 0.0), None, None, d, K, gamma)
     e = np.zeros(d.kap2.shape, complex)
     e[d.M + 2, 1] = 1.0                       # one valid mode (m = 2, n = 2)
     expected = math.exp(-2.0 * gamma[d.M + 2, 1] * 0.02)
     assert d.norm(lossy.propagate_chebyshev(e, 0.02)[0]) / d.norm(e) == pytest.approx(expected, rel=1e-10)
-    assert d.norm(lossy.propagate_split(e, 0.02)) / d.norm(e) == pytest.approx(expected, rel=1e-10)
     assert expected < 1.0
 
 
-def test_chebyshev_matches_dense_exponential_and_split_step_is_first_order():
+def test_chebyshev_matches_dense_exponential():
     aw = 3e-6
     d = FB.Disc(aw, 20)
     ell = FB.wall_offset(K, DELTA, BETA)
     gamma = d.kap2 * ell.imag / (aw * K)
-    ch = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 2000.0, d, K, 5e-4, gamma)
+    ch = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 2000.0, d, K, gamma)
     c0 = ch.entrance_modes((0.3e-6, 0.1e-6), 0.05)
     assert np.linalg.norm(ch.apply_h(c0) - ch.apply_h_grid(c0)) < 1e-13 * np.linalg.norm(ch.apply_h_grid(c0))
     n = c0.size
@@ -157,13 +154,6 @@ def test_chebyshev_matches_dense_exponential_and_split_step_is_first_order():
     cheb, deg = ch.propagate_chebyshev(c0, L, 1e-12)
     assert np.linalg.norm(cheb - exact) < 1e-11 * np.linalg.norm(exact)
     assert deg > 10
-    errs = []
-    for dz in (5e-4, 2.5e-4, 1.25e-4):
-        sp = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 2000.0, d, K, dz, gamma).propagate_split(c0, L)
-        errs.append(np.linalg.norm(sp - exact) / np.linalg.norm(exact))
-    assert errs[0] < 2e-3
-    for a, b in zip(errs[:-1], errs[1:]):           # pointwise potential: first order in dz
-        assert 1.6 < a / b < 2.5
 
 
 # ---------------------------------------------------------------- bend
@@ -178,14 +168,14 @@ def test_bend_limit_and_mirror_symmetry():
     d = FB.Disc(aw, 40)
     d.fine_table(20e-9)
     x = np.arange(-2.8e-6, 2.81e-6, 0.1e-6)
-    straight = FB.FBChannel((0.0, 0.0), None, None, d, K, 5e-4)
-    far = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 1e12, d, K, 5e-4)
+    straight = FB.FBChannel((0.0, 0.0), None, None, d, K)
+    far = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 1e12, d, K)
     c0 = straight.entrance_modes((0.0, 0.0), 0.05)
     Es = _lab_exit(straight, straight.propagate_chebyshev(c0, L)[0], L, x)
     Ef = _lab_exit(far, far.propagate_chebyshev(c0, L)[0], L, x)
     assert np.max(np.abs(Ef - Es)) < 1e-8 * np.max(np.abs(Es))          # (a) R -> infinity
-    plus = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 50.0, d, K, 5e-4)
-    minus = FB.FBChannel((0.0, 0.0), (-1.0, 0.0), 50.0, d, K, 5e-4)
+    plus = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 50.0, d, K)
+    minus = FB.FBChannel((0.0, 0.0), (-1.0, 0.0), 50.0, d, K)
     Ep = _lab_exit(plus, plus.propagate_chebyshev(c0, L)[0], L, x)
     Em = _lab_exit(minus, minus.propagate_chebyshev(c0, L)[0], L, x)
     assert np.max(np.abs(Ep - Em[:, ::-1])) < 1e-9 * np.max(np.abs(Ep))  # (b) mirror x -> -x
@@ -198,7 +188,7 @@ def test_bend_frame_against_free_gaussian_beam():
     aw, L, R, w0 = 10e-6, 0.01, 50.0, 3e-6
     d = FB.Disc(aw, 110)
     d.fine_table(20e-9)
-    ch = FB.FBChannel((20e-6, 0.0), (-1.0, 0.0), R, d, K, 2e-4)
+    ch = FB.FBChannel((20e-6, 0.0), (-1.0, 0.0), R, d, K)
     xi = d.r[:, None] * np.cos(d.phi)[None, :]
     eta = d.r[:, None] * np.sin(d.phi)[None, :]
     q0 = -1j * math.pi * w0 ** 2 / LAM
@@ -302,10 +292,3 @@ def test_fb_stage_two_bores(tmp_path):
         assert res3["results"][label]["I_bore"] is None
         assert np.allclose(res3["results"][label]["I"], res["results"][label]["I"], rtol=1e-9, atol=1e-12 * r0["I"].max())
         assert np.allclose(res3["results"][label]["W"], res["results"][label]["W"], rtol=1e-9, atol=1e-12 * r0["I"].max())
-    # the two propagators agree on a weak bend
-    sim2 = Simulation.from_dict(_two_bores(bend=2000.0, fb_propagator="split_step", fb_dz=2.5e-4))
-    res2 = W.run_wave_stage(sim2, str(tmp_path / "b"), sim2.cfg.validate_wave_estimator(), log=lambda *a: None)
-    for label in res["results"]:
-        m1, m2 = res["results"][label]["mu"], res2["results"][label]["mu"]
-        ok = np.isfinite(m1) & np.isfinite(m2) & res["results"][label]["trusted"]
-        assert np.max(np.abs(m1[ok] - m2[ok])) < 5e-3
