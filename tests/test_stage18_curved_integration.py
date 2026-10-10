@@ -117,3 +117,39 @@ def test_curved_residual_replay_corrects_intensity_and_cross_terms(tmp_path):
         np.testing.assert_allclose(data['W'], field*field[ref].conjugate()-covariance, rtol=1e-12, atol=1e-12*abs(field).max()**2)
     if residual['faces']:
         assert residual['mean_norm_over_mesh_field'] is not None and np.any(variance > 0)
+
+
+def test_mode_failures_are_skipped_and_recorded(tmp_path, monkeypatch):
+    pytest.importorskip('finufft')
+    from formula.capsysred.stages import stage18
+
+    sim = Simulation.from_dict(curved_scene())
+    archive, output = tmp_path/'archive', tmp_path/'result'
+    make_archive(sim, archive)
+    original = stage18._mode_job
+
+    def flaky(job):
+        if job['mode'] == 0:
+            raise ValueError('prescribed node 7: geometry is outside the verified 0/1-family model')
+        return original(job)
+
+    monkeypatch.setattr(stage18, '_mode_job', flaky)
+    sim.replay(str(archive), str(output), stages=[18])
+    meta = json.loads((output/'stage18'/'meta.json').read_text())
+    assert meta['failed_modes'] == [{'mode': 0, 'error': 'prescribed node 7: geometry is outside the verified 0/1-family model'}]
+    assert meta['completed_source_modes'] == 1 and [m['mode'] for m in meta['modes']] == [1]
+    assert meta['full_coherence_computed'] and any(row['modes'] == 1 for row in meta['outputs'])
+
+    def fatal(job):
+        raise ValueError('stage 18 implementation changed before worker')
+
+    monkeypatch.setattr(stage18, '_mode_job', fatal)
+    with pytest.raises(ValueError, match='implementation changed'):
+        sim.replay(str(archive), str(tmp_path/'result2'), stages=[18])
+
+    def all_bad(job):
+        raise ValueError('prescribed node 1: geometry is outside the verified 0/1-family model')
+
+    monkeypatch.setattr(stage18, '_mode_job', all_bad)
+    with pytest.raises(ValueError, match='every requested source mode failed'):
+        sim.replay(str(archive), str(tmp_path/'result3'), stages=[18])

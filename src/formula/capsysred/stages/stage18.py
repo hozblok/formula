@@ -544,14 +544,44 @@ def run_b9_stage(sim, out_dir, options, *, rays_paths=None, log=None):
         result["status"] = "experimental-curved-GO-ray-tube-diffraction"
         result["field_model"] = "P2 entrance-to-exit ray map, P2 optical action and P2 complex pullback density on selected bores; retained flat models converted exactly; Fresnel diffraction of the resulting GO branches"
         result["limitations"].append("Curved pullback removes inverse-Jacobian evaluation in the integral, but does not supply a uniform wave solution at a caustic or restore omitted entrance faces.")
+    result["failed_modes"] = []
     started, executor = time.perf_counter(), None
+
+    def outcomes():
+        # a mode whose prescribed geometry violates the model is skipped and recorded, not fatal
+        if executor is not None:
+            futures = [executor.submit(_mode_job, job) for job in jobs]
+            for job, future in zip(jobs, futures):
+                try:
+                    yield job, future.result(), None
+                except ValueError as exc:
+                    yield job, None, exc
+        else:
+            for job in jobs:
+                try:
+                    yield job, _mode_job(job), None
+                except ValueError as exc:
+                    yield job, None, exc
+
     try:
         if options["map_jobs"] > 1:
             executor = ProcessPoolExecutor(max_workers=options["map_jobs"])
-            stream = executor.map(_mode_job, jobs, chunksize=1)
-        else:
-            stream = map(_mode_job, jobs)
-        for completed_count, completed in enumerate(stream, 1):
+        completed_count = 0
+        for processed, (job, completed, failure) in enumerate(outcomes(), 1):
+            if failure is not None:
+                fatal = ("implementation", "archive metadata", "archive has", "max_missing_area_fraction")
+                if any(word in str(failure) for word in fatal):
+                    raise failure
+                result["failed_modes"].append(dict(mode=job["mode"], error=str(failure)))
+                if log:
+                    log(f"  Stage18 mode {job['mode']} skipped: {failure}")
+                if processed == len(jobs) and completed_count:
+                    result["outputs"].extend(_snapshot(partial, states, matched, grid, completed_count,
+                                                      carrier_groups=groups, options=options))
+                    result["seconds"] = time.perf_counter()-started
+                    _dump(partial/"meta.json", result)
+                continue
+            completed_count += 1
             record = {key: completed[key] for key in ("mode", "origin", "origin_decimal", "archive", "meshes", "seconds")}
             record["variants"] = []
             for key, item in completed["variants"].items():
@@ -591,11 +621,13 @@ def run_b9_stage(sim, out_dir, options, *, rays_paths=None, log=None):
                 log(f"  Stage18 mode {completed['mode']}: minimum entrance coverage {coverage:.4f}; {completed['seconds']:.1f}s")
                 if any(m["final_amplitude_probes_passed"] is False for m in completed["meshes"].values()):
                     log("  Stage18 warning: final amplitude correction failed some adaptive probes; this is a diagnostic map")
-            if completed_count in options["map_snapshots"] or completed_count == count:
+            if completed_count in options["map_snapshots"] or processed == len(jobs):
                 result["outputs"].extend(_snapshot(partial, states, matched, grid, completed_count,
                                                   carrier_groups=groups, options=options))
                 result["seconds"] = time.perf_counter()-started
                 _dump(partial/"meta.json", result)
+        if not completed_count:
+            raise ValueError("stage 18: every requested source mode failed; see failed_modes in meta.json")
         if executor is not None:
             executor.shutdown(wait=True)
             executor = None
