@@ -91,7 +91,7 @@ DEFAULTS = {
 # stage 16 (`wave_estimator`): merged lazily by Config.validate_wave_estimator(),
 # so a YAML without the section keeps its raw config unchanged for every other stage.
 WAVE_DEFAULTS = {
-    "provider": "auto",             # auto | uisk (regular-polygon bores) | free
+    "provider": "auto",             # auto | uisk (regular-polygon bores) | fb (circular bores) | free
     "observable": "coherent_cell",  # coherent_cell (|integral_cell E|^2, as stage 14) | point
     "source_mode": "quadrature",    # quadrature (positive rule over `source`) | recorded_origins
     "target_error": 0.002,          # declared numerical budget on complex mu; recorded, not enforced
@@ -105,6 +105,19 @@ WAVE_DEFAULTS = {
     "intensity_floor": 1.0e-6,      # trusted: I and I_ref >= floor * max I
     "workers": None,                # scipy.fft threads; null = all cores
     "cache_gb": 2.0,                # transfer-function cache budget
+    # provider fb (Fourier-Bessel modes of circular / torus bores)
+    "fb_jmax": None,                # basis cut j_mn < jmax; null -> ceil(k (a + Re ell) fb_theta_cut)
+    "fb_theta_cut": 3.6e-4,         # modal angular cut [rad] behind the jmax rule
+    "fb_dz": 5.0e-4,                # split-step length [m]
+    "fb_propagator": "chebyshev",   # chebyshev (series of exp(-iHL), no z error) | split_step (pointwise potential, O(dz))
+    "fb_chebyshev_tol": 1.0e-12,    # Bessel-coefficient cutoff of the Chebyshev series
+    "fb_dr": 2.0e-8,                # fine radial table step [m] for the exit-field synthesis
+    "fb_wall": "dir-ell",           # dir-ell (complex offset: phase + absorption) | dir-ell-real (no absorption)
+    "fb_angle_margin": 1.1,         # lattice h = lambda / (2 (theta_modal + tilt) margin), rounded to pixel / b
+    "fb_lattice_half": None,        # lattice half-width [m]; null -> windows + spread + Fresnel tails
+    "fb_grid_dtype": "complex128",  # complex64 | complex128 lattice arrays
+    "fb_jobs": 1,                   # processes over source nodes (each builds its own basis)
+    "fb_per_bore_maps": None,       # per-bore drifts for I_bores / Gamma_12; null -> only for <= 2 bores
 }
 
 B5_DEFAULTS = {
@@ -577,9 +590,12 @@ class Config:
                 raise ValueError(f"wave_estimator.{key}: invalid value {v!r}")
             return v if integer else float(v)
 
-        for key, choices in (("provider", ("auto", "uisk", "free")),
+        for key, choices in (("provider", ("auto", "uisk", "fb", "free")),
                              ("observable", ("coherent_cell", "point")),
-                             ("source_mode", ("quadrature", "recorded_origins"))):
+                             ("source_mode", ("quadrature", "recorded_origins")),
+                             ("fb_propagator", ("split_step", "chebyshev")),
+                             ("fb_wall", ("dir-ell", "dir-ell-real")),
+                             ("fb_grid_dtype", ("complex64", "complex128"))):
             if w[key] not in choices:
                 raise ValueError(
                     f"wave_estimator.{key}: expected one of {choices}, got {w[key]!r}")
@@ -594,6 +610,16 @@ class Config:
         w["intensity_floor"] = num("intensity_floor", lo=0.0, hi=1.0)
         w["workers"] = num("workers", lo=1, integer=True, optional=True)
         w["cache_gb"] = num("cache_gb", lo=0.0)
+        w["fb_jmax"] = num("fb_jmax", lo=8, integer=True, optional=True)
+        w["fb_theta_cut"] = num("fb_theta_cut", lo=0.0, strict=True)
+        w["fb_dz"] = num("fb_dz", lo=0.0, strict=True)
+        w["fb_chebyshev_tol"] = num("fb_chebyshev_tol", lo=0.0, strict=True)
+        w["fb_dr"] = num("fb_dr", lo=0.0, strict=True)
+        w["fb_angle_margin"] = num("fb_angle_margin", lo=1.0)
+        w["fb_lattice_half"] = num("fb_lattice_half", lo=0.0, strict=True, optional=True)
+        w["fb_jobs"] = num("fb_jobs", lo=1, integer=True)
+        if w["fb_per_bore_maps"] is not None and not isinstance(w["fb_per_bore_maps"], bool):
+            raise ValueError(f"wave_estimator.fb_per_bore_maps: expected true, false or null, got {w['fb_per_bore_maps']!r}")
         self.wave = w
         return w
 

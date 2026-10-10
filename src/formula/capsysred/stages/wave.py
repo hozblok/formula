@@ -2,9 +2,10 @@
 
 Baseline estimator: one positive source quadrature; complex W(P, P_ref) and
 I(P) accumulate from the same fields (PSD by construction). Providers:
-`free` (source -> screen Fresnel) and `uisk` (unfolded-image spectral
+`free` (source -> screen Fresnel), `uisk` (unfolded-image spectral
 Kirchhoff: straight regular-polygon bores, plane-wave r(kappa) per bounce,
-Kirchhoff entrance/exit masks). Paraxial scalar optics, carrier e^{+ikz}
+Kirchhoff entrance/exit masks) and `fb` (wave_fb: Fourier-Bessel modes of
+circular / torus bores, DIR-ell wall). Paraxial scalar optics, carrier e^{+ikz}
 dropped, phasor e^{-i omega t}. Rows: stage16/[screen-N/|free/]mu-wave.jsonl.
 """
 
@@ -24,7 +25,7 @@ from ..screen import ScreenGrid
 from ..shared.units import m_to_um
 
 RESULT_DIR = "stage16"
-MODEL_CLASS = {"free": "free-space", "uisk": "kirchhoff-rims"}
+MODEL_CLASS = {"free": "free-space", "uisk": "kirchhoff-rims", "fb": "dir-ell"}
 # reference intensity below this fraction of max I = deep diffraction tail: the lattice
 # representation of the aperture edges dominates W
 FAR_TAIL_RATIO = 1e-3
@@ -530,18 +531,16 @@ def preflight_wave_inputs(sim, wave):
     cap = cfg.capillary
     if wave["provider"] == "free" and cfg.free_source is None:
         raise ValueError("wave_estimator: provider free needs a configured free.source")
-    if wave["provider"] == "uisk" and cap is None:
-        raise ValueError("wave_estimator: provider uisk needs a configured capillary scene")
-    if cap is not None and wave["provider"] in ("auto", "uisk"):
-        for bore in cap.bores:
-            if bore.get("kind") != "polygon":
-                raise ValueError("wave_estimator: provider uisk supports regular-polygon bores "
-                                 f"only (sides: n); got kind {bore.get('kind', 'cylinder')!r}")
-        for i, scr in enumerate([cap.screen, *cap.screens]):
-            if float(scr.z) <= float(cap.z1):
-                raise ValueError(f"wave_estimator: capillary screen {i} at z = {float(scr.z)} "
-                                 f"is not past the exit z1 = {float(cap.z1)}; a screen on the "
-                                 "exit plane is outside the Stage-16 MVP")
+    if wave["provider"] in ("uisk", "fb") and cap is None:
+        raise ValueError(f"wave_estimator: provider {wave['provider']} needs a configured capillary scene")
+    if cap is not None and wave["provider"] in ("auto", "uisk", "fb"):
+        prov = capillary_provider(cap, wave)
+        if prov == "uisk":
+            for i, scr in enumerate([cap.screen, *cap.screens]):
+                if float(scr.z) <= float(cap.z1):
+                    raise ValueError(f"wave_estimator: capillary screen {i} at z = {float(scr.z)} "
+                                     f"is not past the exit z1 = {float(cap.z1)}; a screen on the "
+                                     "exit plane is outside the Stage-16 MVP for uisk (fb takes it)")
         scenes.append([cap.screen, *cap.screens])
     for screens in scenes:
         for scr in screens:
@@ -550,7 +549,30 @@ def preflight_wave_inputs(sim, wave):
 
 
 def _polygon_circumradius(bore):
+    if bore.get("sides") is None:
+        return float(bore["radius"])
     return float(bore["radius"]) / math.cos(math.pi / int(bore["sides"]))
+
+
+def capillary_provider(cap, wave):
+    """Provider for the capillary scene: uisk for regular polygons, fb for circular / torus
+    bores; `auto` picks by geometry, an explicit choice must match it (no fallback)."""
+    kinds = {bore.get("kind", "cylinder") for bore in cap.bores}
+    polygonal = kinds <= {"polygon"}
+    circular = kinds <= {"cylinder", "torus"}
+    prov = wave["provider"]
+    if prov == "auto":
+        prov = "uisk" if polygonal else ("fb" if circular else None)
+    if prov == "uisk" and not polygonal:
+        raise ValueError("wave_estimator: provider uisk supports regular-polygon bores "
+                         f"only (sides: n); got kinds {sorted(kinds)}")
+    if prov == "fb" and not circular:
+        raise ValueError("wave_estimator: provider fb supports circular bores (radius, optional "
+                         f"bend) only; got kinds {sorted(kinds)}")
+    if prov is None:
+        raise ValueError(f"wave_estimator: no provider for bore kinds {sorted(kinds)} "
+                         "(uisk: regular polygons; fb: circular / torus)")
+    return prov
 
 
 def _theta_max(cap, src_nodes, grids, refs=()):
@@ -604,19 +626,21 @@ def _run(sim, out_dir, partial, wave, rays_paths, log):
         files += _emit(partial, "free", res, wave, log)
         report += res["report"]
     cap = cfg.capillary
-    if cap is not None and wave["provider"] in ("auto", "uisk"):
-        for bore in cap.bores:
-            if bore.get("kind") != "polygon":
-                raise ValueError("wave_estimator: provider uisk supports regular-polygon bores "
-                                 f"only (sides: n); got kind {bore.get('kind', 'cylinder')!r}")
-        for label, res in _capillary_scene(sim, wave, lines, rays_paths, workers, log):
+    if cap is not None and wave["provider"] in ("auto", "uisk", "fb"):
+        prov = capillary_provider(cap, wave)
+        if prov == "uisk":
+            scenes = _capillary_scene(sim, wave, lines, rays_paths, workers, log)
+        else:
+            from . import wave_fb
+            scenes = wave_fb.fb_capillary_scene(sim, wave, lines, rays_paths, log)
+        for label, res in scenes:
             results[label] = res
             sub = "" if label == "capillary" else "screen-" + label.rsplit("-s", 1)[1]
             files += _emit(partial, sub, res, wave, log)
             report += res["report"]
     if not results:
         raise ValueError(f"wave_estimator: no scene matches provider {wave['provider']!r} "
-                         "(free scene: auto|free; capillary polygon bores: auto|uisk)")
+                         "(free scene: auto|free; capillary bores: auto|uisk|fb)")
     os.rename(partial, os.path.join(out_dir, RESULT_DIR))
     return {"files": [RESULT_DIR + "/" + f for f in files], "report": report,
             "results": results, "seconds": time.time() - t0}

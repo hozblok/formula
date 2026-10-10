@@ -591,7 +591,8 @@ def test_explicit_coarse_grid_is_diagnosed():
 
 
 def test_geometry_preflight_precedes_stage14(tmp_path, monkeypatch):
-    """A cylinder bore with provider auto/uisk fails before Stage 14; free + free scene passes."""
+    """A cylinder bore with provider uisk fails before Stage 14 (auto now routes circular bores
+    to the fb provider); free + free scene passes."""
     import formula.capsysred.simulation as simulation
 
     def boom(*args, **kwargs):
@@ -600,6 +601,7 @@ def test_geometry_preflight_precedes_stage14(tmp_path, monkeypatch):
     monkeypatch.setattr(simulation, "run_stage14", boom)
     raw = _square("disk", 3e-7)
     raw["capillary"]["bores"] = [{"center": [0.0, 0.0], "radius": 24e-6}]
+    raw["wave_estimator"] = {"provider": "uisk"}
     with pytest.raises(ValueError, match="regular-polygon bores only"):
         Simulation.from_dict(raw).run(str(tmp_path / "cyl"), stages=[14, 16])
     raw["wave_estimator"] = {"provider": "uisk"}
