@@ -464,7 +464,8 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print):
             f"G rms {rec_w['G_rms']:.4f} (noise {rec_w['G_shot_rms']:.4f}) T rms {rec_w['T_rms']:.4f} (noise {rec_w['T_shot_rms']:.4f}) "
             f"-> indicator rms {rec_w['indicator_rms']:.4f}, at the map's rays {rec_w['indicator_prod_rms']:.4f}")
     best = min(summary["widths"], key=lambda r: r["indicator_prod_rms"])
-    summary["argmin"] = {"width_m": best["width_m"], "indicator_rms": best["indicator_rms"]}
+    summary["argmin"] = {"width_m": best["width_m"], "indicator_rms": best["indicator_rms"],
+                         "indicator_prod_rms": best["indicator_prod_rms"]}
     summary["seconds"] = time.time() - t0
     summary["modes"] = len(results)
     with open(os.path.join(out, "defect.json"), "w", encoding="utf-8") as fh:
@@ -496,7 +497,7 @@ def main(argv=None):
     t0 = time.time()
     summary = run_defect(sim, os.path.abspath(args.archive), args.out, opt, widths)
     best = summary["argmin"]
-    print(f"argmin indicator: width {best['width_m']*1e6:g} um (rms {best['indicator_rms']:.4f}); {time.time() - t0:.0f} s; "
+    print(f"argmin indicator: width {best['width_m']*1e6:g} um (rms at the map's rays {best['indicator_prod_rms']:.4f}); {time.time() - t0:.0f} s; "
           f"rows in {os.path.join(args.out, RESULT_DIR)}")
 
 
