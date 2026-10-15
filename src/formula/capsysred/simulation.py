@@ -1357,7 +1357,8 @@ class Simulation:
         stage 9 validates live tracers and is refused); default = the
         jackknife stage of each scene present (free -> 2, capillary -> 14).
         The spectrum and the material may differ from the recording — rays
-        are energy-free; the geometry, seed and budgets must match it.
+        are energy-free; the trace geometry, seed and budgets must match it,
+        while screens may differ: arrivals re-project from the recorded plane.
         """
         paths = ([records_path] if isinstance(records_path, str)
                  else list(records_path))

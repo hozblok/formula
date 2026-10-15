@@ -86,6 +86,37 @@ def metadata_equal(left: dict, right: dict) -> bool:
     return canonical(left) == canonical(right)
 
 
+def _scene_core(geometry: dict, scene: str) -> dict:
+    """A scene's recorded source and bores, without screens and budgets."""
+    core = copy.deepcopy(geometry.get(scene) or {})
+    core.pop("screen", None)
+    core.pop("screens", None)
+    source = core.get("source")
+    if isinstance(source, dict):
+        source.pop("n_modes", None)
+        source.pop("n_rays", None)
+    return core
+
+
+def recorded_plane(sim, scene, scr_cfg) -> float:
+    """z of the recorded arrival plane. Every recorded part's scene geometry
+    must match the config (screens, budgets and precision may differ), and
+    the parts of a union must share one plane."""
+    want = _scene_core(geometry_metadata(sim.cfg), scene)
+    planes = set()
+    for part in getattr(sim.rays, "parts", [sim.rays]):
+        geo = part.meta.get("geometry", {})
+        if scene in geo and not metadata_equal(_scene_core(geo, scene), want):
+            raise ValueError(f"{part.path}: {scene} trace geometry differs "
+                             "from the config")
+        rec = {**geo.get("screen", {}), **(geo.get(scene) or {}).get("screen", {})}
+        planes.add(float(rec.get("z", scr_cfg.z)))
+    if len(planes) != 1:
+        raise ValueError(f"{sim.rays.path}: union parts recorded {scene} "
+                         f"arrivals on different planes {sorted(planes)}")
+    return planes.pop()
+
+
 class RaysReader:
     """Read-only v3 archive (a directory) for --replay: stages consume,
     nothing traces or writes. Geometry fingerprint is NOT checked — replaying

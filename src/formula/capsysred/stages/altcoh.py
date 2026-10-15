@@ -27,7 +27,7 @@ from ..fresnel import FresnelAmplitude
 from ..spectrum import SpectralLine
 from ..shared.physics_constants import FRESNEL_PROBE_THETA
 from ..shared.progress import Progress
-from ..rays import scene_stream
+from ..rays import recorded_plane, rescreen, scene_stream
 from ..screen import ScreenGrid
 
 
@@ -201,6 +201,8 @@ def run_alt_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory):
     alt = AltCoherence(sim.lines, screen, screen.ref_pixel(scr_cfg.reference))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
                                       aim_factory)
+    # arrivals re-projected from the recorded plane, re-binned on this grid
+    records = rescreen(records, recorded_plane(sim, scene, scr_cfg), screen)
     stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
              "off_window": 0}
     progress = Progress(label, n_modes * n_rays)

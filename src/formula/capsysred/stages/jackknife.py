@@ -21,7 +21,7 @@ import time
 
 from .altcoh import FloatLineAmplitudes
 from ..shared.progress import Progress
-from ..rays import rescreen, scene_stream
+from ..rays import recorded_plane, rescreen, scene_stream
 from ..screen import ScatterRaster, ScreenGrid
 from ..shared.utils import zeros
 
@@ -155,9 +155,8 @@ def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory):
     jack = JackknifeCoherence(sim.lines, screen.ref_pixel(scr_cfg.reference))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
                                       aim_factory)
-    if getattr(sim.rays, "readonly", False):
-        # --replay records may carry pixel ids of a different grid — re-bin
-        records = rescreen(records, float(scr_cfg.z), screen)
+    # arrivals re-projected from the recorded plane, re-binned on this grid
+    records = rescreen(records, recorded_plane(sim, scene, scr_cfg), screen)
     stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
              "off_window": 0, "reflected_rays": 0, "reflections": 0,
              "bounce_hist": {}}
