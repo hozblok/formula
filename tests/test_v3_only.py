@@ -137,3 +137,28 @@ def test_cli_default_jobs_fit_the_machine(tmp_path, monkeypatch):
     assert main(["--verify", archive]) == 0
     monkeypatch.setattr(os, "cpu_count", lambda: None)
     assert main(["--verify", archive]) == 0
+
+
+def test_workers_trace_the_parent_snapshot_of_the_yaml(tmp_path, monkeypatch):
+    """The fingerprint and the rays come from one reading of the yaml: a file
+    edited after the parent read it must not reach the workers."""
+    from formula.capsysred import trace_v3
+    cfg = tmp_path / "cfg.yaml"
+    with open(cfg, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(RAW, fh, sort_keys=False)
+    expected = str(tmp_path / "expected")
+    trace_v3.trace(str(cfg), expected, jobs=1, level=6, log=lambda m: None)
+    original = trace_v3._init_worker
+
+    def edited_before_workers_start(snapshot):
+        with open(cfg, "w", encoding="utf-8") as fh:
+            yaml.safe_dump({**RAW, "seed": RAW["seed"] + 1}, fh, sort_keys=False)
+        return original(snapshot)
+
+    monkeypatch.setattr(trace_v3, "_init_worker", edited_before_workers_start)
+    raced = str(tmp_path / "raced")
+    trace_v3.trace(str(cfg), raced, jobs=1, level=6, log=lambda m: None)
+    assert rays_v3.read_fingerprint(raced)["geometry"]["seed"] == RAW["seed"]
+    ia, ib = rays_v3.load_index(expected), rays_v3.load_index(raced)
+    assert (list(rays_v3.scene_lines(raced, ib, "capillary"))
+            == list(rays_v3.scene_lines(expected, ia, "capillary")))

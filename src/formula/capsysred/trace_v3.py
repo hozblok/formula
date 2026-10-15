@@ -64,10 +64,11 @@ def _scene_parts(sim, scene: str):
 _W = {}
 
 
-def _init_worker(config_path):
+def _init_worker(raw: dict):
+    """Workers get the parent's snapshot of the yaml, never the file."""
     from .simulation import Simulation
     _W.clear()
-    _W["sim"] = Simulation.from_yaml(config_path)
+    _W["sim"] = Simulation.from_dict(raw)
 
 
 def _worker_scene(scene: str):
@@ -209,7 +210,7 @@ def trace(config_path: str, archive: str, jobs: int,
              for mode in range(n_modes)]
     if jobs == 1:
         # In-process: no spawn cost, same code path as the pool workers.
-        _init_worker(config_path)
+        _init_worker(cfg.raw)
         results = (_trace_section(archive, scene, mode, n0, target, origin,
                                   lean, level)
                    for scene, mode, n0, target, origin in tasks)
@@ -223,7 +224,7 @@ def trace(config_path: str, archive: str, jobs: int,
     else:
         with concurrent.futures.ProcessPoolExecutor(
                 max_workers=jobs, initializer=_init_worker,
-                initargs=(config_path,)) as pool:
+                initargs=(cfg.raw,)) as pool:
             futures = [pool.submit(_trace_section, archive, scene, mode, n0,
                                    target, origin, lean, level)
                        for scene, mode, n0, target, origin in tasks]
