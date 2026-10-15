@@ -21,6 +21,7 @@ import json
 import math
 import random
 
+from ..formula import Number
 from . import rays_v3
 from .shared.types import RayRecord
 
@@ -98,6 +99,27 @@ def _scene_core(geometry: dict, scene: str) -> dict:
     return core
 
 
+def recorded_screen_z_text(geometry: dict, scene: str) -> str | None:
+    """The scene's recorded screen z — the base screen under the scene's
+    override — evaluated as the config evaluates it (expressions allowed) at
+    the fingerprint's precision, as the shortest decimal text; None when the
+    recording states no z."""
+    screen = {**(geometry.get("screen") or {}),
+              **((geometry.get(scene) or {}).get("screen") or {})}
+    if "z" not in screen:
+        return None
+    try:
+        # numbers are exact at any precision; 32 covers recordings without one
+        return str(Number(str(screen["z"]), int(geometry.get("precision", 32))))
+    except Exception as exc:
+        raise ValueError(f"invalid recorded screen z {screen['z']!r}") from exc
+
+
+def recorded_screen_z(geometry: dict, scene: str) -> float | None:
+    text = recorded_screen_z_text(geometry, scene)
+    return None if text is None else float(text)
+
+
 def recorded_plane(sim, scene, scr_cfg) -> float:
     """z of the recorded arrival plane. Every recorded part's scene geometry
     must match the config (screens, budgets and precision may differ), and
@@ -109,8 +131,8 @@ def recorded_plane(sim, scene, scr_cfg) -> float:
         if scene in geo and not metadata_equal(_scene_core(geo, scene), want):
             raise ValueError(f"{part.path}: {scene} trace geometry differs "
                              "from the config")
-        rec = {**geo.get("screen", {}), **(geo.get(scene) or {}).get("screen", {})}
-        planes.add(float(rec.get("z", scr_cfg.z)))
+        z = recorded_screen_z(geo, scene)
+        planes.add(float(scr_cfg.z) if z is None else z)
     if len(planes) != 1:
         raise ValueError(f"{sim.rays.path}: union parts recorded {scene} "
                          f"arrivals on different planes {sorted(planes)}")

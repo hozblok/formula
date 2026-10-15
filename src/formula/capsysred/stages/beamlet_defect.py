@@ -35,6 +35,7 @@ import numpy as np
 
 from .. import rays_v3
 from ..gamma import bounce_lenses, reflect
+from ..rays import recorded_screen_z
 from ..surfaces import CapillaryBundle
 from .altcoh import FloatLineAmplitudes
 from .beamlet import _launch
@@ -426,11 +427,10 @@ def launch_jobs(sim, archive, index, opt, w0, w0_t, waist_z):
 
 
 def index_screen_z(archive):
-    meta = rays_v3.read_fingerprint(archive)
-    g = meta["geometry"]
-    screen = dict(g.get("screen") or {})
-    screen.update((g.get("capillary") or {}).get("screen") or {})
-    return float(screen["z"])
+    z = recorded_screen_z(rays_v3.read_fingerprint(archive)["geometry"], "capillary")
+    if z is None:
+        raise ValueError(f"{archive}: archive fingerprint does not specify the recorded screen z")
+    return z
 
 
 def run_defect(sim, archive, out_dir, opt, launches, log=print):

@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from .. import rays_v3
+from ..rays import recorded_screen_z_text
 
 
 def _stamp(path):
@@ -92,14 +93,10 @@ def read_sample(archive, *, scene="capillary", max_modes=4,
     sections_by_mode = index.modes(scene)
     if not sections_by_mode:
         raise ValueError(f"archive contains no {scene!r} scene")
-    geometry = meta["geometry"]
-    screen = dict(geometry.get("screen") or {})
-    scene_geometry = geometry.get(scene)
-    if isinstance(scene_geometry, dict):
-        screen.update(scene_geometry.get("screen") or {})
-    if "z" not in screen:
+    recorded_z_text = recorded_screen_z_text(meta["geometry"], scene)
+    if recorded_z_text is None:
         raise ValueError("archive fingerprint does not specify the recorded screen z")
-    recorded_z_decimal = _decimal(screen["z"], "recorded screen z")
+    recorded_z_decimal = _decimal(recorded_z_text, "recorded screen z")
     recorded_z = float(recorded_z_decimal)
     if not math.isfinite(recorded_z) or target_z < recorded_z:
         raise ValueError("target_z must be at or downstream of the recorded screen")

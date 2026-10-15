@@ -36,7 +36,7 @@ from ._stage14_checkpoints import (RANGE_SLOTS, mode_ranges, range_agg_name,
                                    range_done, range_manifest_name,
                                    range_rows_name, read_range_manifest)
 from ..shared.progress import Progress
-from ..rays import RNG_SCHEME, geometry_metadata, metadata_equal
+from ..rays import RNG_SCHEME, geometry_metadata, metadata_equal, recorded_screen_z
 from ..screen import ScatterRaster, ScreenGrid
 from .stage14_flags import (FlagThresholds, PixelCounters, PixelStatistics,
                             serialize_pixel, validate_counters, validate_ref,
@@ -192,23 +192,13 @@ def _require_array_bytes(name: str, data, itemsize: int, count: int) -> bytes:
     return value
 
 
-def _deep_merge(base: dict, override: dict) -> dict:
-    out = copy.deepcopy(base)
-    for key, value in (override or {}).items():
-        if isinstance(value, dict) and isinstance(out.get(key), dict):
-            out[key] = _deep_merge(out[key], value)
-        else:
-            out[key] = copy.deepcopy(value)
-    return out
-
-
 def _recorded_screen_z(meta: dict, path: str) -> float:
     try:
-        geo = meta["geometry"]
-        screen = _deep_merge(geo["screen"], geo["capillary"].get("screen", {}))
-        z = float(screen["z"])
+        z = recorded_screen_z(meta["geometry"], "capillary")
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"{path}: rays metadata has no capillary screen z") from exc
+    if z is None:
+        raise ValueError(f"{path}: rays metadata has no capillary screen z")
     if not math.isfinite(z):
         raise ValueError(f"{path}: recorded capillary screen z is not finite")
     return z
