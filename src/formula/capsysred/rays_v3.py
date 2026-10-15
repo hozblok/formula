@@ -6,7 +6,8 @@
       modes/<scene>-m<mode:06>-r<r0:08>-<r1:08>.jsonl.gz
 
 A section file holds a header line ``{"header": 3, scene, mode, r0, r1,
-origin}``, the v2 rows of rays r0..r1-1 with absolute mode/ray ids, and a
+origin}``, the rows (rays.row_of) of rays r0..r1-1 with absolute mode/ray
+ids, and a
 trailer ``{"scene_end", "rows", "mode", "r0", "r1"}``.  The index is the
 authority for budgets: modes 0..M-1 all present, sections contiguous from
 ray 0, one common ray count per scene.  Readers hash every section while
@@ -220,7 +221,7 @@ def index_digest(archive) -> str:
 
 
 def metadata(archive) -> dict:
-    """Fingerprint plus index-derived budgets: the v2-shaped meta consumers expect."""
+    """Fingerprint plus index-derived budgets, the metadata shape readers expect."""
     meta = dict(read_fingerprint(archive))
     index = load_index(archive)
     meta["budgets"] = {scene: list(budget) for scene, budget in index.budgets.items()}

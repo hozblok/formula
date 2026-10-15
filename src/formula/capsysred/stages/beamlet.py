@@ -418,8 +418,7 @@ def _mode_tasks(rays, scene):
     for part in getattr(rays, "parts", [rays]):
         index = getattr(part, "index", None)
         if index is None:
-            raise ValueError(f"{part.path}: stage 11 reads per-mode v3 archives "
-                             "only; convert the recording with convert_rays_v3")
+            raise ValueError(f"{part.path}: stage 11 reads per-mode v3 archives only")
         modes = index.modes(scene)
         for local, sections in enumerate(modes):
             tasks.append(ModeTask(part.path, local, offset + local, tuple(sections)))
@@ -740,8 +739,7 @@ def _tile_jackknife(rows_path, n_modes, npix, w_b, i_b, i_ref, irefs, eps, band)
 
 
 def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
-                      seed_offset: int, extra_screens=(), work_dir=None,
-                      jobs: int = 1, sampler=None):
+                      extra_screens=(), work_dir=None, jobs: int = 1, sampler=None):
     """The beamlet deposit over the scene's recorded modes, one path for any
     jobs: modes are the work units, their float64 W/I contributions enter
     exact accumulators, the float32 delete-one rows a disk store under
@@ -761,7 +759,7 @@ def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     # the reader's budget/presence checks; the records themselves stream
     # per mode inside the workers
     _, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
-                                aim_factory, seed_offset)
+                                aim_factory)
     require_full_rows(sim.rays, rays_from, "beamlet stage (refl segments)")
     z_rec = recorded_plane(sim, scene, scr_cfg)
     tasks = _mode_tasks(sim.rays, scene)

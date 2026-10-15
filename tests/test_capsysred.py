@@ -749,7 +749,7 @@ def test_grid_source_requires_grid_fields(scene, missing):
 ])
 def test_scene_sections_control_raw_geometry_and_budgets(raw, scenes):
     from formula.capsysred.config import load
-    from formula.capsysred.rays import budgets, geometry_metadata
+    from formula.capsysred.rays import geometry_metadata
 
     cfg = load(raw)
     geometry = geometry_metadata(cfg)
@@ -757,7 +757,6 @@ def test_scene_sections_control_raw_geometry_and_budgets(raw, scenes):
     assert "source" not in geometry
     assert {s for s in ("free", "capillary") if s in cfg.raw} == scenes
     assert {s for s in ("free", "capillary") if s in geometry} == scenes
-    assert set(budgets(cfg)) == scenes
     assert (cfg.free_source is not None) == ("free" in scenes)
     assert (cfg.free_screen is not None) == ("free" in scenes)
     assert (cfg.capillary is not None) == ("capillary" in scenes)
@@ -1165,82 +1164,11 @@ def test_trace_command_records_all_scenes(tmp_path):
 
 
 def test_trace_then_replay(tmp_path):
-    # trace records rays.jsonl.gz; replay reads it back with no tracing
+    # trace_v3 records rays-modes/; replay reads it back with no tracing
     _record(TINY, tmp_path)
     sim = Simulation.from_dict(TINY)
     sim.replay(str(tmp_path / "rays-modes"), str(tmp_path / "replay"))
     assert sim.results["stage14:capillary"]["stats"]["emitted"] > 0
-
-
-def test_rays_runtime_uses_sidecar_and_ignores_first_line(tmp_path):
-    from formula.capsysred.config import load
-    from formula.capsysred.rays import (RaysReader, scan, sidecar_metadata,
-                                        write_metadata)
-
-    path = tmp_path / "rays.jsonl"
-    # The preamble is deliberately shaped exactly like a ray row.  It must not
-    # affect either the scan counts or the records yielded to consumers.
-    rows = [
-        {"stage": "free", "mode": 99, "ray": 99, "fate": "lost",
-         "pixel": None, "opl": "99", "sins": []},
-        {"stage": "free", "mode": 0, "ray": 0, "fate": "lost",
-         "pixel": None, "opl": "0.1", "sins": []},
-        {"scene_end": "free", "rows": 1},
-    ]
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
-        for row in rows:
-            fh.write(json.dumps(row) + "\n")
-    expected = sidecar_metadata(load({"free": {"source": FREE_SOURCE}}))
-    write_metadata(path, expected)
-
-    meta, done, clean = scan(str(path), expected_meta=expected)
-    assert meta == expected
-    assert done == {"free": 1}
-    assert clean
-    reader = RaysReader(str(path))
-    assert reader.meta == expected
-    assert [(row.mode, row.ray)
-            for row in reader.scene_records("free")] == [(0, 0)]
-
-
-def test_sidecar_can_retire_an_archived_scene_without_rewriting_rows(tmp_path):
-    from formula.capsysred.config import load
-    from formula.capsysred.rays import scan, sidecar_metadata, write_metadata
-
-    path = tmp_path / "rays.jsonl.gz"
-    cfg = load(TINY)
-    with gzip.open(path, "wt", encoding="utf-8", newline="\n") as fh:
-        fh.write("{}\n")
-        fh.write(json.dumps({
-            "stage": "retired", "mode": 0, "ray": 0,
-            "fate": "absorbed", "pixel": None, "opl": "0", "sins": [],
-        }) + "\n")
-        fh.write(json.dumps({"scene_end": "retired", "rows": 1}) + "\n")
-    write_metadata(path, sidecar_metadata(cfg))
-
-    _, done, clean = scan(str(path))
-    assert clean and done == {}
-
-
-def test_rays_reader_refuses_partial_archive(tmp_path):
-    from formula.capsysred.config import load
-    from formula.capsysred.rays import (RaysReader, sidecar_metadata,
-                                        write_metadata)
-
-    path = tmp_path / "rays.jsonl.gz"
-    with gzip.open(path, "wt", encoding="utf-8", newline="\n") as fh:
-        fh.write("{}\n")
-        fh.write(json.dumps({
-            "stage": "free", "mode": 0, "ray": 0, "fate": "lost",
-            "pixel": None, "opl": "0", "sins": [],
-        }) + "\n")
-    write_metadata(
-        path,
-        sidecar_metadata(load({"free": {"source": FREE_SOURCE}})),
-    )
-
-    with pytest.raises(ValueError, match="incomplete"):
-        RaysReader(str(path))
 
 
 def test_existing_rays_without_sidecar_is_refused_without_mutation(tmp_path):
@@ -1272,14 +1200,16 @@ def test_rays_file_geometry_change_is_never_overwritten(tmp_path):
     assert fingerprint.read_bytes() == original_fp
 
 
-def test_unreadable_rays_file_is_never_overwritten(tmp_path):
-    path = tmp_path / "rays.jsonl.gz"
-    original = b"not a gzip stream"
-    path.write_bytes(original)
-    with pytest.raises(ValueError, match="remove"):
+def test_unreadable_rays_archive_is_never_overwritten(tmp_path):
+    archive = tmp_path / "rays-modes"
+    archive.mkdir()
+    fingerprint = archive / "rays-fingerprint.yaml"
+    original = b"not: [yaml"
+    fingerprint.write_bytes(original)
+    with pytest.raises(ValueError, match="invalid v3 rays archive"):
         Simulation.from_dict(TINY).run(str(tmp_path), stages=[14])
-    assert path.read_bytes() == original
-    assert not (tmp_path / "rays-fingerprint.yaml").exists()
+    assert fingerprint.read_bytes() == original
+    assert not (archive / "rays-index.jsonl").exists()
 
 
 def test_truncated_rays_file_is_never_appended_or_overwritten(tmp_path):
@@ -1294,7 +1224,7 @@ def test_truncated_rays_file_is_never_appended_or_overwritten(tmp_path):
 
     with pytest.raises(ValueError, match="truncated or corrupt|sha256"):
         Simulation.from_dict(TINY).run(str(tmp_path), stages=[14])
-    from formula.capsysred.convert_rays_v3 import verify
+    from formula.capsysred.trace_v3 import verify
     with pytest.raises(ValueError, match="truncated or corrupt|sha256"):
         verify(archive, jobs=1, log=lambda m: None)
 
@@ -1330,43 +1260,24 @@ def test_conflicting_sidecar_is_never_overwritten(tmp_path):
     assert fingerprint.read_bytes() == wrong_bytes
 
 
-def test_rays_metadata_sidecar_helpers(tmp_path):
-    from formula.capsysred.rays import (metadata_equal, metadata_path,
-                                        read_metadata, write_metadata)
-
-    rays_path = tmp_path / "rays.jsonl.gz"
-    first = {"format": 2, "geometry": "abc", "budgets": {"free": [2, 3]}}
-    sidecar = tmp_path / "rays-fingerprint.yaml"
-    assert metadata_path(rays_path) == str(sidecar)
-    assert write_metadata(rays_path, first) == str(sidecar)
-    assert read_metadata(rays_path) == first
-    write_metadata(rays_path, first)  # Writing identical metadata is idempotent.
-
-    second = dict(first, geometry="def")
-    with pytest.raises(ValueError, match="remove it manually"):
-        write_metadata(rays_path, second)
-    assert read_metadata(rays_path) == first
-    sidecar.unlink()  # Conflict resolution is always an explicit user action.
-    write_metadata(rays_path, second)
-    assert read_metadata(rays_path) == second
-    assert not list(tmp_path.glob(".*.tmp"))
+def test_metadata_equal_is_type_strict():
+    from formula.capsysred.rays import metadata_equal
+    assert metadata_equal({"a": [1, {"b": "c"}]}, {"a": [1, {"b": "c"}]})
     assert not metadata_equal({"value": 1}, {"value": 1.0})
     assert not metadata_equal({"value": True}, {"value": 1})
 
 
-def test_rays_sidecar_metadata_is_structured(tmp_path):
+def test_geometry_metadata_and_fingerprint_are_structured():
     from formula.capsysred.config import load
-    from formula.capsysred.rays import (geometry_metadata, metadata_equal,
-                                        read_metadata,
-                                        sidecar_metadata, write_metadata)
+    from formula.capsysred.rays import geometry_metadata
+    from formula.capsysred.trace_v3 import archive_fingerprint
 
     cfg = load(TINY)
     geometry = geometry_metadata(cfg)
-    sidecar = sidecar_metadata(cfg)
-    assert sidecar["geometry"] == geometry
-    rays_path = tmp_path / "rays.jsonl.gz"
-    write_metadata(rays_path, sidecar)
-    assert metadata_equal(read_metadata(rays_path), sidecar)
+    fingerprint = archive_fingerprint(cfg)
+    assert fingerprint["geometry"] == geometry
+    assert fingerprint["format"] == 3 and fingerprint["rng"]["scheme"] == "lattice-v1"
+    assert "lean" not in fingerprint and "budgets" not in fingerprint
     assert geometry["max_bounces"] == cfg.max_bounces
     assert geometry["screen"] == cfg.raw["screen"]
     assert "source" not in geometry
@@ -1374,7 +1285,6 @@ def test_rays_sidecar_metadata_is_structured(tmp_path):
     assert (geometry["capillary"]["source"]
             == cfg.raw["capillary"]["source"])
     assert "lloyd" not in geometry
-    assert "lloyd" not in sidecar["budgets"]
     assert "screens" not in geometry["capillary"]
 
     with_extra_screen = load({
@@ -1391,10 +1301,10 @@ def test_rays_sidecar_metadata_is_structured(tmp_path):
         "trace": {"lean_rays": True},
     })
     assert geometry_metadata(physics_change) == geometry
-    assert sidecar_metadata(physics_change)["lean"] is True
+    assert archive_fingerprint(physics_change)["lean"] is True
 
     geometry["screen"]["z"] = -1
-    assert cfg.raw["screen"]["z"] != -1  # The sidecar owns a detached copy.
+    assert cfg.raw["screen"]["z"] != -1  # The fingerprint owns a detached copy.
 
 
 def test_rays_file_survives_added_screens(tmp_path):
@@ -2780,31 +2690,6 @@ def test_beamlet_native_multimode_fold_matches_python():
     assert nat["i_ref"] == pytest.approx(ref["i_ref"], rel=1e-12)
 
 
-def test_file_records_scene_name_prefix_no_cross_pickup(tmp_path):
-    # scene names sharing a prefix must not leak rows into each other
-    from formula.capsysred.rays import _file_records
-    path = str(tmp_path / "rays.jsonl")
-    rows = [
-        {},
-        {"stage": "cap", "mode": 0, "ray": 0, "fate": "absorbed",
-         "pixel": None, "opl": "0.1", "sins": []},
-        {"stage": "capillary", "mode": 0, "ray": 1, "fate": "screen",
-         "pixel": 5, "opl": "0.2", "sins": ["1.0e-3"], "x": 1.0e-6,
-         "y": 0.0, "dx": 0.0, "dy": 0.0, "refl": [[0.0, 0.0, 0.01]]},
-        {"scene_end": "cap", "rows": 1},
-        {"scene_end": "capillary", "rows": 1},
-    ]
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
-        for row in rows:
-            fh.write(json.dumps(row) + "\n")
-    short = list(_file_records(path, "cap"))
-    assert [(r.mode, r.ray, r.fate) for r in short] == [(0, 0, "absorbed")]
-    full = list(_file_records(path, "capillary"))
-    assert [(r.ray, r.fate, r.pixel) for r in full] == [(1, "screen", 5)]
-    assert full[0].refl == ((0.0, 0.0, 0.01),)
-    assert list(_file_records(path, "missing")) == []
-
-
 # ---------------------------------------- tracer audit xfails (2026-07-31)
 
 
@@ -2990,7 +2875,7 @@ def test_scene_stream_refuses_thinned_recording(tmp_path, write_v3_archive):
                              {"free": modes})
     sim = SimpleNamespace(rays=RaysReader(str(path)))
     src = SimpleNamespace(budget=lambda: (2, 3))
-    records, source = scene_stream(sim, "free", src, None, None, None, 0)
+    records, source = scene_stream(sim, "free", src, None, None, None)
     assert source == "file" and len(list(records)) == 6
 
     section = rays_v3.section_path(path, index.sections("free", 1)[0])
@@ -2999,7 +2884,7 @@ def test_scene_stream_refuses_thinned_recording(tmp_path, write_v3_archive):
     del lines[-2]
     with gzip.open(section, "wb") as fh:
         fh.writelines(lines)
-    records, _ = scene_stream(sim, "free", src, None, None, None, 0)
+    records, _ = scene_stream(sim, "free", src, None, None, None)
     assert next(records).mode == 0
     with pytest.raises(ValueError, match="section trailer contradicts the index"):
         list(records)

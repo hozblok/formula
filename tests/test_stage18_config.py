@@ -66,12 +66,13 @@ def test_b9_invalid_configuration(bad):
 
 
 def test_b9_options_do_not_change_recording_contract_or_default_stages():
-    from formula.capsysred.rays import geometry_metadata, sidecar_metadata
+    from formula.capsysred.rays import geometry_metadata
+    from formula.capsysred.trace_v3 import archive_fingerprint
 
     base = Config(_raw())
     raw = _raw()
     raw["b9_estimator"] = {"phase_subdivisions": [4], "unknown": "unused"}
     other = Config(raw)
     assert geometry_metadata(base) == geometry_metadata(other)
-    assert sidecar_metadata(base) == sidecar_metadata(other)
+    assert archive_fingerprint(base) == archive_fingerprint(other)
     assert Simulation(base)._default_stages() == Simulation(other)._default_stages() == {1, 14}

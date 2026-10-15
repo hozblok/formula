@@ -79,14 +79,15 @@ def test_canonical_invalid_configuration(bad):
 
 
 def test_b5_section_does_not_change_recording_contract_or_default_stages():
-    from formula.capsysred.rays import geometry_metadata, sidecar_metadata
+    from formula.capsysred.rays import geometry_metadata
+    from formula.capsysred.trace_v3 import archive_fingerprint
 
     base = Config(_raw())
     raw = _raw()
     raw["b5_estimator"] = {"degree": 5, "unknown": "ignored by other stages"}
     other = Config(raw)
     assert geometry_metadata(base) == geometry_metadata(other)
-    assert sidecar_metadata(base) == sidecar_metadata(other)
+    assert archive_fingerprint(base) == archive_fingerprint(other)
     assert Simulation(base)._default_stages() == {1, 14}
     assert Simulation(other)._default_stages() == {1, 14}
 

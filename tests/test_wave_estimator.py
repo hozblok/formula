@@ -79,15 +79,16 @@ def test_wave_section_is_lazy_and_validated():
 
 
 def test_stage14_contract_ignores_wave_section():
-    from formula.capsysred.rays import geometry_metadata, sidecar_metadata
+    from formula.capsysred.rays import geometry_metadata
     from formula.capsysred.stages.stage14 import _analysis_signature, _screen_contract
+    from formula.capsysred.trace_v3 import archive_fingerprint
 
     base = Simulation.from_dict(_square("disk", 3e-7))
     raw = _square("disk", 3e-7)
     raw["wave_estimator"] = {"provider": "uisk", "grid_dx": 1e-7, "pad": 3}
     other = Simulation.from_dict(raw)
     assert geometry_metadata(other.cfg) == geometry_metadata(base.cfg)
-    assert sidecar_metadata(other.cfg) == sidecar_metadata(base.cfg)
+    assert archive_fingerprint(other.cfg) == archive_fingerprint(base.cfg)
     a, b = ScreenGrid(base.cfg.capillary.screen), ScreenGrid(other.cfg.capillary.screen)
     assert (_analysis_signature(base, _screen_contract(a, a.ref_pixel(base.cfg.capillary.screen.reference)))
             == _analysis_signature(other, _screen_contract(b, b.ref_pixel(other.cfg.capillary.screen.reference))))

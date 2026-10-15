@@ -145,10 +145,8 @@ class JackknifeCoherence:
                 "n_modes": n_modes}
 
 
-def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
-                   seed_offset: int):
-    """The jackknife estimator over the scene's ray records from the rays
-    file."""
+def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory):
+    """The jackknife estimator over the scene's recorded ray records."""
     cfg = sim.cfg
     screen = ScreenGrid(scr_cfg)
     scat = ScatterRaster(scr_cfg)
@@ -156,7 +154,7 @@ def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
     jack = JackknifeCoherence(sim.lines, screen.ref_pixel(scr_cfg.reference))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
-                                      aim_factory, seed_offset)
+                                      aim_factory)
     if getattr(sim.rays, "readonly", False):
         # --replay records may carry pixel ids of a different grid — re-bin
         records = rescreen(records, float(scr_cfg.z), screen)

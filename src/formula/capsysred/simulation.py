@@ -37,9 +37,8 @@ from .surfaces import CapillaryBundle, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
 from . import rays_v3
-from .rays import (RNG_SCHEME, MultiRaysReader, RaysReader, SceneSeed,
-                   _validate_stream_metadata, geometry_core, geometry_metadata,
-                   metadata_equal, metadata_path, read_metadata)
+from .rays import (RNG_SCHEME, MultiRaysReader, RaysReader, geometry_core,
+                   geometry_metadata, metadata_equal)
 from .shared.types import HitMethod
 from .shared.utils import flat as _flat
 from .shared import format
@@ -320,7 +319,7 @@ class Simulation:
         """Free space through the jackknife estimator, optic = None."""
         res = run_jack_stage(self, "2 without optics (MC)", "free",
                              self.cfg.free_source, self.cfg.free_screen,
-                             None, self._aim_free, SceneSeed.FREE)
+                             None, self._aim_free)
         self.results["free"] = res
         self._jack_outputs(out_dir, "02", "free", res)
         return res
@@ -376,14 +375,14 @@ class Simulation:
         if self.cfg.free_source is not None:
             scenes.append(
                 ("free", "7 alt free (MC)", self.cfg.free_source,
-                 self.cfg.free_screen, None, self._aim_free, SceneSeed.FREE))
+                 self.cfg.free_screen, None, self._aim_free))
         if cap is not None:
             scenes.append(
                 ("capillary", "7 alt capillary (MC)", cap.source, cap.screen,
                  CapillaryBundle(cap.bores, cap.z0, cap.z1),
-                 self._aim_capillary, SceneSeed.CAPILLARY))
+                 self._aim_capillary))
         rows = []
-        for stage, label, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
+        for stage, label, src_cfg, scr_cfg, optic, aim_factory in scenes:
             if scr_cfg.ny != 1:
                 _log(f"  7 [{stage}]: skipped — 2D screen (ny = {scr_cfg.ny}), estimators are 1D-only")
                 self.report += [
@@ -392,7 +391,7 @@ class Simulation:
                 ]
                 continue
             res = run_alt_stage(self, label, stage, src_cfg, scr_cfg,
-                                optic, aim_factory, off)
+                                optic, aim_factory)
             self.results[f"alt:{stage}"] = res
             maps, screen, st = res["maps"], res["screen"], res["stats"]
             xs_um = [m_to_um(x) for x in screen.xs()]
@@ -467,16 +466,16 @@ class Simulation:
         if self.cfg.free_source is not None:
             scenes.append(
                 ("free", "8 sketch free (MC)", self.cfg.free_source,
-                 self.cfg.free_screen, None, self._aim_free, SceneSeed.FREE))
+                 self.cfg.free_screen, None, self._aim_free))
         if cap is not None:
             scenes.append(
                 ("capillary", "8 sketch capillary (MC)", cap.source, cap.screen,
                  CapillaryBundle(cap.bores, cap.z0, cap.z1),
-                 self._aim_capillary, SceneSeed.CAPILLARY))
+                 self._aim_capillary))
         rows = []
-        for stage, label, src_cfg, scr_cfg, optic, aim_factory, off in scenes:
+        for stage, label, src_cfg, scr_cfg, optic, aim_factory in scenes:
             res = run_sketch_stage(self, label, stage, src_cfg, scr_cfg,
-                                   optic, aim_factory, off)
+                                   optic, aim_factory)
             self.results[f"sketch:{stage}"] = res
             maps, screen, st = res["maps"], res["screen"], res["stats"]
             rms_engine = None
@@ -822,7 +821,7 @@ class Simulation:
             if self.cfg.free_source is not None:
                 res = run_beamlet_stage(self, "11 beamlet free (MC)", "free",
                                         self.cfg.free_source, self.cfg.free_screen,
-                                        None, self._aim_free, SceneSeed.FREE,
+                                        None, self._aim_free,
                                         work_dir=out_dir, jobs=jobs, sampler=sampler)
                 self.results["beamlet:free"] = res
                 maps, screen = res["maps"], res["screen"]
@@ -855,7 +854,6 @@ class Simulation:
                 res = run_beamlet_stage(self, "11 beamlet capillary (MC)",
                                         "capillary", cap.source, cap.screen,
                                         bundle, self._aim_capillary,
-                                        SceneSeed.CAPILLARY,
                                         extra_screens=cap.screens,
                                         work_dir=out_dir, jobs=jobs, sampler=sampler)
                 self.results["beamlet:capillary"] = res
@@ -1129,46 +1127,28 @@ class Simulation:
 
     def _local_recording(self, out_dir: str):
         """The recording a stage run reads when no --replay is given:
-        ``out_dir/rays-modes`` (v3) or ``out_dir/rays.jsonl.gz`` (v2).
-        Geometry (with seed), lean and rng scheme must equal this config's;
-        the budgets of the scenes a stage consumes are checked per scene by
-        its reader.  None when neither exists.  Stages never trace:
-        ``trace_v3`` is a separate command.
+        ``out_dir/rays-modes``.  Geometry (with seed), lean and rng scheme
+        must equal this config's; the budgets of the scenes a stage consumes
+        are checked per scene by its reader.  None when it does not exist.
+        Stages never trace: ``trace_v3`` is a separate command.
         """
         v3_dir = os.path.join(out_dir, "rays-modes")
-        v2_path = os.path.join(out_dir, "rays.jsonl.gz")
+        if not os.path.isdir(v3_dir):
+            return None
+        try:
+            meta = rays_v3.metadata(v3_dir)
+        except ValueError as exc:
+            raise ValueError(f"{v3_dir}: invalid v3 rays archive: {exc}") from exc
         expected_core = geometry_core(geometry_metadata(self.cfg))
-
-        def check(path, geometry, lean, scheme):
-            if (not metadata_equal(geometry_core(geometry), expected_core)
-                    or lean != bool(self.cfg.lean_rays) or scheme != RNG_SCHEME):
-                raise ValueError(
-                    f"{path}: recording metadata does not match this config "
-                    "(geometry, seed, lean or rng scheme); remove the recording "
-                    "manually, use explicit --replay or another output directory"
-                )
-
-        if os.path.isdir(v3_dir):
-            try:
-                meta = rays_v3.metadata(v3_dir)
-            except ValueError as exc:
-                raise ValueError(f"{v3_dir}: invalid v3 rays archive: {exc}") from exc
-            check(v3_dir, meta["geometry"], bool(meta.get("lean")),
-                  (meta.get("rng") or {}).get("scheme"))
-            return v3_dir
-        if os.path.lexists(v2_path):
-            try:
-                actual = read_metadata(v2_path)
-                _validate_stream_metadata(actual, v2_path)
-            except (OSError, UnicodeError, ValueError, TypeError) as exc:
-                raise ValueError(
-                    f"{metadata_path(v2_path)}: rays metadata is missing or invalid; "
-                    "remove the recording manually or choose another output directory"
-                ) from exc
-            check(v2_path, actual["geometry"], bool(actual.get("lean")),
-                  actual.get("rng"))
-            return v2_path
-        return None
+        if (not metadata_equal(geometry_core(meta["geometry"]), expected_core)
+                or bool(meta.get("lean")) != bool(self.cfg.lean_rays)
+                or (meta.get("rng") or {}).get("scheme") != RNG_SCHEME):
+            raise ValueError(
+                f"{v3_dir}: recording metadata does not match this config "
+                "(geometry, seed, lean or rng scheme); remove the recording "
+                "manually, use explicit --replay or another output directory"
+            )
+        return v3_dir
 
     # ------------------------------------------------------------- run
 
@@ -1240,7 +1220,7 @@ class Simulation:
                 local = self._local_recording(out_dir)
                 if local is None:
                     raise ValueError(
-                        f"{out_dir}: no rays recording (rays-modes/ or rays.jsonl.gz); "
+                        f"{out_dir}: no rays recording (rays-modes/); "
                         "trace first (python -m formula.capsysred.trace_v3 …) "
                         "or pass --replay"
                     )
@@ -1370,7 +1350,8 @@ class Simulation:
     # ------------------------------------------------------------- replay
 
     def replay(self, records_path, out_dir, stages=None) -> dict:
-        """Run stages from a recorded rays file — no tracing at all.
+        """Run stages from recorded rays archives (v3 directories) — no
+        tracing at all.
 
         Any streaming stage replays (2, 7, 8, 11 and 14, plus analytics 3;
         stage 9 validates live tracers and is refused); default = the
@@ -1404,7 +1385,7 @@ class Simulation:
         if 18 in wanted:
             _b9_backend()
         if wanted <= {14, 16, 17, 18}:
-            # No RaysReader: its constructor scans the whole gzip.  The
+            # No RaysReader: the
             # Stage-14 builder validates/deposits in one strict pass, while a
             # cache hit does not open the ray archive at all; Stage 16 reads
             # only the per-mode origins; Stages 17/18 sample selected modes.
