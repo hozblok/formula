@@ -9,8 +9,8 @@ later — Fresnel amplitudes are computed from the recorded sines.
 from collections import namedtuple
 
 from ..formula import Number
-from .shared.nums import vadd, vdot, vscale, vsub
-from .shared.types import Vec3
+from .shared.nums import raw, vadd, vdot, vscale, vsub
+from .shared.types import _EPS_T, Vec3
 
 # fate: "screen" | "absorbed" | "lost". reflections: [(point, sin_grazing), ...]
 # direction: unit direction at the final point (post-bounce for absorbed/lost).
@@ -58,7 +58,11 @@ def trace_ray(origin: Vec3, direction: Vec3, optic, screen_z: Number,
     if float(d[2]) <= 0.0:
         return TraceResult("lost", O, opl, reflections, d)
     t = (screen_z - O[2]) / d[2]
-    if float(t) < 0.0:
-        return TraceResult("lost", O, opl, reflections, d)
+    zero = Number("0", p)
+    if raw(t) < raw(zero):
+        # Treat backward steps within the tolerance as arrival, keeping O and opl.
+        if raw(t) < raw(Number(-_EPS_T, p)):
+            return TraceResult("lost", O, opl, reflections, d)
+        t = zero
     P = vadd(O, vscale(d, t))
     return TraceResult("screen", P, opl + t, reflections, d)
