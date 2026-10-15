@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-import gzip
 import json
 import math
 
 import pytest
 
-from formula.capsysred import Simulation
+from formula.capsysred import Simulation, rays_v3
 from formula.capsysred.stages import stage14
-from formula.capsysred.rays import sidecar_metadata, write_metadata
 from formula.capsysred.screen import ScreenGrid
 
 
@@ -82,8 +80,8 @@ def _config(*, extra_screens: bool) -> dict:
     }
 
 
-def _write_rays(path, raw: dict) -> None:
-    """Write the smallest canonical capillary stream accepted by Stage 14."""
+def _ray_rows(raw: dict) -> dict:
+    """Two modes of controlled capillary rays, grouped for archive writing."""
     sim = Simulation.from_dict(raw)
     grid = ScreenGrid(sim.cfg.capillary.screen)
     ref = grid.ref_pixel(sim.cfg.capillary.screen.reference)
@@ -92,31 +90,28 @@ def _write_rays(path, raw: dict) -> None:
     x_target, y_target = grid.pixel_xy(target)
     phase_flip = math.pi / float(sim.lines[0].k)
     n_modes, n_rays = sim.cfg.capillary.source.budget()
-    with gzip.open(path, "xt", encoding="utf-8", newline="\n") as fh:
-        fh.write("{}\n")
-        for mode in range(n_modes):
-            for ray in range(n_rays):
-                at_ref = ray < n_rays // 2
-                x, y = (x_ref, y_ref) if at_ref else (x_target, y_target)
-                opl = phase_flip if mode == 1 and not at_ref else 0.0
-                fh.write(json.dumps({
-                    "stage": "capillary",
-                    "mode": mode,
-                    "ray": ray,
-                    "fate": "screen",
-                    "pixel": ref,
-                    "opl": repr(opl),
-                    "sins": [],
-                    "x": x,
-                    "y": y,
-                    "dx": 0.0,
-                    "dy": 0.0,
-                }) + "\n")
-        fh.write(json.dumps({
-            "scene_end": "capillary",
-            "rows": n_modes * n_rays,
-        }) + "\n")
-    write_metadata(path, sidecar_metadata(sim.cfg))
+    modes = {}
+    for mode in range(n_modes):
+        rows = []
+        for ray in range(n_rays):
+            at_ref = ray < n_rays // 2
+            x, y = (x_ref, y_ref) if at_ref else (x_target, y_target)
+            opl = phase_flip if mode == 1 and not at_ref else 0.0
+            rows.append({
+                "stage": "capillary",
+                "mode": mode,
+                "ray": ray,
+                "fate": "screen",
+                "pixel": ref,
+                "opl": repr(opl),
+                "sins": [],
+                "x": x,
+                "y": y,
+                "dx": 0.0,
+                "dy": 0.0,
+            })
+        modes[mode] = rows
+    return {"capillary": modes}
 
 
 def _cache_metas(recording) -> list[dict]:
@@ -146,12 +141,13 @@ def _assert_screen_results(sim: Simulation, out_dir) -> None:
 
 
 def test_stage14_cold_multiscreen_fanout_opens_archive_once_and_reuses_all(
-        tmp_path, monkeypatch):
+        tmp_path, monkeypatch, write_v3_archive):
     raw = _config(extra_screens=True)
     recording = tmp_path / "recording"
     recording.mkdir()
-    rays = recording / "rays.jsonl.gz"
-    _write_rays(rays, raw)
+    rays = recording / "rays-modes"
+    index = write_v3_archive(rays, raw, _ray_rows(raw))
+    archive_bytes = index.total_bytes()
 
     archive_opens = []
     original_archive_lines = stage14._archive_lines
@@ -179,11 +175,11 @@ def test_stage14_cold_multiscreen_fanout_opens_archive_once_and_reuses_all(
             encoding="utf-8"))
     assert [item["screen"] for item in root_meta["fanout"]["screens"]] == [
         "capillary", "capillary-s1", "capillary-s2"]
-    assert root_meta["fanout"]["physical_ray_archive_bytes_read"] == rays.stat().st_size
+    assert root_meta["fanout"]["physical_ray_archive_bytes_read"] == archive_bytes
     assert root_meta["performance"]["total_seconds"] == cold.results[
         "stage14:capillary"]["seconds"]
     assert sum(cold.results[key]["result_meta"]["performance"][
-        "ray_archive_bytes_read"] for key in _RESULT_KEYS) == rays.stat().st_size
+        "ray_archive_bytes_read"] for key in _RESULT_KEYS) == archive_bytes
 
     metas = _cache_metas(recording)
     assert len(metas) == 3
@@ -196,7 +192,7 @@ def test_stage14_cold_multiscreen_fanout_opens_archive_once_and_reuses_all(
     def no_gzip(*_args, **_kwargs):
         raise AssertionError("a Stage-14 all-cache-hit run opened gzip")
 
-    monkeypatch.setattr(stage14.gzip, "GzipFile", no_gzip)
+    monkeypatch.setattr(rays_v3.gzip, "GzipFile", no_gzip)
     hot = Simulation.from_dict(raw)
     hot.replay(str(rays), str(tmp_path / "hot"), stages=[14])
     _assert_screen_results(hot, tmp_path / "hot")
@@ -214,12 +210,13 @@ def test_stage14_cold_multiscreen_fanout_opens_archive_once_and_reuses_all(
 
 
 def test_stage14_partial_hit_builds_two_missing_screens_in_one_pass(
-        tmp_path, monkeypatch):
+        tmp_path, monkeypatch, write_v3_archive):
     base_raw = _config(extra_screens=False)
     recording = tmp_path / "recording"
     recording.mkdir()
-    rays = recording / "rays.jsonl.gz"
-    _write_rays(rays, base_raw)
+    rays = recording / "rays-modes"
+    index = write_v3_archive(rays, base_raw, _ray_rows(base_raw))
+    archive_bytes = index.total_bytes()
 
     base = Simulation.from_dict(base_raw)
     base.replay(str(rays), str(tmp_path / "base"), stages=[14])
@@ -252,7 +249,7 @@ def test_stage14_partial_hit_builds_two_missing_screens_in_one_pass(
     expanded_meta = json.loads(
         (tmp_path / "expanded" / "stage14" / "meta.json").read_text(
             encoding="utf-8"))
-    assert expanded_meta["fanout"]["physical_ray_archive_bytes_read"] == rays.stat().st_size
+    assert expanded_meta["fanout"]["physical_ray_archive_bytes_read"] == archive_bytes
     assert expanded.results["stage14:capillary"]["result_meta"][
         "performance"]["target_cache_miss_ray_archive_bytes"] == 0
     assert len(_cache_metas(recording)) == 3
