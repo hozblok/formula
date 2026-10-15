@@ -3006,32 +3006,17 @@ def test_scene_stream_refuses_thinned_recording(tmp_path):
         list(_counted(iter([1, 2]), 3, "free", str(path)))
 
 
-def test_multi_rays_reader_propagates_lean_from_every_part(tmp_path):
-    from formula.capsysred.config import load
-    from formula.capsysred.rays import (MultiRaysReader, geometry_metadata,
-                                        require_full_rows, write_metadata)
+def test_multi_rays_reader_propagates_lean_from_every_part(tmp_path, write_v3_archive):
+    from formula.capsysred.rays import MultiRaysReader, require_full_rows
 
     def recording(name, lean):
-        directory = tmp_path / name
-        directory.mkdir()
-        path = directory / "rays.jsonl.gz"
-        with gzip.open(path, "wt", encoding="utf-8", newline="\n") as fh:
-            fh.write("{}\n")
-            fh.write(json.dumps({
-                "stage": "free", "mode": 0, "ray": 0, "fate": "lost",
-                "pixel": None, "opl": 0.1 if lean else "0.1", "sins": [],
-            }) + "\n")
-            fh.write(json.dumps({"scene_end": "free", "rows": 1}) + "\n")
-        meta = {
-            "format": 2,
-            "geometry": geometry_metadata(
-                load({"free": {"source": FREE_SOURCE}})
-            ),
-            "budgets": {"free": [1, 1]},
-        }
-        if lean:
-            meta["lean"] = True
-        write_metadata(path, meta)
+        path = tmp_path / name / "rays-modes"
+        rows = [{
+            "stage": "free", "mode": 0, "ray": 0, "fate": "lost",
+            "pixel": None, "opl": 0.1 if lean else "0.1", "sins": [],
+        }]
+        write_v3_archive(path, {"free": {"source": FREE_SOURCE}},
+                         {"free": {0: rows}}, lean=lean)
         return str(path)
 
     full = recording("full", False)
