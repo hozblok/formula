@@ -286,7 +286,7 @@ def main(argv=None):
     ap.add_argument("--archive", default=None, help="v3 archive directory (created if absent)")
     ap.add_argument("--verify", metavar="ARCHIVE_DIR", default=None,
                     help="re-read a v3 archive completely instead of tracing")
-    ap.add_argument("--jobs", type=int, default=4)
+    ap.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 4))
     ap.add_argument("--level", type=int, default=rays_v3.DEFAULT_LEVEL)
     args = ap.parse_args(argv)
     max_jobs = os.cpu_count() or MAX_JOBS
