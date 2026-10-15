@@ -1,6 +1,7 @@
 """Opt-in phase quadrature and prescribed-cylinder reconstruction."""
 
 from decimal import Decimal, localcontext
+from pathlib import Path
 import json
 
 import numpy as np
@@ -73,7 +74,7 @@ def make_archive(sim, path):
 
 @pytest.mark.parametrize("retrace", [False, True])
 def test_replay_new_routes_use_saved_source_origins_and_complex_moments(tmp_path, monkeypatch, retrace):
-    from formula.capsysred.stages import _b9_phase
+    from formula.capsysred.stages import _b9_phase, stage18
 
     pytest.importorskip("finufft")
     raw = raw_scene()
@@ -83,6 +84,11 @@ def test_replay_new_routes_use_saved_source_origins_and_complex_moments(tmp_path
     archive = tmp_path/"archive"
     make_archive(sim, archive)
     original, captured = _b9_phase.phase_field, []
+    original_hash = stage18._hash
+
+    def data_hash(path):
+        assert Path(path).is_relative_to(tmp_path), "Stage 18 must not hash package files"
+        return original_hash(path)
 
     def audited(*args, **kwargs):
         result = original(*args, **kwargs)
@@ -90,13 +96,14 @@ def test_replay_new_routes_use_saved_source_origins_and_complex_moments(tmp_path
         return result
 
     monkeypatch.setattr(_b9_phase, "phase_field", audited)
+    monkeypatch.setattr(stage18, "_hash", data_hash)
     output = tmp_path/"result"
     sim.replay(str(archive), str(output), stages=[18])
     folder = output/"stage18"
     meta = json.loads((folder/"meta.json").read_text())
     assert meta["full_coherence_computed"] and not meta["accuracy_validated"]
     assert meta["completed_source_modes"] == 2 and len(captured) == 2
-    assert "_b9_phase.py" in meta["implementation_sha256"]
+    assert "implementation_sha256" not in meta
     fields = np.array([entry[0] for entry in captured])
     assert not np.array_equal(fields[0], fields[1])
     with np.load(folder/"map-b36-q6-p2-m2.npz") as saved:

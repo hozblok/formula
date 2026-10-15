@@ -100,6 +100,42 @@ def test_stage18_cli_dispatches_explicit_stage(tmp_path, monkeypatch):
     assert calls == [(["archive"], out, [18])]
 
 
+@pytest.mark.parametrize("metadata", ["index", "fingerprint"])
+@pytest.mark.parametrize("when", ["before_worker", "after_worker"])
+def test_stage18_rejects_archive_metadata_changes(tmp_path, monkeypatch, metadata, when):
+    from formula.capsysred import rays_v3
+    from formula.capsysred.stages import stage18
+    from tests.test_stage18_improvements import raw_scene, make_archive
+
+    pytest.importorskip("finufft")
+    raw = raw_scene()
+    raw["b9_estimator"]["max_modes"] = 1
+    sim = Simulation.from_dict(raw)
+    archive, output = tmp_path / "archive", tmp_path / "result"
+    make_archive(sim, archive)
+    path = Path(rays_v3.index_path(archive) if metadata == "index"
+                else rays_v3.fingerprint_path(archive))
+    original = stage18._mode_job
+
+    def changed(job):
+        assert "implementation" not in job
+        if when == "before_worker":
+            path.write_bytes(path.read_bytes() + b"\n")
+        result = original(job)
+        if when == "after_worker":
+            path.write_bytes(path.read_bytes() + b"\n")
+        return result
+
+    monkeypatch.setattr(stage18, "_mode_job", changed)
+    message = "archive metadata changed" + (" during run" if when == "after_worker" else "")
+    with pytest.raises(ValueError, match=message):
+        sim.replay(str(archive), str(output), stages=[18])
+    assert not (output / "stage18").exists()
+    meta = json.loads((output / "stage18.partial/meta.json").read_text())
+    assert meta["status"] == "failed-partial" and not meta["full_coherence_computed"]
+    assert message in meta["failure"]
+
+
 @pytest.mark.parametrize("amplitude_mode", ["point_jacobian", "tube_flux"])
 def test_stage18_full_archive_replay_writes_complex_coherence(tmp_path, amplitude_mode):
     import numpy as np

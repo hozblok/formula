@@ -163,7 +163,7 @@ def test_optional_carrier_replay_preserves_native_cells_and_source_ensemble(tmp_
         assert np.max(abs(result["mu"])) <= 1+1e-12
         if groups:
             assert len(captured) == 2
-            assert "_b9_carrier.py" in meta["implementation_sha256"]
+            assert "implementation_sha256" not in meta
             assert all(item[1]["cell_width"] == width for item in captured)
             fields = np.stack([item[0] for item in captured])
             ref = tuple(result["ref_index"])

@@ -141,10 +141,10 @@ def test_mode_failures_are_skipped_and_recorded(tmp_path, monkeypatch):
     assert meta['full_coherence_computed'] and any(row['modes'] == 1 for row in meta['outputs'])
 
     def fatal(job):
-        raise ValueError('stage 18 implementation changed before worker')
+        raise ValueError('stage 18 archive metadata changed')
 
     monkeypatch.setattr(stage18, '_mode_job', fatal)
-    with pytest.raises(ValueError, match='implementation changed'):
+    with pytest.raises(ValueError, match='archive metadata changed'):
         sim.replay(str(archive), str(tmp_path/'result2'), stages=[18])
 
     def all_bad(job):

@@ -55,20 +55,6 @@ def preflight_b9_inputs(sim, options):
         raise ValueError("stage 18 requires the optional finufft package")
 
 
-def implementation_hashes():
-    from ... import _formula
-
-    base = Path(__file__).parent
-    hashes = {name: _hash(base/name) for name in
-            ("stage18.py", "_b9_archive.py", "_b9_contour.py", "_b9_carrier.py", "_b9_phase.py",
-             "_b9_cylinder_mesh.py", "_b9_adaptive_mesh.py", "_b9_amplitude.py", "_b9_regular.py", "_b9_quadrature.py",
-             "_b9_curved_mesh.py", "_b9_curved.py",
-             "_b5_archive.py", "_b5_transport.py", "_b5_map.py", "stage17.py",
-             "../trace.py", "../native.py", "../surfaces.py", "../shared/nums.py", "../config.py", "../rays_v3.py")}
-    hashes["compiled_formula_extension"] = _hash(Path(_formula.__file__))
-    return hashes
-
-
 def refine_chirped_mesh(mesh, subdivisions, k, distance):
     """Sample affine unwrapped phase/amplitude on conforming subtriangles."""
     n = int(subdivisions)
@@ -258,8 +244,6 @@ def _mode_job(job):
     from ._b9_contour import fresnel_from_chirped
 
     started = time.perf_counter()
-    if implementation_hashes() != job["implementation"]:
-        raise ValueError("stage 18 implementation changed before worker")
     samples, archive_meta = read_sample(job["archive"], max_modes=1, mode_start=job["mode"],
         max_rays_per_mode=max(job["budgets"]), target_z=job["target_z"], k=job["k"])
     if (archive_meta["fingerprint_sha256"] != job["fingerprint_sha256"]
@@ -432,8 +416,6 @@ def _mode_job(job):
                 residual=residual if "residual" in diagnostics else None)
             if not groups and opts.get("field_representation", "contour_p1") == "contour_p1":
                 del tri, values
-    if implementation_hashes() != job["implementation"]:
-        raise ValueError("stage 18 implementation changed during worker")
     return dict(mode=int(mode["mode"]), origin=mode["origin"].tolist(),
         origin_decimal=mode["source_origin_decimal"], archive=archive_meta, meshes=meshes,
         variants=variants, matched=matched, seconds=time.perf_counter()-started)
@@ -490,11 +472,10 @@ def run_b9_stage(sim, out_dir, options, *, rays_paths=None, log=None):
     cap = sim.cfg.capillary
     screen = [cap.screen, *cap.screens][options["screen_index"]]
     grid = _map_grid(screen, options["map_stride"])
-    implementation = implementation_hashes()
     base = dict(archive=archive, options=options, budgets=budgets, grid=grid,
         cap=dict(z0=float(cap.z0), z1=float(cap.z1), bores=sim.cfg.raw["capillary"]["bores"]),
         target_z=float(screen.z), k=float(sim.lines[0].k), delta=sim.delta_f, beta=sim.beta_f,
-        fingerprint_sha256=fingerprint_hash, index_sha256=index_hash, implementation=implementation)
+        fingerprint_sha256=fingerprint_hash, index_sha256=index_hash)
     jobs = [dict(base, mode=i) for i in range(options["mode_start"], options["mode_start"]+count)]
     groups = options.get("carrier_groups", 0)
     phase_quadrature = options.get("field_representation") in ("phase_quadrature", "curved_tubes")
@@ -511,7 +492,7 @@ def run_b9_stage(sim, out_dir, options, *, rays_paths=None, log=None):
         status="experimental-GO-exit-phase-diffraction" if phase_quadrature else "experimental-GO-exit-contour-diffraction",
         full_coherence_computed=False, accuracy_validated=False, options=options,
         archive=archive, archive_mode_count=archive_modes, archive_rays_per_mode=archive_rays,
-        fingerprint_sha256=fingerprint_hash, index_sha256=index_hash, implementation_sha256=implementation,
+        fingerprint_sha256=fingerprint_hash, index_sha256=index_hash,
         screen_z_m=float(screen.z), exit_z_m=float(cap.z1), distance_after_exit_m=float(screen.z)-float(cap.z1),
         k_per_m=base["k"], delta=sim.delta_f, beta=sim.beta_f,
         screen_grid={key: value for key, value in grid.items() if key not in ("x", "y")},
@@ -569,7 +550,7 @@ def run_b9_stage(sim, out_dir, options, *, rays_paths=None, log=None):
         completed_count = 0
         for processed, (job, completed, failure) in enumerate(outcomes(), 1):
             if failure is not None:
-                fatal = ("implementation", "archive metadata", "archive has", "max_missing_area_fraction")
+                fatal = ("archive metadata", "archive has", "max_missing_area_fraction")
                 if any(word in str(failure) for word in fatal):
                     raise failure
                 result["failed_modes"].append(dict(mode=job["mode"], error=str(failure)))
@@ -631,9 +612,9 @@ def run_b9_stage(sim, out_dir, options, *, rays_paths=None, log=None):
         if executor is not None:
             executor.shutdown(wait=True)
             executor = None
-        if (implementation_hashes() != implementation or _hash(index_path) != index_hash
+        if (_hash(index_path) != index_hash
                 or _hash(rays_v3.fingerprint_path(archive)) != fingerprint_hash):
-            raise ValueError("stage 18 implementation or archive metadata changed during run")
+            raise ValueError("stage 18 archive metadata changed during run")
         result["seconds"] = time.perf_counter()-started
         result["full_coherence_computed"] = True
         _dump(partial/"meta.json", result)
