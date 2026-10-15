@@ -12,12 +12,11 @@ import pytest
 import yaml
 
 from formula.capsysred import Simulation, rays_v3
-from formula.capsysred.convert_rays_v3 import CAPILLARY_AIM_DRAWS, convert, verify
+from formula.capsysred.convert_rays_v3 import convert, verify
 from formula.capsysred.rays import RaysReader, SceneSeed, _SCENE_SEED_STRIDE
 from formula.capsysred.screen import ScreenGrid
 from formula.capsysred.source import Source
-from formula.capsysred.topup_trace import topup
-from formula.capsysred.trace_v3 import trace as trace_v3
+from formula.capsysred.trace_v3 import AIM_DRAWS, SCENES, trace as trace_v3
 
 
 def _raw(n_modes=6, n_rays=60, seed=77, shape="disk"):
@@ -112,11 +111,6 @@ def test_convert_parity_reader_and_stage14(tmp_path):
         convert(str(v2), archive, 1, 6, None, True, log=lambda m: None)
 
 
-def _v2_lines(path):
-    with gzip.open(path, "rb") as fh:
-        return fh.read().split(b"\n")[1:]        # drop the preamble
-
-
 def test_lattice_convert_and_origins_independent_of_rays(tmp_path):
     raw = _raw(n_modes=6, n_rays=40)
     seq = tmp_path / "seq"
@@ -177,6 +171,8 @@ def _legacy_trace(raw, out_dir):
 
 
 def test_convert_legacy_sequential_origins(tmp_path):
+    assert SceneSeed.CAPILLARY_TOPUP not in (SceneSeed.CAPILLARY, SceneSeed.FREE)
+    assert _SCENE_SEED_STRIDE == 1000003
     raw = _raw(n_modes=4, n_rays=30)
     run = tmp_path / "legacy"
     _legacy_trace(raw, str(run))
@@ -194,28 +190,26 @@ def test_convert_legacy_sequential_origins(tmp_path):
 
 def test_topup_lattice_equals_single_piece(tmp_path):
     raw = _raw(n_modes=5, n_rays=40)
-    head = tmp_path / "head"
-    _v2_from_v3(raw, head)
-    archive = str(head / "rays-modes")
-    convert(str(head), archive, 1, 6, None, True, log=lambda m: None)
+    archive = str(tmp_path / "head")
+    trace_v3(_write_yaml(tmp_path / "cfg-40.yaml", raw), archive,
+             jobs=1, level=6, log=lambda m: None)
     raw100 = json.loads(json.dumps(raw))
     raw100["capillary"]["source"]["n_rays"] = 100
-    topup(_write_yaml(tmp_path / "cfg-100.yaml", raw100), archive,
-          jobs=1, level=6, log=lambda m: None)
-    full = tmp_path / "full"
-    _v2_from_v3(raw100, full)
+    cfg100 = _write_yaml(tmp_path / "cfg-100.yaml", raw100)
+    trace_v3(cfg100, archive, jobs=2, level=6, log=lambda m: None)
+    full = str(tmp_path / "full")
+    trace_v3(cfg100, full, jobs=1, level=6, log=lambda m: None)
     index = rays_v3.load_index(archive)
-    expected = [l for l in _v2_lines(full / "rays.jsonl.gz") if l.startswith(b'{"stage"')]
-    got = [l.rstrip(b"\n") for l in rays_v3.scene_lines(archive, index, "capillary")]
-    assert got == expected
+    full_index = rays_v3.load_index(full)
+    assert (list(rays_v3.scene_lines(archive, index, "capillary"))
+            == list(rays_v3.scene_lines(full, full_index, "capillary")))
 
 
 def test_topup_chunk_invariance_and_merge_oracle(tmp_path):
     raw = _raw()
-    v2 = tmp_path / "v2"
-    _v2_from_v3(raw, v2)
-    one = str(v2 / "one")
-    convert(str(v2), one, 1, 6, None, True, log=lambda m: None)
+    one = str(tmp_path / "one")
+    trace_v3(_write_yaml(tmp_path / "cfg.yaml", raw), one,
+             jobs=1, level=6, log=lambda m: None)
     two = str(tmp_path / "two")
     shutil.copytree(one, two)
 
@@ -226,9 +220,9 @@ def test_topup_chunk_invariance_and_merge_oracle(tmp_path):
 
     raw120, cfg120 = cfg_for(120)
     _, cfg90 = cfg_for(90)
-    topup(cfg120, one, jobs=1, level=6, log=lambda m: None)
-    topup(cfg90, two, jobs=1, level=6, log=lambda m: None)
-    topup(cfg120, two, jobs=1, level=6, log=lambda m: None)
+    trace_v3(cfg120, one, jobs=1, level=6, log=lambda m: None)
+    trace_v3(cfg90, two, jobs=2, level=6, log=lambda m: None)
+    trace_v3(cfg120, two, jobs=2, level=6, log=lambda m: None)
     ia, ib = rays_v3.load_index(one), rays_v3.load_index(two)
     assert ia.budgets == ib.budgets == {"capillary": [6, 120]}
     for m in range(6):
@@ -262,15 +256,14 @@ def test_topup_chunk_invariance_and_merge_oracle(tmp_path):
     with pytest.raises(ValueError, match="replay budgets differ"):
         _stage14(raw, two, tmp_path / "s14-wrong-budget")
     with pytest.raises(ValueError, match="below the recorded"):
-        topup(cfg90, two, jobs=1, level=6, log=lambda m: None)
+        trace_v3(cfg90, two, jobs=1, level=6, log=lambda m: None)
 
 
 def test_verify_and_stage14_detect_corruption(tmp_path):
     raw = _raw(n_modes=3, n_rays=30)
-    v2 = tmp_path / "v2"
-    _v2_from_v3(raw, v2)
-    archive = str(v2 / "rays-modes")
-    convert(str(v2), archive, 1, 6, None, True, log=lambda m: None)
+    archive = str(tmp_path / "rays-modes")
+    trace_v3(_write_yaml(tmp_path / "cfg.yaml", raw), archive,
+             jobs=1, level=6, log=lambda m: None)
     entry = rays_v3.load_index(archive).sections("capillary", 1)[0]
     path = rays_v3.section_path(archive, entry)
     with gzip.open(path, "rb") as fh:
@@ -298,10 +291,9 @@ def test_rng_skip_counts(shape, draws):
         origin = source.mode_origin()
         for _ in range(7):
             aim(origin)
-    for _ in range(4 * (draws + 7 * CAPILLARY_AIM_DRAWS)):
+    for _ in range(4 * (draws + 7 * AIM_DRAWS)):
         skip.random()
     assert real.getstate() == skip.getstate()
-    from formula.capsysred.trace_v3 import SCENES
     real, skip = random.Random(6), random.Random(6)
     free = sim._aim_free(None, ScreenGrid(cap.screen), real)
     for _ in range(5):
@@ -309,11 +301,9 @@ def test_rng_skip_counts(shape, draws):
     for _ in range(5 * SCENES["free"]["draws"]):
         skip.random()
     assert real.getstate() == skip.getstate()
-    assert SceneSeed.CAPILLARY_TOPUP not in (SceneSeed.CAPILLARY, SceneSeed.FREE)
-    assert _SCENE_SEED_STRIDE == 1000003
 
 
-def test_trace_v3_fresh_equals_v2_and_two_steps(tmp_path):
+def test_trace_v3_fresh_equals_parallel_and_two_steps(tmp_path):
     raw = _raw(n_modes=5, n_rays=40)
     cfg40 = _write_yaml(tmp_path / "cfg-40.yaml", raw)
     raw100 = json.loads(json.dumps(raw))
@@ -322,18 +312,25 @@ def test_trace_v3_fresh_equals_v2_and_two_steps(tmp_path):
 
     one = str(tmp_path / "one")
     trace_v3(cfg100, one, jobs=1, level=6, log=lambda m: None)
+    parallel = str(tmp_path / "parallel")
+    trace_v3(cfg100, parallel, jobs=2, level=6, log=lambda m: None)
     two = str(tmp_path / "two")
     trace_v3(cfg40, two, jobs=1, level=6, log=lambda m: None)
-    trace_v3(cfg100, two, jobs=1, level=6, log=lambda m: None)
-    v2 = tmp_path / "v2"
-    _v2_from_v3(raw100, v2)
+    trace_v3(cfg100, two, jobs=2, level=6, log=lambda m: None)
 
-    expected = [l for l in _v2_lines(v2 / "rays.jsonl.gz") if l.startswith(b'{"stage"')]
-    for archive in (one, two):
+    one_index = rays_v3.load_index(one)
+    expected = list(rays_v3.scene_lines(one, one_index, "capillary"))
+    expected_origins = [rays_v3.section_header(one, s[0])["origin"]
+                        for s in one_index.modes("capillary")]
+    for archive in (parallel, two):
         index = rays_v3.load_index(archive)
         assert index.budgets == {"capillary": [5, 100]}
-        got = [l.rstrip(b"\n") for l in rays_v3.scene_lines(archive, index, "capillary")]
+        got = list(rays_v3.scene_lines(archive, index, "capillary"))
         assert got == expected
+        # The initial section in two used n_rays=40; origins must still agree.
+        assert [rays_v3.section_header(archive, s[0])["origin"]
+                for s in index.modes("capillary")] == expected_origins
+    assert one_index.budgets == {"capillary": [5, 100]}
     assert len(rays_v3.load_index(two).sections("capillary", 0)) == 2
     fp = rays_v3.read_fingerprint(one)
     assert fp["rng"]["scheme"] == "lattice-v1" and fp["geometry"]["seed"] == 77
@@ -347,7 +344,7 @@ def test_trace_v3_fresh_equals_v2_and_two_steps(tmp_path):
         trace_v3(cfg40, one, jobs=1, level=6, log=lambda m: None)
 
 
-def test_trace_v3_all_scenes_equals_v2_trace(tmp_path):
+def test_trace_v3_all_scenes_equals_parallel_and_completed_archive(tmp_path):
     raw = _raw(n_modes=4, n_rays=30)
     raw["free"] = {"source": {"shape": "disk", "size": 2.0e-6, "position": [0.0, 0.0, -0.02],
                               "n_modes": 3, "n_rays": 25},
@@ -357,24 +354,28 @@ def test_trace_v3_all_scenes_equals_v2_trace(tmp_path):
     archive = str(tmp_path / "v3")
     summary = trace_v3(cfg, archive, jobs=2, level=6, log=lambda m: None, scenes="all")
     assert summary["budgets"] == {"capillary": [4, 30], "free": [3, 25]}
-    v2 = tmp_path / "v2"
-    _v2_from_v3(raw, v2)
+    serial = str(tmp_path / "serial")
+    trace_v3(cfg, serial, jobs=1, level=6, log=lambda m: None, scenes="all")
     index = rays_v3.load_index(archive)
+    serial_index = rays_v3.load_index(serial)
     for scene in ("free", "capillary"):
-        expected = [l for l in _v2_lines(v2 / "rays.jsonl.gz")
-                    if l.startswith(('{"stage": "%s"' % scene).encode())]
-        got = [l.rstrip(b"\n") for l in rays_v3.scene_lines(archive, index, scene)]
+        expected = list(rays_v3.scene_lines(serial, serial_index, scene))
+        got = list(rays_v3.scene_lines(archive, index, scene))
         assert got == expected
     # a capillary-only archive completes itself on the next default run
     only_cap = str(tmp_path / "cap")
     trace_v3(cfg, only_cap, jobs=1, level=6, log=lambda m: None, scenes=("capillary",))
     assert rays_v3.load_index(only_cap).budgets == {"capillary": [4, 30]}
     trace_v3(cfg, only_cap, jobs=1, level=6, log=lambda m: None)
-    assert rays_v3.load_index(only_cap).budgets == {"capillary": [4, 30], "free": [3, 25]}
+    completed_index = rays_v3.load_index(only_cap)
+    assert completed_index.budgets == {"capillary": [4, 30], "free": [3, 25]}
+    for scene in ("free", "capillary"):
+        assert (list(rays_v3.scene_lines(only_cap, completed_index, scene))
+                == list(rays_v3.scene_lines(serial, serial_index, scene)))
     a = Simulation.from_dict(raw)
     a.replay(only_cap, str(tmp_path / "s2-v3"), stages=[2])
     b = Simulation.from_dict(raw)
-    b.replay(str(v2 / "rays.jsonl.gz"), str(tmp_path / "s2-v2"), stages=[2])
+    b.replay(serial, str(tmp_path / "s2-serial"), stages=[2])
     assert a.results["free"]["stats"] == b.results["free"]["stats"]
     before = open(rays_v3.index_path(only_cap), "rb").read()
     trace_v3(cfg, only_cap, jobs=1, level=6, log=lambda m: None)   # both scenes: no-op

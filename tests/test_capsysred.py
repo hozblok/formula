@@ -2975,33 +2975,34 @@ def test_jackknife_trust_flags_cover_no_data_cases():
     assert 0.0 < maps["mu_err"][0][5] <= 1.0
 
 
-def test_scene_stream_refuses_thinned_recording(tmp_path):
-    # The sidecar promises 2x3 rows but the scene holds 5: replay must
-    # refuse loudly, and a partially consumed stream must count-check
+def test_scene_stream_refuses_thinned_recording(tmp_path, write_v3_archive):
+    # Missing rows must fail even after consuming a valid scene prefix.
     from types import SimpleNamespace
-    from formula.capsysred.config import load
-    from formula.capsysred.rays import (RaysReader, _counted,
-                                        geometry_metadata, scene_stream,
-                                        write_metadata)
-    path = tmp_path / "rays.jsonl"
-    rows = [{}]
-    rows += [{"stage": "free", "mode": 0, "ray": i, "fate": "lost",
-              "pixel": None, "opl": "0.1", "sins": []} for i in range(5)]
-    rows.append({"scene_end": "free", "rows": 5})
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
-        for row in rows:
-            fh.write(json.dumps(row) + "\n")
-    write_metadata(path, {
-        "format": 2,
-        "geometry": geometry_metadata(
-            load({"free": {"source": FREE_SOURCE}})
-        ),
-        "budgets": {"free": [2, 3]},
-    })
+    from formula.capsysred import rays_v3
+    from formula.capsysred.rays import RaysReader, _counted, scene_stream
+
+    path = tmp_path / "rays-modes"
+    modes = {mode: [
+        {"stage": "free", "mode": mode, "ray": ray, "fate": "lost",
+         "pixel": None, "opl": "0.1", "sins": []} for ray in range(3)
+    ] for mode in range(2)}
+    index = write_v3_archive(path, {"free": {"source": FREE_SOURCE}},
+                             {"free": modes})
     sim = SimpleNamespace(rays=RaysReader(str(path)))
     src = SimpleNamespace(budget=lambda: (2, 3))
-    with pytest.raises(ValueError, match="thinned"):
-        scene_stream(sim, "free", src, None, None, None, 0)
+    records, source = scene_stream(sim, "free", src, None, None, None, 0)
+    assert source == "file" and len(list(records)) == 6
+
+    section = rays_v3.section_path(path, index.sections("free", 1)[0])
+    with gzip.open(section, "rb") as fh:
+        lines = fh.readlines()
+    del lines[-2]
+    with gzip.open(section, "wb") as fh:
+        fh.writelines(lines)
+    records, _ = scene_stream(sim, "free", src, None, None, None, 0)
+    assert next(records).mode == 0
+    with pytest.raises(ValueError, match="section trailer contradicts the index"):
+        list(records)
     with pytest.raises(ValueError, match="rewritten or truncated"):
         list(_counted(iter([1, 2]), 3, "free", str(path)))
 

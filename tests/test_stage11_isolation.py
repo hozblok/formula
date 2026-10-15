@@ -75,48 +75,53 @@ def _config(case):
 @pytest.mark.parametrize("case", LEGACY_BEAMLET)
 def test_unused_beamlet_values_preserve_trace_and_stage14_contracts(case, tmp_path):
     from formula.capsysred import Simulation
-    from formula.capsysred.rays import geometry_metadata, sidecar_metadata
+    from formula.capsysred.rays import geometry_metadata
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.stages.stage14 import _analysis_signature, _screen_contract
+    from formula.capsysred.trace_v3 import _new_archive
 
     base = Simulation.from_dict(_config("cylinder-mono"))
     other = Simulation.from_dict(_config(case))
     assert "waist_z" not in base.cfg.raw["beamlet"]
     assert geometry_metadata(other.cfg) == geometry_metadata(base.cfg)
-    assert sidecar_metadata(other.cfg) == sidecar_metadata(base.cfg)
+    _new_archive(base.cfg, str(tmp_path / "base-archive"))
+    _new_archive(other.cfg, str(tmp_path / "other-archive"))
+    assert (tmp_path / "base-archive" / "rays-fingerprint.yaml").read_bytes() == (
+        tmp_path / "other-archive" / "rays-fingerprint.yaml").read_bytes()
     for normal, legacy in zip([base.cfg.capillary.screen, *base.cfg.capillary.screens],
                               [other.cfg.capillary.screen, *other.cfg.capillary.screens]):
         a, b = ScreenGrid(normal), ScreenGrid(legacy)
         assert _analysis_signature(base, _screen_contract(a, a.ref_pixel(normal.reference))) == (
             _analysis_signature(other, _screen_contract(b, b.ref_pixel(legacy.reference))))
+    stage11_out = tmp_path / "stage11-output"
+    stage11_out.mkdir()
     with pytest.raises(ValueError, match="beamlet"):
-        other._stage11(str(tmp_path))
-    assert not list(tmp_path.iterdir())
+        other._stage11(str(stage11_out))
+    assert not list(stage11_out.iterdir())
 
 
 def _controlled_rows(config, case_dir):
-    import gzip
-    from formula.capsysred import Simulation
-    from formula.capsysred.rays import sidecar_metadata, write_metadata
+    from formula.capsysred import Simulation, rays_v3
+    from rays_archive import write_v3_archive
 
     sim = Simulation.from_yaml(str(config))
-    archive = case_dir / "rays.jsonl.gz"
-    rows = []
+    archive = case_dir / "rays-modes"
+    modes = {}
     for mode in range(3):
+        rows = []
         for ray in range(80):
             at_ref = ray < 50
-            rows.append(json.dumps({
+            rows.append({
                 "stage": "capillary", "mode": mode, "ray": ray, "fate": "screen",
                 "pixel": 4 if at_ref else 5,
                 "opl": repr(0.061 + mode * 1e-5 + (0.0 if at_ref else (mode + 1) * 1e-12)),
                 "sins": [0.001, 0.002], "x": 0.0 if at_ref else 8e-6,
                 "y": 0.0, "dx": 0.0, "dy": 0.0,
-            }).encode("utf-8") + b"\n")
-    raw = b"".join(rows)
-    with gzip.open(archive, "wb") as stream:
-        stream.write(b"{}\n" + raw + b'{"scene_end": "capillary", "rows": 240}\n')
-    write_metadata(str(archive), sidecar_metadata(sim.cfg))
-    return raw, case_dir / "rays-fingerprint.yaml"
+            })
+        modes[mode] = rows
+    index = write_v3_archive(archive, sim.cfg.raw, {"capillary": modes})
+    raw = b"".join(rays_v3.scene_lines(archive, index, "capillary"))
+    return raw, archive / "rays-fingerprint.yaml"
 
 
 def _worker(out):
