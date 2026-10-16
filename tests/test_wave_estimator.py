@@ -110,10 +110,11 @@ def test_input_preflight_rejects_bad_spectrum_and_exit_screen(tmp_path):
                                                    {"energy_kev": 16.0, "weight": -0.5}]}
     with pytest.raises(ValueError, match="non-negative weights"):
         Simulation.from_dict(raw).run(str(tmp_path / "neg"), stages=[16])
-    raw = _square(screen_z=0.0525)                          # screen on the exit plane
-    with pytest.raises(ValueError, match="outside the Stage-16 MVP"):
+    raw = _square(screen_z=0.05)                            # screen inside the channel
+    with pytest.raises(ValueError, match="inside the optic"):
         Simulation.from_dict(raw).run(str(tmp_path / "exit"), stages=[16])
     assert not (tmp_path / "exit" / "stage16").exists()
+    W.preflight_wave_inputs(Simulation.from_dict(_square(screen_z=0.0525)), WAVE_DEFAULTS)
 
 
 def test_reference_outside_window():
@@ -538,8 +539,9 @@ def test_input_preflight_precedes_stage14(tmp_path, monkeypatch):
         raise AssertionError("stage 14 must not run")
 
     monkeypatch.setattr(simulation, "run_stage14", boom)
-    raw = _square(screen_z=0.0525)
-    with pytest.raises(ValueError, match="outside the Stage-16 MVP"):
+    raw = _square()
+    raw["capillary"]["screen"]["reference"] = [50e-6, 0.0]   # coherent_cell reference off-window
+    with pytest.raises(ValueError, match="outside the screen window"):
         Simulation.from_dict(raw).run(str(tmp_path), stages=[14, 16])
     assert not list(tmp_path.glob("stage14*"))
 
@@ -689,3 +691,59 @@ def test_far_tail_reference_is_flagged(tmp_path):
     fake = dict(res["meta"], I_ref_over_max_I=4.6e-5, reference_in_far_tail=True)
     lines = W._report_lines("free", dict(res, meta=fake), wave, [])
     assert any("far diffraction tail" in l for l in lines)
+
+
+# ---------------------------------------------------------------- exit-plane screens (d = 0)
+
+def test_exit_plane_kernels_pick_and_average_the_lattice():
+    """d = 0: point pixels pick the lattice cell under them, cell pixels integrate it."""
+    raw = _square(screen_z=0.0525)
+    raw["capillary"]["screen"].update(edge_x=2e-6, edge_y=1e-6, nx=4, ny=2, reference=[0.2e-6, 0.1e-6])
+    grid = ScreenGrid(Simulation.from_dict(raw).cfg.capillary.screen)
+    h = 0.5e-6 / 3                                          # pixels 0.5 um = 3 x 3 lattice cells
+    xs = (np.arange(-8, 8) + 0.5) * h                       # cell edges on the pixel edges
+    ys = (np.arange(-6, 6) + 0.5) * h
+    rng = np.random.default_rng(3)
+    u = rng.normal(size=(xs.size, ys.size)) + 1j * rng.normal(size=(xs.size, ys.size))
+    cell_of = lambda p, zs: int(np.flatnonzero((p >= zs - h / 2) & (p < zs + h / 2))[0])
+    samp = W.ScreenSampler(grid, (0.2e-6, 0.1e-6), "point", 1)
+    e, ref, _ = samp.fields(u, samp.kernels(xs, ys, K, 0.0, h), K, 0.0, h)
+    for ix, px in enumerate(samp.px):
+        for iy, py in enumerate(samp.py):
+            want = u[cell_of(px, xs), cell_of(py, ys)]
+            assert abs(e[ix, iy] - want) < 1e-12 * abs(want)
+    want = u[cell_of(0.2e-6, xs), cell_of(0.1e-6, ys)]
+    assert abs(ref - want) < 1e-12 * abs(want)
+    samp = W.ScreenSampler(grid, (0.2e-6, 0.1e-6), "coherent_cell", 2)
+    e, _, es = samp.fields(u, samp.kernels(xs, ys, K, 0.0, h), K, 0.0, h)
+    for ix, px in enumerate(samp.px):
+        for iy, py in enumerate(samp.py):
+            inx, iny = np.abs(xs - px) < samp.hx / 2, np.abs(ys - py) < samp.hy / 2
+            assert inx.sum() == 3 and iny.sum() == 3
+            want = u[np.ix_(inx, iny)].sum() * h * h
+            assert abs(e[ix, iy] - want) < 1e-12 * abs(want)
+    assert es.shape == (samp.nx * 2, samp.ny * 2)
+    want = u[cell_of(samp.sub_x[0], xs), cell_of(samp.sub_y[0], ys)]
+    assert abs(es[0, 0] - want) < 1e-12 * abs(want)
+
+
+def test_exit_plane_screen_is_the_exit_field(tmp_path):
+    """A screen on z1: theta_max is the entrance cone alone and the point field is the
+    exit lattice field picked under the pixels (no propagation step)."""
+    raw = _square(screen_z=0.0525, nx=21)
+    raw["wave_estimator"] = {"observable": "point", "grid_dx": 0.2e-6, "pad": 1.0}
+    sim = Simulation.from_dict(raw)
+    wave = sim.cfg.validate_wave_estimator()
+    cap = sim.cfg.capillary
+    theta = W._theta_max(cap, np.array([[0.0, 0.0]]), [ScreenGrid(cap.screen)], [(0.0, 0.0)])
+    assert abs(theta - 24e-6 / math.cos(math.pi / 4) / 0.117) < 1e-15 * theta
+    (label, res), = W._capillary_scene(sim, wave, _lines(sim), None, -1, lambda _: None)
+    solver = W.BoreSolver(cap.bores[0], 0.117, 0.0525, theta, LAM, wave)
+    u = solver.exit_field((0.0, 0.0), K, sim.delta_f, sim.beta_f, -1)
+    samp = res["sampler"]
+    picked = np.array([[u[int(np.argmin(np.abs(solver.xs - px))), int(np.argmin(np.abs(solver.ys - py)))]
+                       for py in samp.py] for px in samp.px])
+    assert np.abs(res["I"] - np.abs(picked) ** 2).max() <= 1e-12 * np.abs(picked).max() ** 2
+    assert res["meta"]["fresnel_numbers"]["exit"] is None and res["meta"]["distance_m"] == 0.0
+    sim.run(str(tmp_path / "exit"), stages=[16])
+    assert (tmp_path / "exit" / "stage16" / "mu-wave.jsonl").exists()

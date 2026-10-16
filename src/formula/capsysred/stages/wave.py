@@ -84,6 +84,19 @@ def cell_cell_kernel(edges_lo, edges_hi, xs, h, k, d):
     return (_f2(b - c, k, d) - _f2(b - e, k, d) - _f2(a - c, k, d) + _f2(a - e, k, d)) / h
 
 
+def point_pick_kernel(pts, xs, h):
+    """Exit plane (d = 0): the lattice cell holding each point, weight 1/h."""
+    lo, hi = xs[None, :] - h / 2.0, xs[None, :] + h / 2.0
+    return ((pts[:, None] >= lo) & (pts[:, None] < hi)).astype(float) / h
+
+
+def cell_overlap_kernel(edges_lo, edges_hi, xs, h):
+    """Exit plane (d = 0): overlap length of a pixel cell with each lattice cell, over h."""
+    lo = np.maximum(edges_lo[:, None], xs[None, :] - h / 2.0)
+    hi = np.minimum(edges_hi[:, None], xs[None, :] + h / 2.0)
+    return np.maximum(hi - lo, 0.0) / h
+
+
 # ----------------------------------------------------------------- source
 
 def source_rule(src, wave):
@@ -410,16 +423,23 @@ class ScreenSampler:
 
     def kernels(self, xs, ys, k, d, h):
         """(Kx, Ky, Kx_ref, Ky_ref, Sx, Sy): pixel, reference-point and sub-pixel kernels;
-        every kernel is integrated exactly over the exit lattice cell of width h."""
-        if self.observable == "coherent_cell":
-            kx = cell_cell_kernel(self.px - self.hx / 2, self.px + self.hx / 2, xs, h, k, d)
-            ky = cell_cell_kernel(self.py - self.hy / 2, self.py + self.hy / 2, ys, h, k, d)
-            kxr = kyr = None
-            sx, sy = point_cell_kernel(self.sub_x, xs, h, k, d), point_cell_kernel(self.sub_y, ys, h, k, d)
+        every kernel is integrated exactly over the exit lattice cell of width h.
+        d = 0 (screen on the exit plane): no propagation, pixels pick / average the lattice."""
+        if d == 0.0:
+            point = lambda pts, zs: point_pick_kernel(pts, zs, h)
+            cell = lambda lo, hi, zs: cell_overlap_kernel(lo, hi, zs, h)
         else:
-            kx, ky = point_cell_kernel(self.px, xs, h, k, d), point_cell_kernel(self.py, ys, h, k, d)
-            kxr = point_cell_kernel(np.array([self.ref_xy[0]]), xs, h, k, d)
-            kyr = point_cell_kernel(np.array([self.ref_xy[1]]), ys, h, k, d)
+            point = lambda pts, zs: point_cell_kernel(pts, zs, h, k, d)
+            cell = lambda lo, hi, zs: cell_cell_kernel(lo, hi, zs, h, k, d)
+        if self.observable == "coherent_cell":
+            kx = cell(self.px - self.hx / 2, self.px + self.hx / 2, xs)
+            ky = cell(self.py - self.hy / 2, self.py + self.hy / 2, ys)
+            kxr = kyr = None
+            sx, sy = point(self.sub_x, xs), point(self.sub_y, ys)
+        else:
+            kx, ky = point(self.px, xs), point(self.py, ys)
+            kxr = point(np.array([self.ref_xy[0]]), xs)
+            kyr = point(np.array([self.ref_xy[1]]), ys)
             sx = sy = None
         return kx, ky, kxr, kyr, sx, sy
 
@@ -428,7 +448,7 @@ class ScreenSampler:
         sub-pixel field [ix*S+s, iy*S+t] (cell mode; None otherwise)."""
         kx, ky, kxr, kyr, sx, sy = kern
         lam = 2.0 * np.pi / k
-        c = h * h / (1j * lam * d)
+        c = h * h if d == 0.0 else h * h / (1j * lam * d)   # d = 0: overlap kernels, cell area
         e = c * (kx @ u @ ky.T)
         ref = None if kxr is None else complex(c * (kxr @ u @ kyr.T)[0, 0])
         es = None if sx is None else c * (sx @ u @ sy.T)
@@ -517,7 +537,7 @@ def spectral_lines_of(cfg):
 
 def preflight_wave_inputs(sim, wave):
     """Stage-16 input contract, cheap and before any heavy work: raw spectral weights,
-    screens past the exit, coherent-cell references inside their windows."""
+    screens on or past the exit, coherent-cell references inside their windows."""
     weights = _raw_spectral_weights(sim.cfg)
     energies = [float(ln.e_kev) for ln in sim.lines]
     if (not all(math.isfinite(w) and w >= 0.0 for w in weights) or sum(weights) <= 0.0
@@ -537,10 +557,10 @@ def preflight_wave_inputs(sim, wave):
         prov = capillary_provider(cap, wave)
         if prov == "uisk":
             for i, scr in enumerate([cap.screen, *cap.screens]):
-                if float(scr.z) <= float(cap.z1):
+                if float(scr.z) < float(cap.z1):
                     raise ValueError(f"wave_estimator: capillary screen {i} at z = {float(scr.z)} "
-                                     f"is not past the exit z1 = {float(cap.z1)}; a screen on the "
-                                     "exit plane is outside the Stage-16 MVP for uisk (fb takes it)")
+                                     f"lies before the exit z1 = {float(cap.z1)}; uisk screens sit "
+                                     "on the exit plane or behind it")
         scenes.append([cap.screen, *cap.screens])
     for screens in scenes:
         for scr in screens:
@@ -577,7 +597,8 @@ def capillary_provider(cap, wave):
 
 def _theta_max(cap, src_nodes, grids, refs=()):
     """Largest paraxial angle the lattice must resolve: entrance cone, screen chirps
-    and the chirps of point references (which may lie outside the windows)."""
+    and the chirps of point references (which may lie outside the windows); a screen
+    on the exit plane adds nothing."""
     z_in = float(cap.z0) - float(cap.source.position[2])
     theta = 0.0
     for bore in cap.bores:
@@ -587,6 +608,8 @@ def _theta_max(cap, src_nodes, grids, refs=()):
         theta = max(theta, far / z_in)
         for i, g in enumerate(grids):
             d = float(g.z) - float(cap.z1)
+            if d <= 0.0:                # exit plane: the entrance cone alone bounds the field
+                continue
             corner = max(abs(g.x0f - c[0]), abs(g.x0f + g.exf - c[0]),
                          abs(g.y0f - c[1]), abs(g.y0f + g.eyf - c[1]))
             if i < len(refs) and refs[i] is not None:
@@ -744,7 +767,7 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log):
                                    else ",first-order-polygon")
     for label, g, acc, d in zip(labels, samplers, accs, dists):
         nf = {"entrance": a * a / (lam0 * length), "source": a * a / (lam0 * z_in),
-              "exit": a * a / (lam0 * d)}
+              "exit": a * a / (lam0 * d) if d > 0.0 else None}   # None: screen on the exit plane
         meta = {"scene": label, "provider": "uisk", "model_class": model,
                 "source_rule": rule, "n_nodes": int(len(nodes)),
                 "lattice_h_m": solvers[0].h, "lattice_wavelength_m": lam_h,
@@ -764,7 +787,8 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log):
             f"{[len(b.families) for b in solvers]} (pruned {[b.pruned for b in solvers]}), "
             f"max_bounces = {wave['max_bounces']}",
             f"- N_F: entrance {nf['entrance']:.2f}, source {nf['source']:.2f}, exit "
-            f"{nf['exit']:.3f}; ray optics is not used anywhere in this stage",
+            + (f"{nf['exit']:.3f}" if nf["exit"] is not None else "— (screen on the exit plane)")
+            + "; ray optics is not used anywhere in this stage",
             f"- sampling: h/h_auto = {solvers[0].h / h_auto:.3f}, Nyquist ratio 2hθ_max/λ_min = "
             f"{sampling['sampling_ratio']:.3f}"
             + (" — ALIASING: the lattice under-samples the scene" if sampling["violation"] else ""),
