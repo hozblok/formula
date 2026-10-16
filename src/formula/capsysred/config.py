@@ -137,6 +137,7 @@ B5_DEFAULTS = {
     "map_jobs": 1,
     "map_ray_budgets": [],
     "map_snapshots": [],
+    "reflection": "fresnel",       # fresnel | ideal_minus_one: per-reflection factor (-1) instead of Fresnel (experimental)
 }
 
 B9_DEFAULTS = {
@@ -632,7 +633,8 @@ class Config:
         b5 = _merge(B5_DEFAULTS, raw)
         for key, choices in (("provider", ("archive_phase", "archive_canonical")),
                              ("patch_space", ("entrance", "screen")),
-                             ("charts", ("screen", "adaptive"))):
+                             ("charts", ("screen", "adaptive")),
+                             ("reflection", ("fresnel", "ideal_minus_one"))):
             if b5[key] not in choices:
                 raise ValueError(f"b5_estimator.{key}: expected one of {choices}")
         for key, minimum in (("max_modes", 1), ("rays_per_mode", 1), ("degree", 2),

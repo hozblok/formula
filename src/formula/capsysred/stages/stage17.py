@@ -74,6 +74,15 @@ def _fresnel_product(sins, delta, beta):
     return out
 
 
+def _reflection_factor(sins, delta, beta, reflection="fresnel"):
+    """Per-ray reflection factor: Fresnel product, or ideal (-1)^n with n reflections."""
+    if reflection == "fresnel":
+        return _fresnel_product(sins, delta, beta)
+    if reflection == "ideal_minus_one":
+        return np.asarray([(-1.0)**len(s) for s in sins], dtype=complex)
+    raise ValueError(f"unknown reflection model {reflection!r}")
+
+
 def entrance_families(mode, cap, target_z):
     """Coarse labels (entrance bore, reflection count), not certified branches."""
     source = np.asarray(mode["origin"], dtype=float)
@@ -161,7 +170,7 @@ def audit_mode(mode, sim, options, target_z, archive_number=0):
     charts = ["xx"] if options["charts"] == "screen" else ["xx", "xp", "px", "pp"]
     representations = {chart: ray_chart(points, mode["directions"], mode["phase_opl"], k, distance, chart)
                        for chart in charts}
-    amplitudes = _fresnel_product(mode["sins"], sim.delta_f, sim.beta_f)
+    amplitudes = _reflection_factor(mode["sins"], sim.delta_f, sim.beta_f, options["reflection"])
     groups, unassigned, entrance = entrance_families(mode, sim.cfg.capillary, target_z)
     neighborhood = entrance if options["patch_space"] == "entrance" else points
     patches, models, families = [], [], []
