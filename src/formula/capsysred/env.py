@@ -7,6 +7,23 @@ class Env:
     PYTHON_TRACE = "CAPSYSRED_PYTHON_TRACE"
     STAGE14_CACHE = "CAPSYSRED_STAGE14_CACHE"
     STAGE14_JOBS = "CAPSYSRED_STAGE14_JOBS"
+    STAGE11_JOBS = "CAPSYSRED_STAGE11_JOBS"
+
+    @staticmethod
+    def stage11_jobs() -> int:
+        """Parallel stage-11 mode workers; unset/empty = 1."""
+        value = os.environ.get(Env.STAGE11_JOBS, "")
+        if not value.strip():
+            return 1
+        try:
+            jobs = int(value)
+        except ValueError:
+            jobs = 0
+        if jobs < 1:
+            raise ValueError(
+                f"{Env.STAGE11_JOBS} must be a positive integer, got {value!r}"
+            )
+        return jobs
 
     @staticmethod
     def python_trace() -> bool:

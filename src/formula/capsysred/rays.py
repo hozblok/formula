@@ -1,57 +1,35 @@
-"""rays.jsonl v2: the legacy single-stream ray recording (read-only).
+"""Ray recordings: the contract shared by trace_v3 (the writer) and the
+stages (readers).  A recording is a v3 per-mode archive — a directory with
+fingerprint, index and one gzip section per mode and ray range (rays_v3).
+Stages never trace: a run without a recording is an error.
 
-Recordings are produced by trace_v3 (per-mode v3 archives); the v2 file
-format is kept for reading older archives, --replay and convert_rays_v3.
 Rows carry the PRE-threshold fate — amplitude_min is physics and every
-consumer applies its own.
-
-Layout: one ignored preamble line (new files write {}), one row per ray, and
-a {"scene_end": scene, "rows": n} trailer per completed scene. Metadata is
-stored exclusively in the adjacent rays-fingerprint.yaml; the preamble's
-contents are never interpreted. Screen-fate
-rows add x, y, dx, dy and the refl bounce points in float64 (enough for the
-float estimators, stages 2/7/8/11/14); opl/sins stay full-precision strings.
-The file is gzipped (rays.jsonl.gz).
+consumer applies its own.  Screen-fate rows add x, y, dx, dy and the refl
+bounce points in float64 (enough for the float estimators, stages
+2/7/8/11/14); opl/sins stay full-precision strings.
 
 trace.lean_rays writes opl/sins as float64 json numbers and drops refl
-(meta gains "lean": true): the estimators and rescreen are bit-identical
-(they float() these fields anyway), the file shrinks ~4x on bounce-heavy
-scenes; the beamlet stage refuses such a file (require_full_rows).
-
-rays_v3 is the per-mode layout (a directory: fingerprint, index, one gzip
-section per mode and ray range); RaysReader and Stage 14 accept either.
-trace_v3 writes it (and tops up existing modes); convert_rays_v3 converts
-a v2 file.  Stages never trace: a run without a recording is an error.
+(the fingerprint gains "lean": true): the estimators and rescreen are
+bit-identical (they float() these fields anyway), the archive shrinks ~4x
+on bounce-heavy scenes; the beamlet stage refuses such an archive
+(require_full_rows).
 """
 
 import copy
 import enum
-import gzip
 import json
 import math
-import os
 import random
 
-import yaml
-
+from ..formula import Number
 from . import rays_v3
 from .shared.types import RayRecord
-from .shared.utils import durable_open
-
-FORMAT = 2
-METADATA_NAME = "rays-fingerprint.yaml"
-
-# Mixes cfg.seed with a per-scene offset into an independent rng stream.
-_SCENE_SEED_STRIDE = 1000003
 
 
 class SceneSeed(enum.IntEnum):
-    """Per-scene rng-stream tag: its lowercase name keys the lattice streams;
-    the integer is only used to replay legacy (sequential-v2) recordings,
-    added to cfg.seed*_SCENE_SEED_STRIDE."""
+    """Per-scene rng-stream tag: its lowercase name keys the lattice streams."""
     FREE = 2         # no-optics scene (stages 2, 7, 8, 11)
     CAPILLARY = 4    # capillary (stages 7, 8, 11, 14)
-    CAPILLARY_TOPUP = 6   # legacy-archive tail substreams of topup_trace
     VALIDATE = 9     # stage 9 hit-method cross-check
 
 
@@ -101,27 +79,6 @@ def geometry_core(geometry: dict) -> dict:
     return core
 
 
-def budgets(cfg) -> dict:
-    """Scene -> [n_modes, n_rays], the same clamps as the stage loops."""
-    def per(src):
-        return list(src.budget())
-    out = {}
-    if cfg.free_source is not None:
-        out["free"] = per(cfg.free_source)
-    if cfg.capillary is not None:
-        out["capillary"] = per(cfg.capillary.source)
-    return out
-
-
-def sidecar_metadata(cfg) -> dict:
-    """Structured metadata for ``rays-fingerprint.yaml``."""
-    meta = {"format": FORMAT, "geometry": geometry_metadata(cfg),
-            "budgets": budgets(cfg), "rng": RNG_SCHEME}
-    if cfg.lean_rays:
-        meta["lean"] = True
-    return meta
-
-
 def metadata_equal(left: dict, right: dict) -> bool:
     """Strict, order-independent comparison preserving JSON scalar types."""
     def canonical(value):
@@ -130,236 +87,82 @@ def metadata_equal(left: dict, right: dict) -> bool:
     return canonical(left) == canonical(right)
 
 
-def metadata_path(rays_path: str | os.PathLike) -> str:
-    """Return the metadata sidecar beside a canonical rays recording
-    (inside a v3 archive directory)."""
-    path = os.fspath(rays_path)
-    if rays_v3.is_v3(path):
-        return os.path.join(path, METADATA_NAME)
-    return os.path.join(os.path.dirname(path), METADATA_NAME)
+def _scene_core(geometry: dict, scene: str) -> dict:
+    """A scene's recorded source and bores, without screens and budgets."""
+    core = copy.deepcopy(geometry.get(scene) or {})
+    core.pop("screen", None)
+    core.pop("screens", None)
+    source = core.get("source")
+    if isinstance(source, dict):
+        source.pop("n_modes", None)
+        source.pop("n_rays", None)
+    return core
 
 
-def read_metadata(rays_path: str | os.PathLike) -> dict:
-    """Read and validate a rays metadata sidecar."""
-    path = metadata_path(rays_path)
+def recorded_screen_z_text(geometry: dict, scene: str) -> str | None:
+    """The scene's recorded screen z — the base screen under the scene's
+    override — evaluated as the config evaluates it (expressions allowed) at
+    the fingerprint's precision, as the shortest decimal text; None when the
+    recording states no z."""
+    screen = {**(geometry.get("screen") or {}),
+              **((geometry.get(scene) or {}).get("screen") or {})}
+    if "z" not in screen:
+        return None
     try:
-        with open(path, encoding="utf-8") as fh:
-            meta = yaml.safe_load(fh)
-    except yaml.YAMLError as exc:
-        raise ValueError(f"{path}: invalid rays metadata YAML") from exc
-    if not isinstance(meta, dict):
-        raise ValueError(f"{path}: rays metadata must be a mapping")
-    return meta
+        # numbers are exact at any precision; 32 covers recordings without one
+        return str(Number(str(screen["z"]), int(geometry.get("precision", 32))))
+    except Exception as exc:
+        raise ValueError(f"invalid recorded screen z {screen['z']!r}") from exc
 
 
-def write_metadata(rays_path: str | os.PathLike, meta: dict) -> str:
-    """Create a sidecar without clobbering any existing metadata."""
-    if not isinstance(meta, dict):
-        raise TypeError("rays metadata must be a mapping")
-    path = metadata_path(rays_path)
-    if os.path.lexists(path):
-        try:
-            existing = read_metadata(rays_path)
-        except (OSError, ValueError) as exc:
-            raise ValueError(
-                f"{path}: existing metadata is unreadable; remove it "
-                "manually or choose another output directory"
-            ) from exc
-        else:
-            if metadata_equal(existing, meta):
-                return path
-        raise ValueError(
-            f"{path}: metadata already exists and differs; remove it "
-            "manually or choose another output directory"
-        )
-
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    created = False
-    try:
-        # Exclusive creation is the no-lock, no-clobber publication rule.
-        # A concurrent writer wins or this call fails; neither overwrites the
-        # other's metadata.
-        with durable_open(path, encoding="utf-8", newline="\n") as fh:
-            created = True
-            yaml.safe_dump(meta, fh, sort_keys=False, allow_unicode=True)
-    except FileExistsError as exc:
-        raise ValueError(
-            f"{path}: metadata appeared concurrently; remove it manually "
-            "or choose another output directory"
-        ) from exc
-    except BaseException:
-        if created:
-            try:
-                os.remove(path)
-            except FileNotFoundError:
-                pass
-        raise
-    return path
+def recorded_screen_z(geometry: dict, scene: str) -> float | None:
+    text = recorded_screen_z_text(geometry, scene)
+    return None if text is None else float(text)
 
 
-def _open(path, mode):
-    # newline="\n": no \r\n translation on Windows text-mode writes
-    return (gzip.open(path, mode + "t", encoding="utf-8", newline="\n")
-            if path.endswith(".gz") else open(path, mode, encoding="utf-8",
-                                              newline="\n"))
-
-
-def _lines(path):
-    """Complete rows; tolerates a live gzip tail (no end-of-stream marker)."""
-    with _open(path, "r") as fh:
-        try:
-            for line in fh:
-                if line.endswith("\n"):
-                    yield line
-        except EOFError:
-            return
-
-
-def _body(path):
-    """Return ``(has_preamble, lines)`` after skipping exactly one line.
-
-    The preamble's contents are intentionally never parsed. New recordings
-    write ``{}``. Only a complete line counts as a preamble, because
-    :func:`_lines` omits an unterminated live tail.
-    """
-    lines = _lines(path)
-    try:
-        next(lines)
-    except StopIteration:
-        return False, ()
-    return True, lines
-
-
-def _body_lines(path):
-    """Iterate archive body lines after the ignored preamble."""
-    _, lines = _body(path)
-    yield from lines
-
-
-def _validate_stream_metadata(meta, path):
-    """Validate the sidecar fields needed by every rays consumer."""
-    sidecar = metadata_path(path)
-    if type(meta.get("format")) is not int or meta["format"] != FORMAT:
-        raise ValueError(f"{sidecar}: rays metadata format must be {FORMAT}")
-    if not isinstance(meta.get("geometry"), dict):
-        raise ValueError(f"{sidecar}: rays geometry metadata must be a mapping")
-    scene_budgets = meta.get("budgets")
-    if not isinstance(scene_budgets, dict):
-        raise ValueError(f"{sidecar}: rays budgets must be a mapping")
-    for scene, budget in scene_budgets.items():
-        if (not isinstance(scene, str) or not isinstance(budget, list)
-                or len(budget) != 2
-                or any(type(value) is not int or value < 1
-                       for value in budget)):
-            raise ValueError(f"{sidecar}: invalid rays budget for {scene!r}")
-    if "lean" in meta and meta["lean"] is not True:
-        raise ValueError(f"{sidecar}: lean must be true when present")
-
-
-def _scan_rows(path):
-    """Strictly scan a closed archive and return ``(done, clean)``.
-
-    Unlike the live-read helpers, this consumes the underlying stream
-    directly: an unterminated text line is dirty, and gzip EOF/checksum
-    failures propagate to the caller.
-    """
-    counts, trailers, validated_scenes = {}, {}, set()
-    with _open(path, "r") as fh:
-        preamble = next(fh, None)
-        if preamble is None or not preamble.endswith("\n"):
-            return {}, False
-        for line in fh:
-            if not line.endswith("\n"):
-                return {}, False
-            if line.startswith('{"stage": "'):
-                # Row fast path: the writer emits "stage" first, names are
-                # plain strings and the required keys in a fixed order.
-                # Rewritten/non-canonical rows fall through to JSON parsing.
-                end = line.find('"', 11)
-                pos = end
-                for marker in (', "mode": ', ', "ray": ', ', "fate": ',
-                               ', "pixel": ', ', "opl": ', ', "sins": '):
-                    pos = line.find(marker, pos + 1)
-                    if pos < 0:
-                        break
-                if end > 0 and pos >= 0 and line.endswith("}\n"):
-                    scene = line[11:end]
-                    if scene in validated_scenes:
-                        counts[scene] = counts.get(scene, 0) + 1
-                        continue
-            try:
-                row = json.loads(line)
-            except ValueError:
-                return {}, False
-            if not isinstance(row, dict):
-                return {}, False
-            if "scene_end" in row:
-                trailers[row["scene_end"]] = row["rows"]
-            elif "stage" in row:
-                required = {"stage", "mode", "ray", "fate", "pixel", "opl",
-                            "sins"}
-                if (not required <= set(row)
-                        or not isinstance(row["stage"], str)):
-                    return {}, False
-                if (row["fate"] == "screen"
-                        and not {"x", "y", "dx", "dy"} <= set(row)):
-                    return {}, False
-                counts[row["stage"]] = counts.get(row["stage"], 0) + 1
-                validated_scenes.add(row["stage"])
-    done = {scene: rows for scene, rows in trailers.items()
-            if counts.get(scene, 0) == rows}
-    clean = set(counts) == set(trailers) and len(done) == len(trailers)
-    return done, clean
-
-
-def scan(path, expected_meta=None):
-    """(meta, {scene: rows} complete, no-partial-scenes flag).
-
-    Metadata comes exclusively from the adjacent sidecar. ``expected_meta``
-    lets a writer reject a mismatch before scanning a potentially very large
-    ray stream. The archive's first complete line is an ignored preamble.
-    """
-    meta = read_metadata(path)
-    _validate_stream_metadata(meta, path)
-    if expected_meta is not None and not metadata_equal(meta, expected_meta):
-        return meta, {}, False
-    done, clean = _scan_rows(path)
-    # The sidecar defines the active scenes. This lets a structured metadata
-    # update retire a scene without rewriting a very large immutable archive;
-    # retired rows are still syntax/integrity checked by _scan_rows above.
-    done = {scene: rows for scene, rows in done.items()
-            if scene in meta["budgets"]}
-    return meta, done, clean
+def recorded_plane(sim, scene, scr_cfg) -> float:
+    """z of the recorded arrival plane. Every recorded part's scene geometry
+    must match the config (screens, budgets and precision may differ), and
+    the parts of a union must share one plane."""
+    want = _scene_core(geometry_metadata(sim.cfg), scene)
+    planes = set()
+    for part in getattr(sim.rays, "parts", [sim.rays]):
+        geo = part.meta.get("geometry", {})
+        if scene in geo and not metadata_equal(_scene_core(geo, scene), want):
+            raise ValueError(f"{part.path}: {scene} trace geometry differs "
+                             "from the config")
+        z = recorded_screen_z(geo, scene)
+        planes.add(float(scr_cfg.z) if z is None else z)
+    if len(planes) != 1:
+        raise ValueError(f"{sim.rays.path}: union parts recorded {scene} "
+                         f"arrivals on different planes {sorted(planes)}")
+    return planes.pop()
 
 
 class RaysReader:
-    """Read-only rays file for --replay: stages consume, nothing traces or
-    writes. Geometry fingerprint is NOT checked — replaying on a different
-    spectrum/material/precision is the point; budgets are (scene_stream).
-    A directory path is a v3 archive (rays_v3)."""
+    """Read-only v3 archive (a directory) for --replay: stages consume,
+    nothing traces or writes. Geometry fingerprint is NOT checked — replaying
+    on a different spectrum/material/precision is the point; budgets are
+    (scene_stream)."""
 
     readonly = True
 
     def __init__(self, path):
-        self._index = None
-        if rays_v3.is_v3(path):
-            self._index = rays_v3.load_index(path)
-            meta = rays_v3.metadata(path)
-            done = {scene: math.prod(budget)
-                    for scene, budget in meta["budgets"].items()}
-        else:
-            meta, done, clean = scan(path)
-            if not clean:
-                raise ValueError(
-                    f"{path}: rays archive is incomplete or corrupt; remove it "
-                    "manually or choose another recording"
-                )
+        if not rays_v3.is_v3(path):
+            raise ValueError(f"{path}: not a v3 rays archive directory")
+        self._index = rays_v3.load_index(path)
+        meta = rays_v3.metadata(path)
+        done = {scene: math.prod(budget)
+                for scene, budget in meta["budgets"].items()}
         self.path, self.meta, self.done = path, meta, done
 
+    @property
+    def index(self):
+        """The v3 section index."""
+        return self._index
+
     def scene_records(self, scene):
-        if self._index is not None:
-            return rays_v3.scene_records(self.path, self._index, scene)
-        return _file_records(self.path, scene)
+        return rays_v3.scene_records(self.path, self._index, scene)
 
     def write(self, scene, rec):
         pass
@@ -372,9 +175,9 @@ class RaysReader:
 
 
 class MultiRaysReader:
-    """Union of read-only rays files for --replay: scenes stream file by
-    file with mode ids offset, so k recordings act as one. Per scene the
-    mode counts add up; n_rays must agree across files."""
+    """Union of read-only rays archives for --replay: scenes stream archive
+    by archive with mode ids offset, so k recordings act as one. Per scene
+    the mode counts add up; n_rays must agree across archives."""
 
     readonly = True
 
@@ -417,7 +220,7 @@ class MultiRaysReader:
 
 
 def row_of(scene: str, rec: RayRecord, lean: bool) -> dict:
-    """The v2 row of one record: key order is part of the file contract."""
+    """The row of one record: key order is part of the file contract."""
     row = {"stage": scene, "mode": rec.mode, "ray": rec.ray,
            "fate": rec.fate, "pixel": rec.pixel}
     if lean:
@@ -433,27 +236,6 @@ def row_of(scene: str, rec: RayRecord, lean: bool) -> dict:
         if rec.refl and not lean:
             row["refl"] = [[float(c) for c in p] for p in rec.refl]
     return row
-
-
-def _file_records(path, scene):
-    """Scene rows -> RayRecords. opl/sins stay strings (float() at use);
-    point z is unknown-by-design (nan), direction dz rebuilt (unit, dz > 0)."""
-    # rows are written "stage"-first: skip foreign scenes without json.loads
-    prefix = '{"stage": ' + json.dumps(scene) + ","
-    for line in _body_lines(path):
-        if not line.startswith(prefix):
-            continue
-        row = json.loads(line)
-        if row.get("stage") != scene:
-            continue
-        point = direction = None
-        if "x" in row:
-            point = (row["x"], row["y"], float("nan"))
-            dx, dy = row["dx"], row["dy"]
-            direction = (dx, dy, math.sqrt(max(1.0 - dx * dx - dy * dy, 0.0)))
-        yield RayRecord(row["mode"], row["ray"], row["fate"], row["pixel"],
-                        point, direction, row["opl"], tuple(row["sins"]),
-                        tuple(tuple(p) for p in row.get("refl", ())))
 
 
 def require_full_rows(rays, rays_from: str, what: str):
@@ -495,12 +277,11 @@ def _counted(records, expected: int, scene: str, path: str):
                          f"{expected} recorded — file rewritten or truncated")
 
 
-def scene_stream(sim, scene, src_cfg, scr_cfg, optic, aim_factory,
-                 seed_offset: int):
+def scene_stream(sim, scene, src_cfg, scr_cfg, optic, aim_factory):
     """(records, "file"): the run's reader must hold the scene at the
     configured budgets; stages never trace (trace_v3 is the recording
-    command).  ``optic``/``aim_factory``/``seed_offset`` are kept for the
-    stage call sites and identify the scene only."""
+    command).  ``scr_cfg``/``optic``/``aim_factory`` are kept for the stage
+    call sites and identify the scene only."""
     n_modes, n_rays = src_cfg.budget()
     w = sim.rays
     if w is None:

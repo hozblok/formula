@@ -21,7 +21,7 @@ import time
 
 from .altcoh import FloatLineAmplitudes
 from ..shared.progress import Progress
-from ..rays import scene_stream
+from ..rays import recorded_plane, rescreen, scene_stream
 from ..screen import ScreenGrid
 
 
@@ -126,10 +126,8 @@ class SketchCoherence:
                 "ref_pixel": self.ref}
 
 
-def run_sketch_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
-                     seed_offset: int):
-    """The sketch estimator over the scene's ray records — from the shared
-    rays file when it matches, else traced (the stage-2/6 rng stream)."""
+def run_sketch_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory):
+    """The sketch estimator over the scene's recorded ray records."""
     cfg = sim.cfg
     screen = ScreenGrid(scr_cfg)
     n_modes, n_rays = src_cfg.budget()
@@ -138,7 +136,9 @@ def run_sketch_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
                           screen.ref_pixel(scr_cfg.reference),
                           cfg.sketch_rank, cfg.seed)
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
-                                      aim_factory, seed_offset)
+                                      aim_factory)
+    # arrivals re-projected from the recorded plane, re-binned on this grid
+    records = rescreen(records, recorded_plane(sim, scene, scr_cfg), screen)
     stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
              "off_window": 0}
     progress = Progress(label, n_modes * n_rays)

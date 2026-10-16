@@ -22,6 +22,7 @@ namespace cstrace {
 
 // Forward-step floor for the ray parameter t (m); capsysred.types._EPS_T.
 constexpr double kEpsT = 1e-12;
+constexpr const char *kEpsTStr = "1e-12";
 
 // Bore-membership nudge along the ray (m); capsysred.types._EPS_LOC.
 constexpr double kEpsLoc = 1e-7;
@@ -626,7 +627,12 @@ struct Tracer {
     }
     R t = (screen_z - O.z) / d.z;
     if (t < 0) {
-      return {fLost, O, opl, std::move(refl), d};
+      // Treat backward steps within the tolerance as arrival, keeping O and opl.
+      static const R screen_eps_t(kEpsTStr);
+      if (t < -screen_eps_t) {
+        return {fLost, O, opl, std::move(refl), d};
+      }
+      t = R();
     }
     V3 point = vadd(O, vscale(d, t));
     return {fScreen, point, opl + t, std::move(refl), d};
