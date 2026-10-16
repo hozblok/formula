@@ -264,7 +264,7 @@ class SectionWriter:
         self._closed = False
 
     def write_line(self, line: bytes) -> None:
-        """One complete v2 row line (ends with a newline)."""
+        """One complete row line (ends with a newline)."""
         self._gz.write(line)
         self.rows += 1
 

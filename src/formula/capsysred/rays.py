@@ -40,7 +40,7 @@ def stream_rng(seed: int, tag: SceneSeed, *parts) -> random.Random:
     """The rng of one named stream: ``"<seed>/<scene>[/<mode>]"``.
 
     Mode m of a scene draws its origin first, then 3 draws per ray, so the
-    ray lattice (seed, scene, mode, ray) is addressable: shards, top-ups
+    ray lattice (seed, scene, mode, ray) is addressable: parallel jobs, top-ups
     and single-piece traces produce identical rays.  Strings seed Python's
     Random through SHA-512, so distinct keys never alias.
     """
