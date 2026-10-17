@@ -4,7 +4,8 @@ import numpy as np
 from scipy.optimize import brentq
 
 from formula.capsysred.stages._b5_transport import (
-    count_free_caustics, reflect_variations, transport_mode, wall_normal_derivative,
+    bore_area, bore_inside, count_free_caustics, polygon_faces, reflect_variations, transport_mode,
+    wall_normal_derivative,
 )
 
 
@@ -162,3 +163,88 @@ def test_torus_transport_against_independent_finite_difference_paths():
         dp.append((plus[1]-minus[1])/(2*h))
     np.testing.assert_allclose(result["Q"][0], np.array(dx).T, rtol=2e-7, atol=1e-7)
     np.testing.assert_allclose(result["P"][0], np.array(dp).T, rtol=2e-7, atol=1e-7)
+
+
+def _square_trace(q, source, apothem, exit_z, target_z, rotation=0.):
+    """Straight channel with four flat faces: exact plane hits and mirror reflections."""
+    faces = np.array([[np.cos(rotation+np.pi/2*k), np.sin(rotation+np.pi/2*k)] for k in range(4)])
+    origin = np.r_[q, 0.]
+    u = origin-source
+    u /= np.linalg.norm(u)
+    refs = []
+    while True:
+        best = None
+        for n in faces:
+            md = n@u[:2]
+            if md <= 1e-30:
+                continue
+            t = (apothem-n@origin[:2])/md
+            if t > 1e-9 and (best is None or t < best[0]):
+                best = (t, n)
+        if best is None or origin[2]+best[0]*u[2] > exit_z:
+            end = origin+(target_z-origin[2])/u[2]*u
+            return end[:2], u[:2], refs
+        origin = origin+best[0]*u
+        refs.append(origin.copy().tolist())
+        n3 = np.r_[best[1], 0.]
+        u -= 2*np.dot(u, n3)*n3
+
+
+def test_polygon_helpers_faces_inside_and_area():
+    square = {"center": [1., -2.], "radius": 1., "sides": 4, "rotation_deg": 0}
+    np.testing.assert_allclose(polygon_faces(square), [[1, 0], [0, 1], [-1, 0], [0, -1]], atol=1e-15)
+    assert bore_inside(np.array([1.9, -1.1]), square) and not bore_inside(np.array([2.1, -2.]), square)
+    assert bore_inside(np.array([1.9, -1.1]), {"center": [1., -2.], "radius": 1., "kind": "polygon",
+                                               "sides": 4, "rotation": 0.})
+    assert not bore_inside(np.array([1.9, -1.1]), {"center": [1., -2.], "radius": 1.})   # inscribed circle
+    np.testing.assert_allclose(bore_area(square), 4.)
+    np.testing.assert_allclose(bore_area({"center": [0., 0.], "radius": 2.}), 4*np.pi)
+    hexagon = {"center": [0., 0.], "radius": 1., "sides": 6}
+    np.testing.assert_allclose(bore_area(hexagon), 6*np.tan(np.pi/6))
+
+
+def test_polygon_normal_is_the_face_normal_with_zero_derivative():
+    for rotation in (0., 45.):
+        bore = {"center": [.5, .25], "radius": 1., "sides": 4, "rotation_deg": rotation}
+        n = np.array([np.cos(np.radians(rotation)), np.sin(np.radians(rotation))])
+        point = np.r_[np.array([.5, .25])+n+.3*np.array([-n[1], n[0]]), 7.]
+        normal, derivative, length = wall_normal_derivative(point, bore, 0.)
+        np.testing.assert_allclose(normal, np.r_[n, 0.], atol=1e-15)
+        np.testing.assert_allclose(derivative, 0., atol=0.)
+        np.testing.assert_allclose(length, 1., atol=1e-15)
+    stacked = wall_normal_derivative(np.array([[1.5, .25, 1.], [.5, 1.25, 2.]]), {"center": [.5, .25], "radius": 1., "sides": 4}, 0.)
+    np.testing.assert_allclose(stacked[0], [[1., 0., 0.], [0., 1., 0.]], atol=1e-15)
+
+
+def test_square_bore_transport_matches_finite_differences_without_caustics():
+    source = np.array([.08, -.04, -2.])
+    cap = SimpleNamespace(z0=0., bores=[{"center": [0., 0.], "radius": 1., "sides": 4, "rotation_deg": 0}])
+    qs = np.array([[.1, .1], [.5, .15], [.9, .9], [.6, -.4]])          # (.9, .9) lies outside the inscribed circle
+    paths = [_square_trace(q, source, 1., 10., 12.) for q in qs]
+    assert max(len(p[2]) for p in paths) >= 2
+    mode = {"origin": source, "points": np.array([p[0] for p in paths]),
+            "directions": np.array([p[1] for p in paths]), "refl": [p[2] for p in paths]}
+    result = transport_mode(mode, cap, 12.)
+    assert np.all(result["valid"]), result["diagnostics"]
+    assert result["diagnostics"]["unassigned_bore_count"] == 0
+    np.testing.assert_allclose(result["entrance"], qs, atol=1e-15)
+    h = 1e-6
+    checked = []
+    for i, q in enumerate(qs):
+        dx, dp = [], []
+        for delta in np.eye(2)*h:
+            plus = _square_trace(q+delta, source, 1., 10., 12.)
+            minus = _square_trace(q-delta, source, 1., 10., 12.)
+            if len(plus[2]) != len(paths[i][2]) or len(minus[2]) != len(paths[i][2]):
+                break                                           # a reflection at the exit edge: no smooth branch
+            dx.append((plus[0]-minus[0])/(2*h))
+            dp.append((plus[1]-minus[1])/(2*h))
+        else:
+            np.testing.assert_allclose(result["Q"][i], np.array(dx).T, rtol=1e-7, atol=1e-8)
+            np.testing.assert_allclose(result["P"][i], np.array(dp).T, rtol=1e-7, atol=1e-8)
+            checked.append(len(paths[i][2]))
+    assert len(checked) >= 3 and max(checked) >= 1
+    np.testing.assert_array_equal(result["maslov"], 0)
+    dets = np.abs(result["Q"][:, 0, 0]*result["Q"][:, 1, 1]-result["Q"][:, 0, 1]*result["Q"][:, 1, 0])
+    np.testing.assert_allclose(dets, 49., rtol=1e-9)              # mirrors keep the free-flight tube
+    assert result["diagnostics"]["lagrangian_defect_max"] < 1e-13

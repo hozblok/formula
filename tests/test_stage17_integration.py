@@ -10,11 +10,11 @@ from formula.capsysred.rays import geometry_metadata
 from formula.capsysred.stages import stage17
 
 
-def make_scene():
+def make_scene(**bore):
     return Simulation.from_dict({
         "precision": 32, "energy_kev": 8.048,
         "capillary": {
-            "bores": [{"center": [0., 0.], "radius": 2e-6}], "z0": 0., "z1": .02,
+            "bores": [{"center": [0., 0.], "radius": 2e-6, **bore}], "z0": 0., "z1": .02,
             "source": {"shape": "point", "size": 0., "position": [0., 0., -.01], "n_modes": 1, "n_rays": 144},
             "screen": {"z": .02, "edge_x": 8e-6, "edge_y": 8e-6, "nx": 21, "ny": 21},
             "screens": [{"z": .05}],
@@ -158,3 +158,26 @@ def test_fingerprint_change_during_contract_is_rejected(tmp_path, monkeypatch):
     monkeypatch.setattr(rays_v3, "read_fingerprint", changed_during_validation)
     with pytest.raises(ValueError, match="fingerprint changed during geometry validation"):
         stage17._archive_contract(sim, archive)
+
+
+def test_square_bore_replays_and_assigns_corner_entrances(tmp_path):
+    sim = make_scene(sides=4)
+    archive = make_archive(tmp_path, sim)
+    output = tmp_path/"output"
+    sim.replay(str(archive), str(output), stages=[17])
+    meta = json.loads((output/"stage17/meta.json").read_text())
+    assert meta["accepted_phase_patches"] == 2
+    corner = {"origin": [0., 0., -.01], "points": np.array([[11.4e-6, 11.4e-6]]),
+              "directions": np.array([[0., 0.]]), "refl": [[]], "sins": [[]]}
+    groups, unassigned, entrance = stage17.entrance_families(corner, sim.cfg.capillary, .05)
+    np.testing.assert_allclose(entrance[0], [1.9e-6, 1.9e-6], rtol=1e-12)
+    assert unassigned == 0 and list(groups) == [(0, 0)]
+    _, unassigned_round, _ = stage17.entrance_families(corner, make_scene().cfg.capillary, .05)
+    assert unassigned_round == 1                                     # the same point misses the circle
+
+
+def test_preflight_rejects_non_polygon_non_circular_bores(tmp_path):
+    sim = make_scene()
+    sim.cfg.capillary.bores[0]["kind"] = "revolution"
+    with pytest.raises(ValueError, match="regular-polygon bores only"):
+        stage17.preflight_b5_inputs(sim, sim.cfg.validate_b5_estimator())

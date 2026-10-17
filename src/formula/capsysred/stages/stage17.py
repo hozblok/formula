@@ -19,6 +19,7 @@ from scipy.spatial import cKDTree
 from .. import rays_v3
 from ..rays import geometry_core, geometry_metadata, metadata_equal
 from ._b5_phase import fit_phase_gradient
+from ._b5_transport import bore_inside
 
 RESULT_DIR = "stage17"
 
@@ -41,8 +42,8 @@ def preflight_b5_inputs(sim, options):
     if float(screens[options["screen_index"]].z) < float(cap.z1):
         raise ValueError("stage 17 target screen must follow the capillary exit")
     for bore in cap.bores:
-        if bore.get("kind", "cylinder") not in ("cylinder", "torus") or "sides" in bore:
-            raise ValueError("stage 17 archive_phase currently supports circular bores only")
+        if bore.get("kind", "cylinder") not in ("cylinder", "torus", "polygon"):
+            raise ValueError("stage 17 archive_phase supports circular, torus and regular-polygon bores only")
 
 
 def _json_safe(value):
@@ -77,8 +78,6 @@ def _fresnel_product(sins, delta, beta):
 def entrance_families(mode, cap, target_z):
     """Coarse labels (entrance bore, reflection count), not certified branches."""
     source = np.asarray(mode["origin"], dtype=float)
-    centers = np.asarray([[float(v) for v in b["center"]] for b in cap.bores])
-    radii = np.asarray([float(b["radius"]) for b in cap.bores])
     groups = defaultdict(list)
     unassigned = 0
     entrance = np.full_like(mode["points"], np.nan)
@@ -93,8 +92,7 @@ def entrance_families(mode, cap, target_z):
             continue
         q = source[:2] + (first[:2]-source[:2])*(float(cap.z0)-source[2])/denominator
         entrance[i] = q
-        distance = np.linalg.norm(centers-q, axis=1)
-        matches = np.flatnonzero(distance <= radii*(1+1e-7))
+        matches = np.flatnonzero([bore_inside(q, b, tol=1e-7) for b in cap.bores])
         if len(matches) != 1:
             unassigned += 1
             continue

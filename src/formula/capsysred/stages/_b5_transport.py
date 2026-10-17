@@ -1,5 +1,7 @@
 """Fixed-source ray derivatives and free-flight caustics from full paths."""
 
+import math
+
 import numpy as np
 
 
@@ -36,12 +38,52 @@ def count_free_caustics(q, velocity_derivative, distance):
     return np.sum(inside, axis=-1).astype(np.int64), ambiguous
 
 
+def is_polygon(bore):
+    """Regular-polygon bore: config dicts carry kind, raw YAML dicts only `sides`."""
+    return bore.get("kind") == "polygon" or bore.get("sides") is not None
+
+
+def polygon_faces(bore):
+    """Outward unit normals (n, 2) of a regular polygon: face k at rotation + 2 pi k / n."""
+    n = int(bore["sides"])
+    rot = (float(bore["rotation"]) if bore.get("rotation") is not None
+           else math.radians(float(bore.get("rotation_deg", 0.0))))
+    phi = rot + 2.0 * np.pi * np.arange(n) / n
+    return np.column_stack([np.cos(phi), np.sin(phi)])
+
+
+def bore_inside(points, bore, tol=1e-8):
+    """Transverse points (..., 2) inside the bore: circle test, or apothem test per face."""
+    points = np.asarray(points, dtype=float)
+    center = np.asarray(bore["center"], dtype=float)
+    radius = float(bore["radius"])
+    if is_polygon(bore):
+        return np.max((points - center) @ polygon_faces(bore).T, axis=-1) <= radius * (1 + tol)
+    return np.linalg.norm(points - center, axis=-1) <= radius * (1 + tol)
+
+
+def bore_area(bore):
+    """Cross-section area: pi r^2, or n a^2 tan(pi / n) for a regular polygon of apothem a."""
+    radius = float(bore["radius"])
+    if is_polygon(bore):
+        n = int(bore["sides"])
+        return n * radius * radius * math.tan(math.pi / n)
+    return math.pi * radius * radius
+
+
 def wall_normal_derivative(points, bore, z0):
-    """Outward unit normal and its Cartesian derivative for a circular bore."""
+    """Outward unit normal and its Cartesian derivative for a circular, torus or polygon bore."""
     points = np.asarray(points, dtype=float)
     center = np.asarray(bore["center"], dtype=float)
     eye = np.eye(3)
-    if bore.get("kind", "cylinder") == "cylinder" and not bore.get("bend"):
+    if is_polygon(bore):
+        faces = polygon_faces(bore)
+        dots = (points[..., :2] - center) @ faces.T
+        k = np.argmax(dots, axis=-1)
+        n2 = faces[k] * np.take_along_axis(dots, k[..., None], -1)    # |raw| = distance to the hit face
+        raw = np.concatenate([n2, np.zeros_like(n2[..., :1])], axis=-1)
+        hessian = np.zeros((*points.shape[:-1], 3, 3))                 # flat face: constant normal
+    elif bore.get("kind", "cylinder") == "cylinder" and not bore.get("bend"):
         raw = points-np.r_[center, 0.]
         raw[..., 2] = 0
         hessian = np.broadcast_to(np.diag([1., 1., 0.]), (*points.shape[:-1], 3, 3))
@@ -64,7 +106,7 @@ def wall_normal_derivative(points, bore, z0):
         hessian = rr+(dr/rho)[..., None, None]*(ring_plane-rr)+np.outer(binormal, binormal)
         raw = dr[..., None]*radial+eta[..., None]*binormal
     else:
-        raise ValueError("B5 transport supports cylinder and torus walls only")
+        raise ValueError("B5 transport supports cylinder, torus and regular-polygon walls only")
     length = np.linalg.norm(raw, axis=-1)
     normal = raw/length[..., None]
     projector = eye-normal[..., :, None]*normal[..., None, :]
@@ -101,9 +143,7 @@ def transport_mode(mode, cap, target_z):
     initial = first-source
     initial /= np.linalg.norm(initial, axis=1)[:, None]
     entrance = source[:2]+initial[:, :2]/initial[:, 2, None]*(float(cap.z0)-source[2])
-    centers = np.array([b["center"] for b in cap.bores], dtype=float)
-    radii = np.array([b["radius"] for b in cap.bores], dtype=float)
-    within = np.linalg.norm(entrance[:, None, :]-centers[None], axis=-1) <= radii[None]*(1+1e-8)
+    within = np.column_stack([bore_inside(entrance, b) for b in cap.bores])
     bore_ids = np.where(within.sum(axis=1) == 1, within.argmax(axis=1), -1)
     q_all = np.full((count, 2, 2), np.nan)
     p_all = np.full_like(q_all, np.nan)

@@ -9,6 +9,8 @@ import shutil
 import time
 from types import SimpleNamespace
 
+from ._b5_transport import bore_area
+
 import numpy as np
 
 from .. import rays_v3
@@ -247,7 +249,7 @@ def run_canonical_map(sim, out_dir, options, *, rays_paths, log=None):
     screen = [cap.screen, *cap.screens][options["screen_index"]]
     grid = _map_grid(screen, options["map_stride"])
     cap_data = {"z0": float(cap.z0), "bores": sim.cfg.raw["capillary"]["bores"]}
-    area = sum(math.pi*float(bore["radius"])**2 for bore in cap.bores)
+    area = sum(bore_area(bore) for bore in cap.bores)
     implementation = _implementation_hashes()
     base_job = dict(archive=archive, cap=cap_data, max_rays=max(budgets), target_z=float(screen.z),
                     k=float(sim.lines[0].k), delta=sim.delta_f, beta=sim.beta_f,
