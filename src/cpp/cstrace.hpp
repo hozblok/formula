@@ -596,11 +596,9 @@ struct Tracer {
     R opl;
     std::vector<Refl> refl;
     if (optic) {
-      bool exited = false;
-      for (long i = 0; i < max_bounces; ++i) {
+      for (;;) {
         Event ev = next_event(*optic, O, d);
         if (ev.kind == kExit) {
-          exited = true;
           break;
         }
         if (ev.kind == kPass) {
@@ -612,14 +610,15 @@ struct Tracer {
           return {fAbsorbed, vadd(O, vscale(d, ev.t)), opl + ev.t,
                   std::move(refl), d};
         }
+        if (static_cast<long>(refl.size()) >= max_bounces) {
+          // reflection budget spent at this wall hit
+          return {fLost, ev.point, opl + ev.t, std::move(refl), d};
+        }
         opl += ev.t;
         R dot = vdot(d, ev.normal);
         d = vsub(d, vscale(ev.normal, 2 * dot));
         refl.push_back({ev.point, abs(dot)});
         O = ev.point;
-      }
-      if (!exited) {  // bounce budget spent: for-else in trace_ray
-        return {fLost, O, opl, std::move(refl), d};
       }
     }
     if (d.z <= 0) {

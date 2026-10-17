@@ -24,6 +24,8 @@ def trace_ray(origin: Vec3, direction: Vec3, optic, screen_z: Number,
     """Trace one ray from the source point to the screen plane z=screen_z.
 
     `direction` must be unit (Number-normalized) so parameters are path lengths.
+    `max_bounces` caps the reflections; passes and the exit are free, and the
+    wall hit that would exceed the cap ends the ray there as "lost".
     """
     p = origin[0].precision
     two = Number("2", p)
@@ -32,7 +34,7 @@ def trace_ray(origin: Vec3, direction: Vec3, optic, screen_z: Number,
     O, d = origin, direction
 
     if optic is not None:
-        for _ in range(max_bounces):
+        while True:
             event = optic.next_event(O, d)
             kind = event[0]
             if kind == "exit":
@@ -47,13 +49,14 @@ def trace_ray(origin: Vec3, direction: Vec3, optic, screen_z: Number,
                 return TraceResult("absorbed", vadd(O, vscale(d, t)),
                                    opl + t, reflections, d)
             _, t, P, normal = event
+            if len(reflections) >= max_bounces:
+                # reflection budget spent at this wall hit
+                return TraceResult("lost", P, opl + t, reflections, d)
             opl = opl + t
             dot = vdot(d, normal)
             d = vsub(d, vscale(normal, two * dot))
             reflections.append((P, abs(dot)))
             O = P
-        else:
-            return TraceResult("lost", O, opl, reflections, d)
 
     if float(d[2]) <= 0.0:
         return TraceResult("lost", O, opl, reflections, d)

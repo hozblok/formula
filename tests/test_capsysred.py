@@ -186,12 +186,10 @@ def test_capillary_multibounce_survives():
     assert tr.fate == "screen" and len(tr.reflections) >= 3
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "P1: max_bounces budgets tracer events, not reflections — the entry "
-    "pass, the pass to z1 and the exit each consume one, so N reflections "
-    "need max_bounces >= N+3 (trace.py and cstrace.hpp alike); the counter "
-    "should charge reflections only"))
 def test_max_bounces_counts_reflections_only():
+    """Passes and the exit are free: N reflections fit a budget of N, a budget
+    of N-1 ends the ray at its N-th wall hit as lost — on both tracers."""
+    from formula.capsysred.native import make_tracer
     sim = Simulation.from_dict(TINY)
     cap = sim.cfg.capillary
     bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
@@ -205,9 +203,20 @@ def test_max_bounces_counts_reflections_only():
     assert reference.fate == "screen"
     n = len(reference.reflections)
     assert n >= 3
-    exact = trace_ray(origin, d, bundle, cap.screen.z, n)
-    assert exact.fate == "screen"                 # N reflections, budget N
-    assert len(exact.reflections) == n
+    for tracer in (trace_ray, make_tracer(bundle)):
+        exact = tracer(origin, d, bundle, cap.screen.z, n)
+        assert exact.fate == "screen"                 # N reflections, budget N
+        assert len(exact.reflections) == n
+        assert float(exact.opl) == pytest.approx(float(reference.opl), rel=1e-12)
+        short = tracer(origin, d, bundle, cap.screen.z, n - 1)
+        assert short.fate == "lost"                   # stopped at the N-th wall hit
+        assert len(short.reflections) == n - 1
+        assert [float(c) for c in short.point] == pytest.approx(
+            [float(c) for c in reference.reflections[n - 1][0]], rel=1e-12, abs=1e-18)
+        assert float(short.opl) < float(reference.opl)
+    # no wall contact at all: a zero budget still lets the ray through
+    axial = trace_ray(origin, (lift(0.0, p), lift(0.0, p), lift(1.0, p)), bundle, cap.screen.z, 0)
+    assert axial.fate == "screen" and not axial.reflections
 
 
 def test_symbolic_templates_match_references():
