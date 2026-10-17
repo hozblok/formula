@@ -273,7 +273,6 @@ class PackedMask:
         self.s = inside.shape[1]
         self.bits = [[np.packbits(inside[:, s, :, t]) for t in range(self.s)]
                      for s in range(self.s)]
-        self.coverage = inside.mean(axis=(1, 3))
 
     def slab(self, s, t):
         n = self.shape[0] * self.shape[1]
