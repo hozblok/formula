@@ -332,29 +332,36 @@ class BoreSolver:
     def _coords(self, g):
         return (np.arange(g[0], g[1]) * self.h, np.arange(g[2], g[3]) * self.h)
 
-    def transfer(self, fam, k, delta, beta):
-        """exp(-i kappa^2 L / 2k) prod_j r(|kappa . n'_j| / k) on the family grid."""
+    def transfer(self, fam, k, delta, beta, rows=256):
+        """exp(-i kappa^2 L / 2k) prod_j r(|kappa . n'_j| / k) on the family grid, filled
+        in row chunks so that only the result is grid-sized."""
         key = (id(fam), k)
         if key in self.cache:
             return self.cache[key]
         nx, ny = fam.grid[1] - fam.grid[0], fam.grid[3] - fam.grid[2]
         kx = 2.0 * np.pi * sfft.fftfreq(nx, self.h)
         ky = 2.0 * np.pi * sfft.fftfreq(ny, self.h)
-        H = np.exp(-1j * (kx[:, None] ** 2 + ky[None, :] ** 2) * self.length / (2.0 * k))
-        for n in fam.unfolded:
-            H = H * fresnel_r(np.abs(kx[:, None] * n[0] + ky[None, :] * n[1]) / k, delta, beta)
         # band limit: waves steeper than reach/L would leave the box and wrap around;
         # raised cosine per axis over the upper half of the margin band above theta_max
         # (a separable window keeps the square problem exactly separable)
         t_hi = self.theta_cut
         t_lo = t_hi - 0.5 * (t_hi - self.theta_max)
-        if t_lo > self.theta_max:
-            def window(kk):
-                theta = np.abs(kk) / k
-                return np.where(theta <= t_lo, 1.0,
-                                np.where(theta >= t_hi, 0.0,
-                                         0.5 * (1.0 + np.cos(np.pi * (theta - t_lo) / (t_hi - t_lo)))))
-            H = H * (window(kx)[:, None] * window(ky)[None, :])
+
+        def window(kk):
+            theta = np.abs(kk) / k
+            return np.where(theta <= t_lo, 1.0,
+                            np.where(theta >= t_hi, 0.0,
+                                     0.5 * (1.0 + np.cos(np.pi * (theta - t_lo) / (t_hi - t_lo)))))
+        wx, wy = (window(kx), window(ky)) if t_lo > self.theta_max else (None, None)
+        H = np.empty((nx, ny), dtype=complex)
+        for i0 in range(0, nx, rows):
+            kxc = kx[i0:i0 + rows, None]
+            h = np.exp(-1j * (kxc ** 2 + ky[None, :] ** 2) * self.length / (2.0 * k))
+            for n in fam.unfolded:
+                h *= fresnel_r(np.abs(kxc * n[0] + ky[None, :] * n[1]) / k, delta, beta)
+            if wx is not None:
+                h *= wx[i0:i0 + rows, None] * wy[None, :]
+            H[i0:i0 + rows] = h
         return H
 
     def cache_transfer(self, k, delta, beta, budget_bytes):
@@ -380,10 +387,16 @@ class BoreSolver:
                     np.multiply(cx[:, s, None], cy[None, :, t], out=tmp)
                     tmp *= fam.mask.slab(s, t)
                     u += tmp
+            del tmp
             u *= 1.0 / (self.supersample ** 2 * 1j * lam * self.z_in)
-            u = sfft.ifft2(sfft.fft2(u, workers=workers) * self.transfer(fam, k, delta, beta),
-                           workers=workers)
+            # two grid-sized arrays alive at most (out-of-place FFTs keep the bit pattern)
+            F = sfft.fft2(u, workers=workers)
+            del u
+            F *= self.transfer(fam, k, delta, beta)
+            u = sfft.ifft2(F, workers=workers)
+            del F
             out += u[fam.slice]
+            del u
         return out * self.exit_mask
 
 
