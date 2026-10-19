@@ -201,6 +201,12 @@ def test_polygon_helpers_faces_inside_and_area():
     np.testing.assert_allclose(bore_area({"center": [0., 0.], "radius": 2.}), 4*np.pi)
     hexagon = {"center": [0., 0.], "radius": 1., "sides": 6}
     np.testing.assert_allclose(bore_area(hexagon), 6*np.tan(np.pi/6))
+    rect = {"center": [0., 0.], "radius": 1., "sides": 4, "rotation_deg": 0, "apothems": [1., 2., 1., 2.]}
+    assert bore_inside(np.array([.9, 1.9]), rect) and not bore_inside(np.array([1.1, 0.]), rect)
+    assert not bore_inside(np.array([0., 2.1]), rect)
+    np.testing.assert_allclose(bore_area(rect), 8.)
+    np.testing.assert_allclose(wall_normal_derivative(np.array([1., .5, 3.]), rect, 0.)[0], [1., 0., 0.], atol=1e-15)
+    np.testing.assert_allclose(wall_normal_derivative(np.array([.2, 2., 3.]), rect, 0.)[0], [0., 1., 0.], atol=1e-15)
 
 
 def test_polygon_normal_is_the_face_normal_with_zero_derivative():

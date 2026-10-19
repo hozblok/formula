@@ -37,11 +37,12 @@ def _wall_spec(wall):
                 (wall.eps, wall._cxf, wall._cyf,
                  wall._c0f, wall._c1f, wall._c2f))
     if type(wall) is PolygonWall:
-        mp = [_raw(wall.apothem), _raw(wall.center[0]), _raw(wall.center[1])]
-        fl = [wall._af, wall._cxf, wall._cyf]
-        for (mx, my), (mxf, myf) in zip(wall.faces, wall._facesf):
-            mp += [_raw(mx), _raw(my)]
-            fl += [mxf, myf]
+        # (cx, cy, then m_x, m_y, a_k per face) in mp and in float
+        mp = [_raw(wall.center[0]), _raw(wall.center[1])]
+        fl = [wall._cxf, wall._cyf]
+        for (mx, my), (mxf, myf), a, af in zip(wall.faces, wall._facesf, wall.apothems, wall._afs):
+            mp += [_raw(mx), _raw(my), _raw(a)]
+            fl += [mxf, myf, af]
         return ("polygon", tuple(mp), tuple(fl))
     if type(wall) is TorusWall:
         return ("torus",

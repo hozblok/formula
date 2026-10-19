@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from formula.henke import f1, f2, silica_electron_density
+from formula.henke import f1, f2, silica_electron_density, silicon_electron_density
 
 
 def test_f1_approaches_z_far_from_edges():
@@ -34,3 +34,10 @@ def test_silica_rho_imag_reproduces_legacy_beta():
     lam = 12.398419843320026 / 10.0 * 1e-10
     beta = 2.8179403262e-15 * lam * lam / (2 * math.pi) * silica_electron_density(10.0).imag
     assert math.isclose(beta, 3.89e-8, rel_tol=0.005)
+
+
+def test_silicon_rho_is_atom_density_times_f():
+    # N_Si = 2330 / 0.0280855 * N_A = 4.99603e28 m^-3; Henke f1 / f2 of Si at 10 keV
+    rho = silicon_electron_density(10.0)
+    assert math.isclose(rho.real, 4.99603e28 * 14.1940, rel_tol=1e-4)
+    assert math.isclose(rho.imag, 4.99603e28 * 0.21355, rel_tol=1e-3)

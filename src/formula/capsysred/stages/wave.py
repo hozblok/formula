@@ -25,6 +25,7 @@ from ..screen import ScreenGrid
 from ..shared.units import m_to_um
 
 RESULT_DIR = "stage16"
+FIELD_DUMP = "field-capillary.npz"
 MODEL_CLASS = {"free": "free-space", "uisk": "kirchhoff-rims", "fb": "dir-ell"}
 # reference intensity below this fraction of max I = deep diffraction tail: the lattice
 # representation of the aperture edges dominates W
@@ -170,22 +171,23 @@ def recorded_rule(archives, scene, src):
 # ----------------------------------------------------------------- polygon bores
 
 class Polygon:
-    """Regular-polygon bore: face k has unit normal at rotation + 2 pi k / n, plane (p - c).n = a."""
+    """Polygon bore: face k has unit normal at rotation + 2 pi k / n, plane (p - c).n = a_k."""
 
     def __init__(self, bore):
         self.n = int(bore["sides"])
-        self.a = float(bore["radius"])
+        self.a = np.array([float(v) for v in bore.get("apothems") or [bore["radius"]] * self.n])
+        self.scale = float(self.a.max())
         self.c = np.array([float(bore["center"][0]), float(bore["center"][1])])
         ang = float(bore["rotation"]) + 2.0 * np.pi * np.arange(self.n) / self.n
         self.normals = np.stack([np.cos(ang), np.sin(ang)], -1)
         self.verts = np.array([
             self.c + np.linalg.solve(np.stack([self.normals[k], self.normals[(k + 1) % self.n]]),
-                                     [self.a, self.a])
+                                     [self.a[k], self.a[(k + 1) % self.n]])
             for k in range(self.n)])
 
     def reflect_point(self, k, p):
         n = self.normals[k]
-        s = (p - self.c) @ n - self.a
+        s = (p - self.c) @ n - self.a[k]
         return p - 2.0 * s[..., None] * n
 
     def reflect_vector(self, k, v):
@@ -226,7 +228,15 @@ class Family:
 
 def enumerate_families(poly, max_bounces):
     """Reflection sequences up to max_bounces; sequences that unfold onto the same
-    tile (commuting reflections, e.g. both corner orders of a square) are one family."""
+    tile (commuting reflections, e.g. both corner orders of a square) are one family.
+    Four faces (rectangle): the tiles are the lattice (kx, ky), |kx| + |ky| <= max_bounces."""
+    if poly.n == 4:
+        out = []
+        for kx in range(-max_bounces, max_bounces + 1):
+            for ky in range(-(max_bounces - abs(kx)), max_bounces - abs(kx) + 1):
+                sx, sy = ((0, 2) if kx > 0 else (2, 0)), ((1, 3) if ky > 0 else (3, 1))
+                out.append(Family(poly, [sx[i % 2] for i in range(abs(kx))] + [sy[i % 2] for i in range(abs(ky))]))
+        return out
     seqs, frontier = [()], [()]
     for _ in range(max_bounces):
         new = [s + (i,) for s in frontier for i in range(poly.n) if not s or s[-1] != i]
@@ -235,7 +245,7 @@ def enumerate_families(poly, max_bounces):
     out = []
     for s in seqs:
         fam = Family(poly, s)
-        if not any(fam.same_tile(f, poly.a) for f in out):
+        if not any(fam.same_tile(f, poly.scale) for f in out):
             out.append(fam)
     return out
 
@@ -245,7 +255,7 @@ def sub_offsets(h, supersample):
 
 
 def sub_lattice_mask(xs, ys, center, normals, a, supersample, strip=256):
-    """Indicator of the convex polygon (p - center).n_k <= a on the S x S sub-lattice,
+    """Indicator of the convex polygon (p - center).n_k <= a_k on the S x S sub-lattice,
     shape (nx, S, ny, S); built in x-strips so the float temporaries stay small."""
     h = xs[1] - xs[0] if len(xs) > 1 else (ys[1] - ys[0] if len(ys) > 1 else 1.0)
     off = sub_offsets(h, supersample)
@@ -254,8 +264,8 @@ def sub_lattice_mask(xs, ys, center, normals, a, supersample, strip=256):
     for i0 in range(0, len(xs), strip):
         X = (xs[i0:i0 + strip, None] + off[None, :]).reshape(-1)
         inside = np.ones((X.size, Y.size), dtype=bool)
-        for n in normals:
-            inside &= ((X[:, None] - center[0]) * n[0] + (Y[None, :] - center[1]) * n[1]) <= a
+        for n, ak in zip(normals, np.broadcast_to(a, (len(normals),))):
+            inside &= ((X[:, None] - center[0]) * n[0] + (Y[None, :] - center[1]) * n[1]) <= ak
         out[i0:i0 + strip] = inside.reshape(-1, supersample, len(ys), supersample)
     return out
 
@@ -331,9 +341,22 @@ class BoreSolver:
     def _coords(self, g):
         return (np.arange(g[0], g[1]) * self.h, np.arange(g[2], g[3]) * self.h)
 
-    def transfer(self, fam, k, delta, beta, rows=256):
-        """exp(-i kappa^2 L / 2k) prod_j r(|kappa . n'_j| / k) on the family grid, filled
-        in row chunks so that only the result is grid-sized."""
+    @staticmethod
+    def _axis_counts(fam, tol=1e-12):
+        """(reflections off x faces, off y faces) when every unfolded normal is a lattice axis, else None."""
+        a = b = 0
+        for n in fam.unfolded:
+            if abs(abs(n[0]) - 1.0) < tol and abs(n[1]) < tol:
+                a += 1
+            elif abs(abs(n[1]) - 1.0) < tol and abs(n[0]) < tol:
+                b += 1
+            else:
+                return None
+        return a, b
+
+    def transfer(self, fam, k, delta, beta, rows=256, general=False):
+        """exp(-i kappa^2 L / 2k) prod_j r(|kappa . n'_j| / k) on the family grid: an outer product of
+        two 1D factors for axis-aligned faces, else filled in row chunks so that only the result is grid-sized."""
         key = (id(fam), k)
         if key in self.cache:
             return self.cache[key]
@@ -352,6 +375,13 @@ class BoreSolver:
                             np.where(theta >= t_hi, 0.0,
                                      0.5 * (1.0 + np.cos(np.pi * (theta - t_lo) / (t_hi - t_lo)))))
         wx, wy = (window(kx), window(ky)) if t_lo > self.theta_max else (None, None)
+        axes = None if general else self._axis_counts(fam)
+        if axes is not None:
+            ex = np.exp(-1j * kx ** 2 * self.length / (2.0 * k)) * fresnel_r(np.abs(kx) / k, delta, beta) ** axes[0]
+            ey = np.exp(-1j * ky ** 2 * self.length / (2.0 * k)) * fresnel_r(np.abs(ky) / k, delta, beta) ** axes[1]
+            if wx is not None:
+                ex, ey = ex * wx, ey * wy
+            return np.outer(ex, ey)
         H = np.empty((nx, ny), dtype=complex)
         for i0 in range(0, nx, rows):
             kxc = kx[i0:i0 + rows, None]
@@ -583,11 +613,12 @@ def preflight_wave_inputs(sim, wave):
 def _polygon_circumradius(bore):
     if bore.get("sides") is None:
         return float(bore["radius"])
-    return float(bore["radius"]) / math.cos(math.pi / int(bore["sides"]))
+    poly = Polygon(bore)
+    return float(np.max(np.linalg.norm(poly.verts - poly.c, axis=1)))
 
 
 def capillary_provider(cap, wave):
-    """Provider for the capillary scene: uisk for regular polygons, fb for circular / torus
+    """Provider for the capillary scene: uisk for polygons, fb for circular / torus
     bores; `auto` picks by geometry, an explicit choice must match it (no fallback)."""
     kinds = {bore.get("kind", "cylinder") for bore in cap.bores}
     polygonal = kinds <= {"polygon"}
@@ -596,14 +627,14 @@ def capillary_provider(cap, wave):
     if prov == "auto":
         prov = "uisk" if polygonal else ("fb" if circular else None)
     if prov == "uisk" and not polygonal:
-        raise ValueError("wave_estimator: provider uisk supports regular-polygon bores "
-                         f"only (sides: n); got kinds {sorted(kinds)}")
+        raise ValueError("wave_estimator: provider uisk supports polygon bores "
+                         f"only (sides: n, optional apothems); got kinds {sorted(kinds)}")
     if prov == "fb" and not circular:
         raise ValueError("wave_estimator: provider fb supports circular bores (radius, optional "
                          f"bend) only; got kinds {sorted(kinds)}")
     if prov is None:
         raise ValueError(f"wave_estimator: no provider for bore kinds {sorted(kinds)} "
-                         "(uisk: regular polygons; fb: circular / torus)")
+                         "(uisk: polygons; fb: circular / torus)")
     return prov
 
 
@@ -663,8 +694,15 @@ def _run(sim, out_dir, partial, wave, rays_paths, log):
     cap = cfg.capillary
     if cap is not None and wave["provider"] in ("auto", "uisk", "fb"):
         prov = capillary_provider(cap, wave)
+        if wave["dump_field"] and prov != "uisk":
+            raise ValueError("wave_estimator: dump_field is implemented for provider uisk only")
+        if wave["entrance_spot"] and prov != "fb":
+            raise ValueError("wave_estimator: entrance_spot is implemented for provider fb only")
         if prov == "uisk":
-            scenes = _capillary_scene(sim, wave, lines, rays_paths, workers, log)
+            scenes = _capillary_scene(sim, wave, lines, rays_paths, workers, log,
+                                      dump_dir=partial if wave["dump_field"] else None)
+            if wave["dump_field"]:
+                files.append(FIELD_DUMP)
         else:
             from . import wave_fb
             scenes = wave_fb.fb_capillary_scene(sim, wave, lines, rays_paths, log)
@@ -713,7 +751,7 @@ def _free_scene(sim, wave, lines, rays_paths):
     return res
 
 
-def _capillary_scene(sim, wave, lines, rays_paths, workers, log):
+def _capillary_scene(sim, wave, lines, rays_paths, workers, log, dump_dir=None):
     cfg = sim.cfg
     cap = cfg.capillary
     src = cap.source
@@ -755,13 +793,17 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log):
     t0 = time.time()
     budget = int(wave["cache_gb"] * 1024 ** 3 / max(len(lines), 1))
     dists = [float(s.z) - float(cap.z1) for s in screens]
-    for k, wl, delta, beta in lines:
+    dump = {}
+    for li, (k, wl, delta, beta) in enumerate(lines):
         for b in solvers:
             b.cache_transfer(k, delta, beta, budget)
         kerns = [[g.kernels(b.xs, b.ys, k, d, b.h) for b in solvers] for g, d in zip(samplers, dists)]
         every = max(1, len(nodes) // 10)
         for j, (xi, w) in enumerate(zip(nodes, weights)):
             exits = [b.exit_field(xi, k, delta, beta, workers) for b in solvers]
+            if dump_dir is not None:
+                for bi, u in enumerate(exits):
+                    dump[f"field_line{li}_node{j}_bore{bi}"] = np.asarray(u, dtype=np.complex128)
             for g, acc, kern_b, d in zip(samplers, accs, kerns, dists):
                 fields, refs, subs = [], [], []
                 for b, u, kern in zip(solvers, exits, kern_b):
@@ -772,6 +814,13 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log):
                 acc.add(w * wl, fields, refs, subs)
             if (j + 1) % every == 0 or j + 1 == len(nodes):
                 log(f"    nodes {j + 1}/{len(nodes)}, {time.time() - t0:.0f} s")
+    if dump_dir is not None:
+        for bi, b in enumerate(solvers):
+            dump[f"xs_bore{bi}"], dump[f"ys_bore{bi}"] = b.xs, b.ys
+        np.savez(os.path.join(dump_dir, FIELD_DUMP), k=np.array([k for k, *_ in lines]),
+                 line_weights=np.array([wl for _, wl, *_ in lines]), nodes=np.asarray(nodes, dtype=float),
+                 node_weights=np.asarray(weights, dtype=float), h=np.array(solvers[0].h),
+                 z_exit=np.array(float(cap.z1)), **dump)
     out = []
     a = float(cap.bores[0]["radius"])
     lam0 = float(sim.lam)
@@ -791,7 +840,8 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log):
                               "grids": [[int(v) for v in f.grid] for f in b.families]}
                              for i, b in enumerate(solvers)],
                 "max_bounces": int(wave["max_bounces"]), "fresnel_numbers": nf,
-                "distance_m": d, "apothem_m": a}
+                "distance_m": d, "apothem_m": a,
+                "apothems_m": [float(v) for v in cap.bores[0].get("apothems") or [a]]}
         res = _finish(acc, g, meta, wave, time.time() - t0)
         res["report"] = _report_lines(label, res, wave, [
             f"- lattice h = {m_to_um(solvers[0].h):.4f} µm ({wave['mask_supersample']}× mask "

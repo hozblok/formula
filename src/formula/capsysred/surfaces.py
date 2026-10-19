@@ -20,7 +20,7 @@ from .shared.types import (_EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _TCAP_TOL
 from .shared.units import m_to_um
 from .walls.wall_cylinder import CylinderWall
 from .walls.wall_funnel import FunnelWall
-from .walls.wall_polygon import PolygonWall
+from .walls.wall_polygon import PolygonWall, polygon_vertices
 from .walls.wall_revolution import RevolutionWall
 from .walls.wall_torus import TorusWall
 
@@ -101,7 +101,8 @@ def entrance_disk(bore: dict, z0f: float):
         c0, c1, c2 = (float(v) for v in bore["r2_poly"])
         rf = math.sqrt(max(c0 + z0f * (c1 + z0f * c2), 0.0))
     elif kind == "polygon":
-        rf = float(bore["radius"]) / math.cos(math.pi / int(bore["sides"]))
+        aps = bore.get("apothems") or [bore["radius"]] * int(bore["sides"])
+        rf = max(math.hypot(x, y) for x, y in polygon_vertices(aps, bore["sides"], bore.get("rotation", 0.0)))
     elif kind == "implicit":
         rf = float(bore["aim_radius"])
     else:
@@ -121,7 +122,8 @@ def _make_wall(bore: dict, z0):
     if kind == "revolution":
         return RevolutionWall("revolution", center, bore["r2_poly"])
     if kind == "polygon":
-        return PolygonWall(center, bore["radius"], bore["sides"], bore["rotation"])
+        return PolygonWall(center, bore.get("apothems") or (bore["radius"],) * int(bore["sides"]),
+                           bore["sides"], bore["rotation"])
     if kind == "torus":
         return TorusWall(center, bore["radius"], bore["bend"]["radius"],
                          bore["bend"]["toward"], z0)

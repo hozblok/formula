@@ -241,23 +241,26 @@ def bore_axis(bore, z):
 
 
 def _shape(bore):
-    """(sides, rotation) of a polygon bore, None for a circle."""
+    """(sides, rotation, apothem / radius per face) of a polygon bore, None for a circle."""
     sides = bore.get("sides")
     if not sides:
         return None
     rot = bore.get("rotation")
     rot = float(rot) if rot is not None else math.radians(float(bore.get("rotation_deg", 0.0)))
-    return int(sides), rot
+    aps = bore.get("apothems")
+    ratio = np.array([float(a) for a in aps]) / float(bore["radius"]) if aps is not None else np.ones(int(sides))
+    return int(sides), rot, ratio
 
 
 def _stretch(shape, phis):
-    """Radius factor of the bore outline at the angles phis: a polygon of apothem a has
-    r = a / cos(angle to the nearest face normal); a circle 1."""
+    """Radius factor of the bore outline at the angles phis: the nearest face plane along the
+    ray from the centre, r = min_k a_k / cos(phi - phi_k) over faces ahead; a circle 1."""
     if shape is None:
         return np.ones(phis.size)
-    n, rot = shape
-    rel = np.mod(phis - rot + math.pi / n, 2.0 * math.pi / n) - math.pi / n
-    return 1.0 / np.cos(rel)
+    n, rot, ratio = shape
+    cosr = np.cos(np.asarray(phis)[:, None] - (rot + 2.0 * math.pi * np.arange(n) / n)[None, :])
+    r = np.where(cosr > 1e-12, ratio[None, :] / np.maximum(cosr, 1e-12), np.inf)
+    return r.min(axis=1)
 
 
 def _ring_sum(seg, idx, z, cx, cy, radii, phis, k, z_src, window, stretch):

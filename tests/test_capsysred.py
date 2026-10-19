@@ -123,6 +123,11 @@ def test_material_enum_selects_wall_glass():
     assert abs(2.0 * float(sim.cfg.material.beta("8.0", precision=32))
                - 1.145e-7) < 1e-12
     assert Simulation.from_dict(TINY).cfg.material is xray.FUSED_SILICA
+    si = Simulation.from_dict(dict(TINY, material="silicon")).cfg.material
+    assert si is xray.SILICON
+    assert abs(float(si.delta("8.048", precision=32)) - 7.581e-6) < 2e-9          # Henke, 2.33 g/cm^3
+    assert abs(float(si.beta("8.048", precision=32)) - 1.728e-7) < 2e-10
+    assert abs(float(si.critical_angle("8.048", precision=32)) - 3.894e-3) < 2e-6
     with pytest.raises(ValueError, match="unknown material"):
         Simulation.from_dict(dict(TINY, material="lead"))
 
@@ -4116,3 +4121,48 @@ def test_stage11_repeated_jsonl_write_failure_still_cleans_up(tmp_path, monkeypa
     left = sorted(p.name for p in out.iterdir())
     assert not any(n.startswith(("11", "stage11-", "mu-beamlet")) for n in left), left
     assert samplers and not samplers[0].is_alive()
+
+
+def test_apothems_rectangle_config_trace_and_twin():
+    ax, ay = 1.25e-7, 1.794e-7
+    rect = _cap_sim([{"center": [0.0, 0.0], "radius": ax, "sides": 4, "apothems": [ax, ay, ax, ay]}], z1=0.005)
+    bore = rect.cfg.capillary.bores[0]
+    assert bore["kind"] == "polygon" and [float(a) for a in bore["apothems"]] == [ax, ay, ax, ay]
+    for bad in ({"apothems": [ax, ay, ax]}, {"apothems": [ax, -ay, ax, ay]}):
+        with pytest.raises(ValueError, match="apothems"):
+            _cap_sim([{"center": [0.0, 0.0], "radius": ax, "sides": 4, **bad}])
+    with pytest.raises(ValueError, match="apothems needs sides"):
+        _cap_sim([{"center": [0.0, 0.0], "radius": ax, "apothems": [ax, ax, ax, ax]}])
+    # equal apothems are the regular polygon: same wall expression, same exact reflections
+    reg = _cap_sim([{"center": [0.0, 0.0], "radius": 3e-6, "sides": 6}])
+    eq = _cap_sim([{"center": [0.0, 0.0], "radius": 3e-6, "sides": 6, "apothems": [3e-6] * 6}])
+    b_reg = CapillaryBundle(reg.cfg.capillary.bores, reg.cfg.capillary.z0, reg.cfg.capillary.z1)
+    b_eq = CapillaryBundle(eq.cfg.capillary.bores, eq.cfg.capillary.z0, eq.cfg.capillary.z1)
+    assert b_reg.walls[0].expr_um == b_eq.walls[0].expr_um
+    p = reg.cfg.precision
+    zs = reg.cfg.capillary.screen.z
+    for dx, dy in ((4.0e-4, 1.5e-4), (-2.0e-4, 3.0e-4), (1.0e-4, -5.0e-4)):
+        d = vunit((lift(dx, p), lift(dy, p), lift(1.0, p)))
+        origin = (lift(2e-7, p), lift(-1e-7, p), reg.cfg.capillary.z0)
+        t1, t2 = trace_ray(origin, d, b_reg, zs, 50), trace_ray(origin, d, b_eq, zs, 50)
+        assert t1.fate == t2.fate and len(t1.reflections) >= 2
+        assert [str(s) for _, s in t1.reflections] == [str(s) for _, s in t2.reflections]
+    # rectangle: a ray along x meets the x faces at t d_x = a_x, along y at a_y
+    cap = rect.cfg.capillary
+    b = CapillaryBundle(cap.bores, cap.z0, cap.z1)
+    p = rect.cfg.precision
+    origin = (lift(0.0, p), lift(0.0, p), cap.z0)
+    th = 5.0e-4
+    for d, a in ((vunit((lift(th, p), lift(0.0, p), lift(1.0, p))), ax),
+                 (vunit((lift(0.0, p), lift(th, p), lift(1.0, p))), ay)):
+        kind, t, _, _ = b.next_event(origin, d)
+        assert kind == "reflect" and abs(float(t) * th / math.sqrt(1.0 + th * th) - a) < 1e-9 * a
+    # implicit twin: the product of the four face planes with their own apothems (um)
+    fac = [f"((x)*({mx})+(y)*({my})-({float(a) * 1e6!r}))" for (mx, my), a in zip(b.walls[0].faces, b.walls[0].apothems)]
+    imp = _cap_sim([{"center": [0.0, 0.0], "surface": "(0-1)*" + "*".join(fac), "aim_radius": math.hypot(ax, ay),
+                     "engine_method": "subdivision"}], z1=0.005)
+    bi = CapillaryBundle(imp.cfg.capillary.bores, imp.cfg.capillary.z0, imp.cfg.capillary.z1)
+    d = vunit((lift(4.0e-4, p), lift(1.5e-4, p), lift(1.0, p)))
+    (k1, t1, _, n1) = b.next_event(origin, d)
+    (k2, t2, _, n2) = bi.next_event(origin, d)
+    assert k1 == k2 == "reflect" and abs(float(t1 - t2)) / float(t1) < 1e-15

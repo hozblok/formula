@@ -87,12 +87,14 @@ typename cstrace::Tracer<P>::Wall make_wall(py::sequence spec) {
                                   F(0), F(1), F(2), F(3), F(4), F(5)};
   }
   if (kind == "polygon") {
-    typename T::Polygon w{{}, {}, M(0), M(1), M(2), F(0), F(1), F(2)};
-    for (size_t i = 3; i + 1 < mp.size(); i += 2) {
+    typename T::Polygon w{{}, {}, {}, {}, M(0), M(1), F(0), F(1)};
+    for (size_t i = 2; i + 2 < mp.size(); i += 3) {
       w.faces.emplace_back(M(i), M(i + 1));
+      w.apothems.push_back(M(i + 2));
     }
-    for (size_t i = 3; i + 1 < fl.size(); i += 2) {
+    for (size_t i = 2; i + 2 < fl.size(); i += 3) {
       w.facesf.emplace_back(F(i), F(i + 1));
+      w.af.push_back(F(i + 2));
     }
     if (w.faces.size() != w.facesf.size()) {
       throw std::invalid_argument("polygon mp/float face counts differ");

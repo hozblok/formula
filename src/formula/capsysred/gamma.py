@@ -120,7 +120,8 @@ def _wall_lens(wall, x, y, z, out):
     kind = wall.kind
     if kind == "polygon":   # exactly flat: the hit face's outward normal
         cx, cy = wall._cxf, wall._cyf
-        mx, my = max(wall._facesf, key=lambda m: m[0] * (x - cx) + m[1] * (y - cy))
+        (mx, my), _ = max(zip(wall._facesf, wall._afs),
+                          key=lambda f: f[0][0] * (x - cx) + f[0][1] * (y - cy) - f[1])
         return (math.atan2(my, mx), 0.0, 0.0, 0.0)
     if kind == "cylinder":
         grad = (x - wall._cxf, y - wall._cyf, 0.0)

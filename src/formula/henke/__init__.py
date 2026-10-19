@@ -51,6 +51,11 @@ FUSED_SILICA_N_FU = (
     float(FUSED_SILICA_DENSITY) / float(SIO2_MOLAR_MASS) * float(AVOGADRO_CONSTANT)
 )
 
+# Crystalline silicon, 2.33 g/cm^3 and 28.0855 g/mol: atoms per m^3.
+SILICON_DENSITY = "2330"
+SI_MOLAR_MASS = "0.0280855"
+SILICON_N_ATOM = float(SILICON_DENSITY) / float(SI_MOLAR_MASS) * float(AVOGADRO_CONSTANT)
+
 # Fused silica (SiO2, ~2.20 g/cm^3): X-ray optical-model inputs.
 #
 # The number density of SiO2 formula units is
@@ -125,3 +130,8 @@ def silica_electron_density(energy_kev: float) -> complex:
         f1("si", energy_kev) + 2.0 * f1("o", energy_kev),
         f2("si", energy_kev) + 2.0 * f2("o", energy_kev),
     )
+
+
+def silicon_electron_density(energy_kev: float) -> complex:
+    """Complex effective electron density of silicon, electrons / m^3: N_Si * (f1 + i*f2)."""
+    return SILICON_N_ATOM * complex(f1("si", energy_kev), f2("si", energy_kev))

@@ -4,6 +4,7 @@ bend limits and symmetry, bend frame against the tracer's torus and against a fr
 end-to-end two-bore run, provider resolution and config contract."""
 
 import math
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -45,7 +46,7 @@ def test_fb_config_and_provider_resolution():
             Simulation.from_dict(r).cfg.validate_wave_estimator()
     cap = Simulation.from_dict(raw).cfg.capillary
     assert W.capillary_provider(cap, {"provider": "auto"}) == "fb"
-    with pytest.raises(ValueError, match="uisk supports regular-polygon"):
+    with pytest.raises(ValueError, match="uisk supports polygon"):
         W.capillary_provider(cap, {"provider": "uisk"})
     sq = Simulation.from_dict(_scene([{"center": [0.0, 0.0], "radius": 3e-6, "sides": 4}])).cfg.capillary
     assert W.capillary_provider(sq, {"provider": "auto"}) == "uisk"
@@ -292,3 +293,105 @@ def test_fb_stage_two_bores(tmp_path):
         assert res3["results"][label]["I_bore"] is None
         assert np.allclose(res3["results"][label]["I"], res["results"][label]["I"], rtol=1e-9, atol=1e-12 * r0["I"].max())
         assert np.allclose(res3["results"][label]["W"], res["results"][label]["W"], rtol=1e-9, atol=1e-12 * r0["I"].max())
+
+
+# ---------------------------------------------------------------- guided-mode cut and Fresnel damping
+
+def test_disc_wall_cut_keeps_guided_modes_only():
+    aw, J = 1e-6, 155.0
+    cut, full = FB.Disc(aw, 300, wall_cut=J), FB.Disc(aw, 300)
+    assert cut.M == full.M and cut.nmodes < full.nmodes
+    for m, z in enumerate(cut.zeros):
+        assert np.all(z * z - m * m < J * J) and np.all(z < 300)
+        dropped = full.zeros[m][~np.isin(full.zeros[m], z)]
+        assert np.all(dropped * dropped - m * m >= J * J)
+    assert cut.zeros[0].max() < J < full.zeros[0].max()
+    # nothing to cut below the kappa cap: the basis is unchanged
+    a, b = FB.Disc(aw, 120, wall_cut=J), FB.Disc(aw, 120)
+    assert a.M == b.M and all(np.array_equal(x, y) for x, y in zip(a.zeros, b.zeros))
+
+
+def test_mode_damping_fresnel_factor():
+    aw, thc = 1e-6, math.sqrt(2 * DELTA)
+    d = FB.Disc(aw, int(K * aw * 0.9 * thc), wall_cut=K * aw * thc)
+    g = FB.mode_damping(d, K, DELTA, BETA)
+    base = d.kap2 * FB.wall_offset(K, DELTA, BETA).imag / (aw * K)
+    x = np.maximum(d.kap2 - (d.am[:, None] / aw) ** 2, 0.0) / (K * thc) ** 2
+    v = d.valid
+    assert np.isfinite(g).all() and np.all(g[v] > 0.0) and np.all(x[v] < 0.81)
+    # (1 - x)^(-1/2) up to the first-order beta/delta term of the exact Fresnel loss
+    tol = 3.0 * np.sqrt(x[v]) * (BETA / DELTA) / np.sqrt(1.0 - x[v]) + 1e-6
+    assert np.all(np.abs(g[v] / base[v] * np.sqrt(1.0 - x[v]) - 1.0) < tol)
+    assert abs(g[d.M, 0] / base[d.M, 0] - 1.0) < 1e-3                       # m = 0, n = 1: grazing limit
+    one = SimpleNamespace(kap2=np.array([[(K * thc) ** 2]]), am=np.array([0]), aw=aw)
+    assert np.isfinite(FB.mode_damping(one, K, DELTA, BETA)).all()          # critical angle: finite
+
+
+def test_fb_wall_cut_config():
+    raw = _scene([{"center": [0.0, 0.0], "radius": 3e-6}])
+    assert Simulation.from_dict(raw).cfg.validate_wave_estimator()["fb_wall_cut"] is True
+    bad = _scene([{"center": [0.0, 0.0], "radius": 3e-6}], extra={"fb_wall_cut": "yes"})
+    with pytest.raises(ValueError, match="fb_wall_cut"):
+        Simulation.from_dict(bad).cfg.validate_wave_estimator()
+    sim = Simulation.from_dict(raw)
+    spec = FB.build_spec(sim, sim.cfg.validate_wave_estimator(), [(K, 1.0, DELTA, BETA)])
+    assert spec["wall_cut"] == pytest.approx(K * spec["aw"] * math.sqrt(2 * DELTA))
+    off = Simulation.from_dict(_scene([{"center": [0.0, 0.0], "radius": 3e-6}], extra={"fb_wall_cut": False}))
+    assert FB.build_spec(off, off.cfg.validate_wave_estimator(), [(K, 1.0, DELTA, BETA)])["wall_cut"] is None
+
+
+# ---------------------------------------------------------------- entrance spot (whispering-gallery launch)
+
+def test_entrance_spot_modes_and_stage(tmp_path):
+    aw = 1e-6 + FB.wall_offset(K, DELTA, BETA).real
+    thc = math.sqrt(2 * DELTA)
+    d = FB.Disc(aw, int(K * aw * 1.15 * thc), wall_cut=K * aw * thc)
+    ch = FB.FBChannel((0.0, 0.0), None, None, d, K)
+    r0, tilt = aw - 51e-9, 2.31e-3
+    spot = {"center": [r0, 0.0], "fwhm": 100e-9, "tilt": [0.0, tilt]}
+    c = ch.spot_modes(spot)
+    P = d.norm(c)
+    assert 0.8 < P < 1.0                                                  # unit-power gaussian; the tail beyond the wall is cut
+    m_mean = float(np.sum(np.array(d.ms)[:, None] * np.abs(c) ** 2 * d.mnorm) / P)
+    assert abs(m_mean - K * r0 * tilt) < 3.0                               # angular momentum of the tilted spot
+    assert np.sum(np.abs(c[:, 0]) ** 2 * d.mnorm[:, 0]) / P > 0.9           # whispering-gallery family n = 1
+    raw = _scene([{"center": [0.0, 0.0], "radius": 1e-6}], z1=0.005, jmax=None,
+                 extra={"entrance_spot": spot, "fb_theta_cut": 4.5e-3, "observable": "point"})
+    raw["capillary"]["screen"].update({"edge_x": 2.2e-6, "edge_y": 2.2e-6, "nx": 11, "ny": 11, "reference": [r0, 0.0]})
+    sim = Simulation.from_dict(raw)
+    wave = sim.cfg.validate_wave_estimator()
+    assert wave["entrance_spot"]["tilt"] == [0.0, tilt]
+    res = W.run_wave_stage(sim, str(tmp_path), wave, log=lambda *a: None)
+    r = res["results"]["capillary"]
+    assert r["meta"]["n_nodes"] == 1 and r["meta"]["source_rule"].startswith("entrance spot")
+    assert r["meta"]["fresnel_numbers"]["source"] is None
+    assert np.isfinite(r["I"]).all() and r["I"].sum() > 0.0
+    for bad in ({"entrance_spot": {"center": [0.0], "fwhm": 1e-7}}, {"entrance_spot": {"center": [0, 0], "fwhm": 0.0}},
+                {"entrance_spot": {"fwhm": 1e-7}}, {"entrance_spot": {"center": [0, 0], "fwhm": 1e-7, "waist": 1}}):
+        with pytest.raises(ValueError, match="entrance_spot"):
+            Simulation.from_dict(_scene([{"center": [0.0, 0.0], "radius": 1e-6}], extra=bad)).cfg.validate_wave_estimator()
+    sq = _scene([{"center": [0.0, 0.0], "radius": 1e-6, "sides": 4}], extra={"entrance_spot": spot})
+    with pytest.raises(ValueError, match="entrance_spot is implemented for provider fb"):
+        W.run_wave_stage(Simulation.from_dict(sq), str(tmp_path / "sq"), Simulation.from_dict(sq).cfg.validate_wave_estimator(), log=lambda *a: None)
+
+
+def test_propagate_is_exact_for_straight_bores_and_substeps_strong_damping():
+    aw, thc = 1e-6 + FB.wall_offset(K, DELTA, BETA).real, math.sqrt(2 * DELTA)
+    d = FB.Disc(aw, int(K * aw * 0.8 * thc), wall_cut=K * aw * thc)        # kappa cap below theta_c: a small basis
+    g = FB.mode_damping(d, K, DELTA, BETA)
+    spot = {"center": [aw - 51e-9, 0.0], "fwhm": 100e-9, "tilt": [0.0, 2.31e-3]}
+    L = 0.03
+    straight = FB.FBChannel((0.0, 0.0), None, None, d, K, g)
+    c0 = straight.spot_modes(spot)
+    out, deg = straight.propagate(c0, L)
+    assert deg == 0 and np.allclose(out, c0 * np.exp(-1j * straight.h0 * L), rtol=0, atol=0)
+    T = d.norm(out) / d.norm(c0)
+    assert 0.4 < T < 0.75                                                 # whispering-gallery launch, 30 mm
+    bent = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 100.0, d, K, g)
+    one, deg1 = bent.propagate(c0, L)
+    two_a, _ = bent.propagate(c0, L / 2)
+    two, deg2 = bent.propagate(two_a, L / 2)
+    assert deg1 > 100 and np.isfinite(one).all()
+    assert np.linalg.norm(one - two) < 1e-8 * np.linalg.norm(one)         # sub-step count does not matter
+    assert abs(d.norm(one) / d.norm(c0) - T) < 0.05                        # R = 100 m barely changes the loss
+    # (the unsplit series on the full length diverges: T_n(x - iy) grows as exp(n y / sqrt(1 - x^2)))

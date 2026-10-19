@@ -52,22 +52,35 @@ def polygon_faces(bore):
     return np.column_stack([np.cos(phi), np.sin(phi)])
 
 
+def polygon_apothems(bore):
+    """Per-face apothems (n,): `apothems` when given, else the radius on every face."""
+    aps = bore.get("apothems")
+    if aps is None:
+        return np.full(int(bore["sides"]), float(bore["radius"]))
+    return np.array([float(a) for a in aps])
+
+
 def bore_inside(points, bore, tol=1e-8):
     """Transverse points (..., 2) inside the bore: circle test, or apothem test per face."""
     points = np.asarray(points, dtype=float)
     center = np.asarray(bore["center"], dtype=float)
     radius = float(bore["radius"])
     if is_polygon(bore):
-        return np.max((points - center) @ polygon_faces(bore).T, axis=-1) <= radius * (1 + tol)
+        aps = polygon_apothems(bore)
+        return np.max((points - center) @ polygon_faces(bore).T - aps, axis=-1) <= tol * aps.max()
     return np.linalg.norm(points - center, axis=-1) <= radius * (1 + tol)
 
 
 def bore_area(bore):
-    """Cross-section area: pi r^2, or n a^2 tan(pi / n) for a regular polygon of apothem a."""
+    """Cross-section area: pi r^2, or the shoelace sum over the polygon vertices."""
     radius = float(bore["radius"])
     if is_polygon(bore):
-        n = int(bore["sides"])
-        return n * radius * radius * math.tan(math.pi / n)
+        faces, aps = polygon_faces(bore), polygon_apothems(bore)
+        n = len(faces)
+        verts = np.array([np.linalg.solve(np.stack([faces[k], faces[(k + 1) % n]]), [aps[k], aps[(k + 1) % n]])
+                          for k in range(n)])
+        x, y = verts[:, 0], verts[:, 1]
+        return 0.5 * abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
     return math.pi * radius * radius
 
 
@@ -79,7 +92,7 @@ def wall_normal_derivative(points, bore, z0):
     if is_polygon(bore):
         faces = polygon_faces(bore)
         dots = (points[..., :2] - center) @ faces.T
-        k = np.argmax(dots, axis=-1)
+        k = np.argmax(dots - polygon_apothems(bore), axis=-1)
         n2 = faces[k] * np.take_along_axis(dots, k[..., None], -1)    # |raw| = distance to the hit face
         raw = np.concatenate([n2, np.zeros_like(n2[..., :1])], axis=-1)
         hessian = np.zeros((*points.shape[:-1], 3, 3))                 # flat face: constant normal
@@ -106,7 +119,7 @@ def wall_normal_derivative(points, bore, z0):
         hessian = rr+(dr/rho)[..., None, None]*(ring_plane-rr)+np.outer(binormal, binormal)
         raw = dr[..., None]*radial+eta[..., None]*binormal
     else:
-        raise ValueError("B5 transport supports cylinder, torus and regular-polygon walls only")
+        raise ValueError("B5 transport supports cylinder, torus and polygon walls only")
     length = np.linalg.norm(raw, axis=-1)
     normal = raw/length[..., None]
     projector = eye-normal[..., :, None]*normal[..., None, :]

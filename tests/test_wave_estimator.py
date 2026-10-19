@@ -605,7 +605,7 @@ def test_geometry_preflight_precedes_stage14(tmp_path, monkeypatch):
     raw = _square("disk", 3e-7)
     raw["capillary"]["bores"] = [{"center": [0.0, 0.0], "radius": 24e-6}]
     raw["wave_estimator"] = {"provider": "uisk"}
-    with pytest.raises(ValueError, match="regular-polygon bores only"):
+    with pytest.raises(ValueError, match="polygon bores only"):
         Simulation.from_dict(raw).run(str(tmp_path / "cyl"), stages=[14, 16])
     raw["wave_estimator"] = {"provider": "uisk"}
     raw.pop("capillary")
@@ -747,3 +747,67 @@ def test_exit_plane_screen_is_the_exit_field(tmp_path):
     assert res["meta"]["fresnel_numbers"]["exit"] is None and res["meta"]["distance_m"] == 0.0
     sim.run(str(tmp_path / "exit"), stages=[16])
     assert (tmp_path / "exit" / "stage16" / "mu-wave.jsonl").exists()
+
+
+def test_rectangle_apothems_is_separable_into_two_squares(square_point_solver):
+    sim, wave, solver, grid, theta = square_point_solver
+    ax, ay = 24e-6, 30e-6
+    raw = _square()
+    raw["capillary"]["bores"][0]["apothems"] = [ax, ay, ax, ay]
+    w = dict(wave, grid_dx=solver.h)
+    rect = W.BoreSolver(Simulation.from_dict(raw).cfg.capillary.bores[0], 0.117, 0.0525, theta, LAM, w)
+    assert np.allclose(rect.poly.a, [ax, ay, ax, ay]) and rect.poly.verts.max(0)[1] == pytest.approx(ay)
+    raw_y = _square()
+    raw_y["capillary"]["bores"][0]["radius"] = ay
+    sq_y = W.BoreSolver(Simulation.from_dict(raw_y).cfg.capillary.bores[0], 0.117, 0.0525, theta, LAM, w)
+    u_r = rect.exit_field((0.0, 0.0), K, sim.delta_f, sim.beta_f, -1)
+    u_x = solver.exit_field((0.0, 0.0), K, sim.delta_f, sim.beta_f, -1)
+    u_y = sq_y.exit_field((0.0, 0.0), K, sim.delta_f, sim.beta_f, -1)
+    sv = np.linalg.svd(u_r, compute_uv=False)
+    assert sv[1] / sv[0] < 1e-9                                        # X(x) Y(y)
+
+    def prof(u, xs, ys, along_x):
+        j = int(np.argmin(np.abs(ys))) if along_x else int(np.argmin(np.abs(xs)))
+        v, c = (u[:, j], xs) if along_x else (u[j, :], ys)
+        return dict(zip(np.round(c / solver.h).astype(int), v / v[int(np.argmin(np.abs(c)))]))
+
+    pairs = ((prof(u_r, rect.xs, rect.ys, True), prof(u_x, solver.xs, solver.ys, True)),
+             (prof(u_r, rect.xs, rect.ys, False), prof(u_y, sq_y.xs, sq_y.ys, False)))
+    for a, b in pairs:                                                  # X from the a_x square, Y from the a_y square
+        keys = sorted(set(a) & set(b))
+        assert len(keys) > 20
+        va, vb = np.array([a[k] for k in keys]), np.array([b[k] for k in keys])
+        assert np.abs(va - vb).max() < 1e-8 * np.abs(vb).max()
+
+
+def test_dump_field_writes_exit_fields_for_uisk_only(tmp_path):
+    raw = _square(nx=9)
+    raw["wave_estimator"] = {"source_nodes": 1, "observable": "point", "dump_field": True}
+    sim = Simulation.from_dict(raw)
+    assert sim.cfg.validate_wave_estimator()["dump_field"] is True
+    sim.run(str(tmp_path), stages=[16])
+    path = tmp_path / "stage16" / "field-capillary.npz"
+    assert path.exists()
+    with np.load(path) as z:
+        u, xs, ys = z["field_line0_node0_bore0"], z["xs_bore0"], z["ys_bore0"]
+        assert u.dtype == np.complex128 and u.shape == (xs.size, ys.size) and np.isfinite(u).all()
+        assert z["nodes"].shape == (1, 2) and float(z["z_exit"]) == 0.0525 and float(z["h"]) == pytest.approx(xs[1] - xs[0], rel=1e-9)
+        power = np.sum(np.abs(u) ** 2) * float(z["h"]) ** 2
+        assert power > 0.0
+    bad = _square(nx=9)
+    bad["wave_estimator"] = {"dump_field": "yes"}
+    with pytest.raises(ValueError, match="dump_field"):
+        Simulation.from_dict(bad).cfg.validate_wave_estimator()
+
+
+def test_transfer_separable_path_matches_the_general_product(square_point_solver):
+    sim, wave, solver, grid, theta = square_point_solver
+    fams = {f.seq: f for f in solver.families}
+    assert W.BoreSolver._axis_counts(fams[()]) == (0, 0) and W.BoreSolver._axis_counts(fams[(0,)]) == (1, 0)
+    assert W.BoreSolver._axis_counts(fams[(0, 1)]) == (1, 1)              # two-step tiles are pruned by the reach
+    for f in solver.families:
+        fast = solver.transfer(f, K, sim.delta_f, sim.beta_f)
+        slow = solver.transfer(f, K, sim.delta_f, sim.beta_f, general=True)
+        assert fast.shape == slow.shape and np.abs(fast - slow).max() < 1e-12 * np.abs(slow).max()
+    rot = W.Polygon({"center": [0.0, 0.0], "radius": 24e-6, "sides": 4, "rotation": math.pi / 4})
+    assert W.BoreSolver._axis_counts(W.enumerate_families(rot, 1)[1]) is None     # rotated faces: general path

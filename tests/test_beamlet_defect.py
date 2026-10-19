@@ -127,3 +127,6 @@ def test_polygon_outline_stretch():
     s = D._stretch(D._shape({"sides": 4, "rotation_deg": 0}), phis)
     assert np.allclose(s, [1.0, math.sqrt(2.0), 1.0, 1.0])
     assert np.allclose(D._stretch(D._shape({"radius": 1.0}), phis), 1.0)
+    rect = D._shape({"radius": 1.0, "sides": 4, "rotation_deg": 0, "apothems": [1.0, 2.0, 1.0, 2.0]})
+    assert np.allclose(D._stretch(rect, np.array([0.0, math.pi / 2, math.pi, math.atan2(2.0, 1.0)])),
+                       [1.0, 2.0, 1.0, math.sqrt(5.0)])

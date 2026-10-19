@@ -35,18 +35,33 @@ def wall_offset(k, delta, beta):
     return 1j / (k * q0)
 
 
+def mode_damping(disc, k, delta, beta):
+    """Amplitude damping per mode, kappa^2 Im ell / (k a_w), times the exact Fresnel loss at the
+    mode's wall grazing angle theta_w relative to its theta -> 0 form: -> (1 - theta_w^2/theta_c^2)^(-1/2)."""
+    ell = wall_offset(k, delta, beta)
+    thw = np.sqrt(np.maximum(disc.kap2 - (disc.am[:, None] / disc.aw) ** 2, 0.0)) / k
+    q = np.sqrt(thw * thw - 2.0 * delta + 2j * beta)
+    q = np.where(q.imag < 0.0, -q, q)
+    loss = 4.0 * thw * q.real / np.abs(thw + q) ** 2
+    loss0 = 4.0 * thw * beta / (2.0 * delta) ** 1.5
+    factor = np.divide(loss, loss0, out=np.ones_like(loss), where=loss0 > 0.0)
+    return disc.kap2 * ell.imag / (disc.aw * k) * factor
+
+
 # ----------------------------------------------------------------- disc basis
 
 class Disc:
-    """Dirichlet disc basis J_|m|(j_mn r / aw) e^{i m phi}, all zeros j_mn < jmax; Gauss-Legendre
-    radial quadrature, FFT in phi; padded arrays over |m|."""
+    """Dirichlet disc basis J_|m|(j_mn r / aw) e^{i m phi}, all zeros j_mn < jmax, with wall_cut J only
+    the guided ones (j_mn^2 - m^2 < J^2); Gauss-Legendre radial quadrature, FFT in phi; padded arrays over |m|."""
 
-    def __init__(self, aw, jmax, nr=None, nphi=None):
-        self.aw, self.jmax = float(aw), int(jmax)
+    def __init__(self, aw, jmax, nr=None, nphi=None, wall_cut=None):
+        self.aw, self.jmax, self.wall_cut = float(aw), int(jmax), wall_cut
         zeros, m = [], 0
         while True:
             z = jn_zeros(m, max(8, int(jmax / math.pi) + 4))
             z = z[z < jmax]
+            if wall_cut is not None:
+                z = z[z * z - m * m < wall_cut * wall_cut]
             if z.size == 0:
                 break
             zeros.append(z)
@@ -183,6 +198,22 @@ class FBChannel:
     def entrance_modes(self, src_xy, z_in):
         return self.disc.to_modes(self.entrance_field(src_xy, z_in))
 
+    def spot_field(self, spot):
+        """Coherent gaussian on the entrance disc: FWHM in intensity, unit power, plane-wave tilt (tx, ty)."""
+        t, tp = self.frame_axes()
+        d = self.disc
+        xi = d.r[:, None] * np.cos(d.phi)[None, :]
+        eta = d.r[:, None] * np.sin(d.phi)[None, :]
+        X = self.c0[0] + xi * t[0] + eta * tp[0]
+        Y = self.c0[1] + xi * t[1] + eta * tp[1]
+        s = spot["fwhm"] / math.sqrt(8.0 * math.log(2.0))
+        (cx, cy), (tx, ty) = spot["center"], spot["tilt"]
+        return (np.exp(-((X - cx) ** 2 + (Y - cy) ** 2) / (4.0 * s * s)) * np.exp(1j * self.k * (tx * X + ty * Y))
+                / math.sqrt(2.0 * math.pi * s * s))
+
+    def spot_modes(self, spot):
+        return self.disc.to_modes(self.spot_field(spot))
+
     def apply_v(self, c):
         """Galerkin V c through the block-tridiagonal m -> m +- 1 matrices (no transforms)."""
         if self.vscale == 0.0:
@@ -214,6 +245,18 @@ class FBChannel:
     def _spectral_bounds(self):
         vmax = float(np.max(np.abs(self.pot))) if self.rb is not None else 0.0
         return -vmax, self.disc.kap2max / (2.0 * self.k) + vmax
+
+    def propagate(self, c, L, tol=1e-12):
+        """exp(-iHL) c: diagonal for a straight bore; for a bend the Chebyshev series in sub-steps
+        short enough that the damping stays small on the scaled spectrum (gamma_max dL <= 1.6)."""
+        if self.rb is None:
+            return c * np.exp(-1j * self.h0 * L), 0
+        steps = max(1, int(math.ceil(float(np.max(self.gamma)) * L / 1.6)))
+        total = 0
+        for _ in range(steps):
+            c, deg = self.propagate_chebyshev(c, L / steps, tol)
+            total += deg
+        return c, total
 
     def propagate_chebyshev(self, c, L, tol=1e-12):
         """exp(-iHL) c as a Chebyshev series (Tal-Ezer & Kosloff): exp(-i t x) =
@@ -377,6 +420,7 @@ def build_spec(sim, wave, lines):
     theta_cut = float(wave["fb_theta_cut"])
     jmax = int(wave["fb_jmax"]) if wave["fb_jmax"] else fb_jmax_rule(k_max, aw, theta_cut)
     theta_modal = jmax / (k_max * aw)
+    wall_cut = max(k * aw * math.sqrt(2.0 * delta) for k, _, delta, _ in lines) if wave["fb_wall_cut"] else None
     tilt = max((length / b["rbend"]) if b["rbend"] else 0.0 for b in bores)
     h_auto = lam_min / (2.0 * (theta_modal + tilt) * float(wave["fb_angle_margin"]))
     px = scr[0]["edge_x"] / scr[0]["nx"]
@@ -396,12 +440,12 @@ def build_spec(sim, wave, lines):
         half = max(half, float(np.max(np.abs(cl))) + aw + 2.0 * h)
     if wave["fb_lattice_half"]:
         half = float(wave["fb_lattice_half"])
-    return {"z_in": z_in, "length": length, "z_exit": float(cap.z1), "bores": bores, "screens": scr, "aw": aw, "jmax": jmax,
+    return {"z_in": z_in, "length": length, "z_exit": float(cap.z1), "bores": bores, "screens": scr, "aw": aw, "jmax": jmax, "wall_cut": wall_cut,
             "theta_modal": theta_modal, "tilt": tilt, "h": h, "h_auto": h_auto, "half": half,
             "lines": [(float(k), float(wl), float(dl), float(bt)) for k, wl, dl, bt in lines],
             "ells": [(e.real, e.imag) for e in ells], "cheb_tol": float(wave["fb_chebyshev_tol"]),
             "dr": float(wave["fb_dr"]), "wall": wave["fb_wall"], "dtype": wave["fb_grid_dtype"],
-            "observable": wave["observable"], "per_bore": wave["fb_per_bore_maps"],
+            "observable": wave["observable"], "per_bore": wave["fb_per_bore_maps"], "spot": wave["entrance_spot"],
             "workers": wave["workers"] or -1, "cache_gb": float(wave["cache_gb"])}
 
 
@@ -422,11 +466,11 @@ def _init_worker(spec):
     from .wave import ScreenSampler, Accumulator
     t0 = time.time()
     dtype = np.complex64 if spec["dtype"] == "complex64" else np.complex128
-    disc = Disc(spec["aw"], spec["jmax"])
+    disc = Disc(spec["aw"], spec["jmax"], wall_cut=spec["wall_cut"])
     disc.fine_table(spec["dr"], dtype=np.float32)
     chans = {}
-    for (k, wl, delta, beta), (er, ei) in zip(spec["lines"], spec["ells"]):
-        gamma = disc.kap2 * (ei if spec["wall"] == "dir-ell" else 0.0) / (spec["aw"] * k)   # per-mode damping
+    for k, wl, delta, beta in spec["lines"]:
+        gamma = mode_damping(disc, k, delta, beta) if spec["wall"] == "dir-ell" else None
         chans[k] = [FBChannel(b["center"], b["toward"], b["rbend"], disc, k, gamma) for b in spec["bores"]]
     lat = Lattice(spec["half"], spec["h"], dtype=dtype, workers=spec["workers"], edge0=spec["screens"][0]["center"][0] - spec["screens"][0]["edge_x"] / 2,
                   cache_bytes=spec["cache_gb"] * 2 ** 30)
@@ -445,8 +489,8 @@ def _node_fields(spec, k, chans, lat, xi, per_bore=True):
     their sum in a single array (one lattice-sized buffer instead of one per bore)."""
     out = []
     for ch in chans:
-        c0 = ch.entrance_modes(xi, spec["z_in"])
-        cL, deg = ch.propagate_chebyshev(c0, spec["length"], spec["cheb_tol"])
+        c0 = ch.spot_modes(spec["spot"]) if spec["spot"] else ch.entrance_modes(xi, spec["z_in"])
+        cL, deg = ch.propagate(c0, spec["length"], spec["cheb_tol"])
         _W["degrees"].append(deg)
         cz = ch.axis(spec["length"])
         lo = np.searchsorted(lat.x, cz - ch.disc.aw - 2 * lat.h)
@@ -490,7 +534,13 @@ def fb_capillary_scene(sim, wave, lines, rays_paths, log):
     from .wave import _rule, ScreenSampler, Accumulator, _finish, _report_lines
     cfg = sim.cfg
     cap = cfg.capillary
-    nodes, weights, rule = _rule(wave, "capillary", cap.source, rays_paths)
+    if wave["entrance_spot"]:
+        sp = wave["entrance_spot"]
+        nodes, weights = np.array([sp["center"]]), np.array([1.0])
+        rule = (f"entrance spot: gaussian FWHM {sp['fwhm'] * 1e9:.0f} nm at ({sp['center'][0] * 1e6:.3f}, "
+                f"{sp['center'][1] * 1e6:.3f}) um, tilt ({sp['tilt'][0] * 1e3:.3f}, {sp['tilt'][1] * 1e3:.3f}) mrad")
+    else:
+        nodes, weights, rule = _rule(wave, "capillary", cap.source, rays_paths)
     spec = build_spec(sim, wave, lines)
     labels = ["capillary"] + [f"capillary-s{i}" for i in range(1, len(cap.screens) + 1)]
     lam0 = float(sim.lam)
@@ -498,6 +548,7 @@ def fb_capillary_scene(sim, wave, lines, rays_paths, log):
     log(f"  16 [capillary/fb]: {rule}; j_max {spec['jmax']} (theta_modal {spec['theta_modal']*1e3:.3f} mrad, "
         f"tilt {spec['tilt']*1e3:.3f} mrad), lattice h = {m_to_um(spec['h']):.4f} um (auto {m_to_um(spec['h_auto']):.4f}), "
         f"half {m_to_um(spec['half']):.1f} um, chebyshev"
+        + (f", guided cut j^2 - m^2 < {spec['wall_cut']:.1f}^2" if spec["wall_cut"] else "")
         + f", wall {spec['wall']} ell = {spec['ells'][0][0]*1e9:.3f} + {spec['ells'][0][1]*1e9:.3f}i nm"
         + ("" if nyq else " — note: lattice coarser than the auto step"))
     t0 = time.time()
@@ -535,7 +586,8 @@ def fb_capillary_scene(sim, wave, lines, rays_paths, log):
     a = spec["bores"][0]["radius"]
     for label, s, smp, acc in zip(labels, spec["screens"], samplers, accs):
         d = s["z"] - float(cap.z1)
-        nf = {"entrance": a * a / (lam0 * spec["length"]), "source": a * a / (lam0 * spec["z_in"]),
+        nf = {"entrance": a * a / (lam0 * spec["length"]),
+              "source": None if spec["spot"] else a * a / (lam0 * spec["z_in"]),
               "exit": (a * a / (lam0 * d)) if d > 0 else None}
         bent = any(b["rbend"] for b in spec["bores"])
         meta = {"scene": label, "provider": "fb",
@@ -544,20 +596,22 @@ def fb_capillary_scene(sim, wave, lines, rays_paths, log):
                 "lattice_h_m": spec["h"], "lattice_h_auto_m": spec["h_auto"], "lattice_half_m": spec["half"],
                 "lattice_n": lat.n, "theta_modal_rad": spec["theta_modal"], "tilt_rad": spec["tilt"],
                 "sampling": {"nyquist_ratio": 2.0 * spec["h"] * (spec["theta_modal"] + spec["tilt"]) / (2.0 * math.pi / max(k for k, *_ in lines))},
-                "jmax": spec["jmax"], "n_modes": parts[0][4],
-                "propagator": "chebyshev", "chebyshev_degree_median": (int(np.median(degrees)) if degrees else None),
+                "jmax": spec["jmax"], "wall_cut": spec["wall_cut"], "n_modes": parts[0][4],
+                "propagator": "chebyshev" if bent else "diagonal",
+                "chebyshev_degree_median": (int(np.median(degrees)) if degrees and bent else None),
                 "wall": spec["wall"], "wall_offset_nm": [[e[0] * 1e9, e[1] * 1e9] for e in spec["ells"]],
                 "aw_m": spec["aw"], "fresnel_numbers": nf, "distance_m": d, "bores": spec["bores"],
                 "per_bore_maps": per_bore, "jobs": jobs, "worker_init_s": max(p[2] for p in parts)}
         res = _finish(acc, smp, meta, wave, time.time() - t0)
         res["report"] = _report_lines(label, res, wave, [
             f"- provider fb: j_max = {spec['jmax']} (θ_modal = {spec['theta_modal']*1e3:.3f} mrad, tilt {spec['tilt']*1e3:.3f} mrad), "
-            f"chebyshev degree ≈ {int(np.median(degrees)) if degrees else '?'}"
-            + f"; wall DIR-ℓ, ℓ = {spec['ells'][0][0]*1e9:.3f} + {spec['ells'][0][1]*1e9:.3f}i nm"
+            + (f"chebyshev degree ≈ {int(np.median(degrees)) if degrees else '?'}" if bent else "diagonal propagator (straight bore)")
+            + (f", guided-mode cut j² − m² < {spec['wall_cut']:.1f}²" if spec["wall_cut"] else "")
+            + f"; wall DIR-ℓ, ℓ = {spec['ells'][0][0]*1e9:.3f} + {spec['ells'][0][1]*1e9:.3f}i nm, damping × Fresnel loss at θ_w"
             + ("" if spec["wall"] == "dir-ell" else " (absorption off)"),
             f"- lattice h = {m_to_um(spec['h']):.4f} µm (auto {m_to_um(spec['h_auto']):.4f}), half-width {m_to_um(spec['half']):.1f} µm, "
             f"{lat.n}² points; cells = exact Fourier box of the band-limited field; screens by angular-spectrum drift",
-            f"- N_F: entrance {nf['entrance']:.2f}, source {nf['source']:.2f}, exit "
+            f"- N_F: entrance {nf['entrance']:.2f}, source " + (f"{nf['source']:.2f}" if nf["source"] else "— (entrance spot)") + ", exit "
             + (f"{nf['exit']:.3f}" if nf["exit"] else "— (screen on the exit plane)") + "; ray optics is not used anywhere in this stage",
         ])
         out.append((label, res))

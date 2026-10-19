@@ -12,11 +12,11 @@ import warnings
 
 from .._roots import get_backend
 from ..formula import Number
-from ..xray import FUSED_SILICA, OE2012_GLASS
+from ..xray import FUSED_SILICA, OE2012_GLASS, SILICON
 from .spectrum import spectral_lines
 from .shared.types import HitMethod
 
-MATERIALS = {"fused_silica": FUSED_SILICA, "glass_oe2012": OE2012_GLASS}
+MATERIALS = {"fused_silica": FUSED_SILICA, "glass_oe2012": OE2012_GLASS, "silicon": SILICON}
 
 _SOURCE_REQUIRED = frozenset({"shape", "size", "position", "n_modes", "n_rays"})
 _GRID_SOURCE_REQUIRED = frozenset({"grid_n", "grid_step"})
@@ -40,7 +40,7 @@ DEFAULTS = {
     "precision_target": None,
     "seed": 12345,
     "energy_kev": 8.0,
-    # wall glass n = 1 - delta + i*beta: fused_silica | glass_oe2012 (Opt. Express 20, 3975)
+    # wall n = 1 - delta + i*beta: fused_silica | glass_oe2012 (Opt. Express 20, 3975) | silicon
     "material": "fused_silica",
     # monochromatic | gaussian {rel_fwhm, n_lines, n_sigma} | lines [{energy_kev, weight}]
     # | table {file}; per_line_fresnel (multi-line modes only): r(E_m) per
@@ -91,7 +91,7 @@ DEFAULTS = {
 # stage 16 (`wave_estimator`): merged lazily by Config.validate_wave_estimator(),
 # so a YAML without the section keeps its raw config unchanged for every other stage.
 WAVE_DEFAULTS = {
-    "provider": "auto",             # auto | uisk (regular-polygon bores) | fb (circular bores) | free
+    "provider": "auto",             # auto | uisk (polygon bores) | fb (circular bores) | free
     "observable": "coherent_cell",  # coherent_cell (|integral_cell E|^2, as stage 14) | point
     "source_mode": "quadrature",    # quadrature (positive rule over `source`) | recorded_origins
     "target_error": 0.002,          # declared numerical budget on complex mu; recorded, not enforced
@@ -111,11 +111,14 @@ WAVE_DEFAULTS = {
     "fb_chebyshev_tol": 1.0e-12,    # Bessel-coefficient cutoff of the Chebyshev series of exp(-iHL)
     "fb_dr": 2.0e-8,                # fine radial table step [m] for the exit-field synthesis
     "fb_wall": "dir-ell",           # dir-ell (complex offset: phase + absorption) | dir-ell-real (no absorption)
+    "fb_wall_cut": True,            # keep only guided modes: j_mn^2 - m^2 < (k a_w theta_c)^2
     "fb_angle_margin": 1.1,         # lattice h = lambda / (2 (theta_modal + tilt) margin), rounded to pixel / b
     "fb_lattice_half": None,        # lattice half-width [m]; null -> windows + spread + Fresnel tails
     "fb_grid_dtype": "complex128",  # complex64 | complex128 lattice arrays
     "fb_jobs": 1,                   # processes over source nodes (each builds its own basis)
     "fb_per_bore_maps": None,       # per-bore drifts for I_bores / Gamma_12; null -> only for <= 2 bores
+    "dump_field": False,            # uisk: write the complex exit field per line / node / bore (npz)
+    "entrance_spot": None,          # fb: {center: [x, y], fwhm, tilt: [tx, ty]} coherent gaussian on the entrance plane
 }
 
 B5_DEFAULTS = {
@@ -238,7 +241,7 @@ def _bore(raw: dict, p: int, idx: int) -> dict:
     """One bore -> typed wall spec; scalars become Number, `kind` selects the wall.
 
     Exactly one geometry: radius (cylinder), radius+bend (torus arc),
-    radius+sides (regular polygon, radius = apothem), r2_poly (surface of
+    radius+sides (polygon, radius = apothem; apothems = per-face list), r2_poly (surface of
     revolution x'^2+y'^2 = c0+c1*z+c2*z^2), surface (implicit F(x,y,z)=0 in µm,
     F<0 inside; needs aim_radius for source aiming and engine_method for hits).
     """
@@ -277,6 +280,8 @@ def _bore(raw: dict, p: int, idx: int) -> dict:
         out.update(kind="revolution",
                    r2_poly=tuple(Number(str(c), p) for c in cs))
         return out
+    if raw.get("apothems") is not None and raw.get("sides") is None:
+        raise ValueError(f"bore {idx}: apothems needs sides")
     if raw.get("radius") is None:
         raise ValueError(f"bore {idx}: needs radius, r2_poly or surface")
     out["radius"] = Number(str(raw["radius"]), p)
@@ -292,7 +297,12 @@ def _bore(raw: dict, p: int, idx: int) -> dict:
         n = int(raw["sides"])
         if n < 3:
             raise ValueError(f"bore {idx}: sides must be >= 3")
-        out.update(kind="polygon", sides=n,
+        aps = raw.get("apothems")
+        if aps is None:
+            aps = [raw["radius"]] * n
+        elif len(aps) != n or any(float(a) <= 0.0 for a in aps):
+            raise ValueError(f"bore {idx}: apothems needs {n} positive values, one per face")
+        out.update(kind="polygon", sides=n, apothems=tuple(Number(str(a), p) for a in aps),
                    rotation=Number(f"({raw.get('rotation_deg', 0)})*pi/180", p))
     elif raw.get("funnel") is not None:
         fn = raw["funnel"]
@@ -616,6 +626,20 @@ class Config:
         w["fb_jobs"] = num("fb_jobs", lo=1, integer=True)
         if w["fb_per_bore_maps"] is not None and not isinstance(w["fb_per_bore_maps"], bool):
             raise ValueError(f"wave_estimator.fb_per_bore_maps: expected true, false or null, got {w['fb_per_bore_maps']!r}")
+        if not isinstance(w["fb_wall_cut"], bool):
+            raise ValueError(f"wave_estimator.fb_wall_cut: expected true or false, got {w['fb_wall_cut']!r}")
+        if not isinstance(w["dump_field"], bool):
+            raise ValueError(f"wave_estimator.dump_field: expected true or false, got {w['dump_field']!r}")
+        spot = w["entrance_spot"]
+        if spot is not None:
+            if (not isinstance(spot, dict) or set(spot) - {"center", "fwhm", "tilt"}
+                    or not {"center", "fwhm"} <= set(spot)):
+                raise ValueError("wave_estimator.entrance_spot: expected {center: [x, y], fwhm, tilt: [tx, ty]}")
+            c, t = list(spot["center"]), list(spot.get("tilt", [0.0, 0.0]))
+            if len(c) != 2 or len(t) != 2 or not float(spot["fwhm"]) > 0.0:
+                raise ValueError("wave_estimator.entrance_spot: center and tilt take two numbers, fwhm > 0")
+            w["entrance_spot"] = {"center": [float(c[0]), float(c[1])], "fwhm": float(spot["fwhm"]),
+                                  "tilt": [float(t[0]), float(t[1])]}
         self.wave = w
         return w
 

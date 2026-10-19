@@ -186,8 +186,10 @@ struct Tracer {
   struct Polygon {
     std::vector<std::pair<R, R>> faces;
     std::vector<std::pair<double, double>> facesf;
-    R apothem, cx, cy;
-    double af, cxf, cyf;
+    std::vector<R> apothems;
+    std::vector<double> af;
+    R cx, cy;
+    double cxf, cyf;
   };
   struct Torus {
     V3 C, nhat;
@@ -267,9 +269,9 @@ struct Tracer {
   // wall_polygon.PolygonWall
   static bool inside(const Polygon &w, double xf, double yf, double) {
     double dx = xf - w.cxf, dy = yf - w.cyf;
-    double lim = w.af * (1.0 + kInsideTol);
-    for (const auto &f : w.facesf) {
-      if (!(f.first * dx + f.second * dy < lim)) {
+    for (size_t i = 0; i < w.facesf.size(); ++i) {
+      double lim = w.af[i] * (1.0 + kInsideTol);
+      if (!(w.facesf[i].first * dx + w.facesf[i].second * dy < lim)) {
         return false;
       }
     }
@@ -287,7 +289,7 @@ struct Tracer {
       if (md <= 1e-30) {
         continue;
       }
-      double tf = (w.af - (mxf * rxf + myf * ryf)) / md;
+      double tf = (w.af[i] - (mxf * rxf + myf * ryf)) / md;
       if (tf > kEpsT && (best < 0 || tf < bestt)) {
         best = static_cast<long>(i);
         bestt = tf;
@@ -298,7 +300,8 @@ struct Tracer {
     }
     const R &mx = w.faces[static_cast<size_t>(best)].first;
     const R &my = w.faces[static_cast<size_t>(best)].second;
-    R t = (w.apothem - (mx * (O.x - w.cx) + my * (O.y - w.cy))) /
+    R t = (w.apothems[static_cast<size_t>(best)] -
+           (mx * (O.x - w.cx) + my * (O.y - w.cy))) /
           (mx * d.x + my * d.y);
     return Hit{t, vadd(O, vscale(d, t)), {mx, my, R()}};
   }
