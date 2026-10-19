@@ -299,9 +299,10 @@ class BoreSolver:
     lam_h: the shortest wavelength of the run (lattice step); lam_reach: the
     longest (Fresnel tails in the box margin)."""
 
-    def __init__(self, bore, z_in, length, theta_max, lam_h, wave, lam_reach=None):
+    def __init__(self, bore, z_in, length, theta_max, lam_h, wave, lam_reach=None, cache_masks=True):
         lam_reach = lam_h if lam_reach is None else lam_reach
         self.poly = Polygon(bore)
+        self.cache_masks = cache_masks                      # False: masks rebuilt per node (one node, one line)
         self.z_in, self.length = z_in, length
         self.h = wave["grid_dx"] or lam_h / (2.0 * theta_max * wave["angle_margin"])
         self.supersample = int(wave["mask_supersample"])
@@ -326,7 +327,7 @@ class BoreSolver:
             fam.grid = g
             fam.xs, fam.ys = self._coords(g)
             fam.mask = PackedMask(sub_lattice_mask(fam.xs, fam.ys, fam.center, fam.face_normals,
-                                                  self.poly.a, self.supersample))
+                                                  self.poly.a, self.supersample)) if cache_masks else None
             fam.slice = (slice(self.win[0] - g[0], self.win[1] - g[0]),
                          slice(self.win[2] - g[2], self.win[3] - g[2]))
             self.families.append(fam)
@@ -409,14 +410,20 @@ class BoreSolver:
             # cell average of chirp x indicator on the sub-lattice (anti-aliased edges)
             cx = np.exp(1j * k * (fam.xs[:, None] + off[None, :] - src[0]) ** 2 / (2.0 * self.z_in))
             cy = np.exp(1j * k * (fam.ys[:, None] + off[None, :] - src[1]) ** 2 / (2.0 * self.z_in))
-            u = np.zeros(fam.mask.shape, dtype=complex)
-            tmp = np.empty(fam.mask.shape, dtype=complex)
+            if fam.mask is None:
+                full = sub_lattice_mask(fam.xs, fam.ys, fam.center, fam.face_normals, self.poly.a, self.supersample)
+                slab = lambda s, t: full[:, s, :, t]
+            else:
+                full, slab = None, fam.mask.slab
+            shape = (fam.xs.size, fam.ys.size)
+            u = np.zeros(shape, dtype=complex)
+            tmp = np.empty(shape, dtype=complex)
             for s in range(self.supersample):
                 for t in range(self.supersample):
                     np.multiply(cx[:, s, None], cy[None, :, t], out=tmp)
-                    tmp *= fam.mask.slab(s, t)
+                    tmp *= slab(s, t)
                     u += tmp
-            del tmp
+            del tmp, full
             u *= 1.0 / (self.supersample ** 2 * 1j * lam * self.z_in)
             # two grid-sized arrays alive at most (out-of-place FFTs keep the bit pattern)
             F = sfft.fft2(u, workers=workers)
@@ -768,7 +775,8 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log, dump_dir=None):
     theta_max = _theta_max(cap, nodes, grids, refs)
     lam_h = 2.0 * np.pi / max(k for k, *_ in lines)        # shortest wavelength sets h
     lam_reach = 2.0 * np.pi / min(k for k, *_ in lines)    # longest sets the Fresnel margin
-    solvers = [BoreSolver(b, z_in, length, theta_max, lam_h, wave, lam_reach) for b in cap.bores]
+    solvers = [BoreSolver(b, z_in, length, theta_max, lam_h, wave, lam_reach,
+                          cache_masks=len(nodes) * len(lines) > 1) for b in cap.bores]
     accs = [Accumulator(smp, len(solvers)) for smp in samplers]
     # sampling contract: Nyquist angle lam_h/(2h) against theta_max (ratio > 1 = aliasing)
     h_auto = lam_h / (2.0 * theta_max * wave["angle_margin"])

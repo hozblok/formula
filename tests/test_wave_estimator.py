@@ -811,3 +811,12 @@ def test_transfer_separable_path_matches_the_general_product(square_point_solver
         assert fast.shape == slow.shape and np.abs(fast - slow).max() < 1e-12 * np.abs(slow).max()
     rot = W.Polygon({"center": [0.0, 0.0], "radius": 24e-6, "sides": 4, "rotation": math.pi / 4})
     assert W.BoreSolver._axis_counts(W.enumerate_families(rot, 1)[1]) is None     # rotated faces: general path
+
+
+def test_uncached_masks_give_the_same_exit_field(square_point_solver):
+    sim, wave, solver, grid, theta = square_point_solver
+    lazy = W.BoreSolver(sim.cfg.capillary.bores[0], 0.117, 0.0525, theta, LAM, dict(wave, grid_dx=solver.h), cache_masks=False)
+    assert all(f.mask is None for f in lazy.families) and len(lazy.families) == len(solver.families)
+    u_c = solver.exit_field((0.0, 0.0), K, sim.delta_f, sim.beta_f, -1)
+    u_l = lazy.exit_field((0.0, 0.0), K, sim.delta_f, sim.beta_f, -1)
+    assert u_c.shape == u_l.shape and np.array_equal(u_c, u_l)
