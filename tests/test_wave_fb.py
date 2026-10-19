@@ -56,11 +56,10 @@ def test_fb_config_and_provider_resolution():
                                          {"center": [8e-6, 0.0], "radius": 3e-6}])).cfg.capillary
     with pytest.raises(ValueError, match="no provider"):
         W.capillary_provider(mixed, {"provider": "auto"})
-    # a screen on the exit plane is accepted by fb and still rejected by uisk
+    # a screen on the exit plane is accepted by both providers
     W.preflight_wave_inputs(Simulation.from_dict(raw), Simulation.from_dict(raw).cfg.validate_wave_estimator())
     sq_exit = _scene([{"center": [0.0, 0.0], "radius": 3e-6, "sides": 4}])
-    with pytest.raises(ValueError, match="exit plane"):
-        W.preflight_wave_inputs(Simulation.from_dict(sq_exit), Simulation.from_dict(sq_exit).cfg.validate_wave_estimator())
+    W.preflight_wave_inputs(Simulation.from_dict(sq_exit), Simulation.from_dict(sq_exit).cfg.validate_wave_estimator())
 
 
 def test_wall_offset_dir_ell():
