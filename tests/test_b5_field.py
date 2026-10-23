@@ -152,3 +152,53 @@ def test_rejects_invalid_grid_and_ray_parameters():
     args.update(x=[0, 1], area_weights=-1)
     with pytest.raises(ValueError, match="nonnegative"):
         reconstruct_field(p, p, 0, 1, q, q, 0, **args)
+
+
+def test_continuous_branch_is_defined_on_an_exact_caustic():
+    """Q = diag(1 - z, 1), P = V = diag(-1, 0): det Q vanishes at z = 1.  The continued root
+    equals the Maslov branch on both sides and stays finite and continuous on the caustic."""
+    from formula.capsysred.stages._b5_transport import det_phase_increment
+    gamma = 0.7
+    zs = np.array([0.5, 1.0-1e-9, 1.0, 1.0+1e-9, 1.5])
+    P = np.repeat(np.diag([-1.0, 0.0])[None], len(zs), 0)
+    Q0 = np.repeat(np.eye(2)[None], len(zs), 0)
+    Q = Q0+zs[:, None, None]*P
+    phase = np.angle(np.linalg.det(gamma*Q0+1j*P))+det_phase_increment(Q0, P, P, zs, gamma)[0]
+    continued, valid = canonical_prefactor(Q, P, None, gamma, phase=phase, gamma_ref=gamma)
+    maslov, valid_m = canonical_prefactor(Q, P, (zs > 1).astype(int), gamma)
+    assert valid.all() and valid_m.tolist() == [True, True, False, True, True]
+    np.testing.assert_allclose(continued[valid_m], maslov[valid_m], rtol=1e-12)
+    assert abs(continued[2]-continued[1]) < 1e-8 and abs(continued[3]-continued[2]) < 1e-8
+
+
+def test_complex_window_cell_average_is_complex_quadrature():
+    k, width, cell, offset, direction = 500, 0.2, 0.11, 0.13, 0.007
+    m = 1/(k*width**2)/(1+0.8j)
+    got = gaussian_cell_average(offset, direction, k, width, cell, order=32, m=m)
+    def f(t):
+        return np.exp(1j*k*direction*t-0.5*k*m*t*t)/cell
+    lo, hi = offset-cell/2, offset+cell/2
+    expected = quad(lambda t: f(t).real, lo, hi, epsabs=1e-12)[0]+1j*quad(lambda t: f(t).imag, lo, hi, epsabs=1e-12)[0]
+    assert got == pytest.approx(expected, abs=2e-14)
+
+
+def test_exit_propagation_reproduces_the_quadratic_field():
+    """Windows formed on a plane L before the receiver (Q there, centres and phases on the
+    receiver) and propagated exactly give the exact field of a quadratic family."""
+    k, c, M, width = 50.0, 0.2, 1.3, 0.1
+    L = k*width**2                                     # the element widens by sqrt(2)
+    q = (np.arange(141)+0.5)*(2/141)-1
+    qx, qy = np.meshgrid(q, q)
+    exit_points = M*np.column_stack([qx.ravel(), qy.ravel()])
+    slopes = c*exit_points
+    points = exit_points+L*slopes
+    phase = 0.73+0.5*k*c*np.sum(exit_points**2, axis=1)+0.5*k*L*np.sum(slopes**2, axis=1)
+    Q = np.broadcast_to(np.eye(2)*M, (len(points), 2, 2))
+    axis = np.array([-0.3, 0.0, 0.3])
+    result = reconstruct_field(points, slopes, phase, 1, Q, c*Q, 0, area_weights=(2/141)**2,
+                               source_amplitude=0.8, k=k, width=width, x=axis, y=axis, cell_width=0,
+                               cutoff=7, spread=L)
+    xx, yy = np.meshgrid(axis, axis)
+    expected = 0.8/(M*(1+c*L))*np.exp(0.73j+0.5j*k*c/(1+c*L)*(xx**2+yy**2))
+    np.testing.assert_allclose(result["field"], expected, atol=1e-9, rtol=1e-9)
+    assert result["metadata"]["effective_width_m"] == pytest.approx(width*np.sqrt(2))

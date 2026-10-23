@@ -69,3 +69,57 @@ def test_exit_tails_and_trace_of_a_straight_ray():
     assert g.shape == (2,) and np.all(g >= 0.0) and np.allclose(g_noise, g)   # one ray: all noise
     r, r_noise = D.volume_residual(seg, bores, 5e-6, np.array([0.1]), K, 1e-6, origin[2], 300, 4.0)
     assert r.shape == (1,) and r[0] > 0.0 and r_noise[0] == r[0]
+
+
+def test_glass_form_cancels_a_window_pair_with_its_fresnel_coefficient():
+    """An incident window and its mirror image times r on the wall x = a: the glass form
+    vanishes up to the envelope gradient, the Dirichlet trace is |1 + r|."""
+    sim = _one_ray_scene()
+    fresnel = (2 * sim.delta_f, 2 * sim.beta_f)
+    a, s, width, x_c = 5e-6, 4e-5, 50e-6, 4e-6
+    root = np.sqrt(complex(s * s - fresnel[0], fresnel[1]))
+    r = (s - root) / (s + root)
+    pre = (np.array([[x_c, 0.0], [2 * a - x_c, 0.0]]), np.array([[s, 0.0], [-s, 0.0]]), np.array([1.0, r]), np.zeros(2))
+    y = np.linspace(-20e-6, 20e-6, 9)
+    px, py = np.full((2, y.size), a), np.broadcast_to(y, (2, y.size))
+    normal = (np.ones(px.shape), np.zeros(px.shape))
+    plain = D.window_values(None, np.arange(2), 0.0, px, py, K, width, 0.0, pre=pre)
+    glass = D.window_values(None, np.arange(2), 0.0, px, py, K, width, 0.0, pre=pre, normal=normal, fresnel=fresnel)
+    scale = np.max(np.abs(plain[0]))
+    assert np.max(np.abs(plain.sum(axis=0))) == pytest.approx(abs(1 + r) * scale, rel=1e-6)
+    assert np.max(np.abs(glass.sum(axis=0))) < 0.05 * abs(1 + r) * scale
+    # the normal derivative against central differences
+    h = 1e-9
+    fd = (D.window_values(None, np.arange(2), 0.0, px + h, py, K, width, 0.0, pre=pre)
+          - D.window_values(None, np.arange(2), 0.0, px - h, py, K, width, 0.0, pre=pre)) / (2 * h)
+    k_g = K * np.sqrt(s * s - fresnel[0] + 1j * fresnel[1])
+    np.testing.assert_allclose(glass, plain - fd / (1j * k_g), rtol=1e-5, atol=1e-5 * scale)
+
+
+def test_outside_tails_of_a_final_window_match_direct_integration():
+    sim = _one_ray_scene()
+    bores = sim.cfg.raw["capillary"]["bores"]
+    origin = [0.0, 0.0, -0.5]
+    rows = [(4.2e-6 * 0.7 / 0.5, 0.0, 4.2e-6 / 0.5, 0.0, 0.7, [], [])]     # 4.2 um off axis at the exit z = 0.2
+    seg = D.build_segments(rows, origin, 0.2, bores, 0.0, K, (2 * sim.delta_f, 2 * sim.beta_f))
+    full, shot = D.exit_tails(seg, bores, 5e-6, 0.2, K, 1e-6, origin[2], 0.1e-6, 5.0, outside=True)
+    assert full == shot > 0.0
+    h = 0.02e-6
+    x = np.arange(-12e-6, 12e-6, h) + 0.5 * h
+    px, py = np.meshgrid(x, x)
+    vals = D.window_values(seg, np.array([0]), 0.2, px.reshape(1, -1), py.reshape(1, -1), K, 1e-6, origin[2])[0]
+    direct = float(np.sum(np.abs(vals) ** 2 * (np.hypot(px, py).ravel() > 5e-6)) * h * h)
+    assert full == pytest.approx(direct, rel=1e-2)
+
+
+def test_mask_of_a_stage17_map(tmp_path):
+    I = np.array([[4.0, 1.0], [0.25, -1.0]])
+    rays = np.array([[3, 1], [0, 0]])
+    path = tmp_path / "map.npz"
+    np.savez(path, I=I, matched_stage14_rays=rays, ref_index=np.array([0, 0]), x=np.arange(2.0), y=np.arange(2.0))
+    summary = D.write_map_mask(path, 0.1, 0.35, tmp_path / "mask.npz")
+    assert summary == {"cells": 4, "lit": 2, "masked": 3, "masked_lit": 1}
+    data = np.load(tmp_path / "mask.npz")
+    eta = 0.1 * np.sqrt(5.25 / 2)
+    assert data["dmu"][0, 1] == pytest.approx(2 * eta * (1.0 + 0.5))
+    assert data["masked"].tolist() == [[False, True], [True, True]]
