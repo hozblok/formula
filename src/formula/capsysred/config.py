@@ -143,6 +143,8 @@ B5_DEFAULTS = {
     "map_jobs": 1,
     "map_ray_budgets": [],
     "map_snapshots": [],
+    "branch": "maslov",            # archive_canonical prefactor root: maslov | continuous (exact caustics kept)
+    "exit_propagation": False,     # windows on the capillary exit plane, propagated exactly to the screen
 }
 
 B9_DEFAULTS = {
@@ -702,7 +704,8 @@ class Config:
         b5 = _merge(B5_DEFAULTS, raw)
         for key, choices in (("provider", ("archive_phase", "archive_canonical")),
                              ("patch_space", ("entrance", "screen")),
-                             ("charts", ("screen", "adaptive"))):
+                             ("charts", ("screen", "adaptive")),
+                             ("branch", ("maslov", "continuous"))):
             if b5[key] not in choices:
                 raise ValueError(f"b5_estimator.{key}: expected one of {choices}")
         for key, minimum in (("max_modes", 1), ("rays_per_mode", 1), ("degree", 2),
@@ -714,6 +717,8 @@ class Config:
                 raise ValueError(f"b5_estimator.{key}: expected an integer >= {minimum}")
         if b5["degree"] > 5:
             raise ValueError("b5_estimator.degree must be from 2 through 5")
+        if not isinstance(b5["exit_propagation"], bool):
+            raise ValueError("b5_estimator.exit_propagation must be true or false")
         if b5["min_neighbors"] > b5["neighbors"]:
             raise ValueError("b5_estimator.min_neighbors must not exceed neighbors")
         widths = b5["widths_m"]
