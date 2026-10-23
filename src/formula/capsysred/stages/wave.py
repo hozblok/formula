@@ -4,8 +4,11 @@ Baseline estimator: one positive source quadrature; complex W(P, P_ref) and
 I(P) accumulate from the same fields (PSD by construction). Providers:
 `free` (source -> screen Fresnel), `uisk` (unfolded-image spectral
 Kirchhoff: straight regular-polygon bores, plane-wave r(kappa) per bounce,
-Kirchhoff entrance/exit masks) and `fb` (wave_fb: Fourier-Bessel modes of
-circular / torus bores, DIR-ell wall). Paraxial scalar optics, carrier e^{+ikz}
+Kirchhoff entrance/exit masks), `images` (wave_images: the same physics for
+axis-aligned rectangles as a product of two line sums over every image up to
+the guided horizon), `march` (wave_march: split-step through the wall as a
+medium, cross section free to change along z) and `fb` (wave_fb: Fourier-Bessel
+modes of circular / torus bores, DIR-ell wall). Paraxial scalar optics, carrier e^{+ikz}
 dropped, phasor e^{-i omega t}. Rows: stage16/[screen-N/|free/]mu-wave.jsonl.
 """
 
@@ -26,7 +29,9 @@ from ..shared.units import m_to_um
 
 RESULT_DIR = "stage16"
 FIELD_DUMP = "field-capillary.npz"
-MODEL_CLASS = {"free": "free-space", "uisk": "kirchhoff-rims", "fb": "dir-ell"}
+FAR_FIELD = "far-field.json"
+MODEL_CLASS = {"free": "free-space", "uisk": "kirchhoff-rims", "images": "kirchhoff-rims",
+               "march": "paraxial-medium", "fb": "dir-ell"}
 # reference intensity below this fraction of max I = deep diffraction tail: the lattice
 # representation of the aperture edges dominates W
 FAR_TAIL_RATIO = 1e-3
@@ -600,16 +605,18 @@ def preflight_wave_inputs(sim, wave):
     cap = cfg.capillary
     if wave["provider"] == "free" and cfg.free_source is None:
         raise ValueError("wave_estimator: provider free needs a configured free.source")
-    if wave["provider"] in ("uisk", "fb") and cap is None:
+    if wave["provider"] in ("uisk", "images", "march", "fb") and cap is None:
         raise ValueError(f"wave_estimator: provider {wave['provider']} needs a configured capillary scene")
-    if cap is not None and wave["provider"] in ("auto", "uisk", "fb"):
+    if cap is not None and wave["provider"] in ("auto", "uisk", "images", "march", "fb"):
         prov = capillary_provider(cap, wave)
-        if prov == "uisk":
+        if prov in ("uisk", "images", "march"):
             for i, scr in enumerate([cap.screen, *cap.screens]):
                 if float(scr.z) < float(cap.z1):
                     raise ValueError(f"wave_estimator: capillary screen {i} at z = {float(scr.z)} "
-                                     f"lies before the exit z1 = {float(cap.z1)}; uisk screens sit "
+                                     f"lies before the exit z1 = {float(cap.z1)}; {prov} screens sit "
                                      "on the exit plane or behind it")
+        if wave["far_field"] is not None and (prov not in ("uisk", "images", "march") or len(cap.bores) != 1):
+            raise ValueError("wave_estimator: far_field needs provider uisk, images or march and a single bore")
         scenes.append([cap.screen, *cap.screens])
     for screens in scenes:
         for scr in screens:
@@ -636,6 +643,14 @@ def capillary_provider(cap, wave):
     if prov == "uisk" and not polygonal:
         raise ValueError("wave_estimator: provider uisk supports polygon bores "
                          f"only (sides: n, optional apothems); got kinds {sorted(kinds)}")
+    if prov == "images":
+        from .wave_images import axis_rectangle
+        if not polygonal or any(axis_rectangle(b) is None for b in cap.bores):
+            raise ValueError("wave_estimator: provider images supports rectangles with faces along "
+                             f"the lattice axes only (sides: 4, rotation 0 or 90 degrees); got kinds {sorted(kinds)}")
+    if prov == "march" and not kinds <= {"polygon", "cylinder"}:
+        raise ValueError("wave_estimator: provider march supports straight polygon and circular bores "
+                         f"only; got kinds {sorted(kinds)}")
     if prov == "fb" and not circular:
         raise ValueError("wave_estimator: provider fb supports circular bores (radius, optional "
                          f"bend) only; got kinds {sorted(kinds)}")
@@ -699,17 +714,20 @@ def _run(sim, out_dir, partial, wave, rays_paths, log):
         files += _emit(partial, "free", res, wave, log)
         report += res["report"]
     cap = cfg.capillary
-    if cap is not None and wave["provider"] in ("auto", "uisk", "fb"):
+    if cap is not None and wave["provider"] in ("auto", "uisk", "images", "march", "fb"):
         prov = capillary_provider(cap, wave)
-        if wave["dump_field"] and prov != "uisk":
-            raise ValueError("wave_estimator: dump_field is implemented for provider uisk only")
-        if wave["entrance_spot"] and prov != "fb":
-            raise ValueError("wave_estimator: entrance_spot is implemented for provider fb only")
-        if prov == "uisk":
+        if wave["dump_field"] and prov not in ("uisk", "images", "march"):
+            raise ValueError("wave_estimator: dump_field is implemented for provider uisk, images or march only")
+        if wave["entrance_spot"] and prov not in ("fb", "images", "march"):
+            raise ValueError("wave_estimator: entrance_spot is implemented for provider fb, images or march only")
+        if prov in ("uisk", "images", "march"):
             scenes = _capillary_scene(sim, wave, lines, rays_paths, workers, log,
-                                      dump_dir=partial if wave["dump_field"] else None)
+                                      dump_dir=partial if wave["dump_field"] else None,
+                                      provider=prov, far_dir=partial)
             if wave["dump_field"]:
                 files.append(FIELD_DUMP)
+            if wave["far_field"] is not None:
+                files += scenes[0][1]["far_field_files"]
         else:
             from . import wave_fb
             scenes = wave_fb.fb_capillary_scene(sim, wave, lines, rays_paths, log)
@@ -758,11 +776,17 @@ def _free_scene(sim, wave, lines, rays_paths):
     return res
 
 
-def _capillary_scene(sim, wave, lines, rays_paths, workers, log, dump_dir=None):
+def _capillary_scene(sim, wave, lines, rays_paths, workers, log, dump_dir=None, provider="uisk", far_dir=None):
     cfg = sim.cfg
     cap = cfg.capillary
     src = cap.source
-    nodes, weights, rule = _rule(wave, "capillary", src, rays_paths)
+    spot = wave["entrance_spot"] if provider in ("images", "march") else None
+    if spot:
+        nodes, weights = np.array([spot["center"]]), np.array([1.0])
+        rule = (f"entrance spot: gaussian FWHM {spot['fwhm'] * 1e9:.0f} nm at ({spot['center'][0] * 1e6:.3f}, "
+                f"{spot['center'][1] * 1e6:.3f}) um, tilt ({spot['tilt'][0] * 1e3:.3f}, {spot['tilt'][1] * 1e3:.3f}) mrad")
+    else:
+        nodes, weights, rule = _rule(wave, "capillary", src, rays_paths)
     screens = [cap.screen, *cap.screens]
     labels = ["capillary"] + [f"capillary-s{i}" for i in range(1, len(cap.screens) + 1)]
     z_in = float(cap.z0) - float(src.position[2])
@@ -775,8 +799,18 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log, dump_dir=None):
     theta_max = _theta_max(cap, nodes, grids, refs)
     lam_h = 2.0 * np.pi / max(k for k, *_ in lines)        # shortest wavelength sets h
     lam_reach = 2.0 * np.pi / min(k for k, *_ in lines)    # longest sets the Fresnel margin
-    solvers = [BoreSolver(b, z_in, length, theta_max, lam_h, wave, lam_reach,
-                          cache_masks=len(nodes) * len(lines) > 1) for b in cap.bores]
+    if spot:
+        theta_max = max(theta_max, math.hypot(*spot["tilt"]) + lam_h / spot["fwhm"])
+    if provider == "images":
+        from .wave_images import ImageSolver
+        theta_c = max(math.sqrt(2.0 * delta) for _, _, delta, _ in lines)
+        solvers = [ImageSolver(b, z_in, length, theta_max, lam_h, wave, lam_reach, theta_c, spot) for b in cap.bores]
+    elif provider == "march":
+        from .wave_march import MarchSolver
+        solvers = [MarchSolver(b, z_in, length, theta_max, lam_h, wave, lam_reach, spot) for b in cap.bores]
+    else:
+        solvers = [BoreSolver(b, z_in, length, theta_max, lam_h, wave, lam_reach,
+                              cache_masks=len(nodes) * len(lines) > 1) for b in cap.bores]
     accs = [Accumulator(smp, len(solvers)) for smp in samplers]
     # sampling contract: Nyquist angle lam_h/(2h) against theta_max (ratio > 1 = aliasing)
     h_auto = lam_h / (2.0 * theta_max * wave["angle_margin"])
@@ -792,12 +826,24 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log, dump_dir=None):
         log(f"  16 [capillary]: note explicit grid_dx {m_to_um(solvers[0].h):.4f} um above auto "
             f"{m_to_um(h_auto):.4f} um: angle margin {sampling['angle_margin_effective']:.2f} "
             f"instead of {wave['angle_margin']:g}")
-    n_fam = sum(len(b.families) for b in solvers)
-    n_cells = max((f.grid[1] - f.grid[0]) * (f.grid[3] - f.grid[2])
-                  for b in solvers for f in b.families)
-    log(f"  16 [capillary]: {rule}; lattice h = {m_to_um(solvers[0].h):.4f} um, "
-        f"theta_max = {theta_max * 1e3:.3f} mrad, {n_fam} families "
-        f"({sum(b.pruned for b in solvers)} pruned), largest grid {n_cells:,} cells")
+    if provider == "images":
+        log(f"  16 [capillary/images]: {rule}; lattice h = {m_to_um(solvers[0].h):.4f} um, "
+            f"theta_max = {theta_max * 1e3:.3f} mrad, images per axis {solvers[0].n_images} "
+            f"(horizon {solvers[0].theta_horizon * 1e3:.3f} mrad), line points {solvers[0].line_points}")
+    elif provider == "march":
+        s0 = solvers[0]
+        log(f"  16 [capillary/march]: {rule}; lattice h = {m_to_um(s0.h):.4f} um, {s0.lx.size} x {s0.ly.size} cells, "
+            f"{s0.n_steps} steps of {m_to_um(s0.dz):.3f} um, {len(wave['march']['defects'])} defect(s)"
+            + (", separable walls" if s0.separable else "") + (", z-dependent" if s0.z_dependent else ""))
+    else:
+        n_fam = sum(len(b.families) for b in solvers)
+        n_cells = max((f.grid[1] - f.grid[0]) * (f.grid[3] - f.grid[2])
+                      for b in solvers for f in b.families)
+        log(f"  16 [capillary]: {rule}; lattice h = {m_to_um(solvers[0].h):.4f} um, "
+            f"theta_max = {theta_max * 1e3:.3f} mrad, {n_fam} families "
+            f"({sum(b.pruned for b in solvers)} pruned), largest grid {n_cells:,} cells")
+    ff = wave["far_field"]
+    far = [None] * len(lines)
     t0 = time.time()
     budget = int(wave["cache_gb"] * 1024 ** 3 / max(len(lines), 1))
     dists = [float(s.z) - float(cap.z1) for s in screens]
@@ -812,6 +858,11 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log, dump_dir=None):
             if dump_dir is not None:
                 for bi, u in enumerate(exits):
                     dump[f"field_line{li}_node{j}_bore{bi}"] = np.asarray(u, dtype=np.complex128)
+            if ff is not None:
+                from .wave_images import far_field
+                t, px, py, total, inside = far_field(exits[0], solvers[0].h, k, ff["theta_max"], ff["pad"])
+                acc_f = far[li] or [t, 0.0, 0.0, 0.0, 0.0]
+                far[li] = [t, acc_f[1] + w * px, acc_f[2] + w * py, acc_f[3] + w * total, acc_f[4] + w * inside]
             for g, acc, kern_b, d in zip(samplers, accs, kerns, dists):
                 fields, refs, subs = [], [], []
                 for b, u, kern in zip(solvers, exits, kern_b):
@@ -830,32 +881,55 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log, dump_dir=None):
                  node_weights=np.asarray(weights, dtype=float), h=np.array(solvers[0].h),
                  z_exit=np.array(float(cap.z1)), **dump)
     out = []
+    far_files = _emit_far_field(far_dir, far, lines, ff, wave) if ff is not None else []
     a = float(cap.bores[0]["radius"])
     lam0 = float(sim.lam)
-    model = MODEL_CLASS["uisk"] + ("" if all(int(b["sides"]) == 4 for b in cap.bores)
-                                   else ",first-order-polygon")
+    model = MODEL_CLASS[provider] + ("" if provider == "images" or all(int(b["sides"]) == 4 for b in cap.bores)
+                                     else ",first-order-polygon")
     for label, g, acc, d in zip(labels, samplers, accs, dists):
         nf = {"entrance": a * a / (lam0 * length), "source": a * a / (lam0 * z_in),
               "exit": a * a / (lam0 * d) if d > 0.0 else None}   # None: screen on the exit plane
-        meta = {"scene": label, "provider": "uisk", "model_class": model,
+        meta = {"scene": label, "provider": provider, "model_class": model,
                 "source_rule": rule, "n_nodes": int(len(nodes)),
                 "lattice_h_m": solvers[0].h, "lattice_wavelength_m": lam_h,
                 "theta_max_rad": theta_max,
                 "box_margin_m": solvers[0].reach, "theta_cut_rad": solvers[0].theta_cut,
-                "sampling": sampling,
-                "families": [{"bore": i, "count": len(b.families), "pruned": b.pruned,
-                              "sequences": [list(f.seq) for f in b.families],
-                              "grids": [[int(v) for v in f.grid] for f in b.families]}
-                             for i, b in enumerate(solvers)],
-                "max_bounces": int(wave["max_bounces"]), "fresnel_numbers": nf,
+                "sampling": sampling, "fresnel_numbers": nf,
                 "distance_m": d, "apothem_m": a,
                 "apothems_m": [float(v) for v in cap.bores[0].get("apothems") or [a]]}
+        if provider == "images":
+            meta.update({"images_per_axis": [list(b.n_images) for b in solvers],
+                         "line_points": [list(b.line_points) for b in solvers],
+                         "theta_horizon_rad": solvers[0].theta_horizon,
+                         "entrance_spot": spot})
+            detail = (f"- lattice h = {m_to_um(solvers[0].h):.4f} µm ({wave['mask_supersample']}× mask "
+                      f"supersampling), θ_max = {theta_max * 1e3:.3f} mrad, images per axis "
+                      f"{[list(b.n_images) for b in solvers]} up to the guided horizon "
+                      f"{solvers[0].theta_horizon * 1e3:.3f} mrad; no band window")
+        elif provider == "march":
+            s0 = solvers[0]
+            meta.update({"march": {"dx_m": s0.h, "dz_m": s0.dz, "n_steps": s0.n_steps,
+                                   "lattice": [int(s0.lx.size), int(s0.ly.size)], "box_m": wave["march"]["box"],
+                                   "sponge_m": wave["march"]["sponge"], "defects": wave["march"]["defects"],
+                                   "separable_walls": bool(s0.separable), "z_dependent": bool(s0.z_dependent)},
+                         "entrance_spot": spot})
+            detail = (f"- lattice h = {m_to_um(s0.h):.4f} µm, {s0.lx.size} × {s0.ly.size} cells, {s0.n_steps} steps "
+                      f"of {m_to_um(s0.dz):.3f} µm, box margin {m_to_um(wave['march']['box']):.3f} µm, "
+                      f"defects {len(wave['march']['defects'])}; wall as a medium n = 1 − δ + iβ, Kirchhoff entrance")
+        else:
+            meta.update({"families": [{"bore": i, "count": len(b.families), "pruned": b.pruned,
+                                       "sequences": [list(f.seq) for f in b.families],
+                                       "grids": [[int(v) for v in f.grid] for f in b.families]}
+                                      for i, b in enumerate(solvers)],
+                         "max_bounces": int(wave["max_bounces"])})
+            detail = (f"- lattice h = {m_to_um(solvers[0].h):.4f} µm ({wave['mask_supersample']}× mask "
+                      f"supersampling), θ_max = {theta_max * 1e3:.3f} mrad, families "
+                      f"{[len(b.families) for b in solvers]} (pruned {[b.pruned for b in solvers]}), "
+                      f"max_bounces = {wave['max_bounces']}")
         res = _finish(acc, g, meta, wave, time.time() - t0)
+        res["far_field_files"] = far_files
         res["report"] = _report_lines(label, res, wave, [
-            f"- lattice h = {m_to_um(solvers[0].h):.4f} µm ({wave['mask_supersample']}× mask "
-            f"supersampling), θ_max = {theta_max * 1e3:.3f} mrad, families "
-            f"{[len(b.families) for b in solvers]} (pruned {[b.pruned for b in solvers]}), "
-            f"max_bounces = {wave['max_bounces']}",
+            detail,
             f"- N_F: entrance {nf['entrance']:.2f}, source {nf['source']:.2f}, exit "
             + (f"{nf['exit']:.3f}" if nf["exit"] is not None else "— (screen on the exit plane)")
             + "; ray optics is not used anywhere in this stage",
@@ -865,6 +939,36 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log, dump_dir=None):
         ])
         out.append((label, res))
     return out
+
+
+def _emit_far_field(out_dir, far, lines, ff, wave):
+    """far-field.json (per line and weighted) and the marginal profiles of the weighted sum."""
+    from .wave_images import far_field_summary
+    rows, wx, wy, wt, wi = [], None, None, 0.0, 0.0
+    for (k, wl, *_), f in zip(lines, far):
+        t, px, py, total, inside = f
+        row = far_field_summary(t, px, py, total, inside)
+        row.update(k_per_m=float(k), e_kev=float(12.398419843 / (2.0e10 * np.pi / k)), weight=float(wl))
+        rows.append(row)
+        wx = wl * px if wx is None else wx + wl * px
+        wy = wl * py if wy is None else wy + wl * py
+        wt, wi = wt + wl * total, wl * inside + wi
+    summary = {"theta_max_rad": ff["theta_max"], "pad": ff["pad"], "lines": rows,
+               "weighted": far_field_summary(far[0][0], wx, wy, wt, wi),
+               "convention": "P(theta) = |FFT2 u_exit|^2 on theta = lambda f, exit field inside the bore mask; "
+                             "lines and nodes summed by intensity"}
+    with open(os.path.join(out_dir, FAR_FIELD), "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(summary, fh, indent=2, default=_json_default)
+        fh.write("\n")
+    th = [float(v) * 1e3 for v in far[0][0]]
+    sx, sy = float(np.max(wx)) or 1.0, float(np.max(wy)) or 1.0
+    name = "16-far-field.svg"
+    render.save(os.path.join(out_dir, name), render.line_chart(
+        [{"xs": th, "ys": [float(v) / sx for v in wx], "label": "P(θ_x) / max"},
+         {"xs": th, "ys": [float(v) / sy for v in wy], "label": "P(θ_y) / max", "dash": "6,4"}],
+        "far field of the exit field (marginals)", "θ, mrad", "P / max",
+        f"window |θ| < {ff['theta_max'] * 1e3:.2f} mrad, zero-padded to {ff['pad']}", w=760))
+    return [FAR_FIELD, name]
 
 
 def _finish(acc, sampler, meta, wave, seconds):

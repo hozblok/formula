@@ -91,7 +91,7 @@ DEFAULTS = {
 # stage 16 (`wave_estimator`): merged lazily by Config.validate_wave_estimator(),
 # so a YAML without the section keeps its raw config unchanged for every other stage.
 WAVE_DEFAULTS = {
-    "provider": "auto",             # auto | uisk (polygon bores) | fb (circular bores) | free
+    "provider": "auto",             # auto | uisk (polygon bores) | images (axis rectangles) | march (split-step, defects) | fb (circular bores) | free
     "observable": "coherent_cell",  # coherent_cell (|integral_cell E|^2, as stage 14) | point
     "source_mode": "quadrature",    # quadrature (positive rule over `source`) | recorded_origins
     "target_error": 0.002,          # declared numerical budget on complex mu; recorded, not enforced
@@ -99,7 +99,8 @@ WAVE_DEFAULTS = {
     "grid_dx": None,                # lattice step [m]; null -> lambda / (2 theta_max angle_margin)
     "angle_margin": 2.0,
     "pad": 1.0,                     # box margin in units of theta_max L + 4 sqrt(lambda L)
-    "max_bounces": 2,               # image families up to this reflection order
+    "max_bounces": 2,               # uisk: image families up to this reflection order
+    "images": None,                 # images: tiles per axis; null -> ceil(1.5 theta_c L / W) + 4
     "mask_supersample": 4,          # polygon masks: fractional coverage from an SxS sub-lattice
     "pixel_subsamples": 3,          # I_pixel: SxS points per cell
     "intensity_floor": 1.0e-6,      # trusted: I and I_ref >= floor * max I
@@ -117,8 +118,10 @@ WAVE_DEFAULTS = {
     "fb_grid_dtype": "complex128",  # complex64 | complex128 lattice arrays
     "fb_jobs": 1,                   # processes over source nodes (each builds its own basis)
     "fb_per_bore_maps": None,       # per-bore drifts for I_bores / Gamma_12; null -> only for <= 2 bores
-    "dump_field": False,            # uisk: write the complex exit field per line / node / bore (npz)
-    "entrance_spot": None,          # fb: {center: [x, y], fwhm, tilt: [tx, ty]} coherent gaussian on the entrance plane
+    "dump_field": False,            # uisk / images: write the complex exit field per line / node / bore (npz)
+    "entrance_spot": None,          # fb / images: {center: [x, y], fwhm, tilt: [tx, ty]} coherent gaussian on the entrance plane
+    "far_field": None,              # uisk / images / march, one bore: {theta_max, pad} angular power of the exit field
+    "march": None,                  # march: {dx, dz, box, sponge, defects: [{type, ...}]} split-step lattice and defects
 }
 
 B5_DEFAULTS = {
@@ -598,7 +601,7 @@ class Config:
                 raise ValueError(f"wave_estimator.{key}: invalid value {v!r}")
             return v if integer else float(v)
 
-        for key, choices in (("provider", ("auto", "uisk", "fb", "free")),
+        for key, choices in (("provider", ("auto", "uisk", "images", "march", "fb", "free")),
                              ("observable", ("coherent_cell", "point")),
                              ("source_mode", ("quadrature", "recorded_origins")),
                              ("fb_wall", ("dir-ell", "dir-ell-real")),
@@ -630,6 +633,49 @@ class Config:
             raise ValueError(f"wave_estimator.fb_wall_cut: expected true or false, got {w['fb_wall_cut']!r}")
         if not isinstance(w["dump_field"], bool):
             raise ValueError(f"wave_estimator.dump_field: expected true or false, got {w['dump_field']!r}")
+        w["images"] = num("images", lo=0, integer=True, optional=True)
+        ff = w["far_field"]
+        if ff is not None:
+            if not isinstance(ff, dict) or set(ff) - {"theta_max", "pad"} or "theta_max" not in ff:
+                raise ValueError("wave_estimator.far_field: expected {theta_max, pad}")
+            tm, pad = ff["theta_max"], ff.get("pad", 2048)
+            if (not isinstance(tm, (int, float)) or isinstance(tm, bool) or not tm > 0.0
+                    or not isinstance(pad, int) or isinstance(pad, bool) or pad < 64):
+                raise ValueError("wave_estimator.far_field: theta_max > 0 [rad], pad >= 64")
+            w["far_field"] = {"theta_max": float(tm), "pad": int(pad)}
+        mc = w["march"]
+        if w["provider"] == "march" and mc is None:
+            raise ValueError("wave_estimator.march: provider march needs the march section {dz, box, ...}")
+        if mc is not None:
+            from .stages.wave_march import DEFECT_KEYS, WALLS
+            if not isinstance(mc, dict) or set(mc) - {"dx", "dz", "box", "sponge", "defects"} or "dz" not in mc:
+                raise ValueError("wave_estimator.march: expected {dx, dz, box, sponge, defects}")
+            out = {"dx": mc.get("dx"), "dz": mc["dz"], "box": mc.get("box", 2.0e-7),
+                   "sponge": mc.get("sponge", 1.0e-7), "defects": mc.get("defects") or []}
+            for key in ("dx", "dz", "box", "sponge"):
+                v = out[key]
+                if v is None and key == "dx":
+                    continue
+                if not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or v < 0.0 \
+                        or (v == 0.0 and key in ("dz", "box")):
+                    raise ValueError(f"wave_estimator.march.{key}: invalid value {v!r}")
+                out[key] = float(v)
+            if not isinstance(out["defects"], list):
+                raise ValueError("wave_estimator.march.defects: expected a list")
+            for d in out["defects"]:
+                if not isinstance(d, dict) or d.get("type") not in DEFECT_KEYS or set(d) - DEFECT_KEYS[d["type"]] - {"type"}:
+                    raise ValueError(f"wave_estimator.march.defects: bad entry {d!r}; types {sorted(DEFECT_KEYS)}")
+                t = d["type"]
+                need = {"roughness": {"sigma", "lc", "seed"}, "step": {"z", "dw"}, "taper": {"dw"}, "slope": {"deg"},
+                        "rounded": {"rc"}, "ellipse": {"ratio"}, "drift": {"dxy"}}[t]
+                if not need <= set(d):
+                    raise ValueError(f"wave_estimator.march.defects: {t} needs {sorted(need)}")
+                if t == "roughness" and any(wl not in WALLS for wl in d.get("walls") or []):
+                    raise ValueError(f"wave_estimator.march.defects: roughness walls must be among {WALLS}")
+                for key in ("dw", "dxy"):
+                    if key in d and (not isinstance(d[key], (list, tuple)) or len(d[key]) != 2):
+                        raise ValueError(f"wave_estimator.march.defects: {key} takes two numbers")
+            w["march"] = out
         spot = w["entrance_spot"]
         if spot is not None:
             if (not isinstance(spot, dict) or set(spot) - {"center", "fwhm", "tilt"}
