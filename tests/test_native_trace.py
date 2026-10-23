@@ -696,3 +696,23 @@ def test_simulation_native_equals_python(tmp_path, monkeypatch):
         for name in ("mu", "intensity", "density"):
             for row_n, row_p in zip(rn["maps"][name], rp["maps"][name]):
                 assert row_n == pytest.approx(row_p, rel=1e-9, abs=1e-12)
+
+
+@pytest.mark.parametrize("p", PRECISIONS)
+def test_rectangle_apothems_hit_parity(p):
+    """Per-face apothems: Python and native hits agree on every face of a 250 x 358.8 nm channel."""
+    N = lambda s: Number(s, p)
+    bore = {"kind": "polygon", "center": (N("0"), N("0")), "radius": N("1.25e-7"), "sides": 4,
+            "rotation": N("0"), "apothems": (N("1.25e-7"), N("1.794e-7"), N("1.25e-7"), N("1.794e-7"))}
+    bundle = CapillaryBundle([bore], N("0"), N("0.005"))
+    native = compile_optic(bundle)
+    wall = bundle.walls[0]
+    assert wall.inside(1.2e-7, 1.7e-7, 0.0) and not wall.inside(1.3e-7, 0.0, 0.0) and not wall.inside(0.0, 1.85e-7, 0.0)
+    for dx, dy in ((6e-4, 0.0), (0.0, 6e-4), (-4e-4, 3e-4), (2e-4, -7e-4), (5e-4, 5e-4)):
+        d = vunit((lift(dx, p), lift(dy, p), lift(1.0, p)))
+        O = (lift(2e-8, p), lift(-3e-8, p), lift(0.0, p))
+        t_exit = t_exit_of(bundle, O, d)
+        py_hit = wall.hit(O, d, t_exit)
+        c_hit = _formula.trace_wall_hit(native, 0, raw_vec(O), raw_vec(d), t_exit._value)
+        assert py_hit is not None
+        assert_hit_equal(py_hit, c_hit)

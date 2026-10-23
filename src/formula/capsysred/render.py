@@ -44,6 +44,14 @@ def _fmt(v: float) -> str:
     return s
 
 
+def diverging_color(v: float):
+    """Blue-white-red for v in [-1, 1] (signed maps: zero is white)."""
+    v = min(1.0, max(-1.0, v))
+    lo, mid, hi = (33, 102, 172), (247, 247, 247), (178, 24, 43)
+    a, b, f = (lo, mid, v + 1.0) if v < 0.0 else (mid, hi, v)
+    return tuple(int(round(a[k] + (b[k] - a[k]) * f)) for k in range(3))
+
+
 def viridis(v: float):
     v = min(1.0, max(0.0, v))
     x = v * (len(_VIRIDIS) - 1)
@@ -240,17 +248,24 @@ def _mark_pixel(ax, mark, nx, ny):
 
 def heatmap(grid, extent, title, xlabel, ylabel, subtitle="", cbar_label="",
             w=560, h=460, vmax=None, mark=None, equal=False, log=False,
-            decades=3):
+            decades=3, diverging=False):
     """grid: row-major [iy][ix], iy=0 at the bottom edge; extent=(x0,x1,y0,y1).
     equal=True: pick h so one data unit spans equal px on both axes.
-    log=True: color spans `decades` below vmax, colorbar labeled per decade."""
+    log=True: color spans `decades` below vmax, colorbar labeled per decade.
+    diverging=True: signed data on a blue-white-red scale over [-vmax, vmax]."""
     ny, nx = len(grid), len(grid[0])
     finite = [float(v) for row in grid for v in row
               if v is not None and math.isfinite(float(v))]
-    vmax = vmax or max(finite, default=1.0) or 1.0
-    floor = vmax / 10 ** decades if vmax > 0 else 0.0
+    if diverging:
+        vmax = vmax or max((abs(v) for v in finite), default=1.0) or 1.0
+        floor = 0.0
+    else:
+        vmax = vmax or max(finite, default=1.0) or 1.0
+        floor = vmax / 10 ** decades if vmax > 0 else 0.0
 
     def tone(v):
+        if diverging:
+            return diverging_color(v / vmax)
         if log:
             return viridis(0.0 if floor <= 0 or v <= floor
                            else math.log10(v / floor) / decades)
@@ -279,7 +294,8 @@ def heatmap(grid, extent, title, xlabel, ylabel, subtitle="", cbar_label="",
              f'href="{_png_uri(rows)}"/>')
     if mark:
         e.append(_mark_pixel(ax, mark, nx, ny))
-    cb = [[viridis(1.0 - j / 255.0)] * 12 for j in range(256)]
+    cb = [[(diverging_color(1.0 - 2.0 * j / 255.0) if diverging else viridis(1.0 - j / 255.0))] * 12
+          for j in range(256)]
     cx = ax.px1 + 14
     e.append(f'<image x="{cx}" y="{ax.py1:.1f}" width="14" '
              f'height="{ax.py0 - ax.py1:.1f}" preserveAspectRatio="none" '
@@ -291,6 +307,10 @@ def heatmap(grid, extent, title, xlabel, ylabel, subtitle="", cbar_label="",
             frac = math.log10(10 ** k / floor) / decades
             y = ax.py0 - frac * (ax.py0 - ax.py1)
             e.append(_text(cx + 18, y + 4, f"1e{k}", 10.5, "start", "#444"))
+    elif diverging:
+        for frac, val in ((0.0, -vmax), (0.5, 0.0), (1.0, vmax)):
+            y = ax.py0 - frac * (ax.py0 - ax.py1)
+            e.append(_text(cx + 18, y + 4, _fmt(val), 10.5, "start", "#444"))
     else:
         for frac in (0.0, 0.5, 1.0):
             y = ax.py0 - frac * (ax.py0 - ax.py1)

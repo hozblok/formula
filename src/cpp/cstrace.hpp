@@ -22,6 +22,7 @@ namespace cstrace {
 
 // Forward-step floor for the ray parameter t (m); capsysred.types._EPS_T.
 constexpr double kEpsT = 1e-12;
+constexpr const char *kEpsTStr = "1e-12";
 
 // Bore-membership nudge along the ray (m); capsysred.types._EPS_LOC.
 constexpr double kEpsLoc = 1e-7;
@@ -185,8 +186,10 @@ struct Tracer {
   struct Polygon {
     std::vector<std::pair<R, R>> faces;
     std::vector<std::pair<double, double>> facesf;
-    R apothem, cx, cy;
-    double af, cxf, cyf;
+    std::vector<R> apothems;
+    std::vector<double> af;
+    R cx, cy;
+    double cxf, cyf;
   };
   struct Torus {
     V3 C, nhat;
@@ -266,9 +269,9 @@ struct Tracer {
   // wall_polygon.PolygonWall
   static bool inside(const Polygon &w, double xf, double yf, double) {
     double dx = xf - w.cxf, dy = yf - w.cyf;
-    double lim = w.af * (1.0 + kInsideTol);
-    for (const auto &f : w.facesf) {
-      if (!(f.first * dx + f.second * dy < lim)) {
+    for (size_t i = 0; i < w.facesf.size(); ++i) {
+      double lim = w.af[i] * (1.0 + kInsideTol);
+      if (!(w.facesf[i].first * dx + w.facesf[i].second * dy < lim)) {
         return false;
       }
     }
@@ -286,7 +289,7 @@ struct Tracer {
       if (md <= 1e-30) {
         continue;
       }
-      double tf = (w.af - (mxf * rxf + myf * ryf)) / md;
+      double tf = (w.af[i] - (mxf * rxf + myf * ryf)) / md;
       if (tf > kEpsT && (best < 0 || tf < bestt)) {
         best = static_cast<long>(i);
         bestt = tf;
@@ -297,7 +300,8 @@ struct Tracer {
     }
     const R &mx = w.faces[static_cast<size_t>(best)].first;
     const R &my = w.faces[static_cast<size_t>(best)].second;
-    R t = (w.apothem - (mx * (O.x - w.cx) + my * (O.y - w.cy))) /
+    R t = (w.apothems[static_cast<size_t>(best)] -
+           (mx * (O.x - w.cx) + my * (O.y - w.cy))) /
           (mx * d.x + my * d.y);
     return Hit{t, vadd(O, vscale(d, t)), {mx, my, R()}};
   }
@@ -595,11 +599,9 @@ struct Tracer {
     R opl;
     std::vector<Refl> refl;
     if (optic) {
-      bool exited = false;
-      for (long i = 0; i < max_bounces; ++i) {
+      for (;;) {
         Event ev = next_event(*optic, O, d);
         if (ev.kind == kExit) {
-          exited = true;
           break;
         }
         if (ev.kind == kPass) {
@@ -611,14 +613,15 @@ struct Tracer {
           return {fAbsorbed, vadd(O, vscale(d, ev.t)), opl + ev.t,
                   std::move(refl), d};
         }
+        if (static_cast<long>(refl.size()) >= max_bounces) {
+          // reflection budget spent at this wall hit
+          return {fLost, ev.point, opl + ev.t, std::move(refl), d};
+        }
         opl += ev.t;
         R dot = vdot(d, ev.normal);
         d = vsub(d, vscale(ev.normal, 2 * dot));
         refl.push_back({ev.point, abs(dot)});
         O = ev.point;
-      }
-      if (!exited) {  // bounce budget spent: for-else in trace_ray
-        return {fLost, O, opl, std::move(refl), d};
       }
     }
     if (d.z <= 0) {
@@ -626,7 +629,12 @@ struct Tracer {
     }
     R t = (screen_z - O.z) / d.z;
     if (t < 0) {
-      return {fLost, O, opl, std::move(refl), d};
+      // Treat backward steps within the tolerance as arrival, keeping O and opl.
+      static const R screen_eps_t(kEpsTStr);
+      if (t < -screen_eps_t) {
+        return {fLost, O, opl, std::move(refl), d};
+      }
+      t = R();
     }
     V3 point = vadd(O, vscale(d, t));
     return {fScreen, point, opl + t, std::move(refl), d};

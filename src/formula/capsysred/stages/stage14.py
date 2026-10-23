@@ -15,9 +15,7 @@ from collections.abc import Iterator
 import concurrent.futures
 from contextlib import contextmanager
 import copy
-import gzip
 import hashlib
-import io
 import json
 import math
 import operator
@@ -38,8 +36,7 @@ from ._stage14_checkpoints import (RANGE_SLOTS, mode_ranges, range_agg_name,
                                    range_done, range_manifest_name,
                                    range_rows_name, read_range_manifest)
 from ..shared.progress import Progress
-from ..rays import (RNG_SCHEME, _validate_stream_metadata, geometry_metadata,
-                   metadata_equal, read_metadata)
+from ..rays import RNG_SCHEME, geometry_metadata, metadata_equal, recorded_screen_z
 from ..screen import ScatterRaster, ScreenGrid
 from .stage14_flags import (FlagThresholds, PixelCounters, PixelStatistics,
                             serialize_pixel, validate_counters, validate_ref,
@@ -60,7 +57,7 @@ AGG_MAGIC = b"CPS14AGG"
 AGG_FORMAT = 1
 STREAM_COUNTERS = ("emitted", "screen", "absorbed", "lost", "off_window",
                    "reflected_rays", "reflections")
-_KNOWN_RNG_SCHEMES = (RNG_SCHEME, "sequential-v2")
+_KNOWN_RNG_SCHEMES = (RNG_SCHEME,)
 RESULT_PAYLOAD_NAMES = (
     "mu-jack.jsonl",
     "14-capillary-jack-mu.svg",
@@ -100,16 +97,6 @@ def _write_json(path: str, value) -> None:
     with durable_open(path, encoding="utf-8", newline="\n") as fh:
         json.dump(value, fh, ensure_ascii=False, indent=2, allow_nan=False)
         fh.write("\n")
-
-
-def _stat_contract(value) -> dict:
-    """Stable identity fields available from both stat() and fstat()."""
-    return {
-        "device": int(value.st_dev),
-        "inode": int(value.st_ino),
-        "size": int(value.st_size),
-        "mtime_ns": int(value.st_mtime_ns),
-    }
 
 
 def _publish_directory(partial: str, final: str, names: list[str]) -> None:
@@ -205,23 +192,13 @@ def _require_array_bytes(name: str, data, itemsize: int, count: int) -> bytes:
     return value
 
 
-def _deep_merge(base: dict, override: dict) -> dict:
-    out = copy.deepcopy(base)
-    for key, value in (override or {}).items():
-        if isinstance(value, dict) and isinstance(out.get(key), dict):
-            out[key] = _deep_merge(out[key], value)
-        else:
-            out[key] = copy.deepcopy(value)
-    return out
-
-
 def _recorded_screen_z(meta: dict, path: str) -> float:
     try:
-        geo = meta["geometry"]
-        screen = _deep_merge(geo["screen"], geo["capillary"].get("screen", {}))
-        z = float(screen["z"])
+        z = recorded_screen_z(meta["geometry"], "capillary")
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"{path}: rays metadata has no capillary screen z") from exc
+    if z is None:
+        raise ValueError(f"{path}: rays metadata has no capillary screen z")
     if not math.isfinite(z):
         raise ValueError(f"{path}: recorded capillary screen z is not finite")
     return z
@@ -313,8 +290,8 @@ class InputPart:
     analysis_id: str
     cache_dir: str
     identity: dict
-    bytes: int = 0
-    v3_index: object = None
+    bytes: int
+    index: object
 
 
 @dataclass
@@ -368,30 +345,20 @@ def _prepare_inputs(sim, paths, signature: dict) -> list[InputPart]:
     expected_rays = None
     for pathlike in paths:
         path = os.path.abspath(os.fspath(pathlike))
-        v3_index = None
-        if rays_v3.is_v3(path):
-            v3_index = rays_v3.load_index(path)
-            meta = rays_v3.metadata(path)
-        else:
-            meta = read_metadata(path)
-            _validate_stream_metadata(meta, path)
+        if not rays_v3.is_v3(path):
+            raise ValueError(f"{path}: not a v3 rays archive directory")
+        index = rays_v3.load_index(path)
+        meta = rays_v3.metadata(path)
         # Jackknife counts modes as independent realizations: that is proven
-        # only for recorded provenance, and across parts only for lattice-v1
-        # (stream keys "{seed}/{scene}/{mode}" are disjoint for distinct
-        # seeds; sequential-v2 shard seeds are base+k and may intersect).
+        # only for recorded lattice-v1 provenance (stream keys
+        # "{seed}/{scene}/{mode}" are disjoint for distinct seeds).
         rng = meta.get("rng")
         scheme = rng.get("scheme") if isinstance(rng, dict) else rng
         if scheme not in _KNOWN_RNG_SCHEMES:
             raise ValueError(
                 f"{path}: rays metadata lacks a known rng scheme "
                 f"(got {scheme!r}); realization independence is unproven — "
-                "re-record or convert with provenance")
-        if len(paths) > 1 and scheme != RNG_SCHEME:
-            raise ValueError(
-                f"{path}: stage 14 union requires lattice-v1 provenance for "
-                "every part (sequential/legacy shard streams may intersect); "
-                "replay such archives separately or prove disjointness "
-                "manually")
+                "re-record with provenance")
         budget = meta["budgets"].get("capillary")
         if not isinstance(budget, list) or len(budget) != 2:
             raise ValueError(f"{path}: no capillary scene in rays metadata")
@@ -408,22 +375,14 @@ def _prepare_inputs(sim, paths, signature: dict) -> list[InputPart]:
                 f"{path}: capillary trace geometry differs from the Stage-14 config"
             )
         snapshot = _json_copy(meta)
+        # v3 archives are content-addressed: the index lists every section's
+        # sha256, and each section is hashed while streamed.
         concrete = {
             "rays_metadata": snapshot,
             "resolved_path": os.path.normcase(os.path.realpath(path)),
+            "index_sha256": rays_v3.index_digest(path),
         }
-        if v3_index is not None:
-            # v3 archives are content-addressed: the index lists every
-            # section's sha256, and each section is hashed while streamed.
-            concrete["index_sha256"] = rays_v3.index_digest(path)
-            archive_bytes = v3_index.total_bytes()
-        else:
-            # Rays archives are immutable under the no-clobber contract.  The
-            # descriptor is checked again before and after the one strict
-            # cache-building pass, closing path/symlink replacement windows.
-            stat = os.stat(path)
-            concrete["archive_stat"] = _stat_contract(stat)
-            archive_bytes = stat.st_size
+        archive_bytes = index.total_bytes()
         input_id = _identity(concrete)
         seed = meta["geometry"].get("seed")
         if type(seed) is not int:
@@ -455,7 +414,7 @@ def _prepare_inputs(sim, paths, signature: dict) -> list[InputPart]:
         parts.append(InputPart(path, meta, n_modes, n_rays,
                                identity["source_screen_z"], input_id, seed,
                                analysis_id, cache_dir, identity,
-                               archive_bytes, v3_index))
+                               archive_bytes, index))
     configured_modes, configured_rays = sim.cfg.capillary.source.budget()
     total_modes = sum(part.n_modes for part in parts)
     if (total_modes, expected_rays) != (configured_modes, configured_rays):
@@ -499,50 +458,28 @@ def _native_store(path, n_modes, n_pixels, ref, kms, weights):
 def _archive_lines(part: InputPart,
                    mode_range: tuple[int, int] | None = None,
                    ) -> Iterator[Iterator[str]]:
-    """Iterator of archive text lines: preamble, rows, scene trailers.
-
-    v2: the exact archive inode selected during input preparation.  v3: the
-    capillary sections mode-major (each hashed against the index) behind a
-    synthetic preamble and scene trailer, so the strict loop is shared.
-    ``mode_range`` (v3 only) restricts the stream to modes [m0, m1).
+    """Iterator of archive text lines: the capillary sections mode-major
+    (each hashed against the index) behind a synthetic preamble and scene
+    trailer, so the strict row loop sees one stream.  ``mode_range``
+    restricts it to modes [m0, m1).
     """
-    if part.v3_index is not None:
-        m0, m1 = mode_range if mode_range else (0, part.n_modes)
-        expected = part.identity["input"]["index_sha256"]
-        if rays_v3.index_digest(part.path) != expected:
-            raise ValueError(f"{part.path}: rays index changed before cache build")
+    m0, m1 = mode_range if mode_range else (0, part.n_modes)
+    expected = part.identity["input"]["index_sha256"]
+    if rays_v3.index_digest(part.path) != expected:
+        raise ValueError(f"{part.path}: rays index changed before cache build")
 
-        def lines():
-            yield "{}\n"
-            for sections in part.v3_index.modes("capillary")[m0:m1]:
-                for entry in sections:
-                    for raw in rays_v3.iter_section_lines(part.path, entry):
-                        yield raw.decode("utf-8")
-            yield json.dumps({"scene_end": "capillary",
-                              "rows": (m1 - m0) * part.n_rays}) + "\n"
+    def lines():
+        yield "{}\n"
+        for sections in part.index.modes("capillary")[m0:m1]:
+            for entry in sections:
+                for raw in rays_v3.iter_section_lines(part.path, entry):
+                    yield raw.decode("utf-8")
+        yield json.dumps({"scene_end": "capillary",
+                          "rows": (m1 - m0) * part.n_rays}) + "\n"
 
-        yield lines()
-        if rays_v3.index_digest(part.path) != expected:
-            raise ValueError(f"{part.path}: rays index changed during cache build")
-        return
-    if mode_range is not None:
-        raise ValueError(f"{part.path}: a mode range needs a v3 rays archive")
-    expected = part.identity["input"]["archive_stat"]
-    with open(part.path, "rb") as raw_fh:
-        if not metadata_equal(_stat_contract(os.fstat(raw_fh.fileno())),
-                              expected):
-            raise ValueError(
-                f"{part.path}: rays archive changed before cache build"
-            )
-        with gzip.GzipFile(fileobj=raw_fh, mode="rb") as compressed:
-            with io.TextIOWrapper(compressed, encoding="utf-8",
-                                  newline="") as text_fh:
-                yield iter(text_fh)
-        if not metadata_equal(_stat_contract(os.fstat(raw_fh.fileno())),
-                              expected):
-            raise ValueError(
-                f"{part.path}: rays archive changed during cache build"
-            )
+    yield lines()
+    if rays_v3.index_digest(part.path) != expected:
+        raise ValueError(f"{part.path}: rays index changed during cache build")
 
 
 def _amplitudes_factory(sim):
@@ -1267,9 +1204,6 @@ def _build_fanout_parallel(sim, part: InputPart, builds: list[CacheBuild],
     """Decode one v3 archive in parallel mode ranges (published atomically,
     so a rerun reuses completed ranges), then assemble each screen's
     canonical rows file and summed aggregates."""
-    if part.v3_index is None:
-        raise ValueError(
-            f"{part.path}: stage-14 jobs > 1 needs a v3 rays archive")
     max_bounces = sim.cfg.max_bounces
     ranges = mode_ranges(part.n_modes)
     screens = [(b.target.index, b.target.label, b.partial, b.target.contract)

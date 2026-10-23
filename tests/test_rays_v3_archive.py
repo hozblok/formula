@@ -354,28 +354,6 @@ def test_new_archive_refuses_orphan_sections(tmp_path):
         trace_v3._new_archive(sim.cfg, archive)
 
 
-def test_convert_section_reuse_requires_identical_payload(tmp_path):
-    """Converter resume re-adopts a published section only byte-for-byte."""
-    from formula.capsysred import convert_rays_v3
-    out_dir = str(tmp_path / "arch")
-    os.makedirs(os.path.join(out_dir, rays_v3.MODES_DIR))
-    payload = (b'{"stage": "capillary", "mode": 0, "ray": 0, "fate": "lost"}\n'
-               b'{"stage": "capillary", "mode": 0, "ray": 1, "fate": "lost"}\n')
-    entry, reused = convert_rays_v3._write_section(
-        out_dir, "capillary", 0, 2, None, None, payload, 2,
-        rays_v3.DEFAULT_LEVEL)
-    assert not reused
-    entry, reused = convert_rays_v3._write_section(
-        out_dir, "capillary", 0, 2, None, None, payload, 2,
-        rays_v3.DEFAULT_LEVEL)
-    assert reused
-    tampered = payload.replace(b'"ray": 1', b'"ray": 9')
-    with pytest.raises(ValueError, match="differs from the current source"):
-        convert_rays_v3._write_section(
-            out_dir, "capillary", 0, 2, None, None, tampered, 2,
-            rays_v3.DEFAULT_LEVEL)
-
-
 @pytest.mark.parametrize("jobs", ["0", str((os.cpu_count() or 8) + 1), "-1"])
 def test_trace_v3_cli_rejects_jobs(tmp_path, jobs):
     from formula.capsysred.trace_v3 import main
@@ -384,12 +362,18 @@ def test_trace_v3_cli_rejects_jobs(tmp_path, jobs):
     assert not os.path.exists(tmp_path / "a")
 
 
-def test_convert_cli_rejects_jobs(tmp_path):
-    from formula.capsysred.convert_rays_v3 import MAX_JOBS, main
+def test_trace_v3_verify_cli(tmp_path):
+    from formula.capsysred.trace_v3 import main
+    archive, _ = _archive(tmp_path)
     with pytest.raises(SystemExit):
-        main([str(tmp_path), "--jobs", str(MAX_JOBS + 1)])
-    with pytest.raises(SystemExit):
-        main(["--verify", str(tmp_path), "--jobs", "0"])
+        main(["--verify", archive, "--jobs", "0"])
+    with pytest.raises(SystemExit):                     # --verify stands alone
+        main([str(tmp_path / "cfg.yaml"), "--verify", archive])
+    with pytest.raises(SystemExit):                     # tracing needs config and --archive
+        main([str(tmp_path / "cfg.yaml")])
+    assert main(["--verify", archive, "--jobs", "1"]) == 0
+    with pytest.raises(ValueError, match="missing or unreadable"):
+        main(["--verify", str(tmp_path / "nowhere")])
 
 
 def test_stages_cli_rejects_unknown_stage(tmp_path):
