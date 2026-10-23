@@ -4,8 +4,8 @@ import numpy as np
 from scipy.optimize import brentq
 
 from formula.capsysred.stages._b5_transport import (
-    bore_area, bore_inside, count_free_caustics, polygon_faces, reflect_variations, transport_mode,
-    wall_normal_derivative,
+    bore_area, bore_inside, count_free_caustics, det_path_increment, gamma_phase_shift, polygon_faces,
+    reflect_variations, transport_mode, wall_normal_derivative,
 )
 
 
@@ -254,3 +254,62 @@ def test_square_bore_transport_matches_finite_differences_without_caustics():
     dets = np.abs(result["Q"][:, 0, 0]*result["Q"][:, 1, 1]-result["Q"][:, 0, 1]*result["Q"][:, 1, 0])
     np.testing.assert_allclose(dets, 49., rtol=1e-9)              # mirrors keep the free-flight tube
     assert result["diagnostics"]["lagrangian_defect_max"] < 1e-13
+
+
+def test_det_path_increment_matches_dense_sampling():
+    rng = np.random.default_rng(1)
+    checked = 0
+    for _ in range(300):
+        A = rng.normal(size=(2, 2))+1j*rng.normal(size=(2, 2))
+        B = rng.normal(size=(2, 2))+1j*rng.normal(size=(2, 2))*rng.integers(0, 2)
+        t = rng.uniform(.1, 3.)
+        s = np.linspace(0., t, 20001)
+        d = np.linalg.det(A[None]+s[:, None, None]*B[None])
+        if np.min(abs(d)) < 1e-3*np.max(abs(d)):
+            continue
+        increment, hit = det_path_increment(A[None], B[None], np.array([t]))
+        assert abs(increment[0]-np.sum(np.angle(d[1:]/d[:-1]))) < 1e-8
+        assert not hit[0]
+        checked += 1
+    assert checked > 200
+    _, hit = det_path_increment(np.eye(2)[None]+0j, np.diag([-1., 0.])[None]+0j, np.array([2.]))
+    assert hit[0]
+
+
+def test_gamma_phase_shift_matches_dense_sampling():
+    rng = np.random.default_rng(2)
+    for _ in range(50):
+        Q = rng.normal(size=(2, 2))
+        H = rng.normal(size=(2, 2))
+        P = (H+H.T)/2@Q
+        g1 = rng.uniform(1e-3, 1e6)
+        gs = np.geomspace(1., g1, 20001)
+        d = np.linalg.det(gs[:, None, None]*Q[None]+1j*P[None])
+        assert abs(gamma_phase_shift(Q[None], P[None], 1., g1)[0]-np.sum(np.angle(d[1:]/d[:-1]))) < 1e-8
+
+
+def test_continuous_phase_matches_maslov_branch_on_curved_walls():
+    """Cylinder (up to 3 bounces) and a long torus (up to ~70 bounces and caustics): the
+    continuous determinant argument gives the Maslov-branch prefactor for every width."""
+    from formula.capsysred.stages._b5_field import canonical_prefactor
+    source = np.array([.08, -.04, -2.])
+    cylinder = SimpleNamespace(z0=0., bores=[{"center": [0., 0.], "radius": 1.}])
+    torus = SimpleNamespace(z0=0., bores=[{"center": [0., 0.], "radius": 1., "kind": "torus",
+                                           "bend": {"radius": 2000., "toward": [1., 0.]}}])
+    cases = [(cylinder, [_cylinder_trace(np.array(q), source, 1., 10., 12.)
+                         for q in ([.1, .1], [.5, .15], [.6, -.4], [-.8, .1], [0., .95])], 12.),
+             (torus, [_torus_trace(np.array(q), source, 1., 2000., 300., 320.)
+                      for q in ([.1, .1], [.5, .15], [-.8, .1])], 320.)]
+    for cap, paths, target in cases:
+        mode = {"origin": source, "points": np.array([p[0] for p in paths]),
+                "directions": np.array([p[1] for p in paths]), "refl": [p[2] for p in paths]}
+        result = transport_mode(mode, cap, target, gamma_ref=2.)
+        assert result["valid"].all() and result["continuous_valid"].all(), result["diagnostics"]
+        assert result["maslov"].max() > 1
+        assert result["diagnostics"]["phase_root_on_path_count"] == 0
+        for gamma in (.3, 1., 50., 1e5):
+            old, _ = canonical_prefactor(result["Q"], result["P"], result["maslov"], gamma)
+            new, valid = canonical_prefactor(result["Q"], result["P"], None, gamma,
+                                             phase=result["phase"], gamma_ref=result["gamma_ref"])
+            assert valid.all()
+            np.testing.assert_allclose(new, old, rtol=1e-12)
