@@ -91,7 +91,7 @@ DEFAULTS = {
 # stage 16 (`wave_estimator`): merged lazily by Config.validate_wave_estimator(),
 # so a YAML without the section keeps its raw config unchanged for every other stage.
 WAVE_DEFAULTS = {
-    "provider": "auto",             # auto | uisk (polygon bores) | images (axis rectangles) | march (split-step, defects) | fb (circular bores) | free
+    "provider": "auto",             # auto (images: axis rectangles; march: other polygons; fb: circular) | uisk | images | march | fb | free
     "observable": "coherent_cell",  # coherent_cell (|integral_cell E|^2, as stage 14) | point
     "source_mode": "quadrature",    # quadrature (positive rule over `source`) | recorded_origins
     "target_error": 0.002,          # declared numerical budget on complex mu; recorded, not enforced

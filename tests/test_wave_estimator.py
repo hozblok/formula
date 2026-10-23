@@ -434,8 +434,8 @@ def test_two_square_bores_run_and_interference_identity(tmp_path):
     centre = [r for r in rows if abs(r["x_um"]) < 0.5 and abs(r["y_um"]) < 0.5]
     assert centre and centre[0]["I"] > 0.02 * imax               # shadow lit by diffraction
     meta = json.loads((out / "meta.json").read_text(encoding="utf-8"))
-    assert meta["status"] == "unverified" and meta["provider"] == "uisk"
-    assert meta["families"][0]["count"] == 13 and meta["wave_estimator"]["source_nodes"] == 4
+    assert meta["status"] == "unverified" and meta["provider"] == "images"      # auto: axis rectangles
+    assert meta["images_per_axis"][0][0] >= 1 and meta["wave_estimator"]["source_nodes"] == 4
     assert meta["screen"]["reference_cell_um"] is not None and meta["screen"]["reference_inside_window"]
     assert "units" in meta["conventions"]
     assert any("Stage 16" in line for line in sim.report)

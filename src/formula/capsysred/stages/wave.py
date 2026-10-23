@@ -632,14 +632,22 @@ def _polygon_circumradius(bore):
 
 
 def capillary_provider(cap, wave):
-    """Provider for the capillary scene: uisk for polygons, fb for circular / torus
-    bores; `auto` picks by geometry, an explicit choice must match it (no fallback)."""
+    """Provider for the capillary scene; `auto` picks by geometry: images for rectangles with
+    faces along the lattice axes, march for other polygons, fb for circular / torus bores.
+    An explicit choice must match the geometry (no fallback)."""
     kinds = {bore.get("kind", "cylinder") for bore in cap.bores}
     polygonal = kinds <= {"polygon"}
     circular = kinds <= {"cylinder", "torus"}
     prov = wave["provider"]
     if prov == "auto":
-        prov = "uisk" if polygonal else ("fb" if circular else None)
+        if polygonal:
+            from .wave_images import axis_rectangle
+            prov = "images" if all(axis_rectangle(b) is not None for b in cap.bores) else "march"
+        else:
+            prov = "fb" if circular else None
+    if prov == "march" and wave.get("march") is None:
+        raise ValueError("wave_estimator: provider march (auto for non-rectangular polygons) needs the "
+                         "march section {dz, box, sponge, defects}")
     if prov == "uisk" and not polygonal:
         raise ValueError("wave_estimator: provider uisk supports polygon bores "
                          f"only (sides: n, optional apothems); got kinds {sorted(kinds)}")

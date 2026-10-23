@@ -49,7 +49,7 @@ def test_fb_config_and_provider_resolution():
     with pytest.raises(ValueError, match="uisk supports polygon"):
         W.capillary_provider(cap, {"provider": "uisk"})
     sq = Simulation.from_dict(_scene([{"center": [0.0, 0.0], "radius": 3e-6, "sides": 4}])).cfg.capillary
-    assert W.capillary_provider(sq, {"provider": "auto"}) == "uisk"
+    assert W.capillary_provider(sq, {"provider": "auto"}) == "images"          # auto: axis rectangles
     with pytest.raises(ValueError, match="fb supports circular"):
         W.capillary_provider(sq, {"provider": "fb"})
     mixed = Simulation.from_dict(_scene([{"center": [0.0, 0.0], "radius": 3e-6, "sides": 4},
@@ -369,7 +369,7 @@ def test_entrance_spot_modes_and_stage(tmp_path):
                 {"entrance_spot": {"fwhm": 1e-7}}, {"entrance_spot": {"center": [0, 0], "fwhm": 1e-7, "waist": 1}}):
         with pytest.raises(ValueError, match="entrance_spot"):
             Simulation.from_dict(_scene([{"center": [0.0, 0.0], "radius": 1e-6}], extra=bad)).cfg.validate_wave_estimator()
-    sq = _scene([{"center": [0.0, 0.0], "radius": 1e-6, "sides": 4}], extra={"entrance_spot": spot})
+    sq = _scene([{"center": [0.0, 0.0], "radius": 1e-6, "sides": 4}], extra={"entrance_spot": spot, "provider": "uisk"})
     with pytest.raises(ValueError, match="entrance_spot is implemented for provider fb"):
         W.run_wave_stage(Simulation.from_dict(sq), str(tmp_path / "sq"), Simulation.from_dict(sq).cfg.validate_wave_estimator(), log=lambda *a: None)
 
