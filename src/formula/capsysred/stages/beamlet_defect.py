@@ -594,6 +594,10 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print, mask=None):
                          "indicator_rms": best["indicator_rms"], "indicator_prod_rms": best["indicator_prod_rms"],
                          "certified": False, "status": "indicator argmin; not an error bound"}
     if mask is not None:
+        n_map = int(sim.cfg.capillary.source.n_modes)
+        if summary["launches"][0]["modes"] != n_map:
+            raise ValueError(f"{mask}: the stage-11 map covers {n_map} modes, the diagnostics "
+                             f"{summary['launches'][0]['modes']}; run the scan without --modes")
         eps = summary["launches"][0]["indicator_prod_rms"]
         summary["mask"] = {"map": mask, "eps": eps, "threshold": opt["mask_threshold"], "certified": False,
                            "assumption": "relative field error eps spread uniformly over the lit cells; not a bound",

@@ -132,3 +132,26 @@ def test_indicator_noise_rescales_to_the_masked_maps_budget():
     assert D.indicator_at_budget(terms, 0.0, 100, 100, False) == pytest.approx(1.0)
     assert D.indicator_at_budget(terms, 0.0, 100, 10000, False) == pytest.approx(0.1)
     assert D.indicator_at_budget(terms, 0.2, 100, 10000, True) == pytest.approx(0.3)
+
+
+def test_defect_diagnostics_refuse_a_continuous_branch_config(tmp_path):
+    # the diagnostics drop the prefactor on an exact caustic (Maslov branch); a
+    # continuous-branch map is another field there, so the scan refuses up front
+    from formula.capsysred.simulation import Simulation
+    raw = dict(_one_ray_scene().cfg.raw)
+    raw["b5_estimator"] = dict(raw["b5_estimator"], branch="continuous")
+    sim = Simulation.from_dict(raw)
+    with pytest.raises(ValueError, match="continuous"):
+        D.run_defect(sim, str(tmp_path / "no-archive"), str(tmp_path), D.options(sim.cfg), [1e-6])
+
+
+def test_map_eps_uses_the_snapshots_mode_prefix():
+    # a snapshot map of the first mode: its eps is that mode's indicator, not the
+    # scan-wide rms; more modes than diagnosed is an error
+    results = [{"rays": 100, "widths": {"1": {"R": 0.0, "R_shot": 0.0, "R_inside": 0.0, "R_inside_shot": 0.0,
+                                               "G": g, "G_shot": 0.0, "T": 0.0, "T_shot": 0.0}}}
+               for g in (0.02, 0.0, 0.0, 0.0)]
+    assert D.map_eps(results, "1", 0.0, 100, 1, False) == pytest.approx(0.02)
+    assert D.map_eps(results, "1", 0.0, 100, 4, False) == pytest.approx(0.01)
+    with pytest.raises(ValueError, match="5 modes"):
+        D.map_eps(results, "1", 0.0, 100, 5, False)

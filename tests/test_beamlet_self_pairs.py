@@ -243,3 +243,46 @@ def test_subtract_keeps_the_self_cross_term_at_a_null_reference():
     assert abs(w_two - w_py).max() > 1e-3 * scale      # the null mode is not inert
     assert abs(w_nat - w_py).max() <= 1e-12 * scale
     assert abs(i_nat - i_py).max() <= 1e-12 * abs(i_py).max()
+
+
+def test_negative_u_intensity_is_dubious_in_every_path():
+    # subtract can leave I < 0 at a lit pixel: no estimate, flagged dubious (never a
+    # confident mu = 0); never-deposited pixels stay unflagged. Python, retained
+    # native jackknife and the production tile agree.
+    if not _grid_ok():
+        pytest.skip("BeamletGrid without self pairs in the built .so")
+    import numpy as np
+    from formula.capsysred.native import jackknife_tile
+    lines = _lines(1)
+    scr = ScreenGrid(SimpleNamespace(z=0.06, nx=21, ny=5, center=[0.0, 0.0],
+                                     edge_x=1.2e-5, edge_y=6.0e-6))
+    a_ray = (0.0, 0.0, 0.0, 0.0, 0.06)
+    b_ray = (2.0e-6, 1.0e-6, 5.0e-5, -3.0e-5, 0.0612)
+    maps = []
+    for use_native in (True, False):
+        field = BeamletField(lines, scr, 52, 5.0e-7, 3.0, None,
+                             use_native=use_native, self_pairs="subtract")
+        field.new_mode()
+        field.add_ray(_rec(0, scr, *b_ray), [1.0 + 0.5j])
+        field.add_ray(_rec(1, scr, *b_ray), [-1.0 - 0.5j])
+        field.fold_mode(n_rays=2)
+        field.new_mode()
+        for i in range(3):
+            field.add_ray(_rec(i, scr, *a_ray), [1.0 + 0.5j])
+        field.fold_mode(n_rays=3)
+        maps.append(field.finalize(21, 5))
+    for m in maps:
+        I, mu, dub = (np.array(m[k]) for k in ("intensity", "mu", "dubious"))
+        assert m["i_ref"] > 0.0 and (I < 0).sum() > 0
+        assert (dub[I < 0] == 1).all() and (mu[I < 0] == 0).all()
+        assert (dub[I == 0] == 0).all()
+    assert maps[0]["dubious"] == maps[1]["dubious"]
+    # the production tile: I = [1, -1, 0, 2], reference lit -> pixel 1 dubious only
+    w = np.array([0.5, 0.5, 0.0, 1.0], complex).tobytes()
+    i_tot = np.array([1.0, -1.0, 0.0, 2.0]).tobytes()
+    rows_w = np.zeros(2 * 2 * 4, np.float32).tobytes()
+    rows_i = np.zeros(2 * 4, np.float32).tobytes()
+    _, _, dub, _ = jackknife_tile(w, i_tot, 1.0, rows_w, rows_i, [0.0, 0.0], 1e-6, 0.0)
+    assert list(dub) == [0, 1, 0, 0]
+    _, _, dub, _ = jackknife_tile(w, i_tot, -1.0, rows_w, rows_i, [0.0, 0.0], 1e-6, 0.0)
+    assert list(dub) == [1, 1, 0, 1]
