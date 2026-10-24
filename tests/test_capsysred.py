@@ -4031,8 +4031,8 @@ def test_stage11_report_has_stage_wall_publication_and_boundary_lines(tmp_path, 
 def test_stage11_peak_sampler_discovers_announced_workers(tmp_path):
     # workers announce their pid in the tmp directory; the sampler
     # picks them up on its next tick, not after their first finished mode
-    from formula.capsysred.stages.beamlet import PID_PREFIX, PeakSampler, _peak_rss
-    if _peak_rss() == 0:
+    from formula.capsysred.stages.beamlet import PID_PREFIX, PeakSampler, _working_set
+    if _working_set(os.getpid()) == 0:
         pytest.skip("working-set queries unavailable on this platform")
     sampler = PeakSampler()
     sampler.watch_dir(str(tmp_path))
