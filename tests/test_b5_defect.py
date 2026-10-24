@@ -192,5 +192,6 @@ def test_modal_bound_of_one_window_is_finite_and_exact_for_an_absent_trace():
     bnd = D.modal_bound(seg, bores, job, origin, 0.5e-6, 0.0)
     assert math.isfinite(bnd["B"]) and bnd["B"] > 0.0
     assert bnd["B_boundary"] == pytest.approx(0.0, abs=1e-9) and bnd["B_T"] == 0.0
-    assert bnd["B"] == pytest.approx(bnd["B_e0"] + bnd["B_tail"], rel=1e-9)
+    assert bnd["B"] == pytest.approx(min(bnd["B_exact"] + bnd["B_r0"], bnd["B_e0"]) + bnd["B_tail"], rel=1e-9)
+    assert bnd["B"] <= bnd["B_tri"] + 1e-12
     assert bnd["sections"] >= 20 and bnd["modes"] > 0

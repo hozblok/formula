@@ -599,7 +599,7 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
         bs = [r["widths"][key].get("bound") for r in results]
         if bs and all(b and b.get("B") is not None for b in bs):
             brms = lambda name: float(np.sqrt(np.mean([b[name] ** 2 for b in bs])))
-            for name in ("B", "B_exit", "B_target", "B_e0", "B_boundary", "B_tail", "B_T", "B_R_inside", "B_R_after"):
+            for name in ("B", "B_tri", "B_exit", "B_target", "B_e0", "B_r0", "B_exact", "B_boundary", "B_tail", "B_T", "B_R_inside", "B_R_after"):
                 rec_w[name + "_rms"] = brms(name)
             rec_w["B_sections"], rec_w["B_jmax"] = bs[0]["sections"], bs[0]["jmax"]
         summary["widths"].append(rec_w)
@@ -622,7 +622,7 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
         for name, key in (("argmin_bound_exit", "B_exit_rms"), ("argmin_bound_target", "B_target_rms")):
             best = min(with_b, key=lambda r: r[key])
             summary[name] = {"width_m": best["width_m"], key: best[key], "B_rms": best["B_rms"], "certified": True,
-                             "bound": "||E - E_map||(screen) <= [||e(0)|| + ||boundary part|| + tail + T] + int ||R|| dz per mode, "
+                             "bound": "||E - E_map||(screen) <= [min(||exact modal part of e(L)|| + ||e(0) beyond the modes||, ||e(0)|| + ||boundary part||) + tail + T] + int ||R|| dz per mode, "
                                       "relative to ||E_in||" + (" (residual inside the channel only: exit_propagation)" if "exit" in name
                                                                  else " (residual to the target screen: frozen windows)"),
                              "model": model}

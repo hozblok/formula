@@ -154,3 +154,17 @@ def test_damping_contracts_the_evolution_and_matches_the_slab_form():
         w0 = np.trapezoid(np.exp(-1j * th[j] * (1.0 - t)), t)
         w1 = np.trapezoid(np.exp(-1j * th[j] * t) * t, t)
         assert abs(e0[j] - w0) < 1e-8 and abs(e1[j] - w1) < 1e-8
+
+
+def test_square_projection_splits_the_field_into_the_box_and_a_remainder():
+    sq = B.Square(AW, 12, nq=48)
+    rng = np.random.default_rng(3)
+    xf = rng.uniform(-AW, AW, 4000); yf = rng.uniform(-AW, AW, 4000)
+    wq = np.full(4000, 4.0 * AW * AW / 4000)
+    m = np.arange(1, 13)
+    phi = lambda i, j: np.sin(i * math.pi * (xf + AW) / (2 * AW)) * np.sin(j * math.pi * (yf + AW) / (2 * AW)) / AW
+    E = 2.0 * phi(3, 5) - 1j * phi(12, 1) + 0.5 * np.sin(20 * math.pi * (xf + AW) / (2 * AW)) * phi(1, 1) * AW
+    c, resid = sq.project(E, wq, xf, yf)
+    assert abs(c[2, 4] - 2.0) < 0.1 and abs(c[11, 0] + 1j) < 0.1      # Monte-Carlo quadrature: ~1/sqrt(P)
+    assert np.allclose(E - resid, np.einsum("pm,mp->p", np.sin(m[:, None] * math.pi * (xf[None, :] + AW) / (2 * AW)).T @ c,
+                                            np.sin(m[:, None] * math.pi * (yf[None, :] + AW) / (2 * AW))) / AW)

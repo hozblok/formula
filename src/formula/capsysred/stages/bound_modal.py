@@ -201,7 +201,10 @@ def bores_bound(chans, L, sample, entrance, phase_step=0.7, t_abs2=0.0):
     for b, ch in enumerate(chans):
         t, _ = ch.frame_axes()
         phis = disc.phi + math.atan2(t[1], t[0])
-        e0 = math.sqrt(float(np.sum(wq * np.abs(ein[b] - efan[b] / C) ** 2)))
+        e_init = ein[b] - efan[b] / C
+        e0 = math.sqrt(float(np.sum(wq * np.abs(e_init) ** 2)))
+        c0 = disc.to_modes(e_init)
+        r0 = math.sqrt(float(np.sum(wq * np.abs(e_init - disc.to_grid(c0)) ** 2)))   # e(0) beyond the Disc modes
         g = np.zeros((len(zs), disc.nphi), complex)
         for jz, zr in enumerate(zs):
             cx, cy = ch.axis(zr)
@@ -209,21 +212,32 @@ def bores_bound(chans, L, sample, entrance, phase_step=0.7, t_abs2=0.0):
             g[jz] = sample(b, zr, np.array([a_w]), phis, cx, cy)[0] * phase / C
         mb = ModalBound(ch)
         ghat = ring_hat(disc, g)
-        bnd = mb.norm(mb.boundary_part(zs, ghat, L))
+        bnd_c = mb.boundary_part(zs, ghat, L)
+        bnd = mb.norm(bnd_c)
+        prop, _ = ch.propagate(c0, L)
+        exact = mb.norm(prop + bnd_c)                   # the Disc part of e(L), evolved exactly
         t1, t2 = mb.tails(zs, ghat, extra_hat(disc, g))
-        bb = e0 + bnd + t1 + t2
+        tri = e0 + bnd + t1 + t2
+        bb = min(exact + r0 + t1 + t2, tri)
         b_sq += bb * bb
-        per_bore.append({"bore": b, "e0": e0, "boundary": bnd, "tail": t1 + t2, "B": bb})
+        per_bore.append({"bore": b, "e0": e0, "r0": r0, "exact": exact, "boundary": bnd, "tail": t1 + t2, "B": bb, "B_tri": tri})
+    return _assemble(per_bore, ein2, t_abs2, C, n_sec, float(disc.jmax), int(disc.valid.sum()))
+
+
+def _assemble(per_bore, ein2, t_abs2, C, n_sec, jmax, modes):
+    """Relative components over the bores (quadrature) plus T by the triangle inequality;
+    B per bore = min(||exact Disc part of e(L)|| + ||remainder of e(0)|| + tail,
+    ||e(0)|| + ||boundary part|| + tail)."""
     norm_in = math.sqrt(ein2)
     t_abs = math.sqrt(max(t_abs2, 0.0)) / abs(C)
-    return {"B": (math.sqrt(b_sq) + t_abs) / norm_in,
-            "B_e0": math.sqrt(sum(r["e0"] ** 2 for r in per_bore)) / norm_in,
-            "B_boundary": math.sqrt(sum(r["boundary"] ** 2 for r in per_bore)) / norm_in,
-            "B_tail": math.sqrt(sum(r["tail"] ** 2 for r in per_bore)) / norm_in,
+    q = lambda key: math.sqrt(sum(r[key] ** 2 for r in per_bore)) / norm_in
+    return {"B": (math.sqrt(sum(r["B"] ** 2 for r in per_bore)) + t_abs) / norm_in,
+            "B_tri": (math.sqrt(sum(r["B_tri"] ** 2 for r in per_bore)) + t_abs) / norm_in,
+            "B_e0": q("e0"), "B_r0": q("r0"), "B_exact": q("exact"), "B_boundary": q("boundary"), "B_tail": q("tail"),
             "B_T": t_abs / norm_in,
             "bores": [{k_: (v / norm_in if k_ != "bore" else v) for k_, v in r.items()} for r in per_bore],
-            "C_fit": [abs(C), math.atan2(C.imag, C.real)], "sections": n_sec, "jmax": float(disc.jmax),
-            "modes": int(disc.valid.sum()), "E_in_norm": norm_in}
+            "C_fit": [abs(C), math.atan2(C.imag, C.real)], "sections": n_sec, "jmax": jmax,
+            "modes": modes, "E_in_norm": norm_in}
 
 
 # ------------------------------------------------------------------ square bore
@@ -278,6 +292,17 @@ class Square:
         """Coefficients [M, M] of values on the tensor Gauss grid (orthonormal basis)."""
         Sw = self.Sg * self.gw[None, :]
         return Sw @ np.asarray(E) @ Sw.T / self.aw
+
+    def project(self, E, wq, xf, yf):
+        """Quadrature projection of values E on arbitrary frame points (weights wq) onto the
+        M-box, and the pointwise remainder E - sum c phi."""
+        m = np.arange(1, self.M + 1)
+        sx = np.sin(m[:, None] * math.pi * (xf.ravel()[None, :] + self.aw) / (2.0 * self.aw))    # [M, P]
+        sy = np.sin(m[:, None] * math.pi * (yf.ravel()[None, :] + self.aw) / (2.0 * self.aw))
+        we = (np.asarray(wq) * np.asarray(E)).ravel()
+        c = (sx * we[None, :]) @ sy.T / self.aw
+        back = np.einsum("pm,mp->p", sx.T @ c, sy) / self.aw
+        return c, np.asarray(E) - back.reshape(np.shape(E))
 
 
 def slab_damping(kappa, k, delta, beta, aw):
@@ -382,38 +407,38 @@ def squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in, phase_s
     zs = np.linspace(0.0, L, n_sec + 1)
     t, wt = leggauss(nr)
     t, wt = 0.5 * (t + 1.0), 0.5 * wt
-    ein, efan, wqs, ein2, num = [], [], [], 0.0, 0j
+    ein, efan, wqs, pts, ein2, num = [], [], [], [], 0.0, 0j
     for b, sq in enumerate(sqs):
         cx, cy = centers[b]
         phis = sq.rot - 0.25 * math.pi + (np.arange(nphi) + 0.5) * 2.0 * math.pi / nphi
         stretch = 1.0 / np.cos(((phis - sq.rot + 0.25 * math.pi) % (0.5 * math.pi)) - 0.25 * math.pi)
         wq = (aw * aw * t * wt)[:, None] * (stretch ** 2)[None, :] * (2.0 * math.pi / nphi)
         rr = (aw * t)[:, None] * stretch[None, :]
-        e = e_in(cx + rr * np.cos(phis)[None, :], cy + rr * np.sin(phis)[None, :])
+        px, py = cx + rr * np.cos(phis)[None, :], cy + rr * np.sin(phis)[None, :]
+        e = e_in(px, py)
         fan = sample_disc(b, aw * t, phis, stretch, cx, cy)
-        ein.append(e); efan.append(fan); wqs.append(wq)
+        ein.append(e); efan.append(fan); wqs.append(wq); pts.append(sq.frame(cx, cy, px, py))
         ein2 += float(np.sum(wq * np.abs(e) ** 2))
         num += complex(np.sum(wq * np.conj(e) * fan))
     C = num / ein2 if ein2 > 0 else 1.0 + 0j
-    per_bore, b_sq = [], 0.0
+    per_bore = []
     for b, sq in enumerate(sqs):
         cx, cy = centers[b]
-        e0 = math.sqrt(float(np.sum(wqs[b] * np.abs(ein[b] - efan[b] / C) ** 2)))
+        e_init = ein[b] - efan[b] / C
+        wq = wqs[b]
+        e0 = math.sqrt(float(np.sum(wq * np.abs(e_init) ** 2)))
+        c0, resid = sq.project(e_init, wq, *pts[b])
+        r0 = math.sqrt(float(np.sum(wq * np.abs(resid) ** 2)))          # e(0) beyond the M-box
         g = np.array([sample_outline(b, zr, sq, cx, cy) for zr in zs]) / C
         sb = SquareBound(sq, k, gamma)
         G = sb.face_coef(g)
-        bnd = sb.norm(sb.boundary_part(zs, G, L))
+        bnd_c = sb.boundary_part(zs, G, L)
+        bnd = sb.norm(bnd_c)
+        exact = sb.norm(c0 * np.exp(-1j * sb.alpha * L) + bnd_c)
         t1, t2 = sb.tails(zs, G)
-        bb = e0 + bnd + t1 + t2
-        b_sq += bb * bb
-        per_bore.append({"bore": b, "e0": e0, "boundary": bnd, "tail": t1 + t2, "B": bb})
-    norm_in = math.sqrt(ein2)
-    t_abs = math.sqrt(max(t_abs2, 0.0)) / abs(C)
-    return {"B": (math.sqrt(b_sq) + t_abs) / norm_in,
-            "B_e0": math.sqrt(sum(r["e0"] ** 2 for r in per_bore)) / norm_in,
-            "B_boundary": math.sqrt(sum(r["boundary"] ** 2 for r in per_bore)) / norm_in,
-            "B_tail": math.sqrt(sum(r["tail"] ** 2 for r in per_bore)) / norm_in,
-            "B_T": t_abs / norm_in,
-            "bores": [{k_: (v / norm_in if k_ != "bore" else v) for k_, v in r.items()} for r in per_bore],
-            "C_fit": [abs(C), math.atan2(C.imag, C.real)], "sections": n_sec, "jmax": float(sqs[0].M),
-            "modes": int(sqs[0].M ** 2), "E_in_norm": norm_in, "basis": "square sines"}
+        tri = e0 + bnd + t1 + t2
+        bb = min(exact + r0 + t1 + t2, tri)
+        per_bore.append({"bore": b, "e0": e0, "r0": r0, "exact": exact, "boundary": bnd, "tail": t1 + t2, "B": bb, "B_tri": tri})
+    out = _assemble(per_bore, ein2, t_abs2, C, n_sec, float(sqs[0].M), int(sqs[0].M ** 2))
+    out["basis"] = "square sines"
+    return out
