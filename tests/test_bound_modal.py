@@ -263,3 +263,35 @@ def test_fan_scale_from_the_deposit_norm_flags_an_amplitude_defect():
     assert abs(fixed["C_fit"][0] - 1.0) < 1e-6 and abs(fixed["scale_defect"] - 1.0) < 1e-6
     assert abs(fixed["B"] - 1.0) < 1e-3
     assert abs(lsq["C_fit"][0] - 2.0) < 1e-6 and lsq["B"] < 1e-6 and abs(lsq["scale_defect"]) < 1e-9
+
+
+def test_rescale_matches_a_direct_bound_at_that_scale():
+    """The parts re-assembled for another fan magnitude equal a direct bound computed with that
+    magnitude fixed; the least-squares magnitude reproduces the provisional result."""
+    chan = FBChannel(np.zeros(2), None, None, Disc(AW, 40.0), K)
+    disc = chan.disc
+    seg = _beam(4.0e-6, 15.0e-6, 2.0e-6)
+    L = 0.02
+    seg.z1[0] = L
+    rng = np.random.default_rng(5)
+
+    def sample(b, zr, radii, phis, cx, cy):
+        px = cx + radii[:, None] * np.cos(phis)[None, :]
+        py = cy + radii[:, None] * np.sin(phis)[None, :]
+        vals = D.beam_values(seg, np.array([0]), zr, px.reshape(1, -1), py.reshape(1, -1), K, 0.0)[0].reshape(px.shape)
+        return 1.7 * np.exp(0.3j) * vals                              # the fan: the beam at another scale
+
+    noise = 1.0 + 0.2 * rng.standard_normal(disc.r.size)[:, None]
+    entrance = lambda ch: _frame_values(ch, seg, 0.0, *B.frame_disc(ch, 0.0)) * noise
+    res = B.bores_bound([chan], L, sample, entrance, 0.7, 1e-12)
+    same = B.rescale(res, res["C_fit"][0])
+    for key in ("B", "B_tri", "B_e0", "B_r0", "B_exact", "B_boundary", "B_tail", "B_T"):
+        assert same[key] == pytest.approx(res[key], rel=1e-10, abs=1e-14)
+    direct = B.bores_bound([chan], L, sample, entrance, 0.7, 1e-12, e_in_dep=2.0 * res["C_fit"][0] * res["E_in_norm"])
+    other = B.rescale(res, 2.0 * res["C_fit"][0])
+    for key in ("B", "B_tri", "B_e0", "B_r0", "B_exact", "B_boundary", "B_tail", "B_T"):
+        assert other[key] == pytest.approx(direct[key], rel=1e-9, abs=1e-14)
+    assert other["B_e0"] > res["B_e0"] and abs(other["scale_defect"] + 0.5) < 1e-9
+    common = B.common_scale([res, other])
+    assert "parts" not in common[0] and common[0]["C_common"] == common[1]["C_common"]
+    assert common[0]["C_fit"][0] == pytest.approx(res["C_fit"][0])            # the mean of the least-squares magnitudes

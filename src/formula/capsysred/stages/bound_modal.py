@@ -213,71 +213,108 @@ def bores_bound(chans, L, sample, entrance, phase_step=0.7, t_abs2=0.0, e_in_dep
     carry no gamma: a damped reference would add the source -Gamma E_method, not included here).
     sample(b, z_rel, radii, phis_lab, cx, cy) -> the method field on polar points around the
     bore axis at z0 + z_rel (raw units); entrance(ch) -> E_in on the Disc polar grid of bore
-    b.  C = least-squares complex scale of the fan against E_in over all bores; per bore
-    e0 = ||E_in - E_m(0)/C||, the frame wall trace at sections resolving the fastest mode
-    phase, its boundary part and tails; bores in quadrature, T (sqrt t_abs2 / |C|) by the
-    triangle inequality.  Returns the relative components (divided by ||E_in||)."""
+    b.  The fan scale C: least-squares phase, magnitude from e_in_dep (deposit-unit norm of
+    E_in) or least squares; `rescale` re-assembles the result for another magnitude (the
+    common scale of a launch).  Returns the relative components (divided by ||E_in||) and
+    the C-independent "parts"."""
     disc, k = chans[0].disc, chans[0].k
     a_w = disc.aw
     alpha_max = max(disc.kap2max / (2.0 * k) + (0.0 if ch.rb is None else k * a_w / ch.rb) for ch in chans)
     n_sec = max(int(math.ceil(L * alpha_max / phase_step)), 20)
     zs = np.linspace(0.0, L, n_sec + 1)
     wq = (disc.wr * disc.r)[:, None] * (2.0 * math.pi / disc.nphi)
-    ein, efan, ein2, num = [], [], 0.0, 0j
+    bores, ein2, num = [], 0.0, 0j
     for b, ch in enumerate(chans):
         t, _ = ch.frame_axes()
         phis = disc.phi + math.atan2(t[1], t[0])
         cx, cy = ch.axis(0.0)
         fan = sample(b, 0.0, disc.r, phis, cx, cy)
         e_in = entrance(ch)
-        ein.append(e_in); efan.append(fan)
-        ein2 += float(np.sum(wq * np.abs(e_in) ** 2))
-        num += complex(np.sum(wq * np.conj(e_in) * fan))
-    C = _scale(num, ein2, e_in_dep)
-    per_bore = []
-    for b, ch in enumerate(chans):
-        t, _ = ch.frame_axes()
-        phis = disc.phi + math.atan2(t[1], t[0])
-        e_init = ein[b] - efan[b] / C
-        e0 = math.sqrt(float(np.sum(wq * np.abs(e_init) ** 2)))
-        c0 = disc.to_modes(e_init)
-        r0 = math.sqrt(float(np.sum(wq * np.abs(e_init - disc.to_grid(c0)) ** 2)))   # e(0) beyond the Disc modes
         g = np.zeros((len(zs), disc.nphi), complex)
         for jz, zr in enumerate(zs):
             cx, cy = ch.axis(zr)
             _, _, phase = frame_ring(ch, zr)
-            g[jz] = sample(b, zr, np.array([a_w]), phis, cx, cy)[0] * phase / C
+            g[jz] = sample(b, zr, np.array([a_w]), phis, cx, cy)[0] * phase
         mb = ModalBound(ch)
         ghat = ring_hat(disc, g)
-        bnd_c = mb.boundary_part(zs, ghat, L)
-        bnd = mb.norm(bnd_c)
-        prop, _ = ch.propagate(c0, L)
-        exact = mb.norm(prop + bnd_c)                   # the Disc part of e(L), evolved exactly
-        itp = mb.interp_error(zs, ghat)
-        t1, t2 = mb.tails(zs, ghat, extra_hat(disc, g))
-        tri = e0 + bnd + itp + t1 + t2
-        bb = min(exact + r0 + itp + t1 + t2, tri)
-        per_bore.append({"bore": b, "e0": e0, "r0": r0, "exact": exact, "boundary": bnd, "interp": itp, "tail": t1 + t2,
-                         "B": bb, "B_tri": tri})
-    return _assemble(per_bore, ein2, t_abs2, C, n_sec, float(disc.jmax), int(disc.valid.sum()), num)
+        bores.append(_bore_parts(b, e_in, fan, wq, disc.to_modes, disc.to_grid, lambda c: ch.propagate(c, L)[0],
+                                 mb.boundary_part(zs, ghat, L), mb.norm, mb.interp_error(zs, ghat),
+                                 *mb.tails(zs, ghat, extra_hat(disc, g))))
+        ein2 += bores[-1]["ein2"]
+        num += bores[-1]["num"]
+    parts = {"bores": bores, "ein2": ein2, "num": num, "t_abs2": float(t_abs2), "mnorm": disc.mnorm,
+             "sections": n_sec, "jmax": float(disc.jmax), "modes": int(disc.valid.sum())}
+    return _assemble(parts, _scale(num, ein2, e_in_dep))
 
 
-def _assemble(per_bore, ein2, t_abs2, C, n_sec, jmax, modes, num=0j):
-    """Relative components over the bores (quadrature) plus T by the triangle inequality;
-    B per bore = min(||exact modal part of e(L)|| + ||remainder of e(0)||, ||e(0)|| + ||boundary part||)
-    + interpolation error of the sampled forcing + tail."""
+def _bore_parts(b, e_in, fan, wq, to_modes, to_grid, propagate, vB, norm, itp1, t1, t2):
+    """C-independent pieces of one bore: quadrature scalars of E_in and the fan (C = 1), their
+    projections propagated to L, the boundary part of the fan's trace, remainders beyond the
+    modes, interpolation and tail terms (all for C = 1)."""
+    cE, cF = to_modes(e_in), to_modes(fan)
+    rE, rF = e_in - to_grid(cE), fan - to_grid(cF)
+    q = lambda a, c: complex(np.sum(wq * np.conj(a) * c))
+    return {"bore": b, "ein2": q(e_in, e_in).real, "fan2": q(fan, fan).real, "num": q(e_in, fan),
+            "rE2": q(rE, rE).real, "rF2": q(rF, rF).real, "rEF": q(rE, rF),
+            "vE": propagate(cE), "vF": propagate(cF), "vB": vB, "bnd1": norm(vB), "itp1": itp1, "t1": t1, "t2": t2}
+
+
+def _assemble(parts, C):
+    """Relative components for the fan scale C from the parts: per bore e0 = ||E_in - fan/C||,
+    exact = ||e^{-iHL} P e(0) + boundary part||, r0 = ||(1-P) e(0)||, B = min(exact + r0, e0 +
+    ||boundary||) + interpolation + tail; bores in quadrature, T by the triangle inequality."""
+    mn = parts["mnorm"]
+    norm = (lambda v: math.sqrt(float(np.sum(np.abs(v) ** 2 * mn)))) if mn is not None else \
+        (lambda v: math.sqrt(float(np.sum(np.abs(v) ** 2))))
+    inv, ac = 1.0 / C, abs(C)
+    per_bore = []
+    for p in parts["bores"]:
+        e0 = math.sqrt(max(p["ein2"] - 2.0 * (p["num"] * inv).real + p["fan2"] / ac ** 2, 0.0))
+        r0 = math.sqrt(max(p["rE2"] - 2.0 * (p["rEF"] * inv).real + p["rF2"] / ac ** 2, 0.0))
+        exact = norm(p["vE"] - (p["vF"] - p["vB"]) * inv)
+        bnd, itp, tail = p["bnd1"] / ac, p["itp1"] / ac, (p["t1"] + p["t2"]) / ac
+        tri = e0 + bnd + itp + tail
+        per_bore.append({"bore": p["bore"], "e0": e0, "r0": r0, "exact": exact, "boundary": bnd, "interp": itp,
+                         "tail": tail, "B": min(exact + r0 + itp + tail, tri), "B_tri": tri})
+    ein2, num = parts["ein2"], parts["num"]
     norm_in = math.sqrt(ein2)
-    t_abs = math.sqrt(max(t_abs2, 0.0)) / abs(C)
+    t_abs = math.sqrt(max(parts["t_abs2"], 0.0)) / ac
     q = lambda key: math.sqrt(sum(r[key] ** 2 for r in per_bore)) / norm_in
     return {"B": (math.sqrt(sum(r["B"] ** 2 for r in per_bore)) + t_abs) / norm_in,
             "B_tri": (math.sqrt(sum(r["B_tri"] ** 2 for r in per_bore)) + t_abs) / norm_in,
             "B_e0": q("e0"), "B_r0": q("r0"), "B_exact": q("exact"), "B_boundary": q("boundary"), "B_interp": q("interp"),
-            "B_tail": q("tail"),
-            "B_T": t_abs / norm_in,
+            "B_tail": q("tail"), "B_T": t_abs / norm_in,
             "bores": [{k_: (v / norm_in if k_ != "bore" else v) for k_, v in r.items()} for r in per_bore],
-            "C_fit": [abs(C), math.atan2(C.imag, C.real)],
-            "scale_defect": (abs(num / ein2) / abs(C) - 1.0) if ein2 > 0 and C != 0 else None,   # LSQ amplitude vs the scale used
-            "sections": n_sec, "jmax": jmax, "modes": modes, "E_in_norm": norm_in}
+            "C_fit": [ac, math.atan2(C.imag, C.real)],
+            "scale_defect": (abs(num / ein2) / ac - 1.0) if ein2 > 0 else None,   # LSQ amplitude vs the scale used
+            "sections": parts["sections"], "jmax": parts["jmax"], "modes": parts["modes"], "E_in_norm": norm_in,
+            "E_dep": ac * norm_in,                                                 # ||E_in|| in the fan's (deposit) units
+            "parts": parts}
+
+
+def rescale(result, c_mag):
+    """The same bound for the fan magnitude c_mag (least-squares phase kept)."""
+    parts = result["parts"]
+    num = parts["num"]
+    C = c_mag * (num / abs(num) if num != 0 else 1.0)
+    return _assemble(parts, C)
+
+
+def common_scale(results):
+    """One fan magnitude for the modes of a launch (the mean of their least-squares magnitudes):
+    a mode with another amplitude is error; the map's |mu| is invariant to the common factor.
+    Returns the rescaled results without the parts, with the common magnitude."""
+    bounds = [r for r in results if r and r.get("parts")]
+    if not bounds:
+        return [({k: v for k, v in r.items() if k != "parts"} if r else r) for r in results]
+    c_mag = float(np.mean([abs(r["parts"]["num"]) / r["parts"]["ein2"] for r in bounds if r["parts"]["ein2"] > 0]))
+    out = []
+    for r in results:
+        if r and r.get("parts"):
+            r = rescale(r, c_mag)
+            r["C_common"] = c_mag
+        out.append({k: v for k, v in r.items() if k != "parts"} if r else r)
+    return out
 
 
 # ------------------------------------------------------------------ square bore
@@ -332,6 +369,17 @@ class Square:
         """Coefficients [M, M] of values on the tensor Gauss grid (orthonormal basis)."""
         Sw = self.Sg * self.gw[None, :]
         return Sw @ np.asarray(E) @ Sw.T / self.aw
+
+    def to_grid(self, c):
+        """Values on the tensor Gauss grid of the coefficients c [M, M]."""
+        return self.Sg.T @ np.asarray(c) @ self.Sg / self.aw
+
+    def eval(self, c, xf, yf):
+        """Values of sum c phi at arbitrary frame points."""
+        m = np.arange(1, self.M + 1)
+        sx = np.sin(m[:, None] * math.pi * (np.asarray(xf).ravel()[None, :] + self.aw) / (2.0 * self.aw))
+        sy = np.sin(m[:, None] * math.pi * (np.asarray(yf).ravel()[None, :] + self.aw) / (2.0 * self.aw))
+        return (np.einsum("pm,mp->p", sx.T @ np.asarray(c), sy) / self.aw).reshape(np.shape(xf))
 
     def project(self, E, wq, xf, yf):
         """Quadrature projection of values E on arbitrary frame points (weights wq) onto the
@@ -452,53 +500,49 @@ class SquareBound:
 
 
 def squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in, phase_step=0.7, t_abs2=0.0, nr=48, nphi=384,
-                  gamma=None, e_in_dep=None):
+                  gamma=None, e_in_dep=None, sample_grid=None):
     """B of one mode's method field over straight square bores (one Square per bore, same aw and M).
-    sample_disc(b, radii, phis, stretch, cx, cy) -> the fan on the stretched polar grid of bore b
-    at z0 (raw units); sample_outline(b, z_rel, sq, cx, cy) -> the fan on its outline nodes at
-    z0 + z_rel; e_in(px, py) -> E_in at lab points; gamma must stay None for a bound against the
-    lossless Dirichlet solution (a damped reference needs the source -Gamma E_method, not
-    included); e_in_dep = deposit-unit norm of E_in fixing the fan scale.  Assembled as bores_bound."""
+    sample_grid(b, xf, yf, cx, cy) -> the fan on the tensor Gauss grid of bore b at z0 (frame
+    coordinates xf x yf; None when the beams are not separable) -- exact projection; else
+    sample_disc(b, radii, phis, stretch, cx, cy) on the stretched polar grid with a quadrature
+    projection; sample_outline(b, z_rel, sq, cx, cy) -> the fan on the outline nodes at z0 + z_rel;
+    e_in(px, py) -> E_in at lab points; gamma must stay None for a bound against the lossless
+    Dirichlet solution (a damped reference needs the source -Gamma E_method, not included);
+    e_in_dep = deposit-unit norm of E_in fixing the fan scale.  Assembled as bores_bound."""
     aw = sqs[0].aw
     alpha_max = max(sq.kap2max for sq in sqs) / (2.0 * k)
     n_sec = max(int(math.ceil(L * alpha_max / phase_step)), 20)
     zs = np.linspace(0.0, L, n_sec + 1)
     t, wt = leggauss(nr)
     t, wt = 0.5 * (t + 1.0), 0.5 * wt
-    ein, efan, wqs, pts, ein2, num = [], [], [], [], 0.0, 0j
+    bores, ein2, num = [], 0.0, 0j
     for b, sq in enumerate(sqs):
         cx, cy = centers[b]
-        phis = sq.rot - 0.25 * math.pi + (np.arange(nphi) + 0.5) * 2.0 * math.pi / nphi
-        stretch = 1.0 / np.cos(((phis - sq.rot + 0.25 * math.pi) % (0.5 * math.pi)) - 0.25 * math.pi)
-        wq = (aw * aw * t * wt)[:, None] * (stretch ** 2)[None, :] * (2.0 * math.pi / nphi)
-        rr = (aw * t)[:, None] * stretch[None, :]
-        px, py = cx + rr * np.cos(phis)[None, :], cy + rr * np.sin(phis)[None, :]
+        fan = sample_grid(b, sq.gq, sq.gq, cx, cy) if sample_grid is not None else None
+        if fan is not None:
+            px, py = sq.grid(cx, cy)
+            wq = sq.gw[:, None] * sq.gw[None, :]
+            to_modes, to_grid = sq.to_modes, sq.to_grid
+        else:
+            phis = sq.rot - 0.25 * math.pi + (np.arange(nphi) + 0.5) * 2.0 * math.pi / nphi
+            stretch = 1.0 / np.cos(((phis - sq.rot + 0.25 * math.pi) % (0.5 * math.pi)) - 0.25 * math.pi)
+            wq = (aw * aw * t * wt)[:, None] * (stretch ** 2)[None, :] * (2.0 * math.pi / nphi)
+            rr = (aw * t)[:, None] * stretch[None, :]
+            px, py = cx + rr * np.cos(phis)[None, :], cy + rr * np.sin(phis)[None, :]
+            fan = sample_disc(b, aw * t, phis, stretch, cx, cy)
+            xf, yf = sq.frame(cx, cy, px, py)
+            to_modes = lambda E, sq=sq, wq=wq, xf=xf, yf=yf: sq.project(E, wq, xf, yf)[0]
+            to_grid = lambda c, sq=sq, xf=xf, yf=yf: sq.eval(c, xf, yf)
         e = e_in(px, py)
-        fan = sample_disc(b, aw * t, phis, stretch, cx, cy)
-        ein.append(e); efan.append(fan); wqs.append(wq); pts.append(sq.frame(cx, cy, px, py))
-        ein2 += float(np.sum(wq * np.abs(e) ** 2))
-        num += complex(np.sum(wq * np.conj(e) * fan))
-    C = _scale(num, ein2, e_in_dep)
-    per_bore = []
-    for b, sq in enumerate(sqs):
-        cx, cy = centers[b]
-        e_init = ein[b] - efan[b] / C
-        wq = wqs[b]
-        e0 = math.sqrt(float(np.sum(wq * np.abs(e_init) ** 2)))
-        c0, resid = sq.project(e_init, wq, *pts[b])
-        r0 = math.sqrt(float(np.sum(wq * np.abs(resid) ** 2)))          # e(0) beyond the M-box
-        g = np.array([sample_outline(b, zr, sq, cx, cy) for zr in zs]) / C
+        g = np.array([sample_outline(b, zr, sq, cx, cy) for zr in zs])
         sb = SquareBound(sq, k, gamma)
         G = sb.face_coef(g)
-        bnd_c = sb.boundary_part(zs, G, L)
-        bnd = sb.norm(bnd_c)
-        exact = sb.norm(c0 * np.exp(-1j * sb.alpha * L) + bnd_c)
-        itp = sb.interp_error(zs, G)
-        t1, t2 = sb.tails(zs, G)
-        tri = e0 + bnd + itp + t1 + t2
-        bb = min(exact + r0 + itp + t1 + t2, tri)
-        per_bore.append({"bore": b, "e0": e0, "r0": r0, "exact": exact, "boundary": bnd, "interp": itp, "tail": t1 + t2,
-                         "B": bb, "B_tri": tri})
-    out = _assemble(per_bore, ein2, t_abs2, C, n_sec, float(sqs[0].M), int(sqs[0].M ** 2), num)
+        bores.append(_bore_parts(b, e, fan, wq, to_modes, to_grid, lambda c, sb=sb: c * np.exp(-1j * sb.alpha * L),
+                                 sb.boundary_part(zs, G, L), sb.norm, sb.interp_error(zs, G), *sb.tails(zs, G)))
+        ein2 += bores[-1]["ein2"]
+        num += bores[-1]["num"]
+    parts = {"bores": bores, "ein2": ein2, "num": num, "t_abs2": float(t_abs2), "mnorm": None,
+             "sections": n_sec, "jmax": float(sqs[0].M), "modes": int(sqs[0].M ** 2)}
+    out = _assemble(parts, _scale(num, ein2, e_in_dep))
     out["basis"] = "square sines"
     return out

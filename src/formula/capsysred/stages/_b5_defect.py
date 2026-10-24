@@ -537,7 +537,7 @@ def mode_job(job):
         w_fin = width
         terms["O_area"] = len(bores) * math.pi * ((job["a_w"] + (job["cutoff"] + 2.0) * w_fin) ** 2 - job["a_w"] ** 2)
         if job.get("bound"):
-            bnd = modal_bound(seg, bores, job, origin, width, t_full, norm)
+            bnd = modal_bound(seg, bores, job, origin, width, t_full)      # provisional scale; the width rescales
             if bnd.get("B") is not None:
                 # the residual of the frozen windows enters by Duhamel with its full norm (the
                 # ray-noise part is error of this sample too): inside the channel for the
@@ -642,6 +642,16 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
     rays_prod = int(max(b5.get("map_ray_budgets") or [b5["rays_per_mode"]]))
     summary = {"archive": archive, "options": opt, "screen_z_m": float(screen.z), "a_w_m": a_w,
                "rays_per_mode_production": rays_prod, "widths": []}
+    # one fan scale per width across the modes; the parts (arrays) stay out of the rows
+    for w in widths:
+        key = f"{w*1e6:g}"
+        rescaled = bound_modal.common_scale([r["widths"][key].get("bound") for r in results])
+        for r, b in zip(results, rescaled):
+            if b is not None:
+                if b.get("B") is not None:
+                    r_in_full, r_all = b["B_R_inside"], b["B_R_inside"] + b["B_R_after"]
+                    b["B_exit"], b["B_target"] = b["B"] + r_in_full, b["B"] + r_all
+                r["widths"][key]["bound"] = b
     with open(os.path.join(out, "modes.jsonl"), "w", encoding="utf-8") as rows:
         for res in results:
             for key, terms in res["widths"].items():
@@ -663,7 +673,7 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
         bs = [r["widths"][key].get("bound") for r in results]
         if bs and all(b and b.get("B") is not None for b in bs):
             brms = lambda name: float(np.sqrt(np.mean([b[name] ** 2 for b in bs])))
-            for name in ("B", "B_tri", "B_exit", "B_target", "B_e0", "B_r0", "B_exact", "B_boundary", "B_interp", "B_tail", "B_T", "B_R_inside", "B_R_after"):
+            for name in ("B", "B_tri", "B_exit", "B_target", "B_e0", "B_r0", "B_exact", "B_boundary", "B_interp", "B_tail", "B_T", "B_R_inside", "B_R_after", "scale_defect"):
                 rec_w[name + "_rms"] = brms(name)
             rec_w["B_sections"], rec_w["B_jmax"] = bs[0]["sections"], bs[0]["jmax"]
         summary["widths"].append(rec_w)
@@ -721,7 +731,7 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
         else:
             bound = {"k": k, "z_exit": float(cap.z1), "area": bore_area(cfg.raw["capillary"]["bores"], a_w),
                      "modes": [{"B": r["widths"][key]["bound"]["B_exit"],
-                                "E_in_dep": r["widths"][key]["E_in_dep"], "O_abs2": r["widths"][key]["O_abs2"],
+                                "E_in_dep": r["widths"][key]["bound"]["E_dep"], "O_abs2": r["widths"][key]["O_abs2"],
                                 "O_area": r["widths"][key]["O_area"]} for r in used]}
         summary["mask"] = {"map": map_path, "file": name, "width_m": width, "exit_propagation": exit_prop, "eps": eps,
                            "rays_per_mode": map_rays, "modes": map_modes, "threshold": opt["mask_threshold"],

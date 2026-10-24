@@ -324,3 +324,24 @@ def test_certified_mask_transfer(tmp_path):
         assert rows_[12]["dmu_bound"] == pytest.approx(2.0 * eta * (1.0 / math.sqrt(12.0) + 1.0 / math.sqrt(10.0)))
         assert rows_[0]["dmu_bound"] is None and rows_[0]["masked_bound"]
         assert "dmu" in rows_[12] and summary[tag]["certified"] is False
+
+
+def test_tensor_sum_matches_beam_values_for_separable_beams():
+    """Beams with q_xy = 0 on a tensor grid: the factorised matrix product equals beam_values."""
+    rng = np.random.default_rng(7)
+    seg = D.Segments(5)
+    for i in range(5):
+        seg.qxx[i] = complex(rng.uniform(-0.01, 0.01), 0.5 * (rng.uniform(1, 3) * 1e-6) ** 2 * K)
+        seg.qyy[i] = complex(rng.uniform(-0.01, 0.01), 0.5 * (rng.uniform(1, 3) * 1e-6) ** 2 * K)
+        seg.a[i] = complex(rng.uniform(0.5, 1.5), rng.uniform(-0.5, 0.5))
+        seg.fres[i] = complex(rng.uniform(0.8, 1.0), 0.0)
+        seg.x0[i], seg.y0[i] = rng.uniform(-5e-6, 5e-6), rng.uniform(-5e-6, 5e-6)
+        seg.ux[i], seg.uy[i] = rng.uniform(-2e-4, 2e-4), rng.uniform(-2e-4, 2e-4)
+        seg.opl[i] = rng.uniform(0.0, 1e-6)
+        seg.z0[i], seg.z1[i] = rng.uniform(-0.01, 0.0), 0.1
+    xs, ys = np.linspace(-6e-6, 6e-6, 7), np.linspace(-5e-6, 5e-6, 5)
+    z = 0.03
+    tensor = D._tensor_sum(seg, np.arange(5), z, xs, ys, K, -0.5)
+    px, py = np.meshgrid(xs, ys, indexing="ij")
+    direct = D.beam_values(seg, np.arange(5), z, px.reshape(1, -1), py.reshape(1, -1), K, -0.5).sum(axis=0).reshape(px.shape)
+    assert np.allclose(tensor, direct, rtol=1e-5, atol=1e-6 * np.abs(direct).max())   # the k z phase (2e10 rad) rounds differently
