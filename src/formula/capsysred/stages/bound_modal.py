@@ -27,6 +27,24 @@ from scipy.special import jv
 from .wave_fb import Disc, FBChannel, wall_offset
 
 
+def _interp_error(zs, s_at, norm):
+    """int ||s - s_lin|| dz for s sampled at zs (s_at(j) -> the forcing at section j): the
+    linear interpolant misses at most h^2/8 max||s''|| per section, s'' by second differences."""
+    zs = np.asarray(zs, float)
+    n = len(zs)
+    if n < 3:
+        return 0.0
+    h = np.diff(zs)
+    d2 = np.zeros(n)
+    prev, cur = s_at(0), s_at(1)
+    for j in range(1, n - 1):
+        nxt = s_at(j + 1)
+        d2[j] = norm((nxt - cur) / h[j] - (cur - prev) / h[j - 1]) / (0.5 * (h[j] + h[j - 1]))
+        prev, cur = cur, nxt
+    d2[0], d2[-1] = d2[1], d2[-2]
+    return float(np.sum(h ** 3 / 8.0 * np.maximum(d2[:-1], d2[1:])))
+
+
 def disc_for(a_w: float, k: float, L: float, n_sections: int, phase_step: float = 0.7) -> Disc:
     """The Dirichlet basis whose fastest mode phase kappa^2 L / 2k advances at most
     `phase_step` rad per section: jmax = a_w sqrt(2k phase_step n_sections / L)."""
@@ -141,6 +159,11 @@ class ModalBound:
     def norm(self, c):
         return math.sqrt(self.disc.norm(c))
 
+    def interp_error(self, zs, ghat_z):
+        """int ||s - s_lin|| dz of the piecewise-linear forcing between the sections, from the
+        second differences of the samples: sum_j h_j^3 / 8 max(||s''_j||, ||s''_j+1||)."""
+        return _interp_error(zs, lambda j: self.forcing(np.asarray(ghat_z)[j:j + 1])[0], self.norm)
+
     def tails(self, zs, ghat_z, extra_hat=None):
         """Modes beyond the Disc, two integrations by parts (alpha = kappa^2/2k):
         |c| sqrt(norm) <= 2 sqrt(pi) (|ghat(0)| + |ghat(L)|) / kappa + 4 sqrt(pi) k (|ghat'(0)| + |ghat'(L)|
@@ -197,7 +220,7 @@ def bores_bound(chans, L, sample, entrance, phase_step=0.7, t_abs2=0.0):
         ein2 += float(np.sum(wq * np.abs(e_in) ** 2))
         num += complex(np.sum(wq * np.conj(e_in) * fan))
     C = num / ein2 if ein2 > 0 else 1.0 + 0j
-    per_bore, b_sq = [], 0.0
+    per_bore = []
     for b, ch in enumerate(chans):
         t, _ = ch.frame_axes()
         phis = disc.phi + math.atan2(t[1], t[0])
@@ -216,24 +239,26 @@ def bores_bound(chans, L, sample, entrance, phase_step=0.7, t_abs2=0.0):
         bnd = mb.norm(bnd_c)
         prop, _ = ch.propagate(c0, L)
         exact = mb.norm(prop + bnd_c)                   # the Disc part of e(L), evolved exactly
+        itp = mb.interp_error(zs, ghat)
         t1, t2 = mb.tails(zs, ghat, extra_hat(disc, g))
-        tri = e0 + bnd + t1 + t2
-        bb = min(exact + r0 + t1 + t2, tri)
-        b_sq += bb * bb
-        per_bore.append({"bore": b, "e0": e0, "r0": r0, "exact": exact, "boundary": bnd, "tail": t1 + t2, "B": bb, "B_tri": tri})
+        tri = e0 + bnd + itp + t1 + t2
+        bb = min(exact + r0 + itp + t1 + t2, tri)
+        per_bore.append({"bore": b, "e0": e0, "r0": r0, "exact": exact, "boundary": bnd, "interp": itp, "tail": t1 + t2,
+                         "B": bb, "B_tri": tri})
     return _assemble(per_bore, ein2, t_abs2, C, n_sec, float(disc.jmax), int(disc.valid.sum()))
 
 
 def _assemble(per_bore, ein2, t_abs2, C, n_sec, jmax, modes):
     """Relative components over the bores (quadrature) plus T by the triangle inequality;
-    B per bore = min(||exact Disc part of e(L)|| + ||remainder of e(0)|| + tail,
-    ||e(0)|| + ||boundary part|| + tail)."""
+    B per bore = min(||exact modal part of e(L)|| + ||remainder of e(0)||, ||e(0)|| + ||boundary part||)
+    + interpolation error of the sampled forcing + tail."""
     norm_in = math.sqrt(ein2)
     t_abs = math.sqrt(max(t_abs2, 0.0)) / abs(C)
     q = lambda key: math.sqrt(sum(r[key] ** 2 for r in per_bore)) / norm_in
     return {"B": (math.sqrt(sum(r["B"] ** 2 for r in per_bore)) + t_abs) / norm_in,
             "B_tri": (math.sqrt(sum(r["B_tri"] ** 2 for r in per_bore)) + t_abs) / norm_in,
-            "B_e0": q("e0"), "B_r0": q("r0"), "B_exact": q("exact"), "B_boundary": q("boundary"), "B_tail": q("tail"),
+            "B_e0": q("e0"), "B_r0": q("r0"), "B_exact": q("exact"), "B_boundary": q("boundary"), "B_interp": q("interp"),
+            "B_tail": q("tail"),
             "B_T": t_abs / norm_in,
             "bores": [{k_: (v / norm_in if k_ != "bore" else v) for k_, v in r.items()} for r in per_bore],
             "C_fit": [abs(C), math.atan2(C.imag, C.real)], "sections": n_sec, "jmax": jmax,
@@ -244,13 +269,13 @@ def _assemble(per_bore, ein2, t_abs2, C, n_sec, jmax, modes):
 class Square:
     """Dirichlet sine basis of a straight square bore |x'|, |y'| < aw in the bore frame
     (rotation rot about the centre): phi_mn = sin(m pi (x'+aw)/2aw) sin(n pi (y'+aw)/2aw) / aw,
-    kappa^2 = (pi/2aw)^2 (m^2 + n^2), 1 <= m, n <= M.  Outline nodes: nq midpoints per face,
-    faces +x, +y, -x, -y in arc order from the corner (aw, -aw); sampled trace coefficients
-    exist up to n = nq (the band limit of the sampling)."""
+    kappa^2 = (pi/2aw)^2 (m^2 + n^2), 1 <= m, n <= M.  Outline nodes: nq midpoints per face
+    (default: 50 nm spacing, at least 2M), faces +x, +y, -x, -y in arc order from the corner
+    (aw, -aw); sampled trace coefficients exist up to n = nq (the band limit of the sampling)."""
 
     def __init__(self, aw, M, rot=0.0, nq=None):
         self.aw, self.M, self.rot = float(aw), int(M), float(rot)
-        self.nq = int(nq or 8 * self.M)
+        self.nq = int(nq or max(2 * self.M, math.ceil(2.0 * self.aw / 5e-8)))
         m = np.arange(1, self.M + 1)
         self.kap2 = (math.pi / (2.0 * self.aw)) ** 2 * (m[:, None] ** 2 + m[None, :] ** 2)
         self.kap2max = float(self.kap2.max())
@@ -372,6 +397,10 @@ class SquareBound:
     def norm(self, c):
         return float(np.sqrt(np.sum(np.abs(c) ** 2)))
 
+    def interp_error(self, zs, G):
+        """int ||s - s_lin|| dz of the piecewise-linear forcing of the M-box between the sections."""
+        return _interp_error(zs, lambda j: self._forcing(G[j], self.sq.M), self.norm)
+
     def tails(self, zs, G):
         """Modes outside the M-box up to the sampling band n <= nq, two integrations by parts:
         |c| <= (|s(0)| + |s(L)|)/alpha + (|s'(0)| + |s'(L)| + int |s''| dz)/alpha^2."""
@@ -435,10 +464,12 @@ def squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in, phase_s
         bnd_c = sb.boundary_part(zs, G, L)
         bnd = sb.norm(bnd_c)
         exact = sb.norm(c0 * np.exp(-1j * sb.alpha * L) + bnd_c)
+        itp = sb.interp_error(zs, G)
         t1, t2 = sb.tails(zs, G)
-        tri = e0 + bnd + t1 + t2
-        bb = min(exact + r0 + t1 + t2, tri)
-        per_bore.append({"bore": b, "e0": e0, "r0": r0, "exact": exact, "boundary": bnd, "tail": t1 + t2, "B": bb, "B_tri": tri})
+        tri = e0 + bnd + itp + t1 + t2
+        bb = min(exact + r0 + itp + t1 + t2, tri)
+        per_bore.append({"bore": b, "e0": e0, "r0": r0, "exact": exact, "boundary": bnd, "interp": itp, "tail": t1 + t2,
+                         "B": bb, "B_tri": tri})
     out = _assemble(per_bore, ein2, t_abs2, C, n_sec, float(sqs[0].M), int(sqs[0].M ** 2))
     out["basis"] = "square sines"
     return out
