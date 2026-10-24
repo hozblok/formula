@@ -48,7 +48,7 @@ from .. import rays_v3
 from ._b5_transport import count_free_caustics, reflect_variations, wall_normal_derivative
 from . import bound_modal
 from .beamlet import _screen_spec
-from .beamlet_defect import _channel, _disc, _shape, bore_area, bound_eta, bound_mask, uniform_mask
+from .beamlet_defect import _channel, _disc, _shape, _stretch, bore_area, bound_eta, bound_mask, uniform_mask
 
 RESULT_DIR = "stage17-defect"
 DEFAULTS = {"rays": 20000, "sections": 40, "samples": 300, "ring_step": 0.5e-6, "cutoff": 5.0,
@@ -148,7 +148,7 @@ def build_segments(rows, origin, z_rec, bores, z0_cap, k, fresnel):
         u = u / dist
         ent = source[:2] + u[:2] / u[2] * (z0_cap - source[2])
         bore = int(np.argmin(np.sum((centers - ent) ** 2, axis=1)))
-        inside = np.linalg.norm(centers[bore] - ent) <= radii[bore] * (1 + 1e-8)
+        inside = _inside_outline(bores[bore], centers[bore], radii[bore], ent)
         # derivatives with respect to the entrance coordinates q (flux measure dq)
         r = np.eye(3)[:, :2].copy()
         distance = (z0_cap - source[2]) / u[2]
@@ -181,6 +181,17 @@ def build_segments(rows, origin, z_rec, bores, z0_cap, k, fresnel):
             seg.valid[i] = ok
             i += 1
     return seg
+
+
+def _inside_outline(bore, center, radius, point):
+    """Entrance test of a bore outline: the circle, or a polygon through its face apothems."""
+    shape = _shape(bore)
+    d = np.asarray(point, float) - np.asarray(center, float)
+    if shape is None:
+        return bool(np.linalg.norm(d) <= radius * (1 + 1e-8))
+    n, rot, ratio = shape
+    ang = rot + 2.0 * math.pi * np.arange(n) / n
+    return bool(np.all(d[0] * np.cos(ang) + d[1] * np.sin(ang) <= radius * ratio * (1 + 1e-8)))
 
 
 def _velocity_derivative(u, du):
@@ -346,11 +357,13 @@ def volume_residual(seg, bores, a_w, zs, k, width, z_src, samples, cutoff, final
             cand = np.flatnonzero(seg.bore == b)
             if final_only_after is not None and z > final_only_after:
                 cand = cand[seg.final[cand]]
-            idx = cand[near(seg, cand, z, cx, cy, a_w, reach)]
+            stretch_shape = _shape(bore, a_w)
+            idx = cand[near(seg, cand, z, cx, cy, a_w * (math.sqrt(2.0) if stretch_shape else 1.0), reach)]
             if idx.size == 0:
                 continue
-            rad = a_w * np.sqrt(rng.random(samples))
             phi = 2.0 * math.pi * rng.random(samples)
+            r_out = a_w * _stretch(stretch_shape, phi)                      # outline radius at phi
+            rad = r_out * np.sqrt(rng.random(samples))
             px, py = cx + rad * np.cos(phi), cy + rad * np.sin(phi)
             pre = window_states(seg, idx, z, k, width, z_src)
             X = pre[0]
@@ -361,9 +374,9 @@ def volume_residual(seg, bores, a_w, zs, k, width, z_src, samples, cutoff, final
                 sub = tuple(arr[s_] for arr in pre)
                 vals = window_values(seg, idx[s_], z, px[p_][:, None], py[p_][:, None], k, width, z_src, residual=True, pre=sub)[:, 0]
                 np.add.at(field, (seg.ray[idx[s_]] % 2, p_), vals)
-            area = math.pi * a_w * a_w
-            full[jz] += float(np.mean(np.abs(field[0] + field[1]) ** 2) * area)
-            shot[jz] += float(np.mean(np.abs(field[0] - field[1]) ** 2) * area)
+            weight = math.pi * r_out * r_out                                  # 1 / point density of the outline sampling
+            full[jz] += float(np.mean(np.abs(field[0] + field[1]) ** 2 * weight))
+            shot[jz] += float(np.mean(np.abs(field[0] - field[1]) ** 2 * weight))
     return full, shot
 
 
@@ -433,8 +446,45 @@ def modal_bound(seg, bores, job, origin, width, t_full, e_in_dep=None):
             out[lo:lo + 8] = ra + rb
         return out
 
-    return bound_modal.bores_bound(chans, L, sample, lambda ch: ch.entrance_field(origin[:2], z0 - z_src),
-                                   job["bound_phase_step"], t_full, e_in_dep)
+    out = bound_modal.bores_bound(chans, L, sample, lambda ch: ch.entrance_field(origin[:2], z0 - z_src),
+                                  job["bound_phase_step"], t_full, e_in_dep)
+    out["sampling"] = trace_sampling17(seg, chans, k, L / out["sections"], z0, width)
+    return out
+
+
+def trace_sampling17(seg, chans, k, h, z0, width):
+    """bound_modal.trace_resolution for frozen windows: the segment angle to the bore axis (minus
+    the bend slope at the segment start) and the window width."""
+    idx = np.flatnonzero(seg.valid & (seg.p0[:, 2] >= z0 - 1e-12))
+    if idx.size == 0:
+        return bound_modal.trace_resolution(k, h, [], [])
+    u = seg.u[idx]
+    ux, uy = u[:, 0] / u[:, 2], u[:, 1] / u[:, 2]
+    if chans is not None:
+        for b, ch in enumerate(chans):
+            m = seg.bore[idx] == b
+            if m.any() and ch.rb is not None:
+                sl = np.array([ch.slope(z) for z in seg.p0[idx][m, 2] - z0])
+                ux[m] -= sl[:, 0]; uy[m] -= sl[:, 1]
+    return bound_modal.trace_resolution(k, h, np.hypot(ux, uy), np.full(idx.size, width))
+
+
+def _points_sum(seg, idx, z, px, py, k, width, z_src, cutoff, a_w):
+    """Sum of the selected windows at arbitrary lab points (flattened), windows within their
+    support only (bucket join as volume_residual); returns [n_points]."""
+    out = np.zeros(px.size, complex)
+    if idx.size == 0:
+        return out
+    pre = window_states(seg, idx, z, k, width, z_src)
+    X = pre[0]
+    cx, cy = float(np.mean(px)), float(np.mean(py))
+    pt, sel = _bucket_pairs(X[:, 0] - cx, X[:, 1] - cy, px - cx, py - cy, a_w * 2.0, cutoff * width)
+    for start in range(0, pt.size, 1 << 18):
+        p_, s_ = pt[start:start + (1 << 18)], sel[start:start + (1 << 18)]
+        sub = tuple(arr[s_] for arr in pre)
+        vals = window_values(seg, idx[s_], z, px[p_][:, None], py[p_][:, None], k, width, z_src, pre=sub)[:, 0]
+        np.add.at(out, p_, vals)
+    return out
 
 
 def _outline_sum(seg, idx, z, cx, cy, sq, k, width, z_src, cutoff):
@@ -471,12 +521,10 @@ def square_bound(seg, bores, shapes, job, origin, width, t_full, e_in_dep=None):
         return cand[near(seg, cand, z, cx, cy, a_w * math.sqrt(2.0), job["cutoff"] * width)]
 
     def sample_disc(b, radii, phis, stretch, cx, cy):
-        idx = active(b, z0, cx, cy)
-        out = np.zeros((radii.size, phis.size), complex)
-        for lo in range(0, radii.size, 8):
-            ra, rb = _halves(seg, idx, z0, cx, cy, radii[lo:lo + 8] * 1.0, phis, k, width, z_src, job["cutoff"])
-            out[lo:lo + 8] = ra + rb
-        return out
+        # the stretched polar points themselves (the square's corners are beyond a_w)
+        rr = radii[:, None] * stretch[None, :]
+        px, py = cx + rr * np.cos(phis)[None, :], cy + rr * np.sin(phis)[None, :]
+        return _points_sum(seg, active(b, z0, cx, cy), z0, px.ravel(), py.ravel(), k, width, z_src, job["cutoff"], a_w).reshape(px.shape)
 
     def sample_outline(b, zr, sq, cx, cy):
         z = z0 + zr
@@ -486,8 +534,10 @@ def square_bound(seg, bores, shapes, job, origin, width, t_full, e_in_dep=None):
     lam = 2.0 * math.pi / k
     e_in = lambda px, py: (np.exp(1j * k * ((px - origin[0]) ** 2 + (py - origin[1]) ** 2) / (2.0 * z_in))
                            / (1j * lam * z_in))
-    return bound_modal.squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in,
-                                     job["bound_phase_step"], t_full, e_in_dep=e_in_dep)
+    out = bound_modal.squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in,
+                                    job["bound_phase_step"], t_full, e_in_dep=e_in_dep)
+    out["sampling"] = trace_sampling17(seg, None, k, L / out["sections"], z0, width)
+    return out
 
 
 def _duhamel(bnd):
@@ -682,6 +732,9 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
             for name in ("B", "B_tri", "B_exit", "B_target", "B_e0", "B_r0", "B_exact", "B_boundary", "B_interp", "B_tail", "B_T", "B_R_inside", "B_R_after", "scale_defect"):
                 rec_w[name + "_rms"] = brms(name)
             rec_w["B_sections"], rec_w["B_jmax"] = bs[0]["sections"], bs[0]["jmax"]
+            rec_w["B_resolved"] = all(b.get("sampling", {}).get("resolved", False) for b in bs)
+            rec_w["B_no_signal"] = any(b.get("no_signal") for b in bs)
+            rec_w["B_phase_per_section"] = float(max(b.get("sampling", {}).get("phase_per_section", math.inf) for b in bs))
         summary["widths"].append(rec_w)
         glass = f" G_glass rms {rec_w['G_glass_rms']:.4f} (noise {rec_w['G_glass_shot_rms']:.4f})" if opt["glass"] else ""
         log(f"  width {w*1e6:g} um: D0 {d0[key]:.4f} R rms {rec_w['R_rms']:.4f} (noise {rec_w['R_shot_rms']:.4f}, inside {rec_w['R_inside_rms']:.4f}) "
@@ -696,13 +749,17 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
                               "indicator_exit_prod_rms": best["indicator_exit_prod_rms"], "certified": False, "status": "indicator argmin; not an error bound"}
     with_b = [r for r in summary["widths"] if "B_rms" in r]
     if with_b:
-        model = ("paraxial Dirichlet field on the bore r < a_w (DIR-ell), constant bend curvature; the frozen-window "
-                 "residual by Duhamel (int ||R|| dz); the diagnosed ray sample is the sample; the fan's complex scale "
-                 "is the least-squares fit to the point source on the entrance disc")
+        model = ("paraxial field with a lossless Dirichlet wall at a_w = a + Re(ell) (no per-mode damping: the fb wave's "
+                 "DIR-ell damping would add a source -Gamma E_method, not included), constant bend curvature; the frozen-window "
+                 "residual by Duhamel (int ||R|| dz, full norm); the diagnosed ray sample is the sample; fan scale: one "
+                 "magnitude per width (mean of the modes' least-squares magnitudes), least-squares phase per mode; sections "
+                 "resolve the trace only where bound.sampling.resolved")
         for name, key in (("argmin_bound_exit", "B_exit_rms"), ("argmin_bound_target", "B_target_rms")):
             best = min(with_b, key=lambda r: r[key])
             summary[name] = {"width_m": best["width_m"], key: best[key], "B_rms": best["B_rms"],
-                             "certified": "exit" in name,
+                             "certified": "exit" in name and bool(best.get("B_resolved")) and not best.get("B_no_signal"),
+                             "sampling": "sections resolve the windows' wall trace" if best.get("B_resolved") else
+                                         "sections do not resolve the windows' wall trace (bound.sampling): B is an estimate",
                              **({} if "exit" in name else
                                 {"status": "not a bound: the post-exit residual is integrated over the bore disc only and "
                                            "its transfer to the screen is not bounded"}),
@@ -732,6 +789,8 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
             why = "no modal bound for this outline"
         elif not exit_prop:
             why = "frozen windows to the target screen: the post-exit residual transfer is not bounded"
+        elif not all(r["widths"][key]["bound"].get("sampling", {}).get("resolved") for r in used):
+            why = "sections do not resolve the windows' wall trace (bound.sampling): B is an estimate"
         elif map_rays != int(opt["rays"]):
             why = f"sample mismatch: B is for the first {opt['rays']} rays per mode, the map for {map_rays}"
         else:

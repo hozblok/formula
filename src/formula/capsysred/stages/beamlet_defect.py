@@ -512,7 +512,10 @@ def modal_bound(seg, bores, job, origin, t_full, e_in_dep=None):
     z0, L = job["z0_cap"], job["z_exit"] - job["z0_cap"]
     shapes = [_shape(b, a_w) for b in bores]
     if any(sh is not None for sh in shapes):
-        return square_bound(seg, bores, shapes, job, origin, t_full, e_in_dep)
+        out = square_bound(seg, bores, shapes, job, origin, t_full, e_in_dep)
+        if out.get("B") is not None:
+            out["sampling"] = trace_sampling(seg, bores, None, k, L / out["sections"], z0)
+        return out
     disc = _disc(a_w, job["bound_jmax"])
     chans = [_channel(b, a_w, disc, k) for b in bores]          # lossless Dirichlet wall: the bound's model
     stretch = np.ones(disc.nphi)
@@ -531,8 +534,36 @@ def modal_bound(seg, bores, job, origin, t_full, e_in_dep=None):
             out[lo:lo + 8] = ra + rb
         return out
 
-    return bound_modal.bores_bound(chans, L, sample, lambda ch: ch.entrance_field(origin[:2], z0 - z_src),
-                                   job["bound_phase_step"], t_full, e_in_dep)
+    out = bound_modal.bores_bound(chans, L, sample, lambda ch: ch.entrance_field(origin[:2], z0 - z_src),
+                                  job["bound_phase_step"], t_full, e_in_dep)
+    out["sampling"] = trace_sampling(seg, bores, chans, k, L / out["sections"], z0)
+    return out
+
+
+def trace_sampling(seg, bores, chans, k, h, z0):
+    """bound_modal.trace_resolution from the segments inside the channel: the beam angle to the
+    bore axis (minus the bend slope at the segment start) and the beam width there."""
+    idx = np.flatnonzero((seg.z0 >= z0 - 1e-12) & np.isfinite(seg.z0))
+    if idx.size == 0:
+        return bound_modal.trace_resolution(k, h, [], [])
+    ux, uy = seg.ux[idx].copy(), seg.uy[idx].copy()
+    if chans is not None:
+        for b, ch in enumerate(chans):
+            m = seg.bore[idx] == b
+            if m.any() and ch.rb is not None:
+                sl = np.array([ch.slope(z) for z in seg.z0[idx][m] - z0])
+                ux[m] -= sl[:, 0]; uy[m] -= sl[:, 1]
+    w, _, _ = beam_width_at_start(seg, idx, k)
+    return bound_modal.trace_resolution(k, h, np.hypot(ux, uy), w)
+
+
+def beam_width_at_start(seg, idx, k):
+    """1/e amplitude width of the selected beams at their own segment start (s = 0)."""
+    qxx, qxy, qyy = seg.qxx[idx], seg.qxy[idx], seg.qyy[idx]
+    det = qxx * qyy - qxy * qxy
+    gi = ((qyy / det).imag, (-qxy / det).imag, (qxx / det).imag)
+    hi = 0.5 * (gi[0] + gi[2]) + np.hypot(0.5 * (gi[0] - gi[2]), gi[1])
+    return np.where(hi < 0, np.sqrt(-2.0 / (k * np.where(hi < 0, hi, -1.0))), np.inf), None, None
 
 
 def square_bound(seg, bores, shapes, job, origin, t_full, e_in_dep=None):
@@ -821,7 +852,9 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print, mask=None):
                            B_boundary_rms=brms("B_boundary"), B_tail_rms=brms("B_tail"), B_T_rms=brms("B_T"),
                            B_tri_rms=brms("B_tri"), B_exact_rms=brms("B_exact"), B_r0_rms=brms("B_r0"),
                            B_interp_rms=brms("B_interp"), scale_defect_max=float(max(abs(b["scale_defect"]) for b in bs)),
-                           C_common=bs[0].get("C_common"),
+                           C_common=bs[0].get("C_common"), B_no_signal=any(b.get("no_signal") for b in bs),
+                           B_resolved=all(b.get("sampling", {}).get("resolved", False) for b in bs),
+                           B_phase_per_section=float(max(b.get("sampling", {}).get("phase_per_section", math.inf) for b in bs)),
                            B_modes=len(bs), B_sections=bs[0]["sections"], B_jmax=bs[0]["jmax"])
                 bound = (f" | B rms {rec['B_rms']:.4f} (e0 {rec['B_e0_rms']:.4f} boundary {rec['B_boundary_rms']:.4f} "
                          f"tail {rec['B_tail_rms']:.4f} T {rec['B_T_rms']:.4f}; {rec['B_sections']} sections)")
@@ -834,16 +867,20 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print, mask=None):
     summary["argmin"] = {"w0_m": best["w0_m"], "w0_t_m": best["w0_t_m"], "waist_z_m": best["waist_z_m"],
                          "indicator_rms": best["indicator_rms"], "indicator_prod_rms": best["indicator_prod_rms"],
                          "certified": False, "status": "indicator argmin; not an error bound"}
-    with_b = [r for r in summary["launches"] if "B_rms" in r]
+    with_b = [r for r in summary["launches"] if "B_rms" in r and not r.get("B_no_signal")]
     if with_b:
         best = min(with_b, key=lambda r: r["B_rms"])
         summary["argmin_bound"] = {
             "w0_m": best["w0_m"], "w0_t_m": best["w0_t_m"], "waist_z_m": best["waist_z_m"],
-            "B_rms": best["B_rms"], "B_max": best["B_max"], "certified": True,
+            "B_rms": best["B_rms"], "B_max": best["B_max"], "certified": bool(best.get("B_resolved")),
+            "sampling": "sections resolve the beams' wall trace" if best.get("B_resolved") else
+                        "sections do not resolve the beams' wall trace (bound.sampling): B is an estimate",
             "bound": "||E - E_dep||(L) <= min(||exact modal part of e(L)|| + ||e(0) beyond the modes||, ||e(0)|| + ||boundary part||) + interpolation of the sampled forcing + tail + T per mode (bound_modal), relative to ||E_in||",
-            "model": "paraxial Dirichlet field on the bore r < a_w (DIR-ell), constant bend curvature; the diagnosed ray sample "
-                     "is the sample (ray statistics not rescaled); the complex scale C of the fan is the least-squares fit "
-                     "to the point source on the entrance disc"}
+            "model": "paraxial field with a lossless Dirichlet wall at a_w = a + Re(ell) (no per-mode damping: the fb wave's "
+                     "DIR-ell damping would add a source -Gamma E_method, not included), constant bend curvature; the diagnosed "
+                     "ray sample is the sample (ray statistics not rescaled); fan scale: one magnitude per launch (mean of the "
+                     "modes' least-squares magnitudes), least-squares phase per mode; sections resolve the trace only where "
+                     "bound.sampling.resolved"}
     if mask is not None:
         n_map = int(sim.cfg.capillary.source.n_modes)
         if summary["launches"][0]["modes"] != n_map:
@@ -854,6 +891,8 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print, mask=None):
         bound, why = None, None
         if not all(r.get("bound") and r["bound"].get("B") is not None for r in results0):
             why = "no modal bound for this outline"
+        elif not all(r["bound"].get("sampling", {}).get("resolved") for r in results0):
+            why = "sections do not resolve the beams' wall trace (bound.sampling): B is an estimate"
         elif opt["rays"] is not None and int(opt["rays"]) != int(meta0["rays_per_mode_production"]):
             why = (f"sample mismatch: B is for the first {opt['rays']} rays per mode, the map for "
                    f"{meta0['rays_per_mode_production']}; run the scan without --rays")

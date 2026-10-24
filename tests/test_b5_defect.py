@@ -244,3 +244,24 @@ def test_run_defect_publishes_the_stage17_bound(tmp_path):
             b = r["widths"][key]["bound"]
             assert "parts" not in b and b["B_exit"] == pytest.approx(b["B"] + b["B_R_inside"])
             assert b["C_common"] == rows[0]["widths"][key]["bound"]["C_common"]
+
+
+def test_square_entrance_test_keeps_corner_rays_and_the_residual_covers_the_square():
+    """A ray entering a square bore of apothem 5 um at (4, 4) um is valid (the circle test would
+    drop it); the volume residual samples the square and stays finite; the stretched entrance
+    sampler evaluates the windows at the requested points."""
+    sim = _one_ray_scene()
+    bores = [{"center": [0.0, 0.0], "radius": 5e-6, "sides": 4}]
+    origin = [0.0, 0.0, -0.5]
+    rows = [(5.6e-6, 5.6e-6, 0.0, 0.0, 0.7, [], [])]                          # enters at (4, 4) um, |.| = 5.66 um
+    seg = D.build_segments(rows, origin, 0.2, bores, 0.0, K, (2 * sim.delta_f, 2 * sim.beta_f))
+    assert seg.valid[0]
+    circle = D.build_segments(rows, origin, 0.2, [dict(bores[0], sides=None)], 0.0, K, (2 * sim.delta_f, 2 * sim.beta_f))
+    assert not circle.valid[0]
+    r, r_noise = D.volume_residual(seg, bores, 5e-6, np.array([0.1]), K, 0.3e-6, origin[2], 400, 4.0)
+    assert r.shape == (1,) and math.isfinite(r[0]) and r[0] > 0.0
+    px, py = np.array([4.0e-6, 4.6e-6, 4.5e-6]), np.array([4.0e-6, 4.6e-6, -4.5e-6])
+    vals = D._points_sum(seg, np.array([0]), 0.1, px, py, K, 0.3e-6, origin[2], 4.0, 5e-6)
+    direct = D.window_values(seg, np.array([0]), 0.1, px[None, :], py[None, :], K, 0.3e-6, origin[2])[0]
+    assert np.allclose(vals, direct, rtol=1e-9, atol=1e-12 * np.abs(direct).max())
+    assert abs(direct[1]) > 1e-3 * np.abs(direct).max()                       # the window passes (4.6, 4.6) um at z = 0.1
