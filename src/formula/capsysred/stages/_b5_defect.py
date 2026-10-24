@@ -490,6 +490,15 @@ def square_bound(seg, bores, shapes, job, origin, width, t_full, e_in_dep=None):
                                      job["bound_phase_step"], t_full, e_in_dep=e_in_dep)
 
 
+def _duhamel(bnd):
+    """B_exit / B_target from B and the raw residual integrals, relative to the fan's own
+    deposit-unit norm of E_in (E_dep) so the scale matches the modal part."""
+    r_in, r_all = bnd["R_inside_raw"] / bnd["E_dep"], bnd["R_all_raw"] / bnd["E_dep"]
+    bnd["B_exit"] = bnd["B"] + r_in                     # exit_propagation map (no residual after the exit)
+    bnd["B_target"] = bnd["B"] + r_all                  # frozen windows to the target screen
+    bnd["B_R_inside"], bnd["B_R_after"] = r_in, r_all - r_in
+
+
 def mode_job(job):
     t0 = time.time()
     from ..simulation import Simulation
@@ -543,11 +552,9 @@ def mode_job(job):
                 # ray-noise part is error of this sample too): inside the channel for the
                 # exit_propagation map; to the target screen its L2 norm there, over the bore
                 # disc only (not a certified bound: see argmin_bound_target)
-                r_in_full = r_int(r_in[0], np.zeros(0))
-                r_all = r_int(r_in[0], r_out[0])
-                bnd["B_exit"] = bnd["B"] + r_in_full            # exit_propagation map (no residual after the exit)
-                bnd["B_target"] = bnd["B"] + r_all              # frozen windows to the target screen
-                bnd["B_R_inside"], bnd["B_R_after"] = r_in_full, r_all - r_in_full
+                raw = lambda a, b_: float(np.sum(np.sqrt(a)) * dz_in + np.sum(np.sqrt(b_)) * dz_out)   # deposit units
+                bnd["R_inside_raw"], bnd["R_all_raw"] = raw(r_in[0], np.zeros(0)), raw(r_in[0], r_out[0])
+                _duhamel(bnd)
             terms["bound"] = bnd
         out[f"{width*1e6:g}"] = terms
     return {"mode": job["mode"], "rays": total, "fates": fates, "segments": int(seg.p0.shape[0]),
@@ -649,8 +656,7 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
         for r, b in zip(results, rescaled):
             if b is not None:
                 if b.get("B") is not None:
-                    r_in_full, r_all = b["B_R_inside"], b["B_R_inside"] + b["B_R_after"]
-                    b["B_exit"], b["B_target"] = b["B"] + r_in_full, b["B"] + r_all
+                    _duhamel(b)
                 r["widths"][key]["bound"] = b
     with open(os.path.join(out, "modes.jsonl"), "w", encoding="utf-8") as rows:
         for res in results:

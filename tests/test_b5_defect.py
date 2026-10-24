@@ -1,5 +1,6 @@
 """Stage 17 defect indicator: entrance kernel, analytic residual of the frozen windows
 against finite differences, and the exit tails of a straight ray."""
+import json
 import math
 
 import numpy as np
@@ -216,3 +217,30 @@ def test_modal_bound_of_one_window_in_a_square_bore():
     assert bnd["B_boundary"] > 0.0 and bnd["B"] <= bnd["B_tri"] + 1e-12
     hexa = D.modal_bound(seg, [dict(bores[0], sides=6)], job, origin, 0.5e-6, 0.0)
     assert hexa["B"] is None
+
+
+def test_run_defect_publishes_the_stage17_bound(tmp_path):
+    """A traced straight bore with exit propagation: every mode and width carries B, B_exit
+    with the full residual, the summary its rms, the certified argmin by B_exit only."""
+    from formula.capsysred.simulation import Simulation
+    from tests.test_capsysred import _record
+    raw = {"precision": 32, "energy_kev": 8.048, "seed": 1,
+           "capillary": {"bores": [{"center": [0.0, 0.0], "radius": 5e-6}], "z0": 0.0, "z1": 0.2,
+                         "source": {"shape": "gaussian", "size": 1.5e-6, "position": [0.0, 0.0, -0.5],
+                                    "n_modes": 2, "n_rays": 40},
+                         "screen": {"z": 0.3, "center": [0.0, 0.0], "edge_x": 4e-6, "edge_y": 4e-6, "nx": 4, "ny": 4}},
+           "b5_estimator": {"provider": "archive_canonical", "screen_index": 0, "exit_propagation": True},
+           "b5_defect": {"rays": 40, "sections": 6, "samples": 50, "bound_jmax": 30.0}}
+    sim = Simulation.from_dict(raw)
+    _record(sim, str(tmp_path))
+    opt = D.options(sim.cfg)
+    summary = D.run_defect(sim, str(tmp_path / "rays-modes"), str(tmp_path), opt, [0.5e-6, 1e-6], log=lambda s: None)
+    rec = summary["widths"][0]
+    assert math.isfinite(rec["B_rms"]) and rec["B_exit_rms"] >= rec["B_rms"] and rec["B_target_rms"] >= rec["B_exit_rms"]
+    assert summary["argmin_bound_exit"]["certified"] is True and summary["argmin_bound_target"]["certified"] is False
+    rows = [json.loads(l) for l in open(tmp_path / D.RESULT_DIR / "modes.jsonl", encoding="utf-8")]
+    for r in rows:
+        for key in ("0.5", "1"):
+            b = r["widths"][key]["bound"]
+            assert "parts" not in b and b["B_exit"] == pytest.approx(b["B"] + b["B_R_inside"])
+            assert b["C_common"] == rows[0]["widths"][key]["bound"]["C_common"]

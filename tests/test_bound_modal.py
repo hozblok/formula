@@ -295,3 +295,14 @@ def test_rescale_matches_a_direct_bound_at_that_scale():
     common = B.common_scale([res, other])
     assert "parts" not in common[0] and common[0]["C_common"] == common[1]["C_common"]
     assert common[0]["C_fit"][0] == pytest.approx(res["C_fit"][0])            # the mean of the least-squares magnitudes
+
+
+def test_common_scale_survives_a_vanishing_fan():
+    """No beams at all: the fan is zero, the scale falls back to 1 and e(0) = E_in (B_e0 = 1)."""
+    chan = FBChannel(np.zeros(2), None, None, Disc(AW, 30.0), K)
+    disc = chan.disc
+    zero = lambda b, zr, radii, phis, cx, cy: np.zeros((radii.size, disc.nphi), complex)
+    res = B.bores_bound([chan], 0.02, zero, lambda ch: ch.entrance_field(np.zeros(2), 0.5), 0.7, 0.0)
+    out = B.common_scale([res])[0]
+    assert out["C_fit"][0] == 1.0 and out["B_e0"] == pytest.approx(1.0) and math.isfinite(out["B"])
+    assert "parts" not in out and out["basis"] if "basis" in out else True
