@@ -52,22 +52,61 @@ def tail_sums(aw, jmax):
     return (aw / math.pi) ** 2 * (1.0 / J ** 2 + 1.0 / J), (aw / math.pi) ** 6 * (1.0 / J ** 6 + 1.0 / (5.0 * J ** 5))
 
 
-def trace_resolution(k, h, thetas, widths, phase_max=0.7, passage_min=4.0, kappa_cut=None):
-    """Whether the sections of spacing h resolve the method field's wall trace, from the beams
-    themselves: the fastest beam phase k theta^2 h / 2 per section and the shortest envelope
-    passage w / theta in sections.  The interpolation term and the sampled tails are estimates
-    only when both hold; the result is published next to B.  With the basis cutoff kappa_cut
-    also band_ratio = k theta_max / kappa_cut: the beams' wall trace lives in modes up to
-    kappa ~ k theta, so the tails decay only below 1 (a diagnostic of looseness, not a gate)."""
-    th = np.asarray(thetas, float)
-    w = np.asarray(widths, float)
-    ok = np.isfinite(th) & np.isfinite(w) & (th > 0)
-    phase = float(np.max(0.5 * k * th[ok] ** 2 * h)) if ok.any() else 0.0
-    passage = float(np.min(w[ok] / th[ok]) / h) if ok.any() else math.inf
-    out = {"phase_per_section": phase, "passage_sections": passage, "sections_h": float(h),
-           "resolved": bool(phase <= phase_max and passage >= passage_min)}
+def _wquantile(x, w, p):
+    """Weighted quantile: the smallest x below which at least p of the weight lies."""
+    o = np.argsort(x)
+    c = np.cumsum(w[o])
+    return float(x[o][min(int(np.searchsorted(c, p * c[-1], "left")), x.size - 1)])
+
+
+def trace_resolution(k, h, thetas, widths, phase_max=0.7, passage_min=4.0, kappa_cut=None, rates=None, scales=None,
+                     theta_band=None, ring_h=None, ring_min=2.0, weights=None, share_max=0.0, weight_total=None,
+                     ring_widths=None):
+    """Whether the sections of spacing h resolve the method field's wall trace, beam by beam:
+    the local angle theta at the wall gives the phase rate k theta^2 / 2, `rates` [rad/m] add the
+    Gouy and envelope rates of a Gaussian beamlet, so the phase per section is h (k theta^2 / 2 +
+    rate); the envelope passage w / theta and the `scales` [m] (Rayleigh ranges) must span
+    passage_min sections; with `ring_h` (arc spacing of the wall sampling) the width must span
+    ring_min points, else the sampled trace aliases.  `weights` = each beam's trace amplitude at
+    the wall; the beams failing any criterion may carry at most `share_max` of `weight_total`
+    (default: the sum of the weights; none may fail by default); `ring_widths` the widths along
+    the wall (default: widths).  Published: the unresolved share, the (1 - share_max) weight quantiles of
+    the phase and the share_max quantiles of the passages, so the interpolation term and the
+    sampled tails are estimates only when resolved.  With kappa_cut also band_ratio = k theta /
+    kappa_cut over `theta_band` (the central angles; default thetas), same quantile: the trace
+    lives in modes up to kappa ~ k theta, so the tails decay only below 1 (a looseness
+    diagnostic)."""
+    th = np.asarray(thetas, float).ravel()
+    w = np.asarray(widths, float).ravel()
+    r = np.zeros(th.size) if rates is None else np.asarray(rates, float).ravel()
+    sc = np.full(th.size, np.inf) if scales is None else np.asarray(scales, float).ravel()
+    wt = np.ones(th.size) if weights is None else np.asarray(weights, float).ravel()
+    tb = th if theta_band is None else np.asarray(theta_band, float).ravel()
+    rw = w if ring_widths is None else np.asarray(ring_widths, float).ravel()
+    ok = np.isfinite(th) & (th >= 0) & np.isfinite(wt) & (wt > 0)
+    th, w, r, sc, wt, tb, rw = th[ok], w[ok], r[ok], sc[ok], wt[ok], tb[ok], rw[ok]
+    total = float(wt.sum()) if weight_total is None else float(weight_total)
+    out = {"sections_h": float(h), "unresolved_share": 0.0}
+    if th.size == 0:
+        out.update(phase_per_section=0.0, passage_sections=math.inf, resolved=True)
+        if ring_h:
+            out["ring_points_per_width"] = math.inf
+        if kappa_cut:
+            out["band_ratio"] = 0.0
+        return out
+    phase = h * (0.5 * k * th ** 2 + np.where(np.isfinite(r), r, 0.0))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        passage = np.minimum(np.where(th > 0, w / th, np.inf), sc) / h
+        ring = rw / ring_h if ring_h else np.full(th.size, np.inf)
+    fail = (phase > phase_max) | (passage < passage_min) | (ring < ring_min)
+    share = float(wt[fail].sum() / total) if total > 0 else 0.0
+    hi, lo = 1.0 - share_max, share_max
+    out.update(phase_per_section=_wquantile(phase, wt, hi), passage_sections=_wquantile(passage, wt, lo),
+               unresolved_share=share, resolved=bool(share <= share_max))
+    if ring_h:
+        out["ring_points_per_width"] = _wquantile(ring, wt, lo)
     if kappa_cut:
-        out["band_ratio"] = float(k * np.max(th[ok]) / kappa_cut) if ok.any() else 0.0
+        out["band_ratio"] = float(k * _wquantile(tb, wt, hi) / kappa_cut)
     return out
 
 

@@ -265,3 +265,35 @@ def test_square_entrance_test_keeps_corner_rays_and_the_residual_covers_the_squa
     direct = D.window_values(seg, np.array([0]), 0.1, px[None, :], py[None, :], K, 0.3e-6, origin[2])[0]
     assert np.allclose(vals, direct, rtol=1e-9, atol=1e-12 * np.abs(direct).max())
     assert abs(direct[1]) > 1e-3 * np.abs(direct).max()                       # the window passes (4.6, 4.6) um at z = 0.1
+
+
+def test_exit_tails_follow_the_square_outline_and_the_first_segment_is_sampled():
+    """A window reflected at (5, 4) um on the +x face of a square bore of apothem 5 um ends
+    0.1 um inside at the exit; its continued non-final window is centred outside the circle
+    of radius a_w + cutoff w, yet its tail inside the square carries norm: T must match the
+    direct integral over x in [4, 5] um, y in [3, 5] um.  The pre-reflection segment from the
+    source is what the sampling gate sees: 1 mrad gives 10.2 rad per 0.5 mm section."""
+    sim = _one_ray_scene()
+    bores = [{"center": [0.0, 0.0], "radius": 5e-6, "sides": 4}]
+    origin = [-1.9e-6, 4e-6, -0.5]
+    w, cutoff = 0.2e-6, 5.0
+    rows = [(4.9e-6, 4e-6, -1e-5, 0.0, 0.7, [2e-5], [(5e-6, 4e-6, 0.19)])]
+    seg = D.build_segments(rows, origin, 0.2, bores, 0.0, K, (2 * sim.delta_f, 2 * sim.beta_f))
+    assert seg.valid.all() and not seg.final[0] and seg.final[1]
+    t_full, _ = D.exit_tails(seg, bores, 5e-6, 0.2, K, w, origin[2], 0.02e-6, cutoff)
+    step = 0.005e-6
+    x = 4.0e-6 + (np.arange(200) + 0.5) * step
+    y = 3.0e-6 + (np.arange(400) + 0.5) * step
+    X, Y = np.meshgrid(x, y)
+    vals = D.window_values(seg, np.array([0]), 0.2, X.reshape(1, -1), Y.reshape(1, -1), K, w, origin[2])[0]
+    direct = float(np.sum(np.abs(vals) ** 2)) * step ** 2
+    assert direct > 0.0 and t_full == pytest.approx(direct, rel=0.02)
+    one = D.Segments(1)
+    one.p0[0] = (13e-6, 0.0, -0.01)                                            # reaches the wall of a 24 um bore at z = 1 mm
+    one.u[0] = np.array([1e-3, 0.0, 1.0]) / math.hypot(1e-3, 1.0)
+    one.z1[0] = 0.01
+    one.amp[0] = 1.0
+    circle = [{"center": [0.0, 0.0], "radius": 24e-6}]
+    s = D.trace_sampling17(one, None, K, 5e-4, 0.0, 1e-6, z_exit=0.01, a_w=24e-6, bores=circle)
+    assert not s["resolved"] and s["phase_per_section"] == pytest.approx(0.5 * K * 1e-6 * 5e-4, rel=1e-6)
+    assert s["passage_sections"] == pytest.approx(math.sqrt(2.0) * 2.0, rel=1e-6)

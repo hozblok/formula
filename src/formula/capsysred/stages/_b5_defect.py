@@ -48,12 +48,12 @@ from .. import rays_v3
 from ._b5_transport import count_free_caustics, reflect_variations, wall_normal_derivative
 from . import bound_modal
 from .beamlet import _screen_spec
-from .beamlet_defect import _channel, _disc, _shape, _stretch, bore_area, bound_eta, bound_mask, uniform_mask
+from .beamlet_defect import _channel, _disc, _shape, _stretch, bore_area, bound_eta, bound_mask, uniform_mask, wall_distance
 
 RESULT_DIR = "stage17-defect"
 DEFAULTS = {"rays": 20000, "sections": 40, "samples": 300, "ring_step": 0.5e-6, "cutoff": 5.0,
             "modes": None, "jobs": 1, "glass": False, "mask_threshold": 0.05,
-            "bound": True, "bound_jmax": 160.0, "bound_phase_step": 0.7}
+            "bound": True, "bound_jmax": 160.0, "bound_phase_step": 0.7, "bound_share": 0.01}
 
 
 def options(cfg):
@@ -73,7 +73,7 @@ def options(cfg):
     for key in ("glass", "bound"):
         if not isinstance(opt[key], bool):
             raise ValueError(f"b5_defect.{key}: true or false")
-    for key in ("bound_jmax", "bound_phase_step"):
+    for key in ("bound_jmax", "bound_phase_step", "bound_share"):
         if not isinstance(opt[key], (int, float)) or opt[key] <= 0:
             raise ValueError(f"b5_defect.{key}: a positive number")
     return opt
@@ -402,8 +402,9 @@ def _bucket_pairs(wx, wy, px, py, a_w, reach):
 
 
 def exit_tails(seg, bores, a_w, z_exit, k, width, z_src, ring_step, cutoff, outside=False):
-    """T^2 and its ray-noise part: non-final windows on the exit plane inside the bores;
-    outside=True: O^2, the final windows beyond the circle a_w."""
+    """T^2 and its ray-noise part: non-final windows on the exit plane inside the bores (polar
+    grid, polygon outline through the apothem stretch); outside=True: O^2, the final windows
+    beyond the outline."""
     n_phi = int(math.ceil(2.0 * math.pi * a_w / ring_step))
     phis = np.arange(n_phi) * 2.0 * math.pi / n_phi
     depth = (cutoff + 1.0) * width if outside else min(a_w, (cutoff + 1.0) * width)
@@ -412,13 +413,20 @@ def exit_tails(seg, bores, a_w, z_exit, k, width, z_src, ring_step, cutoff, outs
     radii = a_w + (np.arange(n_r) + 0.5) * dr if outside else a_w - (np.arange(n_r) + 0.5) * dr
     full = shot = 0.0
     for b, bore in enumerate(bores):
+        stretch = _stretch(_shape(bore, a_w), phis)
         cx, cy = bore_axis(bore, z_exit)
         cand = np.flatnonzero((seg.bore == b) & (seg.final if outside else ~seg.final))
-        idx = cand[near(seg, cand, z_exit, cx, cy, a_w, cutoff * width)]
-        ga, gb = _halves(seg, idx, z_exit, cx, cy, radii, phis, k, width, z_src, cutoff)
-        measure = radii[:, None] * dr * (2.0 * math.pi / n_phi)
-        full += float(np.sum(np.abs(ga + gb) ** 2 * measure))
-        shot += float(np.sum(np.abs(ga - gb) ** 2 * measure))
+        idx = cand[near(seg, cand, z_exit, cx, cy, a_w * float(stretch.max()), cutoff * width)]
+        if idx.size == 0:
+            continue
+        rs = radii[:, None] * stretch[None, :]
+        px, py = cx + rs * np.cos(phis)[None, :], cy + rs * np.sin(phis)[None, :]
+        measure = rs * stretch[None, :] * dr * (2.0 * math.pi / n_phi)
+        even = seg.ray[idx] % 2 == 0
+        ga = _points_sum(seg, idx[even], z_exit, px.ravel(), py.ravel(), k, width, z_src, cutoff, a_w * float(stretch.max()))
+        gb = _points_sum(seg, idx[~even], z_exit, px.ravel(), py.ravel(), k, width, z_src, cutoff, a_w * float(stretch.max()))
+        full += float(np.sum(np.abs(ga + gb) ** 2 * measure.ravel()))
+        shot += float(np.sum(np.abs(ga - gb) ** 2 * measure.ravel()))
     return full, shot
 
 
@@ -448,25 +456,52 @@ def modal_bound(seg, bores, job, origin, width, t_full, e_in_dep=None):
 
     out = bound_modal.bores_bound(chans, L, sample, lambda ch: ch.entrance_field(origin[:2], z0 - z_src),
                                   job["bound_phase_step"], t_full, e_in_dep)
-    out["sampling"] = trace_sampling17(seg, chans, k, L / out["sections"], z0, width, out["jmax"] / a_w)
+    out["sampling"] = trace_sampling17(seg, chans, k, L / out["sections"], z0, width, out["jmax"] / a_w, z_exit=job["z_exit"],
+                                       ring_h=2.0 * math.pi * a_w / disc.nphi, share_max=job.get("bound_share", 0.01), a_w=a_w, bores=bores)
     return out
 
 
-def trace_sampling17(seg, chans, k, h, z0, width, kappa_cut=None):
-    """bound_modal.trace_resolution for frozen windows: the segment angle to the bore axis (minus
-    the bend slope at the segment start) and the window width."""
-    idx = np.flatnonzero(seg.valid & (seg.p0[:, 2] >= z0 - 1e-12))
+def trace_sampling17(seg, chans, k, h, z0, width, kappa_cut=None, z_exit=None, ring_h=None, share_max=0.0, a_w=None,
+                     bores=None):
+    """bound_modal.trace_resolution for frozen windows (plane-wave phase, fixed width): the
+    segments crossing [z0, z_exit] (the first one from the source included), their angle to
+    the bore axis minus the bend slope at the in-channel midpoint, the window's 1/e radius
+    sqrt(2) width, each weighted by its amplitude at the nearest wall point of its bore."""
+    hi = math.inf if z_exit is None else float(z_exit)
+    idx = np.flatnonzero(seg.valid & (seg.z1 >= z0 - 1e-12) & (seg.p0[:, 2] <= hi + 1e-12))
     if idx.size == 0:
-        return bound_modal.trace_resolution(k, h, [], [], kappa_cut=kappa_cut)
+        return bound_modal.trace_resolution(k, h, [], [], kappa_cut=kappa_cut, ring_h=ring_h, share_max=share_max)
     u = seg.u[idx]
     ux, uy = u[:, 0] / u[:, 2], u[:, 1] / u[:, 2]
-    if chans is not None:
+    zm = 0.5 * (np.maximum(seg.p0[idx, 2], z0) + np.minimum(seg.z1[idx], hi))
+    wt = np.abs(seg.amp[idx]) if np.any(seg.amp[idx]) else np.ones(idx.size)
+    w1e = math.sqrt(2.0) * width
+    if bores is not None and a_w is not None:
+        d = np.zeros(idx.size)
+        for b, bore in enumerate(bores):
+            m = seg.bore[idx] == b
+            if not m.any():
+                continue
+            ch = chans[b] if chans is not None else None
+            if ch is not None and ch.rb is not None:
+                sl = ch.t[None, :] * ((zm[m] - z0) / ch.rb)[:, None]
+                ux[m] -= sl[:, 0]; uy[m] -= sl[:, 1]
+                axes = np.array([ch.axis(zz - z0) for zz in zm[m]])
+            else:
+                axes = np.array([[float(bore["center"][0]), float(bore["center"][1])]])
+            flight = (zm[m] - seg.p0[idx][m, 2]) / u[m, 2]
+            bx = seg.p0[idx][m, 0] + flight * u[m, 0] - axes[..., 0]
+            by = seg.p0[idx][m, 1] + flight * u[m, 1] - axes[..., 1]
+            d[m] = wall_distance(_shape(bore, a_w), a_w, bx, by)[0]
+        wt = wt * np.exp(-(d / w1e) ** 2)
+    elif chans is not None:
         for b, ch in enumerate(chans):
             m = seg.bore[idx] == b
             if m.any() and ch.rb is not None:
-                sl = np.array([ch.slope(z) for z in seg.p0[idx][m, 2] - z0])
+                sl = ch.t[None, :] * ((zm[m] - z0) / ch.rb)[:, None]
                 ux[m] -= sl[:, 0]; uy[m] -= sl[:, 1]
-    return bound_modal.trace_resolution(k, h, np.hypot(ux, uy), np.full(idx.size, width), kappa_cut=kappa_cut)
+    return bound_modal.trace_resolution(k, h, np.hypot(ux, uy), np.full(idx.size, w1e), kappa_cut=kappa_cut, ring_h=ring_h,
+                                        weights=wt, share_max=share_max)
 
 
 def _points_sum(seg, idx, z, px, py, k, width, z_src, cutoff, a_w):
@@ -536,7 +571,9 @@ def square_bound(seg, bores, shapes, job, origin, width, t_full, e_in_dep=None):
                            / (1j * lam * z_in))
     out = bound_modal.squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in,
                                     job["bound_phase_step"], t_full, e_in_dep=e_in_dep)
-    out["sampling"] = trace_sampling17(seg, None, k, L / out["sections"], z0, width, math.pi * out["jmax"] / (2.0 * a_w))
+    out["sampling"] = trace_sampling17(seg, None, k, L / out["sections"], z0, width, math.pi * out["jmax"] / (2.0 * a_w),
+                                       z_exit=job["z_exit"], ring_h=2.0 * a_w / sqs[0].nq, share_max=job.get("bound_share", 0.01), a_w=a_w,
+                                       bores=bores)
     return out
 
 
@@ -685,7 +722,7 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
                 a_w=a_w, a=float(cap.bores[0]["radius"]), glass=bool(opt["glass"]),
                 z_exit=float(cap.z1), z_target=float(screen.z), z_rec=float(rec["z"]), area=area, widths=list(widths),
                 z0_cap=float(cap.z0), bound=bool(opt["bound"]), bound_jmax=float(opt["bound_jmax"]),
-                bound_phase_step=float(opt["bound_phase_step"]))
+                bound_phase_step=float(opt["bound_phase_step"]), bound_share=float(opt["bound_share"]))
     jobs = [dict(base, mode=m, parts=tuple(secs)) for m, secs in enumerate(modes)]
     out = os.path.join(out_dir, RESULT_DIR)
     os.makedirs(out, exist_ok=True)
@@ -828,6 +865,8 @@ def main(argv=None):
     ap.add_argument("--no-bound", action="store_true", help="skip the modal error bound B")
     ap.add_argument("--bound-jmax", type=float, default=None, help="Dirichlet basis cutoff j_mn < jmax of the bound")
     ap.add_argument("--bound-phase-step", type=float, default=None, help="section count of the bound: fastest mode phase per section, rad")
+    ap.add_argument("--bound-share", type=float, default=None,
+                    help="largest trace-amplitude share of windows the sections may leave unresolved (certification)")
     args = ap.parse_args(argv)
     from .. import load
     from ..simulation import Simulation
@@ -844,6 +883,8 @@ def main(argv=None):
         opt["bound_jmax"] = float(args.bound_jmax)
     if args.bound_phase_step is not None:
         opt["bound_phase_step"] = float(args.bound_phase_step)
+    if args.bound_share is not None:
+        opt["bound_share"] = float(args.bound_share)
     if cfg.capillary is None:
         raise ValueError("b5_defect needs a capillary scene")
     widths = ([float(v) * 1e-6 for v in args.widths.split(",")] if args.widths

@@ -60,7 +60,7 @@ from .wave_fb import Disc, FBChannel, mode_damping
 RESULT_DIR = "stage11-defect"
 DEFAULTS = {"rays": 50000, "sections": 60, "ring_step": 0.5e-6, "window": 4.0,
             "modes": None, "jobs": 1, "scan": None, "glass": False, "mask_threshold": 0.05,
-            "bound": True, "bound_jmax": 160.0, "bound_phase_step": 0.7}
+            "bound": True, "bound_jmax": 160.0, "bound_phase_step": 0.7, "bound_share": 0.01}
 
 
 def options(cfg):
@@ -80,7 +80,7 @@ def options(cfg):
     for key in ("glass", "bound"):
         if not isinstance(opt[key], bool):
             raise ValueError(f"beamlet_defect.{key}: true or false")
-    for key in ("bound_jmax", "bound_phase_step"):
+    for key in ("bound_jmax", "bound_phase_step", "bound_share"):
         if not isinstance(opt[key], (int, float)) or opt[key] <= 0:
             raise ValueError(f"beamlet_defect.{key}: a positive number")
     if opt["scan"] is not None:
@@ -514,7 +514,9 @@ def modal_bound(seg, bores, job, origin, t_full, e_in_dep=None):
     if any(sh is not None for sh in shapes):
         out = square_bound(seg, bores, shapes, job, origin, t_full, e_in_dep)
         if out.get("B") is not None:
-            out["sampling"] = trace_sampling(seg, bores, None, k, L / out["sections"], z0, math.pi * out["jmax"] / (2.0 * a_w))
+            nq = max(2 * int(out["jmax"]), math.ceil(2.0 * a_w / 5e-8))
+            out["sampling"] = trace_sampling(seg, bores, None, k, L / out["sections"], z0, math.pi * out["jmax"] / (2.0 * a_w),
+                                             z_exit=job["z_exit"], ring_h=2.0 * a_w / nq, share_max=job.get("bound_share", 0.01), a_w=a_w)
         return out
     disc = _disc(a_w, job["bound_jmax"])
     chans = [_channel(b, a_w, disc, k) for b in bores]          # lossless Dirichlet wall: the bound's model
@@ -536,34 +538,99 @@ def modal_bound(seg, bores, job, origin, t_full, e_in_dep=None):
 
     out = bound_modal.bores_bound(chans, L, sample, lambda ch: ch.entrance_field(origin[:2], z0 - z_src),
                                   job["bound_phase_step"], t_full, e_in_dep)
-    out["sampling"] = trace_sampling(seg, bores, chans, k, L / out["sections"], z0, out["jmax"] / a_w)
+    out["sampling"] = trace_sampling(seg, bores, chans, k, L / out["sections"], z0, out["jmax"] / a_w, z_exit=job["z_exit"],
+                                     ring_h=2.0 * math.pi * a_w / disc.nphi, share_max=job.get("bound_share", 0.01), a_w=a_w)
     return out
 
 
-def trace_sampling(seg, bores, chans, k, h, z0, kappa_cut=None):
-    """bound_modal.trace_resolution from the segments inside the channel: the beam angle to the
-    bore axis (minus the bend slope at the segment start) and the beam width there."""
-    idx = np.flatnonzero((seg.z0 >= z0 - 1e-12) & np.isfinite(seg.z0))
+def trace_sampling(seg, bores, chans, k, h, z0, kappa_cut=None, z_exit=None, nz=4, ring_h=None, share_max=0.0, a_w=None,
+                   offsets=(-2.0, -1.0, 0.0, 1.0, 2.0)):
+    """bound_modal.trace_resolution from the segments crossing the channel [z0, z_exit] (the
+    first segment from the source included).  Each beam is sampled on nz planes of its
+    in-channel range and, on each, at wall points around the one nearest to its centre
+    (`offsets` in tangential 1/e widths); a (beam, point) pair carries the beam's amplitude
+    there, |a| e^{-k d^T G d / 2} (G = -Im Q^-1, d the point relative to the centre), the local
+    angle |theta_c + R d| to the bore axis (R = Re Q^-1, theta_c minus the bend slope), the Gouy
+    and envelope rate tr G / 2 + k |G d|^2 / 2, the passage w_min / theta and the Rayleigh range
+    k w_min^2 / 2, and the tangential width against the ring spacing; the unresolved share is
+    relative to the beams' total amplitude.  Without `a_w` the points sit on the beam centres."""
+    hi = math.inf if z_exit is None else float(z_exit)
+    idx = np.flatnonzero(np.isfinite(seg.z0) & (seg.z1 >= z0 - 1e-12) & (seg.z0 <= hi + 1e-12))
     if idx.size == 0:
-        return bound_modal.trace_resolution(k, h, [], [], kappa_cut=kappa_cut)
-    ux, uy = seg.ux[idx].copy(), seg.uy[idx].copy()
-    if chans is not None:
-        for b, ch in enumerate(chans):
+        return bound_modal.trace_resolution(k, h, [], [], kappa_cut=kappa_cut, ring_h=ring_h, share_max=share_max)
+    za = np.maximum(seg.z0[idx], z0)
+    zb = np.minimum(seg.z1[idx], hi)
+    amp = np.abs(seg.a[idx])
+    offs = np.asarray(offsets, float) if a_w is not None else np.zeros(1)
+    th, wt, rate, pas, ring, tb = [], [], [], [], [], []
+    for t in np.linspace(0.0, 1.0, nz):
+        z = za + t * (zb - za)
+        ux, uy = seg.ux[idx].copy(), seg.uy[idx].copy()
+        nx, ny, dist = np.ones(idx.size), np.zeros(idx.size), np.zeros(idx.size)
+        for b, bore in enumerate(bores):
             m = seg.bore[idx] == b
-            if m.any() and ch.rb is not None:
-                sl = np.array([ch.slope(z) for z in seg.z0[idx][m] - z0])
+            if not m.any():
+                continue
+            ch = chans[b] if chans is not None else None
+            if ch is not None and ch.rb is not None:
+                sl = ch.t[None, :] * ((z[m] - z0) / ch.rb)[:, None]
                 ux[m] -= sl[:, 0]; uy[m] -= sl[:, 1]
-    w, _, _ = beam_width_at_start(seg, idx, k)
-    return bound_modal.trace_resolution(k, h, np.hypot(ux, uy), w, kappa_cut=kappa_cut)
+            if a_w is not None:
+                axes = (np.array([ch.axis(zz - z0) for zz in z[m]]) if ch is not None and ch.rb is not None
+                        else np.array([[float(bore["center"][0]), float(bore["center"][1])]]))
+                bx = seg.x0[idx][m] + seg.ux[idx][m] * (z[m] - seg.z0[idx][m]) - axes[..., 0]
+                by = seg.y0[idx][m] + seg.uy[idx][m] * (z[m] - seg.z0[idx][m]) - axes[..., 1]
+                dist[m], nx[m], ny[m] = wall_distance(_shape(bore, a_w), a_w, bx, by)
+        G, R, ok, wmin = beam_matrices(seg, idx, z, k)
+        gtt = np.einsum("ni,nij,nj->n", np.stack([-ny, nx], 1), G, np.stack([-ny, nx], 1))        # t^T G t
+        wt_tan = np.where(ok & (gtt > 0), np.sqrt(2.0 / (k * np.where(gtt > 0, gtt, 1.0))), np.inf)
+        for o in offs:
+            d = np.stack([dist * nx - o * wt_tan * ny, dist * ny + o * wt_tan * nx], 1)        # point relative to the centre
+            d = np.where(np.isfinite(d), d, 0.0)
+            Gd = np.einsum("nij,nj->ni", G, d)
+            Rd = np.einsum("nij,nj->ni", R, d)
+            expo = 0.5 * k * np.einsum("ni,ni->n", d, Gd)
+            th.append(np.hypot(ux + Rd[:, 0], uy + Rd[:, 1]))
+            wt.append(amp * np.exp(-np.where(ok, expo, 0.0)))
+            rate.append(np.where(ok, 0.5 * (G[:, 0, 0] + G[:, 1, 1]) + 0.5 * k * np.einsum("ni,ni->n", Gd, Gd), 0.0))
+            pas.append(np.minimum(np.where(th[-1] > 0, wmin / np.maximum(th[-1], 1e-300), np.inf), 0.5 * k * wmin ** 2))
+            ring.append(wt_tan)
+            tb.append(np.hypot(ux, uy))
+    cat = lambda v: np.concatenate(v)
+    return bound_modal.trace_resolution(k, h, cat(th), cat(pas) * cat(th), kappa_cut=kappa_cut, rates=cat(rate),
+                                        scales=cat(pas), theta_band=cat(tb), ring_h=ring_h, ring_widths=cat(ring),
+                                        weights=cat(wt), weight_total=float(amp.sum() * len(offs) * nz), share_max=share_max)
 
 
-def beam_width_at_start(seg, idx, k):
-    """1/e amplitude width of the selected beams at their own segment start (s = 0)."""
-    qxx, qxy, qyy = seg.qxx[idx], seg.qxy[idx], seg.qyy[idx]
+def wall_distance(shape, a_w, bx, by):
+    """Distance from points (bx, by) in the bore frame to the nearest wall point of the outline
+    (circle of radius a_w, or the polygon of apothem a_w through its faces; 0 outside) and the
+    unit normal towards that point."""
+    if shape is None:
+        r = np.hypot(bx, by)
+        rs = np.where(r > 0, r, 1.0)
+        return np.maximum(a_w - r, 0.0), np.where(r > 0, bx / rs, 1.0), np.where(r > 0, by / rs, 0.0)
+    n, rot, ratio = shape
+    ang = rot + 2.0 * math.pi * np.arange(n) / n
+    gap = a_w * ratio[None, :] - (bx[:, None] * np.cos(ang)[None, :] + by[:, None] * np.sin(ang)[None, :])
+    j = np.argmin(gap, axis=1)
+    return np.maximum(gap[np.arange(bx.size), j], 0.0), np.cos(ang)[j], np.sin(ang)[j]
+
+
+def beam_matrices(seg, idx, z, k):
+    """At the plane z, per selected beam: G = -Im Q^-1 and R = Re Q^-1 [n, 2, 2], whether G is
+    positive (a decaying beam) and the narrowest 1/e width sqrt(2 / (k lambda_max(G)))."""
+    dz = z - seg.z0[idx]
+    s = dz * np.sqrt(1.0 + seg.ux[idx] ** 2 + seg.uy[idx] ** 2)
+    qxx, qxy, qyy = seg.qxx[idx] + s, seg.qxy[idx], seg.qyy[idx] + s
     det = qxx * qyy - qxy * qxy
-    gi = ((qyy / det).imag, (-qxy / det).imag, (qxx / det).imag)
-    hi = 0.5 * (gi[0] + gi[2]) + np.hypot(0.5 * (gi[0] - gi[2]), gi[1])
-    return np.where(hi < 0, np.sqrt(-2.0 / (k * np.where(hi < 0, hi, -1.0))), np.inf), None, None
+    ixx, ixy, iyy = qyy / det, -qxy / det, qxx / det
+    G = -np.stack([[ixx.imag, ixy.imag], [ixy.imag, iyy.imag]]).transpose(2, 0, 1)
+    R = np.stack([[ixx.real, ixy.real], [ixy.real, iyy.real]]).transpose(2, 0, 1)
+    ev = np.linalg.eigvalsh(G)
+    ok = ev[:, 0] > 0
+    wmin = np.where(ok, np.sqrt(2.0 / (k * np.where(ok, ev[:, 1], 1.0))), np.inf)
+    return G, R, ok, wmin
 
 
 def square_bound(seg, bores, shapes, job, origin, t_full, e_in_dep=None):
@@ -689,7 +756,8 @@ def launch_jobs(sim, archive, index, opt, w0, w0_t, waist_z):
                 ring_step=float(opt["ring_step"]), window=float(opt["window"]), k=k, zr_t=zr_t, zr_s=zr_s,
                 waist_dz=waist_dz, fresnel=fres, a_w=a_w, a=float(cap.bores[0]["radius"]), glass=bool(opt["glass"]),
                 z_exit=z1, z_rec=rec, norm_per_ray=norm_per_ray, area=area, z0_cap=z0,
-                bound=bool(opt["bound"]), bound_jmax=float(opt["bound_jmax"]), bound_phase_step=float(opt["bound_phase_step"]))
+                bound=bool(opt["bound"]), bound_jmax=float(opt["bound_jmax"]), bound_phase_step=float(opt["bound_phase_step"]),
+                bound_share=float(opt["bound_share"]))
     jobs = [dict(base, mode=m, parts=tuple(secs)) for m, secs in enumerate(modes)]
     meta = {"w0_m": w0, "w0_t_m": w0_t, "waist_z_m": waist_z, "waist_dz_m": waist_dz, "D0": d0,
             "rays_per_mode_production": int(max(secs[-1].r1 for secs in modes)),
@@ -936,6 +1004,8 @@ def main(argv=None):
     ap.add_argument("--no-bound", action="store_true", help="skip the modal error bound B")
     ap.add_argument("--bound-jmax", type=float, default=None, help="Dirichlet basis cutoff j_mn < jmax of the bound")
     ap.add_argument("--bound-phase-step", type=float, default=None, help="section count of the bound: fastest mode phase per section, rad")
+    ap.add_argument("--bound-share", type=float, default=None,
+                    help="largest trace-amplitude share of beams the sections may leave unresolved (certification)")
     args = ap.parse_args(argv)
     from .. import load
     from ..simulation import Simulation
@@ -953,6 +1023,8 @@ def main(argv=None):
         opt["bound_jmax"] = float(args.bound_jmax)
     if args.bound_phase_step is not None:
         opt["bound_phase_step"] = float(args.bound_phase_step)
+    if args.bound_share is not None:
+        opt["bound_share"] = float(args.bound_share)
     cap = cfg.capillary
     if cap is None:
         raise ValueError("beamlet_defect needs a capillary scene")

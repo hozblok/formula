@@ -334,6 +334,10 @@ def test_trace_resolution_flags_aliased_sections():
     bad = B.trace_resolution(K, L / 144, [theta], [aw])
     assert not bad["resolved"] and bad["phase_per_section"] == pytest.approx(4.0 * math.pi, rel=1e-6)
     assert B.trace_resolution(K, h, [], [])["resolved"] and B.trace_resolution(K, h, [0.0], [1e-6])["resolved"]
+    gouy = B.trace_resolution(K, h, [0.0], [1e-6], rates=[1e4])                 # an on-axis beam near its waist
+    assert not gouy["resolved"] and gouy["phase_per_section"] == pytest.approx(h * 1e4)
+    waist = B.trace_resolution(K, h, [0.0], [1e-6], scales=[1e-3])
+    assert not waist["resolved"] and waist["passage_sections"] == pytest.approx(1e-3 / h)
 
 
 def test_tail_sums_dominate_the_true_zero_sums_for_every_order():
