@@ -12,8 +12,10 @@ model of stage 11a, exact for an isotropic launch on flat walls).
 
 The estimator is honest — no ray self-pair subtraction: the mode field is a
 true coherent sum of beamlet fields, mu = |W| / sqrt(I*I_ref) with
-I = sum_m w_m |g_m|^2 as is. The rng stream matches the other estimators,
-so the rays are the stage-2/14 rays.
+I = sum_m w_m |g_m|^2 as is. beamlet.self_pairs: subtract switches to the
+U-statistic: the ray diagonal sum_i |e_i|^2 (and e_i conj(e_i,ref)) comes
+off each mode and n/(n-1) restores the scale. The rng stream matches the
+other estimators, so the rays are the stage-2/14 rays.
 
 One path for any CAPSYSRED_STAGE11_JOBS: the unit of work is a mode, each
 mode's float64 W/I contribution enters an exact fixed-point accumulator (so
@@ -72,7 +74,7 @@ class BeamletField:
 
     def __init__(self, lines, screen: ScreenGrid, ref_pixel: int,
                  w0: float, n_sigmas: float, optic=None, use_native=True,
-                 w0_t=None, waist_dz=0.0):
+                 w0_t=None, waist_dz=0.0, self_pairs="keep"):
         self.kms = [float(l.k) for l in lines]
         # a beamlet fan sums to lambda * (point-source field): (k/k0)^2
         # restores the configured line weights in W and I
@@ -127,12 +129,23 @@ class BeamletField:
                                          n_sigmas)
                        if use_native else None)
         self._g = None
+        # subtract: the ray self-pair diagonal per line, sum_i |e_i(P)|^2
+        # and sum_i e_i(P) conj(e_i(ref)), tracked beside the field
+        self.subtract = self_pairs == "subtract"
+        self._si = self._sw = None
+        if self.native is not None:
+            self.native.set_reference(self.ref)
+            if self.subtract:
+                self.native.set_self_pairs(True)
 
     def new_mode(self):
         if self.native is not None:
             self.native.clear()
         else:
             self._g = [{} for _ in range(self.nl)]
+            if self.subtract:
+                self._si = [{} for _ in range(self.nl)]
+                self._sw = [{} for _ in range(self.nl)]
 
     def prep(self, rec, zf=None):
         """The shared per-record work: floats, segments to the plane zf (the
@@ -217,6 +230,17 @@ class BeamletField:
             if ix_lo > ix_hi or iy_lo > iy_hi:
                 continue
             g = self._g[m]
+            si = sw = None
+            ref_c = None
+            if self.subtract:
+                si, sw = self._si[m], self._sw[m]
+                iy_r, ix_r = divmod(self.ref, self.nx)
+                if iy_lo <= iy_r <= iy_hi and ix_lo <= ix_r <= ix_hi:
+                    dx_r, dy_r = self.xs[ix_r] - x, self.ys[iy_r] - y
+                    quad = (hxx * (dx_r * dx_r) + 2.0 * hxy * (dx_r * dy_r)
+                            + hyy * (dy_r * dy_r))
+                    ref_c = (pref * cmath.exp(complex(
+                        quad.imag, quad.real + tx * dx_r + ty * dy_r))).conjugate()
             for iy in range(iy_lo, iy_hi + 1):
                 dy_off = self.ys[iy] - y
                 cy = hyy * (dy_off * dy_off)
@@ -231,42 +255,51 @@ class BeamletField:
                     pix = row + ix
                     prev = g.get(pix)
                     g[pix] = val if prev is None else prev + val
+                    if si is not None:
+                        si[pix] = si.get(pix, 0.0) + abs(val) ** 2
+                        if ref_c is not None:
+                            sw[pix] = sw.get(pix, 0j) + val * ref_c
 
-    def fold_mode(self):
+    def fold_mode(self, n_rays=0):
         """Oracle path (tests): fold into the retained native rows/totals,
-        or into the Python dicts without the native grid."""
+        or into the Python dicts without the native grid. n_rays: the mode's
+        quadrature rays, the U-statistic scale n/(n-1) under subtract."""
         if self.native is not None:
             # scan, totals AND the delete-one rows all stay in C++
-            self.native.fold(self.wfs, self.ref)
+            self.native.fold(self.wfs, self.ref, self.subtract, int(n_rays))
             return
         npix = self.nx * self.ny
         w_row = array("f", bytes(8 * npix))
         i_row = array("f", bytes(4 * npix))
+        f = n_rays / (n_rays - 1) if self.subtract and n_rays > 1 else 1.0
         for m in range(self.nl):
-            wf = self.wfs[m]
+            wf = self.wfs[m] * f
             g = self._g[m]
             g_ref = g.get(self.ref)
             ref_c = g_ref.conjugate() if g_ref is not None else None
+            si = self._si[m] if self.subtract else {}
+            sw = self._sw[m] if self.subtract else {}
             for pixel, value in g.items():
-                a2 = value.real * value.real + value.imag * value.imag
+                a2 = abs(value) ** 2 - si.get(pixel, 0.0)
                 self.I[pixel] = self.I.get(pixel, 0.0) + wf * a2
                 i_row[pixel] += wf * a2
                 if ref_c is not None:
-                    cross = value * ref_c
+                    cross = value * ref_c - sw.get(pixel, 0j)
                     self.W[pixel] = self.W.get(pixel, 0j) + wf * cross
                     w_row[2 * pixel] += wf * cross.real
                     w_row[2 * pixel + 1] += wf * cross.imag
         self.Ws.append(w_row)
         self.Is.append(i_row)
         self.i_refs.append(float(i_row[self.ref]))
-        self._g = None
+        self._g = self._si = self._sw = None
 
-    def fold_export(self):
+    def fold_export(self, n_rays=0):
         """Shared path: one mode's (w_row f32, i_row f32, dW f64, dI f64,
         i_ref) exactly as fold builds the rows; nothing is retained."""
         if self.native is None:
             raise RuntimeError("fold_export needs the native BeamletGrid")
-        return self.native.fold_export(self.wfs, self.ref)
+        return self.native.fold_export(self.wfs, self.ref, self.subtract,
+                                       int(n_rays))
 
     def take_density(self) -> bytes:
         """The mode's arrival counts (uint32 per pixel), then zeroed."""
@@ -284,10 +317,11 @@ class BeamletField:
 
     def finalize(self, nx: int, ny: int):
         """Row-major [iy][ix] maps: mu, mu_err (delete-one-mode jackknife),
-        dubious, intensity, density. No self-pair subtraction, so I itself
-        is the mu denominator and every lit pixel is estimable; the trust
-        flags are sigma > 1, |mu| pinned at 1 or 0 with sigma below loo_eps,
-        fewer than 2 usable leave-one-out modes, or an unlit reference."""
+        dubious, intensity, density. I itself is the mu denominator (under
+        subtract the U-statistic I, which can vanish or go negative at
+        sparse pixels: such pixels stay unestimated); the trust flags are
+        sigma > 1, |mu| pinned at 1 or 0 with sigma below loo_eps, fewer
+        than 2 usable leave-one-out modes, or an unlit reference."""
         if self.native is not None:
             return self._finalize_native(nx, ny)
         n_modes = len(self.Ws)
@@ -437,6 +471,7 @@ def _stage11_contract(sim, scene, planes, n_modes) -> dict:
             "physics": _physics_contract(sim),
             "beamlet": {"w0": float(cfg.beamlet_w0), "w0_t": w0_t,
                         "ns": float(cfg.beamlet_ns), "waist_dz": waist_dz,
+                        "self_pairs": cfg.beamlet_self_pairs,
                         "loo_eps": (16 + len(sim.lines)) * 2.0 ** -24},
             "amplitude_min": float(cfg.amplitude_min)}
 
@@ -571,7 +606,7 @@ class _Worker:
             self.fields.append(BeamletField(
                 sim.lines, grid, _reference_pixel(grid, spec["reference"]),
                 launch["w0"], launch["ns"], self.optic, w0_t=launch["w0_t"],
-                waist_dz=launch["waist_dz"]))
+                waist_dz=launch["waist_dz"], self_pairs=launch["self_pairs"]))
             if self.fields[-1].native is None:
                 raise RuntimeError("stage 11 needs the native BeamletGrid; "
                                    "rebuild the _formula extension")
@@ -596,7 +631,12 @@ class _Worker:
         n = 0
         for entry in task.sections:
             for line in rays_v3.iter_section_lines(task.part, entry):
-                rec = rays_v3._record(json.loads(line))
+                try:
+                    rec = rays_v3._record(json.loads(line))
+                except ValueError as exc:   # garbage that inflated without error
+                    raise ValueError(
+                        f"{rays_v3.section_path(task.part, entry)}: corrupt row "
+                        "in section; remove it manually (verify the archive)") from exc
                 n += 1
                 fate, amps = rec.fate, None
                 if fate == "screen":
@@ -630,7 +670,7 @@ class _Worker:
         out = {"mode": task.mode, "rows": n, "stats": stats, "w": [],
                "gamma_bad": [], "i_ref": [], "pid": os.getpid()}
         for k, field in enumerate(fields):
-            w_row, i_row, dw, di, i_ref = field.fold_export()
+            w_row, i_row, dw, di, i_ref = field.fold_export(n)
             npix = field.nx * field.ny
             base = task.mode * 12 * npix
             store = self.maps[k]
