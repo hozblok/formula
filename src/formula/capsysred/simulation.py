@@ -47,7 +47,7 @@ from .shared.physics_constants import FRESNEL_PROBE_THETA
 from .shared.units import (
     m_to_angstrom, m_to_um, rad_to_mrad, rad_to_urad)
 
-KNOWN_STAGES = (1, 2, 3, 7, 8, 9, 11, 14, 16, 17, 18)
+KNOWN_STAGES = (1, 2, 3, 7, 8, 9, 11, 14, 16, 17, 18, 19)
 
 
 def _wave_backend():
@@ -87,6 +87,12 @@ def _b9_backend():
             f"Stage 18 requires NumPy and SciPy; missing dependency: {exc.name}"
         ) from exc
     return stage18
+
+
+def _stage19_backend():
+    """Load the independent NumPy-free 18LITE stage on explicit selection."""
+    from .stages import stage19
+    return stage19
 
 
 def _open_jsonl(path: str):
@@ -1066,6 +1072,18 @@ class Simulation:
         self.files += res["files"]
         self.report += res["report"]
 
+    def _stage19(self, out_dir, rays_src=None, stage14_paths=None):
+        backend = _stage19_backend()
+        options = backend.validate(self.cfg)
+        paths = stage14_paths
+        if paths is None and rays_src is not None:
+            parts = getattr(rays_src, "parts", None)
+            paths = [part.path for part in parts] if parts else [rays_src.path]
+        result = backend.run_stage19(self, out_dir, options, rays_paths=paths, log=_log)
+        self.results["stage19"] = result["results"]
+        self.files += result["files"]
+        self.report += result["report"]
+
     def _capillary_engine_check(self, bundle) -> str:
         cap = self.cfg.capillary
         p = self.cfg.precision
@@ -1110,7 +1128,7 @@ class Simulation:
             raise ValueError(
                 f"stages {free_stages} require a configured free.source"
             )
-        capillary_stages = sorted(wanted & {9, 14, 17, 18})
+        capillary_stages = sorted(wanted & {9, 14, 17, 18, 19})
         if capillary_stages and self.cfg.capillary is None:
             raise ValueError(
                 f"stages {capillary_stages} require a configured "
@@ -1181,6 +1199,11 @@ class Simulation:
             backend = _b9_backend()
             backend.preflight_b9_inputs(self, self.cfg.validate_b9_estimator())
             backend.preflight_b9_output(out_dir)
+        if 19 in wanted:
+            backend = _stage19_backend()
+            options = backend.validate(self.cfg)
+            backend.preflight_stage19_inputs(self, options)
+            backend.preflight_stage19_output(out_dir, options)
         os.makedirs(out_dir, exist_ok=True)
         if 14 in wanted:
             # Fail before a fresh trace or a many-hour cache build.
@@ -1336,6 +1359,9 @@ class Simulation:
         if 18 in wanted:
             _log("Stage 18: experimental archive B9 contour reconstruction")
             self._stage18(out_dir, rays_src, stage14_paths)
+        if 19 in wanted:
+            _log("Stage 19: 18LITE finite elements and coherence, without NumPy")
+            self._stage19(out_dir, rays_src, stage14_paths)
         report_name = format.report_name(out_dir, "report")
         self.report += ["", "## Files", ""]
         self.report += [f"- {name}" for name in self.files + [report_name]]
@@ -1385,7 +1411,9 @@ class Simulation:
             _b5_backend()
         if 18 in wanted:
             _b9_backend()
-        if wanted <= {14, 16, 17, 18}:
+        if 19 in wanted:
+            _stage19_backend()
+        if wanted <= {14, 16, 17, 18, 19}:
             # No RaysReader: the
             # Stage-14 builder validates/deposits in one strict pass, while a
             # cache hit does not open the ray archive at all; Stage 16 reads

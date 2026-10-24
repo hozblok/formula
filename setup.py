@@ -64,6 +64,20 @@ elif sys.platform == "darwin":
 
 EXT_MODULES = [
     Pybind11Extension(
+        "formula._stage19_transport",
+        ["src/cpp/stage19_transport.cpp"],
+        extra_compile_args=EXTRA_COMPILE_ARGS + (["/fp:strict"] if sys.platform == "win32" else []),
+        language="c++",
+        cxx_std=17,
+    ),
+    Pybind11Extension(
+        "formula._stage19",
+        ["src/cpp/stage19_kernel.cpp", "src/cpp/stage19_fast.cpp"],
+        extra_compile_args=EXTRA_COMPILE_ARGS,
+        language="c++",
+        cxx_std=17,
+    ),
+    Pybind11Extension(
         "formula._formula",
         # Bindings split across translation units to bound per-compile memory.
         [
@@ -84,6 +98,9 @@ EXT_MODULES = [
         cxx_std=17,
     )
 ]
+
+if os.environ.get("FORMULA_BUILD_ONLY_STAGE19") == "1":
+    EXT_MODULES = [ext for ext in EXT_MODULES if ext.name.startswith("formula._stage19")]
 
 CAPSYSRED_DEPS = ["PyYAML"]
 CAPSYSRED_B9_DEPS = CAPSYSRED_DEPS + ["numpy", "scipy", "finufft>=2.5,<3"]

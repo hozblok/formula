@@ -1,0 +1,78 @@
+# C-2 scene for the Stage 19 transport tests: seven 24-um bores, 625 source modes.
+
+precision: 64
+seed: 12345
+energy_kev: 8.048
+
+spectrum:
+  mode: monochromatic
+
+capillary:
+  # centre channel straight; six outer channels (r = 72 um) bent toward the axis.
+  bores:
+    - {center: [ 0.00000e+00,  0.00000e+00], radius: 2.4e-5}
+    - {center: [ 7.20000e-05,  0.00000e+00], radius: 2.4e-5,
+       bend: {radius: 2156.25, toward: [-1.0,  0.0]}}
+    - {center: [ 3.60000e-05,  6.23520e-05], radius: 2.4e-5,
+       bend: {radius: 2156.25, toward: [-0.5, -0.8660]}}
+    - {center: [-3.60000e-05,  6.23520e-05], radius: 2.4e-5,
+       bend: {radius: 2156.25, toward: [ 0.5, -0.8660]}}
+    - {center: [-7.20000e-05,  0.00000e+00], radius: 2.4e-5,
+       bend: {radius: 2156.25, toward: [ 1.0,  0.0]}}
+    - {center: [-3.60000e-05, -6.23520e-05], radius: 2.4e-5,
+       bend: {radius: 2156.25, toward: [ 0.5,  0.8660]}}
+    - {center: [ 3.60000e-05, -6.23520e-05], radius: 2.4e-5,
+       bend: {radius: 2156.25, toward: [-0.5,  0.8660]}}
+  z0: 0.0
+  z1: 0.23                          # channel length 23 cm, as in C
+  source:
+    shape: gaussian
+    size: 5.25e-7                   # a = 2.1/4 um keeps pitch/xi = 2.28
+    position: [0.0, 0.0, -0.675]
+    n_modes: 625
+    n_rays: 1000000
+  screen:
+    z: 0.231
+    center: [0.0, 0.0]
+    edge_x: 2.4e-4                  # +-120 um: bores out to 96 um + margin
+    edge_y: 2.4e-4
+    nx: 201
+    ny: 201
+    reference: [0.0, 0.0]
+  screens:                          # C-2's planes (N_F 37 / 19 / 10.7) + s7 fine re-bin
+    - z: 0.33                       # ladder plane +10 cm (N_F = 37)
+    - z: 0.43                       # overlap plane (N_F = 19)
+    - z: 0.58                       # merged plane (N_F = 10.7)
+      edge_x: 3.2e-4
+      edge_y: 3.2e-4
+    - z: 0.33                       # s4: ladder, 2.4 um cells
+      nx: 101
+      ny: 101
+    - z: 0.43                       # s5: overlap, 2.4 um cells
+      nx: 101
+      ny: 101
+    - z: 0.58                       # s6: merged, 3.2 um cells
+      edge_x: 3.2e-4
+      edge_y: 3.2e-4
+      nx: 101
+      ny: 101
+    - z: 0.231                      # s7: +1 mm at 0.3 um cells, carrier-resolved
+      edge_x: 1.44e-4
+      edge_y: 1.44e-4
+      nx: 480
+      ny: 480
+      reference: [0.0, 0.0]
+
+trace:
+  max_bounces: 200
+  amplitude_min: 1.0e-6
+
+schematic:
+  n_rays: 20
+
+stage14:
+  flag_thresholds:
+    ic_n_sigma: 3.0
+    ref_ic_n_sigma: 3.0
+    w_n_sigma: 3.0
+    min_coherent_fraction: 0.05
