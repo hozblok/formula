@@ -293,11 +293,12 @@ def _assemble(parts, C):
 
 
 def rescale(result, c_mag):
-    """The same bound for the fan magnitude c_mag (least-squares phase kept)."""
+    """The same bound for the fan magnitude c_mag (least-squares phase kept); keys the caller
+    added to the result (basis, raw residuals) are carried over, the assembled ones replaced."""
     parts = result["parts"]
     num = parts["num"]
-    C = c_mag * (num / abs(num) if num != 0 else 1.0)
-    return _assemble(parts, C)
+    C = c_mag * (num / abs(num) if num != 0 else 1.0) if c_mag > 0 else 1.0 + 0j   # a vanishing fan: e(0) = E_in
+    return {**result, **_assemble(parts, C)}
 
 
 def common_scale(results):
@@ -307,7 +308,8 @@ def common_scale(results):
     bounds = [r for r in results if r and r.get("parts")]
     if not bounds:
         return [({k: v for k, v in r.items() if k != "parts"} if r else r) for r in results]
-    c_mag = float(np.mean([abs(r["parts"]["num"]) / r["parts"]["ein2"] for r in bounds if r["parts"]["ein2"] > 0]))
+    mags = [abs(r["parts"]["num"]) / r["parts"]["ein2"] for r in bounds if r["parts"]["ein2"] > 0]
+    c_mag = float(np.mean(mags)) if mags else 0.0
     out = []
     for r in results:
         if r and r.get("parts"):
