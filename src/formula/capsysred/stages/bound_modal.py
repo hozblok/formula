@@ -195,8 +195,22 @@ class ModalBound:
 
 
 
-def bores_bound(chans, L, sample, entrance, phase_step=0.7, t_abs2=0.0):
-    """B of one mode's method field over circular bores (the FBChannels share one Disc).
+def _scale(num, ein2, e_in_dep):
+    """Fan scale C: the least-squares phase; the magnitude from the deposit-unit norm of E_in
+    when given (a wrong fan amplitude is then error), else least squares as well."""
+    if ein2 <= 0.0:
+        return 1.0 + 0j
+    lsq = num / ein2
+    if e_in_dep is None:
+        return lsq if lsq != 0 else 1.0 + 0j
+    mag = e_in_dep / math.sqrt(ein2)
+    return mag * (lsq / abs(lsq) if lsq != 0 else 1.0)
+
+
+def bores_bound(chans, L, sample, entrance, phase_step=0.7, t_abs2=0.0, e_in_dep=None):
+    """B of one mode's method field over circular bores (the FBChannels share one Disc); the
+    reference is the Dirichlet solution of the channels' operator H (lossless when the channels
+    carry no gamma: a damped reference would add the source -Gamma E_method, not included here).
     sample(b, z_rel, radii, phis_lab, cx, cy) -> the method field on polar points around the
     bore axis at z0 + z_rel (raw units); entrance(ch) -> E_in on the Disc polar grid of bore
     b.  C = least-squares complex scale of the fan against E_in over all bores; per bore
@@ -219,7 +233,7 @@ def bores_bound(chans, L, sample, entrance, phase_step=0.7, t_abs2=0.0):
         ein.append(e_in); efan.append(fan)
         ein2 += float(np.sum(wq * np.abs(e_in) ** 2))
         num += complex(np.sum(wq * np.conj(e_in) * fan))
-    C = num / ein2 if ein2 > 0 else 1.0 + 0j
+    C = _scale(num, ein2, e_in_dep)
     per_bore = []
     for b, ch in enumerate(chans):
         t, _ = ch.frame_axes()
@@ -245,10 +259,10 @@ def bores_bound(chans, L, sample, entrance, phase_step=0.7, t_abs2=0.0):
         bb = min(exact + r0 + itp + t1 + t2, tri)
         per_bore.append({"bore": b, "e0": e0, "r0": r0, "exact": exact, "boundary": bnd, "interp": itp, "tail": t1 + t2,
                          "B": bb, "B_tri": tri})
-    return _assemble(per_bore, ein2, t_abs2, C, n_sec, float(disc.jmax), int(disc.valid.sum()))
+    return _assemble(per_bore, ein2, t_abs2, C, n_sec, float(disc.jmax), int(disc.valid.sum()), num)
 
 
-def _assemble(per_bore, ein2, t_abs2, C, n_sec, jmax, modes):
+def _assemble(per_bore, ein2, t_abs2, C, n_sec, jmax, modes, num=0j):
     """Relative components over the bores (quadrature) plus T by the triangle inequality;
     B per bore = min(||exact modal part of e(L)|| + ||remainder of e(0)||, ||e(0)|| + ||boundary part||)
     + interpolation error of the sampled forcing + tail."""
@@ -261,8 +275,9 @@ def _assemble(per_bore, ein2, t_abs2, C, n_sec, jmax, modes):
             "B_tail": q("tail"),
             "B_T": t_abs / norm_in,
             "bores": [{k_: (v / norm_in if k_ != "bore" else v) for k_, v in r.items()} for r in per_bore],
-            "C_fit": [abs(C), math.atan2(C.imag, C.real)], "sections": n_sec, "jmax": jmax,
-            "modes": modes, "E_in_norm": norm_in}
+            "C_fit": [abs(C), math.atan2(C.imag, C.real)],
+            "scale_defect": (abs(num / ein2) / abs(C) - 1.0) if ein2 > 0 and C != 0 else None,   # LSQ amplitude vs the scale used
+            "sections": n_sec, "jmax": jmax, "modes": modes, "E_in_norm": norm_in}
 
 
 # ------------------------------------------------------------------ square bore
@@ -333,7 +348,7 @@ class Square:
 def slab_damping(kappa, k, delta, beta, aw):
     """DIR-ell amplitude damping of a slab mode of wall wavenumber kappa (wave_fb.mode_damping
     per wall pair): kappa^2 Im ell / (k a_w) times the exact Fresnel loss at the grazing angle
-    kappa / k relative to its theta -> 0 form."""
+    kappa / k relative to its theta -> 0 form.  A diagnostic of the model gap, not part of B."""
     ell = wall_offset(k, delta, beta)
     thw = np.asarray(kappa, float) / k
     q = np.sqrt(thw * thw - 2.0 * delta + 2j * beta)
@@ -402,8 +417,9 @@ class SquareBound:
         return _interp_error(zs, lambda j: self._forcing(G[j], self.sq.M), self.norm)
 
     def tails(self, zs, G):
-        """Modes outside the M-box up to the sampling band n <= nq, two integrations by parts:
-        |c| <= (|s(0)| + |s(L)|)/alpha + (|s'(0)| + |s'(L)| + int |s''| dz)/alpha^2."""
+        """Modes outside the M-box, two integrations by parts: |c| <= (|s(0)| + |s(L)|)/alpha
+        + (|s'(0)| + |s'(L)| + int |s''| dz)/alpha^2; the face harmonics up to the sampling band
+        n <= nq (the rest taken as zero), the normal index to infinity."""
         zs = np.asarray(zs, float)
         nq, M = self.sq.nq, self.sq.M
         n = np.arange(1, nq + 1)
@@ -419,17 +435,30 @@ class SquareBound:
         der = f(G1[0]) + f(G1[-1])
         for j in range(len(zs)):
             der = der + w[j] * f(G2[j])
-        t1 = math.sqrt(float(np.sum((end[tail] / alpha[tail]) ** 2)))
-        t2 = math.sqrt(float(np.sum((der[tail] / alpha[tail] ** 2) ** 2)))
-        return t1, t2
+        t1_sq = float(np.sum((end[tail] / alpha[tail]) ** 2))
+        t2_sq = float(np.sum((der[tail] / alpha[tail] ** 2) ** 2))
+        # normal index beyond the sampling band (m > nq for the x faces, n > nq for the y faces):
+        # |s_mn| <= (1/2k) m pi/(2 aw^2) X_n with X_n = |G+x_n| + |G-x_n|; (m pi/2aw^2)/alpha_mn
+        # = (4 k aw m/pi)/(m^2+n^2), sum_{m>K} m^2/(m^2+n^2)^2 <= 1/K, sum_{m>K} m^2/(m^2+n^2)^4 <= 1/(5 K^5)
+        aw, K = self.sq.aw, nq
+        c1, c2 = 2.0 * aw / math.pi, 2.0 * self.k * (2.0 * aw / math.pi) ** 3
+        for fa, fb in ((0, 2), (1, 3)):
+            endf = np.abs(G[0, fa]) + np.abs(G[0, fb]) + np.abs(G[-1, fa]) + np.abs(G[-1, fb])
+            derf = (np.abs(G1[0, fa]) + np.abs(G1[0, fb]) + np.abs(G1[-1, fa]) + np.abs(G1[-1, fb])
+                    + np.trapezoid(np.abs(G2[:, fa]) + np.abs(G2[:, fb]), zs, axis=0))
+            t1_sq += (c1 ** 2 / K) * float(np.sum(endf ** 2))
+            t2_sq += (c2 ** 2 / (5.0 * K ** 5)) * float(np.sum(derf ** 2))
+        return math.sqrt(t1_sq), math.sqrt(t2_sq)
 
 
-def squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in, phase_step=0.7, t_abs2=0.0, nr=48, nphi=384, gamma=None):
+def squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in, phase_step=0.7, t_abs2=0.0, nr=48, nphi=384,
+                  gamma=None, e_in_dep=None):
     """B of one mode's method field over straight square bores (one Square per bore, same aw and M).
     sample_disc(b, radii, phis, stretch, cx, cy) -> the fan on the stretched polar grid of bore b
     at z0 (raw units); sample_outline(b, z_rel, sq, cx, cy) -> the fan on its outline nodes at
-    z0 + z_rel; e_in(px, py) -> E_in at lab points; gamma = square_damping(...) or None.
-    Assembled as bores_bound."""
+    z0 + z_rel; e_in(px, py) -> E_in at lab points; gamma must stay None for a bound against the
+    lossless Dirichlet solution (a damped reference needs the source -Gamma E_method, not
+    included); e_in_dep = deposit-unit norm of E_in fixing the fan scale.  Assembled as bores_bound."""
     aw = sqs[0].aw
     alpha_max = max(sq.kap2max for sq in sqs) / (2.0 * k)
     n_sec = max(int(math.ceil(L * alpha_max / phase_step)), 20)
@@ -449,7 +478,7 @@ def squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in, phase_s
         ein.append(e); efan.append(fan); wqs.append(wq); pts.append(sq.frame(cx, cy, px, py))
         ein2 += float(np.sum(wq * np.abs(e) ** 2))
         num += complex(np.sum(wq * np.conj(e) * fan))
-    C = num / ein2 if ein2 > 0 else 1.0 + 0j
+    C = _scale(num, ein2, e_in_dep)
     per_bore = []
     for b, sq in enumerate(sqs):
         cx, cy = centers[b]
@@ -470,6 +499,6 @@ def squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in, phase_s
         bb = min(exact + r0 + itp + t1 + t2, tri)
         per_bore.append({"bore": b, "e0": e0, "r0": r0, "exact": exact, "boundary": bnd, "interp": itp, "tail": t1 + t2,
                          "B": bb, "B_tri": tri})
-    out = _assemble(per_bore, ein2, t_abs2, C, n_sec, float(sqs[0].M), int(sqs[0].M ** 2))
+    out = _assemble(per_bore, ein2, t_abs2, C, n_sec, float(sqs[0].M), int(sqs[0].M ** 2), num)
     out["basis"] = "square sines"
     return out
