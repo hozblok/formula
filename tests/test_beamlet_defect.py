@@ -207,7 +207,7 @@ def test_mask_rows_of_a_stage11_map(tmp_path):
             fh.write(json.dumps({"stage": "capillary", "pixel": p, "x_um": float(p % 4), "y_um": float(p // 4),
                                  "I": intensity[p], "n_rays": int(p >= 8)}) + "\n")
     summary = D.write_mask(cfg, str(rows), 0.02, 0.1, str(tmp_path / "mask.jsonl"))
-    assert summary == {"capillary": {"cells": 16, "lit": 8, "masked": 10, "masked_lit": 2}}   # I < 9.24
+    assert summary == {"capillary": {"cells": 16, "lit": 8, "masked": 10, "masked_lit": 2, "certified": False}}   # I < 9.24
     out = [json.loads(line) for line in open(tmp_path / "mask.jsonl")]
     eta = 0.02 * math.sqrt(intensity.sum() / 8)
     ref = 10                                                         # window centre
@@ -263,3 +263,43 @@ def test_run_defect_publishes_the_bound(tmp_path):
     opt["bound"] = False
     summary = D.run_defect(sim, str(tmp_path / "rays-modes"), str(tmp_path), opt, [(1e-6, None, None)], log=lambda s: None)
     assert "argmin_bound" not in summary and "B_rms" not in summary["launches"][0]
+
+
+
+def test_certified_mask_transfer(tmp_path):
+    # the per-mode bound reaches the cells: beyond the exit through the Fresnel kernel
+    # (uniform in the cell), on the exit plane through the cell concentration; the heuristic
+    # mask stays beside it
+    import json
+    from formula.capsysred.simulation import Simulation
+    raw = {"precision": 32, "energy_kev": 8.048, "seed": 1,
+           "capillary": {"bores": [{"center": [0.0, 0.0], "radius": 5e-6}], "z0": 0.0, "z1": 0.2,
+                         "source": {"shape": "gaussian", "size": 1e-7, "position": [0.0, 0.0, -0.5],
+                                    "n_modes": 1, "n_rays": 1},
+                         "screen": {"z": 0.2, "center": [0.0, 0.0], "edge_x": 4e-6, "edge_y": 4e-6, "nx": 4, "ny": 4},
+                         "screens": [{"z": 0.3, "edge_x": 4e-6, "edge_y": 4e-6, "nx": 4, "ny": 4}]},
+           "beamlet": {"w0": 1e-6, "w0_t": None, "window_sigmas": 3.0}}
+    cfg = Simulation.from_dict(raw).cfg
+    rows = tmp_path / "mu-beamlet.jsonl"
+    with open(rows, "w") as fh:
+        for tag in ("capillary", "capillary-s1"):
+            for p in range(16):
+                fh.write(json.dumps({"stage": tag, "pixel": p, "x_um": float(p % 4), "y_um": float(p // 4),
+                                     "I": float(p), "n_rays": int(p >= 8)}) + "\n")
+    bound = {"k": K, "z_exit": 0.2, "area": math.pi * 25e-12,
+             "modes": [{"B": 0.1, "E_in_dep": 2.0, "O_abs2": 0.0, "O_area": 1e-10}]}
+    summary = D.write_mask(cfg, str(rows), 0.02, 0.1, str(tmp_path / "mask.jsonl"), bound)
+    out = [json.loads(l) for l in open(tmp_path / "mask.jsonl")]
+    exit_rows = [r for r in out if r["stage"] == "capillary"]
+    far_rows = [r for r in out if r["stage"] == "capillary-s1"]
+    ref = 10
+    eta_cell = 0.1 * 2.0 / math.sqrt(1e-6 * 1e-6)
+    eta_fres = K / (2.0 * math.pi * 0.1) * math.sqrt(math.pi * 25e-12) * 0.1 * 2.0
+    for rows_, eta, kind in ((exit_rows, eta_cell, "cell"), (far_rows, eta_fres, "fresnel")):
+        tag = rows_[0]["stage"]
+        assert summary[tag]["bound"]["transfer"] == kind and summary[tag]["bound"]["certified"] is True
+        assert summary[tag]["bound"]["eta"] == pytest.approx(eta)
+        assert rows_[12]["dmu_bound"] == pytest.approx(2.0 * eta * (1.0 / math.sqrt(12.0) + 1.0 / math.sqrt(10.0)))
+        assert rows_[0]["dmu_bound"] is None and rows_[0]["masked_bound"]
+        assert "dmu" in rows_[12] and summary[tag]["certified"] is False
+    assert summary["capillary"]["bound"]["masked"] == 16        # eta ~ 2e5: nothing survives the cell transfer
