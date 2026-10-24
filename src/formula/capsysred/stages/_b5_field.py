@@ -42,12 +42,14 @@ def canonical_prefactor(Q, P, maslov, gamma, phase=None, gamma_ref=None):
         result[valid] = (np.sqrt(np.sign(det_q[valid]) * determinant[valid])
                          * np.exp(-0.5j * np.pi * maslov[valid]))
         return result, valid
-    from ._b5_transport import gamma_phase_shift
+    from ._b5_transport import det_path_increment
     if gamma_ref is None or not np.isfinite(gamma_ref) or gamma_ref <= 0:
         raise ValueError("the continuous branch needs the transport's gamma_ref")
     phase = np.broadcast_to(np.asarray(phase, float), Q.shape[:1])
-    valid = finite & np.isfinite(phase)
-    theta = phase + gamma_phase_shift(Q, P, float(gamma_ref), float(gamma))
+    # continuation from gamma_ref to gamma; a root of det(g Q + i P) on the way leaves the branch undefined
+    shift, hit = det_path_increment(float(gamma_ref) * Q + 1j * P, (float(gamma) - float(gamma_ref)) * Q, 1.0)
+    valid = finite & np.isfinite(phase) & ~hit
+    theta = phase + shift
     result[valid] = np.sqrt(np.abs(determinant[valid])) * np.exp(0.5j * theta[valid])
     return result, valid
 

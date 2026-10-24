@@ -129,7 +129,9 @@ def _mode_job(job):
             with np.errstate(invalid="ignore"):
                 Q = Q-spread*V
                 if continuous:
-                    phase = phase-det_phase_increment(Q, P, V, spread, gamma_ref)[0]
+                    back, hit = det_phase_increment(Q, P, V, spread, gamma_ref)
+                    phase = phase-back
+                    usable = usable & ~hit
                 else:
                     crosses, ambiguous = count_free_caustics(Q, V, np.full(len(Q), spread))
                     maslov = maslov-crosses
