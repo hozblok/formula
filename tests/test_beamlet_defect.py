@@ -2,6 +2,7 @@
 algebra, the entrance-kernel defect, the image cancellation on a flat wall, and the
 exit tails of a straight ray."""
 import cmath
+import json
 import math
 
 import numpy as np
@@ -43,6 +44,7 @@ def test_beam_values_reproduce_a_free_gaussian_beam():
     q0, q = complex(0.0, -zr), complex(z, -zr)
     exact = (q0 / q) * np.exp(1j * K * (px * px + py * py) / (2.0 * q))
     assert np.max(np.abs(vals - exact)) < 1e-10 * np.max(np.abs(exact))
+    assert D.beam_width(seg, np.array([0]), 0.0, K)[0][0] == pytest.approx(w0)
 
 
 def test_entrance_defect_shrinks_with_the_kernel():
@@ -55,9 +57,9 @@ def test_entrance_defect_shrinks_with_the_kernel():
     assert d_wide / d_narrow == pytest.approx(math.sqrt(10.0), rel=0.35)
 
 
-def test_image_cancels_on_a_flat_wall():
-    """A ray bouncing once on the flat face x = +a of a square bore: the incident beam
-    continued past the hit and the reflected beam continued before it cancel on the face."""
+def _flat_wall_pair(w0):
+    """A ray bouncing once on the flat face x = +a of a square bore, launched with waist w0:
+    the segments, the face, the hit z, the source z and the Fresnel constants."""
     from formula.capsysred.simulation import Simulation
     raw = {"precision": 32, "energy_kev": 8.048, "seed": 1,
            "capillary": {"bores": [{"center": [0.0, 0.0], "radius": 5e-6, "sides": 4}], "z0": 0.0, "z1": 0.2,
@@ -77,13 +79,19 @@ def test_image_cancels_on_a_flat_wall():
     hit = [a, 0.0, z_hit]
     z_rec = 0.2
     x_rec = a - theta * (z_rec - z_hit)
-    rows = [(x_rec, 0.0, -theta, 0.0, 0.0, [theta], [hit])]
-    rows[0] = (x_rec, 0.0, -theta / math.sqrt(1 + theta * theta), 0.0,
-               math.dist(origin, hit) + math.dist(hit, (x_rec, 0.0, z_rec)), [theta], [hit])
-    zr = 0.5 * (1e-6) ** 2 * K
+    rows = [(x_rec, 0.0, -theta / math.sqrt(1 + theta * theta), 0.0,
+             math.dist(origin, hit) + math.dist(hit, (x_rec, 0.0, z_rec)), [theta], [hit])]
+    zr = 0.5 * w0 ** 2 * K
     fres = (2.0 * sim.delta_f, 2.0 * sim.beta_f)
     seg = D.build_segments(rows, origin, z_rec, bundle, zr, zr, 0.0, fres, K,
                            np.array([[0.0, 0.0]]), np.array([a]), 0.0)
+    return seg, a, z_hit, z_src, fres
+
+
+def test_image_cancels_on_a_flat_wall():
+    """The incident beam continued past the hit and the reflected beam continued before it
+    cancel on the face."""
+    seg, a, z_hit, z_src, _ = _flat_wall_pair(1e-6)
     assert seg.qxx.size == 2 and seg.final[1] and not seg.final[0]
     # on the face the mirror image equals the incident beam, so with the grazing Fresnel
     # factor r = -1 + O(theta / theta_c) the physical pair cancels to |1 + r|
@@ -96,6 +104,21 @@ def test_image_cancels_on_a_flat_wall():
         ref = D.beam_values(seg, np.array([1]), z, px, y[None, :], K, z_src)[0]
         assert np.max(np.abs(ref / r - inc)) < 1e-4 * np.max(np.abs(inc))      # phase rounding of k*opl ~ 1e-6 rad
         assert np.max(np.abs(inc + ref)) <= (abs(1.0 + r) + 1e-4) * np.max(np.abs(inc))
+
+
+def test_glass_form_cancels_the_pair_with_its_fresnel_coefficient():
+    """E - d_n E / (i k_g) of the incident + reflected pair on the face: zero for a plane-wave
+    pair, small against the Dirichlet trace |1 + r| for beams."""
+    for w0 in (1e-6, 30e-6):
+        seg, a, z_hit, z_src, fres = _flat_wall_pair(w0)
+        r = seg.fres[1]
+        y = np.linspace(-3e-6, 3e-6, 7)
+        px = np.full((1, y.size), a)
+        normal = (np.ones(px.shape), np.zeros(px.shape))
+        for z in (z_hit - 0.03, z_hit, z_hit + 0.03):
+            scale = np.max(np.abs(D.beam_values(seg, np.array([0]), z, px, y[None, :], K, z_src)))
+            glass = D.beam_values(seg, np.array([0, 1]), z, px, y[None, :], K, z_src, normal, fres).sum(axis=0)
+            assert np.max(np.abs(glass)) < 0.1 * abs(1.0 + r) * scale
 
 
 def test_exit_tails_vanish_without_bounces():
@@ -130,3 +153,172 @@ def test_polygon_outline_stretch():
     rect = D._shape({"radius": 1.0, "sides": 4, "rotation_deg": 0, "apothems": [1.0, 2.0, 1.0, 2.0]})
     assert np.allclose(D._stretch(rect, np.array([0.0, math.pi / 2, math.pi, math.atan2(2.0, 1.0)])),
                        [1.0, 2.0, 1.0, math.sqrt(5.0)])
+    # the Dirichlet outline a_w = radius + offset moves every face by the offset, not by a scale
+    off = D._shape({"radius": 1.0, "sides": 4, "rotation_deg": 0, "apothems": [1.0, 2.0, 1.0, 2.0]}, a_w=1.5)
+    assert np.allclose(1.5 * D._stretch(off, np.array([0.0, math.pi / 2, math.pi])), [1.5, 2.5, 1.5])
+    assert np.allclose(1.5 * D._stretch(off, np.array([math.atan2(2.5, 1.5)])), [math.hypot(1.5, 2.5)])
+    assert np.allclose(D._normals(off, np.array([0.0, math.pi / 2]))[0], [1.0, 0.0])
+
+
+def test_outside_tails_of_a_final_beam_match_direct_integration():
+    """O^2 of one final beam near the wall: the polar sum beyond a_w against a Cartesian sum."""
+    seg = D.Segments(1)
+    zr = 0.5 * (1e-6) ** 2 * K
+    seg.qxx[0] = seg.qyy[0] = complex(0.0, zr)
+    seg.a[0] = seg.fres[0] = 1.0
+    seg.x0[0], seg.z1[0], seg.final[0] = 3.5e-6, 0.2, True
+    bores = [{"center": [0.0, 0.0], "radius": 5e-6}]
+    full, shot = D.exit_tails(seg, bores, 5e-6, 1e-6, K, 0.0, 0.1e-6, 4.0, outside=True)
+    assert full == shot > 0.0                                          # one ray: all noise
+    h = 0.02e-6
+    x = np.arange(-12e-6, 12e-6, h) + 0.5 * h
+    px, py = np.meshgrid(x, x)
+    vals = D.beam_values(seg, np.array([0]), 1e-6, px.reshape(1, -1), py.reshape(1, -1), K, 0.0)[0]
+    direct = float(np.sum(np.abs(vals) ** 2 * (np.hypot(px, py).ravel() > 5e-6)) * h * h)
+    assert full == pytest.approx(direct, rel=1e-2)
+    assert D.exit_tails(seg, bores, 5e-6, 1e-6, K, 0.0, 0.1e-6, 4.0) == (0.0, 0.0)
+
+
+def test_uniform_mask_formula():
+    I = np.array([4.0, 1.0, 0.25, 0.0, -1.0])
+    lit = np.array([True, True, True, False, False])
+    dmu, masked = D.uniform_mask(I, lit, 0, 0.1, 0.3)
+    eta = 0.1 * math.sqrt(5.25 / 3)
+    np.testing.assert_allclose(dmu[:3], 2.0 * eta * (1.0 / np.sqrt(I[:3]) + 0.5))
+    assert np.isinf(dmu[3:]).all()
+    assert masked.tolist() == [False, True, True, True, True]
+
+
+def test_mask_rows_of_a_stage11_map(tmp_path):
+    import json
+    from formula.capsysred.simulation import Simulation
+    raw = {"precision": 32, "energy_kev": 8.048, "seed": 1,
+           "capillary": {"bores": [{"center": [0.0, 0.0], "radius": 5e-6}], "z0": 0.0, "z1": 0.2,
+                         "source": {"shape": "gaussian", "size": 1e-7, "position": [0.0, 0.0, -0.5],
+                                    "n_modes": 1, "n_rays": 1},
+                         "screen": {"z": 0.3, "center": [0.0, 0.0], "edge_x": 4e-6, "edge_y": 4e-6, "nx": 4, "ny": 4}},
+           "beamlet": {"w0": 1e-6, "w0_t": None, "window_sigmas": 3.0}}
+    cfg = Simulation.from_dict(raw).cfg
+    rows = tmp_path / "mu-beamlet.jsonl"
+    intensity = np.arange(16, dtype=float)
+    with open(rows, "w") as fh:
+        fh.write(json.dumps({"stage": "free", "pixel": 0, "x_um": 0.0, "y_um": 0.0, "I": 1.0, "n_rays": 1}) + "\n")
+        for p in range(16):
+            fh.write(json.dumps({"stage": "capillary", "pixel": p, "x_um": float(p % 4), "y_um": float(p // 4),
+                                 "I": intensity[p], "n_rays": int(p >= 8)}) + "\n")
+    summary = D.write_mask(cfg, str(rows), 0.02, 0.1, str(tmp_path / "mask.jsonl"))
+    assert summary == {"capillary": {"cells": 16, "lit": 8, "masked": 10, "masked_lit": 2, "certified": False}}   # I < 9.24
+    out = [json.loads(line) for line in open(tmp_path / "mask.jsonl")]
+    eta = 0.02 * math.sqrt(intensity.sum() / 8)
+    ref = 10                                                         # window centre
+    assert out[0]["dmu"] is None and out[0]["masked"]
+    assert out[12]["dmu"] == pytest.approx(2.0 * eta * (1.0 / math.sqrt(12.0) + 1.0 / math.sqrt(intensity[ref])))
+
+
+def test_uniform_mask_without_a_positive_reference():
+    # unlit or U-statistic-negative reference cell: every cell masked, no exception
+    for i_ref in (0.0, -1.0):
+        dmu, masked = D.uniform_mask(np.array([i_ref, 1.0]), np.array([True, True]), 0, 0.1, 0.05)
+        assert np.isinf(dmu).all() and masked.all()
+
+
+
+def test_modal_bound_of_a_single_beam_is_finite():
+    # one straight beam near the wall of a straight bore: the pipeline runs end to end,
+    # the components are finite and the complex scale is the beam's own projection
+    bores = [{"center": [0.0, 0.0], "radius": 24e-6}]
+    seg = D.Segments(1)
+    seg.qxx[0] = seg.qyy[0] = complex(0.0, 0.5 * (4e-6) ** 2 * K)
+    seg.a[0] = 1.0; seg.fres[0] = 1.0; seg.x0[0] = 18e-6; seg.z1[0] = 0.02
+    job = {"k": K, "a_w": 24e-6, "z0_cap": 0.0, "z_exit": 0.02, "bound_jmax": 60.0, "bound_phase_step": 0.7, "window": 4.0}
+    res = D.modal_bound(seg, bores, job, [0.0, 0.0, -0.5], 0.0)
+    assert res["sections"] >= 20 and res["modes"] > 100
+    for key in ("B", "B_e0", "B_boundary", "B_tail", "B_T"):
+        assert math.isfinite(res[key]) and res[key] >= 0.0
+    assert res["B_T"] == 0.0 and res["B_boundary"] > 0.0
+    assert res["B_tri"] >= res["B_e0"] + res["B_boundary"] and res["B"] <= res["B_tri"] + 1e-12
+    assert res["B_exact"] > 0.0 and res["B_r0"] >= 0.0
+    assert len(res["bores"]) == 1 and res["C_fit"][0] > 0.0
+
+
+def test_modal_bound_of_a_single_beam_in_a_square_bore():
+    # the same beam in a square bore of half-side a_w: the sine basis path, finite components,
+    # the boundary part from the +x face; a hexagon has no basis
+    bores = [{"center": [0.0, 0.0], "radius": 24e-6, "sides": 4}]
+    seg = D.Segments(1)
+    seg.qxx[0] = seg.qyy[0] = complex(0.0, 0.5 * (4e-6) ** 2 * K)
+    seg.a[0] = 1.0; seg.fres[0] = 1.0; seg.x0[0] = 18e-6; seg.z1[0] = 0.02
+    job = {"k": K, "a_w": 24e-6, "z0_cap": 0.0, "z_exit": 0.02, "bound_jmax": 40.0, "bound_phase_step": 0.7, "window": 4.0}
+    res = D.modal_bound(seg, bores, job, [0.0, 0.0, -0.5], 0.0)
+    assert res["basis"] == "square sines" and res["sections"] >= 20 and res["modes"] == 25 ** 2
+    for key in ("B", "B_e0", "B_boundary", "B_tail", "B_T"):
+        assert math.isfinite(res[key]) and res[key] >= 0.0
+    assert res["B_T"] == 0.0 and res["B_boundary"] > 0.0
+    assert res["B_tri"] >= res["B_e0"] + res["B_boundary"] and res["B"] <= res["B_tri"] + 1e-12
+    hexa = D.modal_bound(seg, [dict(bores[0], sides=6)], job, [0.0, 0.0, -0.5], 0.0)
+    assert hexa["B"] is None and "basis" in hexa["reason"]
+
+
+def test_run_defect_publishes_the_bound(tmp_path):
+    # a traced straight bore: every mode carries the bound, the summary its rms and argmin
+    from formula.capsysred.simulation import Simulation
+    from tests.test_capsysred import _record
+    raw = {"precision": 32, "energy_kev": 8.048, "seed": 1,
+           "capillary": {"bores": [{"center": [0.0, 0.0], "radius": 5e-6}], "z0": 0.0, "z1": 0.2,
+                         "source": {"shape": "gaussian", "size": 1.5e-6, "position": [0.0, 0.0, -0.5],
+                                    "n_modes": 2, "n_rays": 40},
+                         "screen": {"z": 0.3, "center": [0.0, 0.0], "edge_x": 4e-6, "edge_y": 4e-6, "nx": 4, "ny": 4}},
+           "beamlet": {"w0": 1e-6, "w0_t": None, "window_sigmas": 3.0},
+           "beamlet_defect": {"rays": 40, "sections": 10, "bound_jmax": 40.0}}
+    sim = Simulation.from_dict(raw)
+    _record(sim, str(tmp_path))
+    opt = D.options(sim.cfg)
+    summary = D.run_defect(sim, str(tmp_path / "rays-modes"), str(tmp_path), opt, [(1e-6, None, None)], log=lambda s: None)
+    rec = summary["launches"][0]
+    assert rec["B_modes"] == 2 and math.isfinite(rec["B_rms"]) and rec["B_rms"] > 0.0
+    assert summary["argmin_bound"]["certified"] is True and summary["argmin"]["certified"] is False
+    rows = [json.loads(l) for l in open(tmp_path / D.RESULT_DIR / "modes.jsonl", encoding="utf-8")]
+    assert all(r["bound"]["B"] >= r["bound"]["B_e0"] for r in rows)
+    opt["bound"] = False
+    summary = D.run_defect(sim, str(tmp_path / "rays-modes"), str(tmp_path), opt, [(1e-6, None, None)], log=lambda s: None)
+    assert "argmin_bound" not in summary and "B_rms" not in summary["launches"][0]
+
+
+
+def test_certified_mask_transfer(tmp_path):
+    # the per-mode bound reaches the cells: beyond the exit through the Fresnel kernel
+    # (uniform in the cell), on the exit plane through the cell concentration; the heuristic
+    # mask stays beside it
+    import json
+    from formula.capsysred.simulation import Simulation
+    raw = {"precision": 32, "energy_kev": 8.048, "seed": 1,
+           "capillary": {"bores": [{"center": [0.0, 0.0], "radius": 5e-6}], "z0": 0.0, "z1": 0.2,
+                         "source": {"shape": "gaussian", "size": 1e-7, "position": [0.0, 0.0, -0.5],
+                                    "n_modes": 1, "n_rays": 1},
+                         "screen": {"z": 0.2, "center": [0.0, 0.0], "edge_x": 4e-6, "edge_y": 4e-6, "nx": 4, "ny": 4},
+                         "screens": [{"z": 0.3, "edge_x": 4e-6, "edge_y": 4e-6, "nx": 4, "ny": 4}]},
+           "beamlet": {"w0": 1e-6, "w0_t": None, "window_sigmas": 3.0}}
+    cfg = Simulation.from_dict(raw).cfg
+    rows = tmp_path / "mu-beamlet.jsonl"
+    with open(rows, "w") as fh:
+        for tag in ("capillary", "capillary-s1"):
+            for p in range(16):
+                fh.write(json.dumps({"stage": tag, "pixel": p, "x_um": float(p % 4), "y_um": float(p // 4),
+                                     "I": float(p), "n_rays": int(p >= 8)}) + "\n")
+    bound = {"k": K, "z_exit": 0.2, "area": math.pi * 25e-12,
+             "modes": [{"B": 0.1, "E_in_dep": 2.0, "O_abs2": 0.0, "O_area": 1e-10}]}
+    summary = D.write_mask(cfg, str(rows), 0.02, 0.1, str(tmp_path / "mask.jsonl"), bound)
+    out = [json.loads(l) for l in open(tmp_path / "mask.jsonl")]
+    exit_rows = [r for r in out if r["stage"] == "capillary"]
+    far_rows = [r for r in out if r["stage"] == "capillary-s1"]
+    ref = 10
+    eta_cell = 0.1 * 2.0 / math.sqrt(1e-6 * 1e-6)
+    eta_fres = K / (2.0 * math.pi * 0.1) * math.sqrt(math.pi * 25e-12) * 0.1 * 2.0
+    for rows_, eta, kind in ((exit_rows, eta_cell, "cell"), (far_rows, eta_fres, "fresnel")):
+        tag = rows_[0]["stage"]
+        assert summary[tag]["bound"]["transfer"] == kind and summary[tag]["bound"]["certified"] is True
+        assert summary[tag]["bound"]["eta"] == pytest.approx(eta)
+        assert rows_[12]["dmu_bound"] == pytest.approx(2.0 * eta * (1.0 / math.sqrt(12.0) + 1.0 / math.sqrt(10.0)))
+        assert rows_[0]["dmu_bound"] is None and rows_[0]["masked_bound"]
+        assert "dmu" in rows_[12] and summary[tag]["certified"] is False
+    assert summary["capillary"]["bound"]["masked"] == 16        # eta ~ 2e5: nothing survives the cell transfer

@@ -87,7 +87,7 @@ def debiased_observables(field, self_intensity, self_cross, prefix_n, reference)
 def _mode_job(job):
     from ._b5_archive import read_sample
     from ._b5_field import reconstruct_field
-    from ._b5_transport import transport_mode
+    from ._b5_transport import count_free_caustics, det_phase_increment, transport_mode
     from .stage17 import _fresnel_product
 
     start = time.perf_counter()
@@ -105,7 +105,8 @@ def _mode_job(job):
     if prefix_rows < job["max_rays"]:
         raise ValueError("archive ray budget is smaller than the requested canonical map budget")
     cap = SimpleNamespace(**job["cap"])
-    transport = transport_mode(mode, cap, job["target_z"]) if len(mode["points"]) else None
+    gamma_ref = 1.0/(job["k"]*min(job["widths"])**2)
+    transport = transport_mode(mode, cap, job["target_z"], gamma_ref) if len(mode["points"]) else None
     fresnel = _fresnel_product(mode["sins"], job["delta"], job["beta"])
     origin = np.asarray(mode["origin"])
     source_distance = float(cap.z0)-origin[2]
@@ -116,21 +117,41 @@ def _mode_job(job):
         uz0 = source_distance/entrance_distance
         uzout = np.sqrt(1-np.sum(mode["directions"]**2, axis=1))
         source_amplitude = np.sqrt(uz0/uzout)/entrance_distance
+        # windows on the exit plane (exit_propagation): Q and the root's branch moved back
+        # along the final free flight; the window centres stay on the target plane
+        spread = job["exit_propagation_m"]
+        Q, P, maslov = transport["Q"], transport["P"], transport["maslov"]
+        continuous = job["branch"] == "continuous"
+        phase = transport["phase"] if continuous else None
+        usable = transport["continuous_valid"] if continuous else transport["valid"]
+        if spread > 0:
+            V = transport["V"]
+            with np.errstate(invalid="ignore"):
+                Q = Q-spread*V
+                if continuous:
+                    back, hit = det_phase_increment(Q, P, V, spread, gamma_ref)
+                    phase = phase-back
+                    usable = usable & ~hit
+                else:
+                    crosses, ambiguous = count_free_caustics(Q, V, np.full(len(Q), spread))
+                    maslov = maslov-crosses
+                    usable = usable & ~ambiguous
     grid = job["grid"]
     shape = (len(grid["y"]), len(grid["x"]))
     variants, matched = {}, {}
     for budget in job["budgets"]:
         prefix = mode["ray_ids"] < budget
         matched[budget] = matched_ray_field(mode["points"][prefix], mode["phase_opl"][prefix], fresnel[prefix], grid)
-        valid = prefix & transport["valid"] if transport is not None else prefix
+        valid = prefix & usable if transport is not None else prefix
         valid_ids = np.flatnonzero(valid)
         for width in job["widths"]:
             if len(valid_ids):
                 result = reconstruct_field(mode["points"][valid], mode["directions"][valid], mode["phase_opl"][valid],
-                    fresnel[valid], transport["Q"][valid], transport["P"][valid], transport["maslov"][valid],
+                    fresnel[valid], Q[valid], P[valid], maslov[valid],
                     area_weights=job["entrance_area"]/budget, source_amplitude=source_amplitude[valid],
                     k=job["k"], width=width, x=grid["x"], y=grid["y"], cell_width=grid["cell_width"],
-                    reference=grid["reference"])
+                    reference=grid["reference"], branch_phase=None if phase is None else phase[valid],
+                    gamma_ref=gamma_ref, spread=spread)
             else:
                 result = dict(field=np.zeros(shape, complex), self_intensity=np.zeros(shape), self_cross=np.zeros(shape, complex),
                               ref_index=grid["ref_index"], metadata={"rays": 0, "contributing_rays": 0})
@@ -251,8 +272,12 @@ def run_canonical_map(sim, out_dir, options, *, rays_paths, log=None):
     cap_data = {"z0": float(cap.z0), "bores": sim.cfg.raw["capillary"]["bores"]}
     area = sum(bore_area(bore) for bore in cap.bores)
     implementation = _implementation_hashes()
+    spread = float(screen.z)-float(cap.z1) if options["exit_propagation"] else 0.0
+    if spread < 0:
+        raise ValueError("b5_estimator.exit_propagation needs the screen at or after the capillary exit")
     base_job = dict(archive=archive, cap=cap_data, max_rays=max(budgets), target_z=float(screen.z),
                     k=float(sim.lines[0].k), delta=sim.delta_f, beta=sim.beta_f,
+                    branch=options["branch"], exit_propagation_m=spread,
                     fingerprint_sha256=fingerprint_hash, index_sha256=index_hash,
                     implementation_hashes=implementation, grid=grid, widths=widths, budgets=budgets, entrance_area=area)
     jobs = [dict(base_job, mode=mode) for mode in range(modes)]
@@ -275,6 +300,9 @@ def run_canonical_map(sim, out_dir, options, *, rays_paths, log=None):
                   source_amplitude="(1 / geometric source-to-entrance distance) * sqrt(uz_entrance / uz_target)",
                   ray_quadrature="uniform entrance-area sampling: each emitted ray has weight total entrance area / full prefix N; lost and invalid transport rays contribute zero",
                   estimator="per-mode U-statistic N/(N-1) times field outer product minus identical-ray diagonal, then equal source-mode mean",
+                  branch=("continuous determinant argument along each path; exact caustics kept" if options["branch"] == "continuous"
+                          else "principal root, sign(det Q) and Maslov count; exact caustics excluded"),
+                  exit_propagation_m=spread,
                   matched_stage14="same archived ray prefix and native screen cells; raw Fresnel-ray units, no geometry correction, self-pairs removed; arithmetic mean over modes",
                   plugin_diagnostic="positive field outer-product estimator without self-pair subtraction; finite-ray quadrature bias remains",
                   jackknife="delete-one-source-mode standard error of |mu|; available only with >=3 modes and all positive leave-one intensities; does not estimate model bias",
@@ -342,5 +370,7 @@ def run_canonical_map(sim, out_dir, options, *, rays_paths, log=None):
     return {"results": result, "files": files,
             "report": ["## Stage 17 — experimental B5 canonical coherence map", "",
                        f"- screen z={float(screen.z):g} m; {modes} empirical source modes; {len(accumulators)} width/ray-budget variants",
+                       f"- branch {options['branch']}; windows "
+                       + (f"on the exit plane, propagated exactly over {spread:g} m" if spread > 0 else "frozen on the screen"),
                        "- full_coherence_computed=true; accuracy_validated=false; semiclassical Gaussian reconstruction",
                        "- same-ray stage14 baseline, unbiased and positive plugin maps, source-mode jackknife and transport diagnostics saved", ""]}

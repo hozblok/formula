@@ -14,13 +14,26 @@ three computable places:
   T   exit tails. The deposit keeps the final beam of a ray only; the beams of the
       earlier segments still reach the exit plane inside the bore.
 indicator = D0 + G + T per mode; a launch scan (w0, waist_z pairs) picks the launch
-with the smallest RMS indicator over modes.  No certified bound is claimed: lifting the
-wall trace into a boundary layer gives a residual above the field norm even for the
-exact Dirichlet field at grazing incidence, so the defects are reported as indicators.
+with the smallest RMS indicator over modes.  Reported beside it, not added:
+  O   the final beams outside the bore on the exit plane: field the deposit carries to
+      the screen although the glass blocks it there.
+  G_glass (option glass) the trace of the glass interface condition E - d_n E / (i k_g)
+      on the true wall r = a, k_g = k sqrt(theta^2 - 2 delta + 2 i beta) at each beam's
+      grazing angle (zero for a plane-wave pair with its Fresnel coefficient), in place of
+      the Dirichlet wall at a + Re(ell).
+--mask STAGE11_JSONL writes a cell mask of that stage-11 map (made with the configured
+launch): its indicator eps spread uniformly over the lit cells gives
+|d mu| <= 2 eta (1/sqrt(I) + 1/sqrt(I_ref)), eta^2 = eps^2 P / A_lit (P the power through
+the window, A_lit the area of the cells with ray centres); cells above `mask_threshold` are
+masked.  An assumption, not a bound.  No certified bound is claimed: lifting the wall trace
+into a boundary layer gives a residual above the field norm even for the exact Dirichlet
+field at grazing incidence, so the defects are reported as indicators.
 
 Usage: python -m formula.capsysred.stages.beamlet_defect SCENE.yaml ARCHIVE -o OUT
          [--scan w0_um:waist_z,...] [--rays N] [--sections S] [--modes M] [--jobs J]
-Rows: OUT/stage11-defect/modes.jsonl (one per launch and mode), defect.json (summary).
+         [--glass] [--mask OUT11/mu-beamlet.jsonl]
+Rows: OUT/stage11-defect/modes.jsonl (one per launch and mode), defect.json (summary),
+mask.jsonl (with --mask).
 """
 
 import argparse
@@ -30,19 +43,24 @@ import json
 import math
 import os
 import time
+from types import SimpleNamespace
 
 import numpy as np
 
 from .. import rays_v3
 from ..gamma import bounce_lenses, reflect
 from ..rays import recorded_screen_z
+from ..screen import ScreenGrid
 from ..surfaces import CapillaryBundle
 from .altcoh import FloatLineAmplitudes
-from .beamlet import _launch
+from .beamlet import _launch, _reference_pixel, _screen_spec
+from . import bound_modal
+from .wave_fb import Disc, FBChannel, mode_damping
 
 RESULT_DIR = "stage11-defect"
 DEFAULTS = {"rays": 50000, "sections": 60, "ring_step": 0.5e-6, "window": 4.0,
-            "modes": None, "jobs": 1, "scan": None}
+            "modes": None, "jobs": 1, "scan": None, "glass": False, "mask_threshold": 0.05,
+            "bound": True, "bound_jmax": 160.0, "bound_phase_step": 0.7}
 
 
 def options(cfg):
@@ -56,7 +74,13 @@ def options(cfg):
             raise ValueError(f"beamlet_defect.{key}: a positive integer")
     if opt["modes"] is not None and (not isinstance(opt["modes"], int) or opt["modes"] < 1):
         raise ValueError("beamlet_defect.modes: null or a positive integer")
-    for key in ("ring_step", "window"):
+    for key in ("ring_step", "window", "mask_threshold"):
+        if not isinstance(opt[key], (int, float)) or opt[key] <= 0:
+            raise ValueError(f"beamlet_defect.{key}: a positive number")
+    for key in ("glass", "bound"):
+        if not isinstance(opt[key], bool):
+            raise ValueError(f"beamlet_defect.{key}: true or false")
+    for key in ("bound_jmax", "bound_phase_step"):
         if not isinstance(opt[key], (int, float)) or opt[key] <= 0:
             raise ValueError(f"beamlet_defect.{key}: a positive number")
     if opt["scan"] is not None:
@@ -198,8 +222,10 @@ def build_segments(rows, origin, z_rec, bundle, zr_t, zr_s, waist_dz, fresnel, k
     return seg
 
 
-def beam_values(seg, idx, z, px, py, k, z_src):
-    """Values of the selected segment beams at points (px, py) [n_sel, n_pts] on the plane z."""
+def beam_values(seg, idx, z, px, py, k, z_src, normal=None, fresnel=None):
+    """Values of the selected segment beams at points (px, py) [n_sel, n_pts] on the plane z;
+    with `normal` (n_x, n_y at the points) and `fresnel` (2 delta, 2 beta) the values of
+    E - d_n E / (i k_g) per beam instead (see G_glass)."""
     ux, uy = seg.ux[idx][:, None], seg.uy[idx][:, None]
     dz = (z - seg.z0[idx])[:, None]
     stretch = np.sqrt(1.0 + ux * ux + uy * uy)
@@ -213,11 +239,17 @@ def beam_values(seg, idx, z, px, py, k, z_src):
     dy = py - (seg.y0[idx][:, None] + uy * dz)
     phase = k * (seg.opl[idx][:, None] + s - (z - z_src))
     expo = 1j * phase + 1j * k * (ux * dx + uy * dy) + 0.5j * k * (gxx * dx * dx + 2.0 * gxy * dx * dy + gyy * dy * dy)
-    return np.conj(amp) * seg.fres[idx][:, None] * np.exp(expo)
+    vals = np.conj(amp) * seg.fres[idx][:, None] * np.exp(expo)
+    if normal is None:
+        return vals
+    nx, ny = normal
+    grad_n = k * ((ux + gxx * dx + gxy * dy) * nx + (uy + gxy * dx + gyy * dy) * ny)
+    k_glass = k * np.sqrt((ux * nx + uy * ny) ** 2 - fresnel[0] + 1j * fresnel[1])
+    return vals * (1.0 - grad_n / k_glass)
 
 
-def beam_width(seg, idx, z):
-    """Widest 1/e axis of the selected beams on the plane z, and their centres."""
+def beam_width(seg, idx, z, k):
+    """Widest 1/e amplitude axis of the selected beams on the plane z, and their centres."""
     dz = z - seg.z0[idx]
     s = dz * np.sqrt(1.0 + seg.ux[idx] ** 2 + seg.uy[idx] ** 2)
     qxx, qxy, qyy = seg.qxx[idx] + s, seg.qxy[idx], seg.qyy[idx] + s
@@ -226,7 +258,7 @@ def beam_width(seg, idx, z):
     mean = 0.5 * (gi[0] + gi[2])
     dev = np.hypot(0.5 * (gi[0] - gi[2]), gi[1])
     hi = mean + dev
-    w = np.where(hi < 0, np.sqrt(-2.0 / np.where(hi < 0, hi, -1.0)), np.inf)
+    w = np.where(hi < 0, np.sqrt(-2.0 / (k * np.where(hi < 0, hi, -1.0))), np.inf)
     return w, seg.x0[idx] + seg.ux[idx] * dz, seg.y0[idx] + seg.uy[idx] * dz
 
 
@@ -240,15 +272,20 @@ def bore_axis(bore, z):
     return c
 
 
-def _shape(bore):
-    """(sides, rotation, apothem / radius per face) of a polygon bore, None for a circle."""
+def _shape(bore, a_w=None):
+    """(sides, rotation, apothem / radius per face) of a polygon bore, None for a circle; with
+    `a_w` the outline offset outward by a_w - radius (each face apothem + offset, over a_w)."""
     sides = bore.get("sides")
     if not sides:
         return None
     rot = bore.get("rotation")
     rot = float(rot) if rot is not None else math.radians(float(bore.get("rotation_deg", 0.0)))
     aps = bore.get("apothems")
-    ratio = np.array([float(a) for a in aps]) / float(bore["radius"]) if aps is not None else np.ones(int(sides))
+    if aps is None and a_w is None:
+        return int(sides), rot, np.ones(int(sides))
+    a = float(bore["radius"])
+    apothems = np.array([float(v) for v in aps]) if aps is not None else np.full(int(sides), a)
+    ratio = apothems / a if a_w is None else (apothems + (float(a_w) - a)) / float(a_w)
     return int(sides), rot, ratio
 
 
@@ -263,14 +300,30 @@ def _stretch(shape, phis):
     return r.min(axis=1)
 
 
-def _ring_sum(seg, idx, z, cx, cy, radii, phis, k, z_src, window, stretch):
+def _normals(shape, phis):
+    """Outward unit normal of the bore outline at the angles phis: radial for a circle,
+    the face met first along the ray from the centre for a polygon; (n_x, n_y)."""
+    if shape is None:
+        return np.cos(phis), np.sin(phis)
+    n, rot, ratio = shape
+    angles = rot + 2.0 * math.pi * np.arange(n) / n
+    cosr = np.cos(np.asarray(phis)[:, None] - angles[None, :])
+    face = np.argmin(np.where(cosr > 1e-12, ratio[None, :] / np.maximum(cosr, 1e-12), np.inf), axis=1)
+    return np.cos(angles[face]), np.sin(angles[face])
+
+
+_POINTS = 1 << 21          # beam-point budget of one block of a ring sum
+
+
+def _ring_sum(seg, idx, z, cx, cy, radii, phis, k, z_src, window, stretch, glass=None):
     """Sum of the selected beams on the points (radii * stretch(phi), phis) around (cx, cy),
-    evaluating each beam only within its angular window; returns [n_r, n_phi]."""
+    evaluating each beam only within its angular window; returns [n_r, n_phi].  `glass`
+    = (normals, fresnel) sums the interface form of beam_values instead."""
     n_r, n_phi = radii.size, phis.size
     out = np.zeros((n_r, n_phi), complex)
     if idx.size == 0:
         return out
-    w, bx, by = beam_width(seg, idx, z)
+    w, bx, by = beam_width(seg, idx, z, k)
     w = np.where(np.isfinite(w), w, radii.max())
     phi_b = np.arctan2(by - cy, bx - cx)
     dphi = phis[1] - phis[0]
@@ -283,35 +336,70 @@ def _ring_sum(seg, idx, z, cx, cy, radii, phis, k, z_src, window, stretch):
         stop = start
         while stop < idx.size and half[stop] == h:
             stop += 1
-        stop = min(stop, start + 2048)
+        stop = min(stop, start + max(1, min(2048, _POINTS // (n_r * (2 * h + 1)))))   # bounded [beams, n_r, 2h+1]
         sel = idx[start:stop]
         m0 = np.rint((phi_b[start:stop] - phis[0]) / dphi).astype(int)
         cols = (m0[:, None] + np.arange(-h, h + 1)[None, :]) % n_phi      # [n_sel, 2h+1]
         rr = radii[None, :, None] * stretch[cols][:, None, :]              # [n_sel, n_r, 2h+1]
         px = cx + rr * np.cos(phis[cols])[:, None, :]
         py = cy + rr * np.sin(phis[cols])[:, None, :]
-        vals = beam_values(seg, sel, z, px.reshape(len(sel), -1), py.reshape(len(sel), -1), k, z_src)
+        shape = (len(sel), -1)
+        if glass is None:
+            vals = beam_values(seg, sel, z, px.reshape(shape), py.reshape(shape), k, z_src)
+        else:
+            (nxs, nys), fresnel = glass
+            normal = tuple(np.broadcast_to(v[cols][:, None, :], px.shape).reshape(shape) for v in (nxs, nys))
+            vals = beam_values(seg, sel, z, px.reshape(shape), py.reshape(shape), k, z_src, normal, fresnel)
         vals = vals.reshape(len(sel), n_r, -1)
         np.add.at(out, (slice(None), cols), np.transpose(vals, (1, 0, 2)))
         start = stop
     return out
 
 
-def _halves(seg, idx, z, cx, cy, radii, phis, k, z_src, window, stretch):
+def _outline_sum(seg, idx, z, cx, cy, sq, k, z_src, window):
+    """Sum of the selected beams on the outline nodes of the square `sq` (bound_modal.Square)
+    around (cx, cy), each beam within its window along the perimeter; returns [4 nq]."""
+    n_u = 4 * sq.nq
+    out = np.zeros(n_u, complex)
+    if idx.size == 0:
+        return out
+    w, bx, by = beam_width(seg, idx, z, k)
+    w = np.where(np.isfinite(w), w, sq.aw)
+    m0 = sq.arc_index(cx, cy, bx, by)
+    half = np.minimum(np.ceil(window * w / sq.h).astype(int) + 1, n_u // 2)
+    order = np.argsort(half)
+    idx, half, m0 = idx[order], half[order], m0[order]
+    px_tab, py_tab = sq.lab(cx, cy, sq.face_x, sq.face_y)
+    start = 0
+    while start < idx.size:
+        h = half[start]
+        stop = start
+        while stop < idx.size and half[stop] == h:
+            stop += 1
+        stop = min(stop, start + max(1, min(2048, _POINTS // (2 * h + 1))))
+        cols = (m0[start:stop, None] + np.arange(-h, h + 1)[None, :]) % n_u
+        vals = beam_values(seg, idx[start:stop], z, px_tab[cols], py_tab[cols], k, z_src)
+        np.add.at(out, cols, vals)
+        start = stop
+    return out
+
+
+def _halves(seg, idx, z, cx, cy, radii, phis, k, z_src, window, stretch, glass=None):
     """Beam sums of the even and odd ray halves: |a + b|^2 is the full sum, |a - b|^2 its
     ray-quadrature noise."""
     even = seg.ray[idx] % 2 == 0
-    return (_ring_sum(seg, idx[even], z, cx, cy, radii, phis, k, z_src, window, stretch),
-            _ring_sum(seg, idx[~even], z, cx, cy, radii, phis, k, z_src, window, stretch))
+    return (_ring_sum(seg, idx[even], z, cx, cy, radii, phis, k, z_src, window, stretch, glass),
+            _ring_sum(seg, idx[~even], z, cx, cy, radii, phis, k, z_src, window, stretch, glass))
 
 
 def k_safe(r):
     return max(r, 1e-12)
 
 
-def wall_trace(seg, bores, a_w, zs, k, z_src, ring_step, window):
+def wall_trace(seg, bores, a_w, zs, k, z_src, ring_step, window, fresnel=None):
     """Per section: the wall integral of |beam sum|^2 and of its ray-noise part, summed
-    over the bores (polygon faces through the apothem stretch)."""
+    over the bores (polygon faces through the apothem stretch); with `fresnel` the
+    glass interface form (beam_values) on the outline of radius a_w."""
     n_phi = int(math.ceil(2.0 * math.pi * a_w / ring_step))
     phis = np.arange(n_phi) * 2.0 * math.pi / n_phi
     radii = np.array([a_w])
@@ -319,47 +407,146 @@ def wall_trace(seg, bores, a_w, zs, k, z_src, ring_step, window):
     for jz, z in enumerate(zs):
         active = (seg.z0 <= z + 0.1) & (seg.z1 >= z - 0.1)                   # every segment is a full beam; cheap pre-cut
         for b, bore in enumerate(bores):
-            stretch = _stretch(_shape(bore), phis)
+            shape = _shape(bore, a_w)
+            stretch = _stretch(shape, phis)
+            glass = None if fresnel is None else (_normals(shape, phis), fresnel)
             cx, cy = bore_axis(bore, z)
             cand = np.flatnonzero(active & (seg.bore == b))
             if cand.size == 0:
                 continue
-            w, bx, by = beam_width(seg, cand, z)
+            w, bx, by = beam_width(seg, cand, z, k)
             near = np.hypot(bx - cx, by - cy) <= a_w * stretch.max() + window * np.where(np.isfinite(w), w, 0.0)
-            ra, rb = _halves(seg, cand[near], z, cx, cy, radii, phis, k, z_src, window, stretch)
+            ra, rb = _halves(seg, cand[near], z, cx, cy, radii, phis, k, z_src, window, stretch, glass)
             measure = a_w * stretch ** 2 * (2.0 * math.pi / n_phi)
             full[jz] += float(np.sum(np.abs(ra[0] + rb[0]) ** 2 * measure))
             shot[jz] += float(np.sum(np.abs(ra[0] - rb[0]) ** 2 * measure))
     return full, shot
 
 
-def exit_tails(seg, bores, a_w, z_exit, k, z_src, ring_step, window):
+def exit_tails(seg, bores, a_w, z_exit, k, z_src, ring_step, window, outside=False):
     """T^2 and its ray-noise part: beams of non-final segments on the exit plane inside
-    the bores (polar grid, polygon outline through the apothem stretch)."""
+    the bores (polar grid, polygon outline through the apothem stretch); outside=True:
+    O^2, the final beams beyond the outline."""
     n_phi = int(math.ceil(2.0 * math.pi * a_w / ring_step))
     phis = np.arange(n_phi) * 2.0 * math.pi / n_phi
     full = shot = 0.0
     for b, bore in enumerate(bores):
-        stretch = _stretch(_shape(bore), phis)
+        stretch = _stretch(_shape(bore, a_w), phis)
         cx, cy = bore_axis(bore, z_exit)
-        cand = np.flatnonzero(~seg.final & (seg.bore == b))
+        cand = np.flatnonzero((seg.final if outside else ~seg.final) & (seg.bore == b))
         if cand.size == 0:
             continue
-        w, bx, by = beam_width(seg, cand, z_exit)
+        w, bx, by = beam_width(seg, cand, z_exit, k)
         wf = np.where(np.isfinite(w), w, 0.0)
         near = np.hypot(bx - cx, by - cy) <= a_w * stretch.max() + window * wf
         idx = cand[near]
         if idx.size == 0:
             continue
-        depth = min(a_w, (window + 2.0) * float(wf[near].max()))
+        depth = (window + 2.0) * float(wf[near].max())
+        depth = depth if outside else min(a_w, depth)
         n_r = max(4, int(math.ceil(depth / ring_step)))
         dr = depth / n_r
-        radii = a_w - (np.arange(n_r) + 0.5) * dr
+        radii = a_w + (np.arange(n_r) + 0.5) * dr if outside else a_w - (np.arange(n_r) + 0.5) * dr
         ga, gb = _halves(seg, idx, z_exit, cx, cy, radii, phis, k, z_src, window, stretch)
         measure = radii[:, None] * stretch[None, :] ** 2 * dr * (2.0 * math.pi / n_phi)
         full += float(np.sum(np.abs(ga + gb) ** 2 * measure))
         shot += float(np.sum(np.abs(ga - gb) ** 2 * measure))
     return full, shot
+
+
+# ------------------------------------------------------------------ modal bound
+_DISCS = {}
+
+
+def _disc(a_w, jmax):
+    key = (round(float(a_w), 15), float(jmax))
+    if key not in _DISCS:
+        _DISCS[key] = Disc(a_w, jmax)
+    return _DISCS[key]
+
+
+def _channel(bore, a_w, disc, k, fresnel=None):
+    """FBChannel of a bore; `fresnel` = (2 delta, 2 beta) adds the DIR-ell per-mode damping of
+    the fb wave (wave_fb.mode_damping), none = lossless Dirichlet."""
+    c0 = np.array([float(bore["center"][0]), float(bore["center"][1])])
+    gamma = None if fresnel is None else mode_damping(disc, k, 0.5 * fresnel[0], 0.5 * fresnel[1])
+    bend = bore.get("bend")
+    if not bend:
+        return FBChannel(c0, None, None, disc, k, gamma)
+    return FBChannel(c0, np.array([float(bend["toward"][0]), float(bend["toward"][1])]), float(bend["radius"]), disc, k, gamma)
+
+
+def modal_bound(seg, bores, job, origin, t_full):
+    """B of the full-beam field of one mode (bound_modal.bores_bound): per bore the entrance
+    defect against the point source, the frame wall trace of the beams at sections resolving
+    the fastest mode phase, its boundary part and the mode tails; T from the exit tails.
+    Circular bores (Disc basis) or straight square bores (sine basis); other outlines have
+    no Dirichlet mode basis: {"B": None, "reason"}."""
+    k, a_w, z_src = job["k"], job["a_w"], origin[2]
+    z0, L = job["z0_cap"], job["z_exit"] - job["z0_cap"]
+    shapes = [_shape(b, a_w) for b in bores]
+    if any(sh is not None for sh in shapes):
+        return square_bound(seg, bores, shapes, job, origin, t_full)
+    disc = _disc(a_w, job["bound_jmax"])
+    chans = [_channel(b, a_w, disc, k, job.get("fresnel")) for b in bores]
+    stretch = np.ones(disc.nphi)
+
+    def sample(b, zr, radii, phis, cx, cy):
+        z = z0 + zr
+        cand = np.flatnonzero(seg.bore == b)
+        act = cand[(seg.z0[cand] <= z + 0.1) & (seg.z1[cand] >= z - 0.1)]
+        w, bx, by = beam_width(seg, act, z, k)
+        reach = a_w + job["window"] * np.where(np.isfinite(w), w, 0.0)
+        idx = act[np.hypot(bx - cx, by - cy) <= reach]
+        # blocks of radii: _ring_sum holds [beams, radii, window] per chunk
+        out = np.zeros((radii.size, phis.size), complex)
+        for lo in range(0, radii.size, 8):
+            ra, rb = _halves(seg, idx, z, cx, cy, radii[lo:lo + 8], phis, k, z_src, job["window"], stretch)
+            out[lo:lo + 8] = ra + rb
+        return out
+
+    return bound_modal.bores_bound(chans, L, sample, lambda ch: ch.entrance_field(origin[:2], z0 - z_src),
+                                   job["bound_phase_step"], t_full)
+
+
+def square_bound(seg, bores, shapes, job, origin, t_full):
+    """B over straight square bores (bound_modal.squares_bound); the trace on the outline
+    nodes, the entrance fan on a stretched polar grid of the square."""
+    k, a_w, z_src = job["k"], job["a_w"], origin[2]
+    z0, L = job["z0_cap"], job["z_exit"] - job["z0_cap"]
+    if any(b.get("bend") or sh is None or sh[0] != 4 or not np.allclose(sh[2], 1.0) for b, sh in zip(bores, shapes)):
+        return {"B": None, "reason": "Dirichlet mode basis only for circular bores (Bessel) and straight square bores (sines)"}
+    M = max(4, int(2.0 * job["bound_jmax"] / math.pi))      # kappa a_w = (pi/2) sqrt(m^2 + n^2) <= jmax on the axes
+    sqs = [bound_modal.Square(a_w, M, sh[1]) for sh in shapes]
+    centers = [(float(b["center"][0]), float(b["center"][1])) for b in bores]
+
+    def active(b, z, cx, cy):
+        cand = np.flatnonzero(seg.bore == b)
+        act = cand[(seg.z0[cand] <= z + 0.1) & (seg.z1[cand] >= z - 0.1)]
+        w, bx, by = beam_width(seg, act, z, k)
+        reach = a_w * math.sqrt(2.0) + job["window"] * np.where(np.isfinite(w), w, 0.0)
+        return act[np.hypot(bx - cx, by - cy) <= reach]
+
+    def sample_disc(b, radii, phis, stretch, cx, cy):
+        idx = active(b, z0, cx, cy)
+        out = np.zeros((radii.size, phis.size), complex)
+        for lo in range(0, radii.size, 8):
+            ra, rb = _halves(seg, idx, z0, cx, cy, radii[lo:lo + 8], phis, k, z_src, job["window"], stretch)
+            out[lo:lo + 8] = ra + rb
+        return out
+
+    def sample_outline(b, zr, sq, cx, cy):
+        z = z0 + zr
+        return _outline_sum(seg, active(b, z, cx, cy), z, cx, cy, sq, k, z_src, job["window"])
+
+    z_in = z0 - z_src
+    lam = 2.0 * math.pi / k
+    e_in = lambda px, py: (np.exp(1j * k * ((px - origin[0]) ** 2 + (py - origin[1]) ** 2) / (2.0 * z_in))
+                           / (1j * lam * z_in))
+    fres = job.get("fresnel")
+    gamma = None if fres is None else bound_modal.square_damping(sqs[0], k, 0.5 * fres[0], 0.5 * fres[1])
+    return bound_modal.squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in,
+                                     job["bound_phase_step"], t_full, gamma=gamma)
 
 
 # ------------------------------------------------------------------ per mode
@@ -380,17 +567,34 @@ def mode_job(job):
     zs = (np.arange(job["sections"]) + 0.5) * length / job["sections"] + float(cap.z0)
     g_full, g_shot = wall_trace(seg, bores, job["a_w"], zs, job["k"], origin[2], job["ring_step"], job["window"])
     t_full, t_shot = exit_tails(seg, bores, job["a_w"], job["z_exit"], job["k"], origin[2], job["ring_step"], job["window"])
+    o_full, o_shot = exit_tails(seg, bores, job["a_w"], job["z_exit"], job["k"], origin[2], job["ring_step"], job["window"],
+                                outside=True)
+    w_fin, _, _ = beam_width(seg, np.flatnonzero(seg.final), job["z_exit"], job["k"])
+    depth_out = (job["window"] + 2.0) * float(np.max(w_fin[np.isfinite(w_fin)], initial=0.0))
+    area_out = len(cap.bores) * math.pi * ((job["a_w"] + depth_out) ** 2 - job["a_w"] ** 2)
+    if job["glass"]:
+        gg_full, gg_shot = wall_trace(seg, bores, job["a"], zs, job["k"], origin[2], job["ring_step"], job["window"],
+                                      fresnel=job["fresnel"])
     norm = job["norm_per_ray"] * total                    # ||E_in|| in deposit units for this fan
     rms_field = norm / math.sqrt(job["area"])
     wall_area = length * 2.0 * math.pi * job["a_w"] * len(cap.bores)
     dz = length / job["sections"]
     g_coh = np.maximum(g_full - g_shot, 0.0)
-    return {"mode": job["mode"], "rays": total, "fates": fates, "segments": int(seg.qxx.size),
-            "G": math.sqrt(float(np.sum(g_coh)) * dz / wall_area) / rms_field,
-            "G_shot": math.sqrt(float(np.sum(g_shot)) * dz / wall_area) / rms_field,
-            "T": math.sqrt(max(t_full - t_shot, 0.0)) / norm, "T_shot": math.sqrt(t_shot) / norm,
-            "trace_profile": (np.sqrt(g_coh / (2.0 * math.pi * job["a_w"] * len(cap.bores))) / rms_field).tolist(),
-            "seconds": time.time() - t0}
+    out = {"mode": job["mode"], "rays": total, "fates": fates, "segments": int(seg.qxx.size),
+           "G": math.sqrt(float(np.sum(g_coh)) * dz / wall_area) / rms_field,
+           "G_shot": math.sqrt(float(np.sum(g_shot)) * dz / wall_area) / rms_field,
+           "T": math.sqrt(max(t_full - t_shot, 0.0)) / norm, "T_shot": math.sqrt(t_shot) / norm,
+           "O": math.sqrt(max(o_full - o_shot, 0.0)) / norm, "O_shot": math.sqrt(o_shot) / norm,
+           "O_abs2": float(o_full), "O_area": area_out, "E_in_dep": norm,
+           "trace_profile": (np.sqrt(g_coh / (2.0 * math.pi * job["a_w"] * len(cap.bores))) / rms_field).tolist()}
+    if job["glass"]:
+        glass_area = length * 2.0 * math.pi * job["a"] * len(cap.bores)
+        out["G_glass"] = math.sqrt(float(np.sum(np.maximum(gg_full - gg_shot, 0.0))) * dz / glass_area) / rms_field
+        out["G_glass_shot"] = math.sqrt(float(np.sum(gg_shot)) * dz / glass_area) / rms_field
+    if job["bound"]:
+        out["bound"] = modal_bound(seg, bores, job, origin, t_full)
+    out["seconds"] = time.time() - t0
+    return out
 
 
 def launch_jobs(sim, archive, index, opt, w0, w0_t, waist_z):
@@ -421,7 +625,9 @@ def launch_jobs(sim, archive, index, opt, w0, w0_t, waist_z):
     rec = index_screen_z(archive)
     base = dict(archive=archive, raw_cfg=cfg.raw, rays=opt["rays"], sections=opt["sections"],
                 ring_step=float(opt["ring_step"]), window=float(opt["window"]), k=k, zr_t=zr_t, zr_s=zr_s,
-                waist_dz=waist_dz, fresnel=fres, a_w=a_w, z_exit=z1, z_rec=rec, norm_per_ray=norm_per_ray, area=area)
+                waist_dz=waist_dz, fresnel=fres, a_w=a_w, a=float(cap.bores[0]["radius"]), glass=bool(opt["glass"]),
+                z_exit=z1, z_rec=rec, norm_per_ray=norm_per_ray, area=area, z0_cap=z0,
+                bound=bool(opt["bound"]), bound_jmax=float(opt["bound_jmax"]), bound_phase_step=float(opt["bound_phase_step"]))
     jobs = [dict(base, mode=m, parts=tuple(secs)) for m, secs in enumerate(modes)]
     meta = {"w0_m": w0, "w0_t_m": w0_t, "waist_z_m": waist_z, "waist_dz_m": waist_dz, "D0": d0,
             "rays_per_mode_production": int(max(secs[-1].r1 for secs in modes)),
@@ -436,14 +642,102 @@ def index_screen_z(archive):
     return z
 
 
-def run_defect(sim, archive, out_dir, opt, launches, log=print):
+def uniform_mask(intensity, lit, ref, eps, threshold):
+    """|d mu| <= 2 eta (1/sqrt(I) + 1/sqrt(I_ref)), eta^2 = eps^2 P / A_lit: the relative
+    field error eps spread uniformly over the lit cells; masked = not below threshold."""
+    I = np.asarray(intensity, float)
+    eta = eps * math.sqrt(float(np.sum(np.maximum(I, 0.0))) / max(int(np.sum(lit)), 1))
+    i_ref = float(I.flat[ref])
+    if not i_ref > 0.0:              # unlit or U-statistic-negative reference: nothing estimable
+        dmu = np.full(I.shape, np.inf)
+        return dmu, np.ones(I.shape, bool)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        dmu = 2.0 * eta * (1.0 / np.sqrt(np.where(I > 0, I, np.nan)) + 1.0 / math.sqrt(i_ref))
+    dmu = np.where(I > 0, dmu, np.inf)
+    return dmu, ~(dmu <= threshold)
+
+
+def bound_eta(bound, spec, z_exit):
+    """Field-error amplitude eta of a screen from the per-mode bounds B_s (deposit units):
+    beyond the exit (z_s > 0) the Fresnel kernel bounds the field uniformly,
+    |e(P)| <= k / (2 pi z_s) (sqrt|Omega| B_s ||E_in||_s + sqrt|A_out| ||E_dep||_out,s);
+    on the exit plane only the cell average, |<e>_cell| <= B_s ||E_in||_s / sqrt(A_cell).
+    eta^2 = sum_s eps_s^2 (equal mode weights, as the map's W and I)."""
+    z_s = float(spec["z"]) - z_exit
+    if z_s > 0.0:
+        pref = bound["k"] / (2.0 * math.pi * z_s)
+        eps = [pref * (math.sqrt(bound["area"]) * m["B"] * m["E_in_dep"] + math.sqrt(m["O_area"]) * math.sqrt(max(m["O_abs2"], 0.0)))
+               for m in bound["modes"]]
+        kind = "fresnel"
+    else:
+        a_cell = float(spec["edge_x"]) / spec["nx"] * float(spec["edge_y"]) / spec["ny"]
+        eps = [m["B"] * m["E_in_dep"] / math.sqrt(a_cell) for m in bound["modes"]]
+        kind = "cell"
+    return math.sqrt(sum(e * e for e in eps)), kind
+
+
+def bound_mask(intensity, ref, eta, threshold):
+    """|d mu| <= 2 eta (1 / sqrt(I) + 1 / sqrt(I_ref)) from a certified field-error amplitude
+    eta; cells with I <= 0 (and every cell when I_ref <= 0) are not estimable: masked."""
+    I = np.asarray(intensity, float)
+    i_ref = float(I.flat[ref])
+    if not i_ref > 0.0:
+        return np.full(I.shape, np.inf), np.ones(I.shape, bool)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        dmu = 2.0 * eta * (1.0 / np.sqrt(np.where(I > 0, I, np.nan)) + 1.0 / math.sqrt(i_ref))
+    dmu = np.where(I > 0, dmu, np.inf)
+    return dmu, ~(dmu <= threshold)
+
+
+def write_mask(cfg, rows_path, eps, threshold, path, bound=None):
+    """Cell mask of the capillary screens of a stage-11 mu-beamlet.jsonl; lit = cells
+    with ray centres.  The heuristic uniform mask always; with `bound` (k, area, z_exit,
+    modes [{B, E_in_dep, O_abs2, O_area}]) also the certified mask of bound_eta."""
+    cap = cfg.capillary
+    screens = {"capillary": cap.screen, **{f"capillary-s{i}": s for i, s in enumerate(cap.screens, 1)}}
+    tables = {}
+    with open(rows_path, encoding="utf-8") as fh:
+        for line in fh:
+            row = json.loads(line)
+            if row["stage"] in screens:
+                tables.setdefault(row["stage"], []).append(row)
+    summary = {}
+    with open(path, "w", encoding="utf-8") as out:
+        for tag, rows in tables.items():
+            rows.sort(key=lambda r: r["pixel"])
+            spec = _screen_spec(screens[tag])
+            ref = _reference_pixel(ScreenGrid(SimpleNamespace(**spec)), spec["reference"])
+            if [r["pixel"] for r in rows] != list(range(len(rows))) or ref >= len(rows):
+                raise ValueError(f"{rows_path}: {tag} rows do not cover the screen grid")
+            lit = np.array([r["n_rays"] > 0 for r in rows])
+            I = [r["I"] for r in rows]
+            dmu, masked = uniform_mask(I, lit, ref, eps, threshold)
+            summary[tag] = {"cells": len(rows), "lit": int(lit.sum()), "masked": int(masked.sum()),
+                            "masked_lit": int((masked & lit).sum()), "certified": False}
+            extra = [{} for _ in rows]
+            if bound is not None:
+                eta, kind = bound_eta(bound, spec, bound["z_exit"])
+                dmu_b, masked_b = bound_mask(I, ref, eta, threshold)
+                extra = [{"dmu_bound": float(d) if np.isfinite(d) else None, "masked_bound": bool(m)}
+                         for d, m in zip(dmu_b, masked_b)]
+                summary[tag]["bound"] = {"eta": eta, "transfer": kind, "masked": int(masked_b.sum()),
+                                         "masked_lit": int((masked_b & lit).sum()), "certified": True}
+            for r, d, m, x in zip(rows, dmu, masked, extra):
+                out.write(json.dumps({"stage": tag, "pixel": r["pixel"], "x_um": r["x_um"], "y_um": r["y_um"],
+                                      "dmu": float(d) if np.isfinite(d) else None, "masked": bool(m), **x}) + "\n")
+    return summary
+
+
+def run_defect(sim, archive, out_dir, opt, launches, log=print, mask=None):
     """Per launch: D0 once, G and T per mode (processes over modes); writes the rows and
-    the summary with the argmin launch."""
+    the summary with the argmin launch; `mask` = a stage-11 mu-beamlet.jsonl of the first
+    launch, masked with that launch's indicator at production rays."""
     index = rays_v3.load_index(archive)
     out = os.path.join(out_dir, RESULT_DIR)
     os.makedirs(out, exist_ok=True)
     summary = {"archive": archive, "options": opt, "launches": []}
     rows_path = os.path.join(out, "modes.jsonl")
+    first_results = None
     with open(rows_path, "w", encoding="utf-8") as rows:
         for w0, w0_t, waist_z in launches:
             jobs, meta = launch_jobs(sim, archive, index, opt, w0, w0_t, waist_z)
@@ -455,6 +749,8 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print):
                         results.append(res)
             else:
                 results = [mode_job(j) for j in jobs]
+            if first_results is None:
+                first_results = (results, meta)
             for res in results:
                 res["D0"] = meta["D0"]
                 # ray noise rescaled from the scanned to the production ray count
@@ -468,15 +764,61 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print):
             rec = dict(meta, indicator_rms=rms("indicator"), indicator_prod_rms=rms("indicator_prod"),
                        indicator_max=float(max(r["indicator"] for r in results)),
                        G_rms=rms("G"), G_shot_rms=rms("G_shot"), T_rms=rms("T"), T_shot_rms=rms("T_shot"),
-                       modes=len(results), seconds=time.time() - t0)
+                       O_rms=rms("O"), O_shot_rms=rms("O_shot"), modes=len(results), seconds=time.time() - t0)
+            glass = ""
+            if opt["glass"]:
+                rec.update(G_glass_rms=rms("G_glass"), G_glass_shot_rms=rms("G_glass_shot"))
+                glass = f" G_glass rms {rec['G_glass_rms']:.4f} (noise {rec['G_glass_shot_rms']:.4f})"
+            bound = ""
+            bs = [r["bound"] for r in results if r.get("bound") and r["bound"].get("B") is not None]
+            if bs:
+                brms = lambda key: float(np.sqrt(np.mean([b[key] ** 2 for b in bs])))
+                rec.update(B_rms=brms("B"), B_max=float(max(b["B"] for b in bs)), B_e0_rms=brms("B_e0"),
+                           B_boundary_rms=brms("B_boundary"), B_tail_rms=brms("B_tail"), B_T_rms=brms("B_T"),
+                           B_modes=len(bs), B_sections=bs[0]["sections"], B_jmax=bs[0]["jmax"])
+                bound = (f" | B rms {rec['B_rms']:.4f} (e0 {rec['B_e0_rms']:.4f} boundary {rec['B_boundary_rms']:.4f} "
+                         f"tail {rec['B_tail_rms']:.4f} T {rec['B_T_rms']:.4f}; {rec['B_sections']} sections)")
             summary["launches"].append(rec)
             log(f"  launch w0 {w0*1e6:.2f} um (w0_t {meta['w0_t_m']*1e6:.2f}) waist_z {waist_z}: D0 {meta['D0']:.4f} "
                 f"G rms {rec['G_rms']:.4f} (noise {rec['G_shot_rms']:.4f}) T rms {rec['T_rms']:.4f} (noise {rec['T_shot_rms']:.4f}) "
                 f"-> indicator rms {rec['indicator_rms']:.4f}, at production rays {rec['indicator_prod_rms']:.4f}; "
-                f"{len(results)} modes, {rec['seconds']:.0f} s")
+                f"O rms {rec['O_rms']:.4f} (noise {rec['O_shot_rms']:.4f}){glass}{bound}; {len(results)} modes, {rec['seconds']:.0f} s")
     best = min(summary["launches"], key=lambda r: r["indicator_prod_rms"])
     summary["argmin"] = {"w0_m": best["w0_m"], "w0_t_m": best["w0_t_m"], "waist_z_m": best["waist_z_m"],
-                         "indicator_rms": best["indicator_rms"], "indicator_prod_rms": best["indicator_prod_rms"]}
+                         "indicator_rms": best["indicator_rms"], "indicator_prod_rms": best["indicator_prod_rms"],
+                         "certified": False, "status": "indicator argmin; not an error bound"}
+    with_b = [r for r in summary["launches"] if "B_rms" in r]
+    if with_b:
+        best = min(with_b, key=lambda r: r["B_rms"])
+        summary["argmin_bound"] = {
+            "w0_m": best["w0_m"], "w0_t_m": best["w0_t_m"], "waist_z_m": best["waist_z_m"],
+            "B_rms": best["B_rms"], "B_max": best["B_max"], "certified": True,
+            "bound": "||E - E_dep||(L) <= min(||exact modal part of e(L)|| + ||e(0) beyond the modes||, ||e(0)|| + ||boundary part||) + tail + T per mode (bound_modal), relative to ||E_in||",
+            "model": "paraxial Dirichlet field on the bore r < a_w (DIR-ell), constant bend curvature; the diagnosed ray sample "
+                     "is the sample (ray statistics not rescaled); the complex scale C of the fan is the least-squares fit "
+                     "to the point source on the entrance disc"}
+    if mask is not None:
+        n_map = int(sim.cfg.capillary.source.n_modes)
+        if summary["launches"][0]["modes"] != n_map:
+            raise ValueError(f"{mask}: the stage-11 map covers {n_map} modes, the diagnostics "
+                             f"{summary['launches'][0]['modes']}; run the scan without --modes")
+        eps = summary["launches"][0]["indicator_prod_rms"]
+        results0, meta0 = first_results
+        bound = None
+        if all(r.get("bound") and r["bound"].get("B") is not None for r in results0):
+            bound = {"k": float(sim.lines[0].k), "z_exit": float(sim.cfg.capillary.z1),
+                     "area": len(sim.cfg.capillary.bores) * math.pi * meta0["a_w_m"] ** 2,
+                     "modes": [{"B": r["bound"]["B"], "E_in_dep": r["E_in_dep"], "O_abs2": r["O_abs2"], "O_area": r["O_area"]}
+                               for r in results0]}
+        summary["mask"] = {"map": mask, "eps": eps, "threshold": opt["mask_threshold"], "certified": False,
+                           "assumption": "relative field error eps spread uniformly over the lit cells; not a bound",
+                           "bound_transfer": None if bound is None else
+                           "certified: Fresnel-kernel field bound beyond the exit, cell-concentration bound on the exit plane",
+                           "screens": write_mask(sim.cfg, mask, eps, opt["mask_threshold"], os.path.join(out, "mask.jsonl"), bound)}
+        for tag, rec in summary["mask"]["screens"].items():
+            log(f"  mask {tag}: {rec['masked_lit']} of {rec['lit']} lit cells above |d mu| {opt['mask_threshold']} (eps {eps:.4f})"
+                + (f"; certified ({rec['bound']['transfer']}, eta {rec['bound']['eta']:.3g}): {rec['bound']['masked_lit']} of {rec['lit']}"
+                   if "bound" in rec else ""))
     with open(os.path.join(out, "defect.json"), "w", encoding="utf-8") as fh:
         json.dump(summary, fh, indent=1)
     return summary
@@ -497,6 +839,10 @@ def main(argv=None):
     ap.add_argument("--scan", default=None, help="extra launches w0_um:waist_z[,...] (waist_z 'source' = null)")
     ap.add_argument("--rays", type=int, default=None); ap.add_argument("--sections", type=int, default=None)
     ap.add_argument("--modes", type=int, default=None); ap.add_argument("--jobs", type=int, default=None)
+    ap.add_argument("--glass", action="store_true", help="also the glass interface trace G_glass")
+    ap.add_argument("--mask", default=None, help="stage-11 mu-beamlet.jsonl of the configured launch to mask")
+    ap.add_argument("--no-bound", action="store_true", help="skip the modal error bound B")
+    ap.add_argument("--bound-jmax", type=float, default=None, help="Dirichlet basis cutoff j_mn < jmax of the bound")
     args = ap.parse_args(argv)
     from .. import load
     from ..simulation import Simulation
@@ -507,6 +853,11 @@ def main(argv=None):
     for key in ("rays", "sections", "modes", "jobs"):
         if getattr(args, key) is not None:
             opt[key] = getattr(args, key)
+    opt["glass"] = opt["glass"] or args.glass
+    if args.no_bound:
+        opt["bound"] = False
+    if args.bound_jmax is not None:
+        opt["bound_jmax"] = float(args.bound_jmax)
     cap = cfg.capillary
     if cap is None:
         raise ValueError("beamlet_defect needs a capillary scene")
@@ -517,10 +868,14 @@ def main(argv=None):
     if args.scan:
         launches += parse_scan(args.scan, float(cap.source.position[2]))
     t0 = time.time()
-    summary = run_defect(sim, os.path.abspath(args.archive), args.out, opt, launches)
+    summary = run_defect(sim, os.path.abspath(args.archive), args.out, opt, launches,
+                         mask=os.path.abspath(args.mask) if args.mask else None)
     best = summary["argmin"]
     print(f"argmin indicator: w0 {best['w0_m']*1e6:.2f} um, waist_z {best['waist_z_m']} "
           f"(rms at production rays {best['indicator_prod_rms']:.4f}); {time.time() - t0:.0f} s; rows in {os.path.join(args.out, RESULT_DIR)}")
+    if "argmin_bound" in summary:
+        bb = summary["argmin_bound"]
+        print(f"argmin bound B: w0 {bb['w0_m']*1e6:.2f} um, waist_z {bb['waist_z_m']} (B rms {bb['B_rms']:.4f}, max {bb['B_max']:.4f})")
 
 
 if __name__ == "__main__":

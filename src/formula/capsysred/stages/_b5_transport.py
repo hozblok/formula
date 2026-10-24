@@ -38,6 +38,64 @@ def count_free_caustics(q, velocity_derivative, distance):
     return np.sum(inside, axis=-1).astype(np.int64), ambiguous
 
 
+def _arg_ratio(num, den):
+    """Principal argument of num / den, 0 where the ratio is undefined."""
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out = np.angle(num/den)
+    return np.where(np.isfinite(out), out, 0.0)
+
+
+def det_path_increment(A, B, t=1.0):
+    """Continuous change of arg det(A + s B) for s from 0 to t (complex 2x2 stacks): the
+    sum over the roots r of the quadratic of the principal arg((t - r) / (-r)).  Returns
+    (increment, a root lies on the segment)."""
+    A, B = np.asarray(A, complex), np.asarray(B, complex)
+    a, c = _det2(B), _det2(A)
+    b = A[..., 0, 0]*B[..., 1, 1]+B[..., 0, 0]*A[..., 1, 1]-A[..., 0, 1]*B[..., 1, 0]-B[..., 0, 1]*A[..., 1, 0]
+    t = np.broadcast_to(np.asarray(t, float), np.shape(c))
+    tol = 64*np.finfo(float).eps*np.maximum.reduce([np.abs(a)*t*t, np.abs(b)*t, np.abs(c), np.full(np.shape(c), 1e-300)])
+    quadratic = np.abs(a)*t*t > tol
+    linear = ~quadratic & (np.abs(b)*t > tol)
+    out = np.zeros(np.shape(c))
+    hit = np.zeros(np.shape(c), bool)
+
+    def add(root, where):
+        nonlocal out, hit
+        out = np.where(where, out+_arg_ratio(t-root, -root), out)
+        on = (np.abs(root.imag) <= 1e-12*np.abs(root)) & (root.real >= 0) & (root.real <= t)
+        hit |= where & on
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        add(-c/b, linear)
+        disc = np.sqrt(b*b-4*a*c)
+        big = np.where(np.abs(b+disc) >= np.abs(b-disc), -(b+disc), -(b-disc))/(2*a)
+        add(big, quadratic)
+        add(c/(a*big), quadratic)
+    return out, hit
+
+
+def det_phase_increment(Q, P, V, dz, gamma):
+    """Continuous change of arg det(gamma (Q + s V) + i P) over a free flight s = 0..dz."""
+    Q, P, V = (np.asarray(m, float) for m in (Q, P, V))
+    return det_path_increment(gamma*Q+1j*P, gamma*V, dz)
+
+
+def gamma_phase_shift(Q, P, gamma_from, gamma_to):
+    """Continuous change of arg det(g Q + i P) for g from gamma_from to gamma_to."""
+    Q, P = np.asarray(Q, float), np.asarray(P, float)
+    return det_path_increment(gamma_from*Q+1j*P, (gamma_to-gamma_from)*Q, 1.0)[0]
+
+
+def _fixed_z(r, u):
+    return r[:, :2]-u[:, :2, None]*(r[:, 2, :]/u[:, 2, None])[:, None, :]
+
+
+def _mirror(normal):
+    """2x2 transverse reflection across the wall tangent (det -1)."""
+    n = normal[:, :2]/np.linalg.norm(normal[:, :2], axis=1)[:, None]
+    return np.eye(2)-2.0*n[:, :, None]*n[:, None, :]
+
+
 def is_polygon(bore):
     """Regular-polygon bore: config dicts carry kind, raw YAML dicts only `sides`."""
     return bore.get("kind") == "polygon" or bore.get("sides") is not None
@@ -146,8 +204,12 @@ def _velocity_derivative(direction, derivative):
     return (derivative[..., :2, :]-slope[..., :, None]*derivative[..., 2, None, :])/direction[..., 2, None, None]
 
 
-def transport_mode(mode, cap, target_z):
-    """Return Q=dX/dq, P=du_perp/dq and caustic count for every archived ray."""
+def transport_mode(mode, cap, target_z, gamma_ref=1.0):
+    """Return Q=dX/dq, P=du_perp/dq, V = dQ/dz of the final flight, caustic count, and
+    the continuous argument of (-1)^bounces det(gamma_ref Q + i P) along every ray: exact
+    over free flights, and over a bounce along the path from the mirrored incident state
+    (M Q, M P) to the reflected one (a thin lens on flat-in-z walls), so it stays defined
+    on exact caustics."""
     source = np.asarray(mode["origin"], dtype=float)
     target = np.column_stack([mode["points"], np.full(len(mode["points"]), target_z)])
     count = len(target)
@@ -161,6 +223,10 @@ def transport_mode(mode, cap, target_z):
     q_all = np.full((count, 2, 2), np.nan)
     p_all = np.full_like(q_all, np.nan)
     maslov = np.zeros(count, dtype=np.int64)
+    phase = np.zeros(count)
+    v_all = np.full_like(q_all, np.nan)
+    phase_hit = np.zeros(count, dtype=bool)
+    phase_jump = np.zeros(count)
     valid = bore_ids >= 0
     endpoint = np.zeros(count, dtype=bool)
     direction_error = np.zeros(count)
@@ -176,6 +242,7 @@ def transport_mode(mode, cap, target_z):
             distance = (float(cap.z0)-source[2])/u[:, 2]
             du = (r-u[:, :, None]*u[:, None, :2])/distance[:, None, None]
             path = np.asarray([mode["refl"][i] for i in ids], dtype=float) if nref else None
+            theta = np.angle(_det2(gamma_ref*_fixed_z(r, u)+1j*du[:, :2]))
             for j in range(nref+1):
                 destination = path[:, j] if j < nref else target[ids]
                 dz = destination[:, 2]-current[:, 2]
@@ -183,6 +250,9 @@ def transport_mode(mode, cap, target_z):
                 crosses, ambiguous = count_free_caustics(r[:, :2], v, dz)
                 maslov[ids] += crosses
                 endpoint[ids] |= ambiguous
+                step, hit = det_phase_increment(_fixed_z(r, u), du[:, :2], v, dz, gamma_ref)
+                theta = theta+step
+                phase_hit[ids] |= hit
                 flight = dz/u[:, 2]
                 reached = current+flight[:, None]*u
                 position_error[ids] = np.maximum(position_error[ids], np.linalg.norm(reached-destination, axis=1))
@@ -191,20 +261,31 @@ def transport_mode(mode, cap, target_z):
                     normal, dn, wall_distance = wall_normal_derivative(destination, bore, cap.z0)
                     wall_error[ids] = np.maximum(wall_error[ids], np.abs(wall_distance-float(bore["radius"])))
                     grazing[ids] = np.minimum(grazing[ids], np.abs(np.sum(u*normal, axis=1)))
+                    mirror = _mirror(normal)
+                    q_in, p_in = mirror@_fixed_z(r, u), mirror@du[:, :2]
                     with np.errstate(divide="ignore", invalid="ignore"):
                         u, r, du = reflect_variations(u, r, du, normal, dn)
+                    jump, hit = det_path_increment(gamma_ref*q_in+1j*p_in,
+                                                   gamma_ref*(r[:, :2]-q_in)+1j*(du[:, :2]-p_in))
+                    theta = theta+jump
+                    phase_hit[ids] |= hit
+                    phase_jump[ids] = np.maximum(phase_jump[ids], np.abs(jump))
                 else:
                     r -= u[:, :, None]*(r[:, 2, :]/u[:, 2, None])[:, None, :]
+                    v_all[ids] = v
                 current = destination
             q_all[ids] = r[:, :2]
             p_all[ids] = du[:, :2]
+            phase[ids] = theta
             direction_error[ids] = np.linalg.norm(u[:, :2]-mode["directions"][ids], axis=1)
     product = np.einsum("nji,njk->nik", q_all, p_all)
     defect = np.linalg.norm(product-product.swapaxes(1, 2), axis=(1, 2))
     defect /= np.maximum(np.linalg.norm(q_all, axis=(1, 2))*np.linalg.norm(p_all, axis=(1, 2)), 1e-300)
     finite = np.all(np.isfinite(q_all), axis=(1, 2)) & np.all(np.isfinite(p_all), axis=(1, 2))
-    valid &= finite & ~endpoint & (direction_error < 1e-8) & (position_error < 1e-8)
+    valid &= finite & (direction_error < 1e-8) & (position_error < 1e-8)
     valid &= (wall_error < 1e-9) & (grazing > 1e-10) & (defect < 1e-7)
+    continuous_valid = valid & ~phase_hit
+    valid &= ~endpoint
     diagnostics = {
         "ray_count": count, "valid_count": int(valid.sum()), "unassigned_bore_count": int((bore_ids < 0).sum()),
         "endpoint_caustic_count": int(endpoint.sum()), "nonfinite_count": int((~finite).sum()),
@@ -214,6 +295,10 @@ def transport_mode(mode, cap, target_z):
         "lagrangian_defect_max": float(np.nanmax(defect, initial=0)),
         "maslov_histogram": {str(m): int(np.sum(maslov[valid] == m)) for m in np.unique(maslov[valid])},
         "maslov_convention": "positive free-flight focal multiplicities; wall orientation jumps excluded",
+        "continuous_valid_count": int(continuous_valid.sum()),
+        "phase_root_on_path_count": int(np.sum(phase_hit & finite)),
+        "phase_bounce_jump_max_rad": float(np.max(phase_jump[finite], initial=0)),
     }
-    return {"entrance": entrance, "bore": bore_ids, "Q": q_all, "P": p_all,
-            "maslov": maslov, "valid": valid, "diagnostics": diagnostics}
+    return {"entrance": entrance, "bore": bore_ids, "Q": q_all, "P": p_all, "V": v_all,
+            "maslov": maslov, "phase": phase, "gamma_ref": float(gamma_ref),
+            "valid": valid, "continuous_valid": continuous_valid, "diagnostics": diagnostics}

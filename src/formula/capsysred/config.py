@@ -79,8 +79,10 @@ DEFAULTS = {
     # source->screen flight, or an explicit number. waist_z [m]: the launch
     # beam's free-space waist lies waist_z - z_source along the ray past the
     # source (the plane z = waist_z when walls before it are flat), null = at
-    # the source.
-    "beamlet": {"w0": 5.0e-7, "w0_t": None, "window_sigmas": 3.0},
+    # the source. self_pairs: "keep" (honest |E|^2) or "subtract" (ray
+    # self-pairs off, U-statistic n/(n-1)).
+    "beamlet": {"w0": 5.0e-7, "w0_t": None, "window_sigmas": 3.0,
+                "self_pairs": "keep"},
     # stage 14: exact disk-backed delete-one-mode jackknife taxonomy.
     "stage14": {"flag_thresholds": {
         "ic_n_sigma": 3.0, "ref_ic_n_sigma": 3.0, "w_n_sigma": 3.0,
@@ -143,6 +145,8 @@ B5_DEFAULTS = {
     "map_jobs": 1,
     "map_ray_budgets": [],
     "map_snapshots": [],
+    "branch": "maslov",            # archive_canonical prefactor root: maslov | continuous (exact caustics kept)
+    "exit_propagation": False,     # windows on the capillary exit plane, propagated exactly to the screen
 }
 
 B9_DEFAULTS = {
@@ -511,6 +515,7 @@ class Config:
         self.beamlet_w0_t = float(w0t) if isinstance(w0t, (int, float)) else w0t
         self.beamlet_ns = float(cfg["beamlet"]["window_sigmas"])
         self.beamlet_waist_z = cfg["beamlet"].get("waist_z")
+        self.beamlet_self_pairs = str(cfg["beamlet"].get("self_pairs", "keep"))
         stage14 = cfg.get("stage14")
         if not isinstance(stage14, dict):
             raise ValueError("stage14 must be a mapping")
@@ -571,6 +576,15 @@ class Config:
         if not (wz is None or finite(wz)):
             raise ValueError(f"beamlet waist_z: null or a number, got {wz!r}")
         self.beamlet_waist_z = None if wz is None else float(wz)
+        sp = beamlet.get("self_pairs", "keep")
+        if sp not in ("keep", "subtract"):
+            raise ValueError(f"beamlet self_pairs: \"keep\" or \"subtract\", got {sp!r}")
+        if sp == "subtract":
+            for src in (getattr(self.capillary, "source", None), getattr(self, "free_source", None)):
+                if src is not None and src.n_rays < 2:
+                    raise ValueError("beamlet self_pairs: subtract pairs distinct rays — needs at least "
+                                     f"two rays per mode, the source has {src.n_rays}")
+        self.beamlet_self_pairs = sp
 
     def validate_wave_estimator(self) -> dict:
         """Stage-16-only checks; returns the `wave_estimator` section merged with WAVE_DEFAULTS."""
@@ -702,7 +716,8 @@ class Config:
         b5 = _merge(B5_DEFAULTS, raw)
         for key, choices in (("provider", ("archive_phase", "archive_canonical")),
                              ("patch_space", ("entrance", "screen")),
-                             ("charts", ("screen", "adaptive"))):
+                             ("charts", ("screen", "adaptive")),
+                             ("branch", ("maslov", "continuous"))):
             if b5[key] not in choices:
                 raise ValueError(f"b5_estimator.{key}: expected one of {choices}")
         for key, minimum in (("max_modes", 1), ("rays_per_mode", 1), ("degree", 2),
@@ -714,6 +729,8 @@ class Config:
                 raise ValueError(f"b5_estimator.{key}: expected an integer >= {minimum}")
         if b5["degree"] > 5:
             raise ValueError("b5_estimator.degree must be from 2 through 5")
+        if not isinstance(b5["exit_propagation"], bool):
+            raise ValueError("b5_estimator.exit_propagation must be true or false")
         if b5["min_neighbors"] > b5["neighbors"]:
             raise ValueError("b5_estimator.min_neighbors must not exceed neighbors")
         widths = b5["widths_m"]

@@ -12,9 +12,9 @@ from formula.capsysred.rays import geometry_metadata
 from formula.capsysred.stages import _b5_map as maps
 
 
-def scene_and_archive(tmp_path):
+def scene_and_archive(tmp_path, z1=.02):
     sim = Simulation.from_dict({"precision": 32, "energy_kev": 8.048,
-        "capillary": {"bores": [{"center": [0., 0.], "radius": 2e-6}], "z0": 0., "z1": .02,
+        "capillary": {"bores": [{"center": [0., 0.], "radius": 2e-6}], "z0": 0., "z1": z1,
             "source": {"shape": "point", "size": 0., "position": [0., 0., -.01], "n_modes": 3, "n_rays": 16},
             "screen": {"z": .02, "edge_x": 8e-6, "edge_y": 8e-6, "nx": 21, "ny": 21}},
         "b5_estimator": {"provider": "archive_canonical", "max_modes": 3, "rays_per_mode": 16,
@@ -116,3 +116,21 @@ def test_jackknife_requires_all_positive_leave_one_intensities():
     assert count[0] == 3
     assert np.isnan(error[1])
     assert count[1] == 1
+
+
+def test_continuous_branch_and_exit_propagation_maps(tmp_path):
+    """Straight rays: the continuous branch gives the Maslov map; windows formed on the
+    exit plane and propagated to the screen give a finite map and say so."""
+    sim, archive = scene_and_archive(tmp_path, z1=.01)
+    base = sim.cfg.validate_b5_estimator()
+    data, metas = {}, {}
+    for name, extra in (("maslov", {}), ("continuous", {"branch": "continuous"}),
+                        ("exit", {"branch": "continuous", "exit_propagation": True})):
+        maps.run_canonical_map(sim, tmp_path/name, {**base, **extra}, rays_paths=[archive])
+        metas[name] = json.loads((tmp_path/name/"stage17/meta.json").read_text())
+        data[name] = np.load(tmp_path/name/"stage17"/metas[name]["outputs"][-1]["file"])
+    np.testing.assert_allclose(data["continuous"]["W"], data["maslov"]["W"], rtol=1e-12, atol=1e-12*abs(data["maslov"]["W"]).max())
+    assert metas["exit"]["exit_propagation_m"] == pytest.approx(.01)
+    assert metas["maslov"]["exit_propagation_m"] == 0
+    assert np.isfinite(data["exit"]["I"]).all() and data["exit"]["I"][tuple(data["exit"]["ref_index"])] > 0
+    assert not np.allclose(data["exit"]["I"], data["maslov"]["I"])

@@ -18,10 +18,21 @@ transport (Q = dX/dq, P = du/dq).  Its defects:
       earlier segments still reach the exit plane inside the bores.
 indicator = D0 + R + G + T per mode and width; the scan picks the width with the
 smallest RMS indicator over modes.  Reported as an indicator, not a certified bound.
+indicator_exit = D0 + R_inside + G + T is the same for the map with exit_propagation
+(windows formed on the exit plane and propagated exactly: no residual after the exit);
+argmin_exit is its width.  Reported beside them, not added:
+  O   the final windows outside the bores on the exit plane (blocked by the glass there).
+  G_glass (option glass) the trace of the glass interface condition E - d_n E / (i k_g) on
+      the true wall r = a, k_g = k sqrt(theta^2 - 2 delta + 2 i beta) per window, in place
+      of the Dirichlet wall at a + Re(ell) (circular outline).
+--map MAP.npz writes the cell mask of a stage-17 map (its width, and exit_propagation of
+the config): the indicator eps spread uniformly over the cells with rays gives
+|d mu| <= 2 eta (1/sqrt(I) + 1/sqrt(I_ref)), eta^2 = eps^2 P / A_lit; an assumption, not a bound.
 
 Usage: python -m formula.capsysred.stages._b5_defect SCENE.yaml ARCHIVE -o OUT
          [--widths 0.5,1,2 (um)] [--rays N] [--sections S] [--modes M] [--jobs J]
-Rows: OUT/stage17-defect/modes.jsonl, defect.json.
+         [--glass] [--map OUT17/.../map-....npz]
+Rows: OUT/stage17-defect/modes.jsonl, defect.json, mask-<map>.npz (with --map).
 """
 
 import argparse
@@ -35,10 +46,14 @@ import numpy as np
 
 from .. import rays_v3
 from ._b5_transport import count_free_caustics, reflect_variations, wall_normal_derivative
+from . import bound_modal
+from .beamlet import _screen_spec
+from .beamlet_defect import _channel, _disc, bound_eta, bound_mask, uniform_mask
 
 RESULT_DIR = "stage17-defect"
 DEFAULTS = {"rays": 20000, "sections": 40, "samples": 300, "ring_step": 0.5e-6, "cutoff": 5.0,
-            "modes": None, "jobs": 1}
+            "modes": None, "jobs": 1, "glass": False, "mask_threshold": 0.05,
+            "bound": True, "bound_jmax": 160.0, "bound_phase_step": 0.7}
 
 
 def options(cfg):
@@ -52,7 +67,13 @@ def options(cfg):
             raise ValueError(f"b5_defect.{key}: a positive integer")
     if opt["modes"] is not None and (not isinstance(opt["modes"], int) or opt["modes"] < 1):
         raise ValueError("b5_defect.modes: null or a positive integer")
-    for key in ("ring_step", "cutoff"):
+    for key in ("ring_step", "cutoff", "mask_threshold"):
+        if not isinstance(opt[key], (int, float)) or opt[key] <= 0:
+            raise ValueError(f"b5_defect.{key}: a positive number")
+    for key in ("glass", "bound"):
+        if not isinstance(opt[key], bool):
+            raise ValueError(f"b5_defect.{key}: true or false")
+    for key in ("bound_jmax", "bound_phase_step"):
         if not isinstance(opt[key], (int, float)) or opt[key] <= 0:
             raise ValueError(f"b5_defect.{key}: a positive number")
     return opt
@@ -221,15 +242,22 @@ def window_states(seg, idx, z, k, width, z_src):
     return X, slope, coeff, log_prefactor_derivative(Q, P, V, gamma)
 
 
-def window_values(seg, idx, z, px, py, k, width, z_src, residual=False, pre=None):
+def window_values(seg, idx, z, px, py, k, width, z_src, residual=False, pre=None, normal=None, fresnel=None):
     """Frozen-window values of the selected segments at points [n_sel, n_pts]; with
-    residual=True the values of i d/dz psi + Lap psi / 2k instead; `pre` = their
-    window_states already restricted to idx."""
+    residual=True the values of i d/dz psi + Lap psi / 2k instead; with `normal` (n_x, n_y
+    at the points) and `fresnel` (2 delta, 2 beta) those of psi - d_n psi / (i k_g); `pre` =
+    their window_states already restricted to idx."""
     X, slope, coeff, cz = window_states(seg, idx, z, k, width, z_src) if pre is None else pre
     dx = px - X[:, 0, None]
     dy = py - X[:, 1, None]
     rho2 = dx * dx + dy * dy
     psi = coeff[:, None] * np.exp(1j * k * (slope[:, 0, None] * dx + slope[:, 1, None] * dy) - rho2 / (2.0 * width * width))
+    if normal is not None:
+        nx, ny = normal
+        s = slope[:, 0, None] * nx + slope[:, 1, None] * ny
+        grad_n = 1j * k * s - (dx * nx + dy * ny) / (width * width)
+        k_glass = k * np.sqrt(s * s - fresnel[0] + 1j * fresnel[1])
+        return psi * (1.0 - grad_n / (1j * k_glass))
     if not residual:
         return psi
     return psi * (1j * cz[:, None] + rho2 / (2.0 * k * width ** 4) - 1.0 / (k * width * width))
@@ -246,9 +274,10 @@ def bore_axis(bore, z):
     return c
 
 
-def _polar_sum(seg, idx, z, cx, cy, radii, phis, k, width, z_src, cutoff, residual=False):
+def _polar_sum(seg, idx, z, cx, cy, radii, phis, k, width, z_src, cutoff, residual=False, fresnel=None):
     """Sum of the selected windows on the polar points around (cx, cy), each window only
-    within its angular support; returns [n_r, n_phi]."""
+    within its angular support; returns [n_r, n_phi]; `fresnel`: the glass form with radial
+    normals."""
     n_r, n_phi = radii.size, phis.size
     out = np.zeros((n_r, n_phi), complex)
     if idx.size == 0:
@@ -257,13 +286,18 @@ def _polar_sum(seg, idx, z, cx, cy, radii, phis, k, width, z_src, cutoff, residu
     phi_b = np.arctan2(X[:, 1] - cy, X[:, 0] - cx)
     dphi = phis[1] - phis[0]
     h = min(int(math.ceil((cutoff * width) / (max(radii.min(), 1e-12) * dphi))) + 1, n_phi // 2)
-    for start in range(0, idx.size, 1024):
-        sel = idx[start:start + 1024]
-        m0 = np.rint((phi_b[start:start + 1024] - phis[0]) / dphi).astype(int)
+    block = max(1, min(1024, (1 << 21) // (n_r * (2 * h + 1))))             # bounded [windows, n_r, 2h+1]
+    for start in range(0, idx.size, block):
+        sel = idx[start:start + block]
+        m0 = np.rint((phi_b[start:start + block] - phis[0]) / dphi).astype(int)
         cols = (m0[:, None] + np.arange(-h, h + 1)[None, :]) % n_phi
         px = cx + radii[None, :, None] * np.cos(phis[cols])[:, None, :]
         py = cy + radii[None, :, None] * np.sin(phis[cols])[:, None, :]
-        vals = window_values(seg, sel, z, px.reshape(len(sel), -1), py.reshape(len(sel), -1), k, width, z_src, residual)
+        normal = None
+        if fresnel is not None:
+            normal = tuple(np.broadcast_to(f(phis[cols])[:, None, :], px.shape).reshape(len(sel), -1) for f in (np.cos, np.sin))
+        vals = window_values(seg, sel, z, px.reshape(len(sel), -1), py.reshape(len(sel), -1), k, width, z_src, residual,
+                             normal=normal, fresnel=fresnel)
         np.add.at(out, (slice(None), cols), np.transpose(vals.reshape(len(sel), n_r, -1), (1, 0, 2)))
     return out
 
@@ -273,16 +307,17 @@ def near(seg, idx, z, cx, cy, a_w, reach):
     return np.hypot(X[:, 0] - cx, X[:, 1] - cy) <= a_w + reach
 
 
-def _halves(seg, idx, z, cx, cy, radii, phis, k, width, z_src, cutoff):
+def _halves(seg, idx, z, cx, cy, radii, phis, k, width, z_src, cutoff, fresnel=None):
     """Window sums of the even and odd ray halves: |a + b|^2 is the full sum, |a - b|^2 its
     ray-quadrature noise."""
     even = seg.ray[idx] % 2 == 0
-    return (_polar_sum(seg, idx[even], z, cx, cy, radii, phis, k, width, z_src, cutoff),
-            _polar_sum(seg, idx[~even], z, cx, cy, radii, phis, k, width, z_src, cutoff))
+    return (_polar_sum(seg, idx[even], z, cx, cy, radii, phis, k, width, z_src, cutoff, fresnel=fresnel),
+            _polar_sum(seg, idx[~even], z, cx, cy, radii, phis, k, width, z_src, cutoff, fresnel=fresnel))
 
 
-def wall_trace(seg, bores, a_w, zs, k, width, z_src, ring_step, cutoff):
-    """Per section: the wall integral of |window sum|^2 and of its ray-noise part."""
+def wall_trace(seg, bores, a_w, zs, k, width, z_src, ring_step, cutoff, fresnel=None):
+    """Per section: the wall integral of |window sum|^2 and of its ray-noise part; with
+    `fresnel` the glass interface form on the circle of radius a_w."""
     n_phi = int(math.ceil(2.0 * math.pi * a_w / ring_step))
     phis = np.arange(n_phi) * 2.0 * math.pi / n_phi
     full, shot = np.zeros(zs.size), np.zeros(zs.size)
@@ -291,7 +326,7 @@ def wall_trace(seg, bores, a_w, zs, k, width, z_src, ring_step, cutoff):
             cx, cy = bore_axis(bore, z)
             cand = np.flatnonzero(seg.bore == b)
             idx = cand[near(seg, cand, z, cx, cy, a_w, cutoff * width)]
-            ra, rb = _halves(seg, idx, z, cx, cy, np.array([a_w]), phis, k, width, z_src, cutoff)
+            ra, rb = _halves(seg, idx, z, cx, cy, np.array([a_w]), phis, k, width, z_src, cutoff, fresnel)
             measure = a_w * (2.0 * math.pi / n_phi)
             full[jz] += float(np.sum(np.abs(ra[0] + rb[0]) ** 2) * measure)
             shot[jz] += float(np.sum(np.abs(ra[0] - rb[0]) ** 2) * measure)
@@ -353,18 +388,19 @@ def _bucket_pairs(wx, wy, px, py, a_w, reach):
     return pt[close], sel[close]
 
 
-def exit_tails(seg, bores, a_w, z_exit, k, width, z_src, ring_step, cutoff):
-    """T^2 and its ray-noise part: non-final windows on the exit plane inside the bores."""
+def exit_tails(seg, bores, a_w, z_exit, k, width, z_src, ring_step, cutoff, outside=False):
+    """T^2 and its ray-noise part: non-final windows on the exit plane inside the bores;
+    outside=True: O^2, the final windows beyond the circle a_w."""
     n_phi = int(math.ceil(2.0 * math.pi * a_w / ring_step))
     phis = np.arange(n_phi) * 2.0 * math.pi / n_phi
-    depth = min(a_w, (cutoff + 1.0) * width)
+    depth = (cutoff + 1.0) * width if outside else min(a_w, (cutoff + 1.0) * width)
     n_r = max(4, int(math.ceil(depth / ring_step)))
     dr = depth / n_r
-    radii = a_w - (np.arange(n_r) + 0.5) * dr
+    radii = a_w + (np.arange(n_r) + 0.5) * dr if outside else a_w - (np.arange(n_r) + 0.5) * dr
     full = shot = 0.0
     for b, bore in enumerate(bores):
         cx, cy = bore_axis(bore, z_exit)
-        cand = np.flatnonzero((seg.bore == b) & ~seg.final)
+        cand = np.flatnonzero((seg.bore == b) & (seg.final if outside else ~seg.final))
         idx = cand[near(seg, cand, z_exit, cx, cy, a_w, cutoff * width)]
         ga, gb = _halves(seg, idx, z_exit, cx, cy, radii, phis, k, width, z_src, cutoff)
         measure = radii[:, None] * dr * (2.0 * math.pi / n_phi)
@@ -374,6 +410,30 @@ def exit_tails(seg, bores, a_w, z_exit, k, width, z_src, ring_step, cutoff):
 
 
 # ------------------------------------------------------------------ per mode
+def modal_bound(seg, bores, job, origin, width, t_full):
+    """B of the frozen-window field of one mode and width (bound_modal.bores_bound): the
+    entrance defect against the point source, the frame wall trace of the windows, its
+    boundary part and the mode tails; T from the exit tails.  The volume residual R is added
+    by the caller (Duhamel, int ||R|| dz).  Circular bores only."""
+    k, a_w, z_src = job["k"], job["a_w"], origin[2]
+    z0, L = job["z0_cap"], job["z_exit"] - job["z0_cap"]
+    disc = _disc(a_w, job["bound_jmax"])
+    chans = [_channel(b, a_w, disc, k, job.get("fresnel")) for b in bores]
+
+    def sample(b, zr, radii, phis, cx, cy):
+        z = z0 + zr
+        cand = np.flatnonzero(seg.bore == b)
+        idx = cand[near(seg, cand, z, cx, cy, a_w, job["cutoff"] * width)]
+        out = np.zeros((radii.size, phis.size), complex)
+        for lo in range(0, radii.size, 8):
+            ra, rb = _halves(seg, idx, z, cx, cy, radii[lo:lo + 8], phis, k, width, z_src, job["cutoff"])
+            out[lo:lo + 8] = ra + rb
+        return out
+
+    return bound_modal.bores_bound(chans, L, sample, lambda ch: ch.entrance_field(origin[:2], z0 - z_src),
+                                   job["bound_phase_step"], t_full)
+
+
 def mode_job(job):
     t0 = time.time()
     from ..simulation import Simulation
@@ -394,6 +454,8 @@ def mode_job(job):
         r_out = (volume_residual(seg, bores, job["a_w"] * 1.0, after, job["k"], width, origin[2], job["samples"], job["cutoff"], final_only_after=z1)
                  if n_after else (np.zeros(0), np.zeros(0)))
         t_full, t_shot = exit_tails(seg, bores, job["a_w"], z1, job["k"], width, origin[2], job["ring_step"], job["cutoff"])
+        o_full, o_shot = exit_tails(seg, bores, job["a_w"], z1, job["k"], width, origin[2], job["ring_step"], job["cutoff"],
+                                    outside=True)
         # entrance field norm of this fan in the map's units: (N/A) coeff_0 2 pi w^2 over the area
         amp0 = (job["k"] / (2.0 * math.pi)) * float(np.mean(seg.amp[seg.final])) * (1.0 / (job["k"] * width * width))
         rms_field = total / job["area"] * amp0 * 2.0 * math.pi * width * width
@@ -402,20 +464,89 @@ def mode_job(job):
         dz_in, dz_out = (z1 - z0) / job["sections"], ((z_t - z1) / n_after if n_after else 0.0)
         r_int = lambda a, b: float(np.sum(np.sqrt(a)) * dz_in + np.sum(np.sqrt(b)) * dz_out) / norm
         g_scale = dz_in / wall_area
-        out[f"{width*1e6:g}"] = {"G": math.sqrt(float(np.sum(coh(g_pair))) * g_scale) / rms_field,
-                                 "G_shot": math.sqrt(float(np.sum(g_pair[1])) * g_scale) / rms_field,
-                                 "R": r_int(coh(r_in), coh(r_out)), "R_shot": r_int(r_in[1], r_out[1]),
-                                 "R_inside": r_int(coh(r_in), np.zeros(0)),
-                                 "T": math.sqrt(max(t_full - t_shot, 0.0)) / norm, "T_shot": math.sqrt(t_shot) / norm}
+        terms = {"G": math.sqrt(float(np.sum(coh(g_pair))) * g_scale) / rms_field,
+                 "G_shot": math.sqrt(float(np.sum(g_pair[1])) * g_scale) / rms_field,
+                 "R": r_int(coh(r_in), coh(r_out)), "R_shot": r_int(r_in[1], r_out[1]),
+                 "R_inside": r_int(coh(r_in), np.zeros(0)), "R_inside_shot": r_int(r_in[1], np.zeros(0)),
+                 "T": math.sqrt(max(t_full - t_shot, 0.0)) / norm, "T_shot": math.sqrt(t_shot) / norm,
+                 "O": math.sqrt(max(o_full - o_shot, 0.0)) / norm, "O_shot": math.sqrt(o_shot) / norm}
+        if job["glass"]:
+            gg = wall_trace(seg, bores, job["a"], inside, job["k"], width, origin[2], job["ring_step"], job["cutoff"],
+                            fresnel=job["fresnel"])
+            glass_scale = dz_in / ((z1 - z0) * 2.0 * math.pi * job["a"] * len(bores))
+            terms["G_glass"] = math.sqrt(float(np.sum(coh(gg))) * glass_scale) / rms_field
+            terms["G_glass_shot"] = math.sqrt(float(np.sum(gg[1])) * glass_scale) / rms_field
+        terms["E_in_dep"] = norm
+        terms["O_abs2"] = float(o_full)
+        w_fin = width
+        terms["O_area"] = len(bores) * math.pi * ((job["a_w"] + (job["cutoff"] + 2.0) * w_fin) ** 2 - job["a_w"] ** 2)
+        if job.get("bound"):
+            if any(b.get("sides") for b in bores):
+                terms["bound"] = {"B": None, "reason": "polygon bore: no Dirichlet mode basis"}
+            else:
+                bnd = modal_bound(seg, bores, job, origin, width, t_full)
+                # the full-flight residual of the frozen windows enters by Duhamel: inside the
+                # channel for the exit_propagation map, to the target screen otherwise
+                r_in, r_all = terms["R_inside"], terms["R"]
+                bnd["B_exit"] = bnd["B"] + r_in                 # exit_propagation map (no residual after the exit)
+                bnd["B_target"] = bnd["B"] + r_all              # frozen windows to the target screen
+                bnd["B_R_inside"], bnd["B_R_after"] = r_in, r_all - r_in
+                terms["bound"] = bnd
+        out[f"{width*1e6:g}"] = terms
     return {"mode": job["mode"], "rays": total, "fates": fates, "segments": int(seg.p0.shape[0]),
             "valid_segments": int(seg.valid.sum()), "widths": out, "seconds": time.time() - t0}
 
 
-def run_defect(sim, archive, out_dir, opt, widths, log=print):
+def indicator_at_budget(terms, d0, measured_rays, rays, exit_prop):
+    """D0 + R + G + T of one mode with its ray-noise terms rescaled from the measured
+    ray count to a budget of `rays` per mode (noise ~ 1/sqrt(rays))."""
+    scale = math.sqrt(measured_rays / rays)
+    prod = lambda t: math.hypot(terms[t], scale * terms[t + "_shot"])
+    return d0 + prod("R_inside" if exit_prop else "R") + prod("G") + prod("T")
+
+
+def map_eps(results, key, d0, rays, modes, exit_prop):
+    """RMS indicator over the first `modes` diagnosed modes at a ray budget of `rays`
+    per mode: the eps of a map built from that mode prefix and budget."""
+    if modes > len(results):
+        raise ValueError(f"map holds {modes} modes, the diagnostics cover {len(results)}")
+    return float(np.sqrt(np.mean([indicator_at_budget(r["widths"][key], d0, r["rays"], rays, exit_prop) ** 2
+                                  for r in results[:modes]])))
+
+
+def write_map_mask(npz_path, eps, threshold, path, bound=None, spec=None):
+    """Cell mask of a stage-17 map under the uniform-error assumption; lit = cells with
+    rays of the matched ray estimator.  With `bound` (as beamlet_defect.bound_eta) and the
+    screen `spec` also the certified mask: dmu_bound / masked_bound in the npz."""
+    with np.load(npz_path) as data:
+        I, lit = data["I"], data["matched_stage14_rays"] > 0
+        ref = int(np.ravel_multi_index(tuple(int(v) for v in data["ref_index"]), I.shape))
+        x, y = data["x"], data["y"]
+    dmu, masked = uniform_mask(I, lit, ref, eps, threshold)
+    arrays = dict(x=x, y=y, dmu=dmu, masked=masked, eps=np.array(eps), threshold=np.array(threshold))
+    out = {"cells": int(I.size), "lit": int(lit.sum()), "masked": int(masked.sum()), "masked_lit": int((masked & lit).sum()),
+           "certified": False}
+    if bound is not None:
+        eta, kind = bound_eta(bound, spec, bound["z_exit"])
+        dmu_b, masked_b = bound_mask(I, ref, eta, threshold)
+        arrays.update(dmu_bound=dmu_b, masked_bound=masked_b, eta_bound=np.array(eta))
+        out["bound"] = {"eta": eta, "transfer": kind, "masked": int(masked_b.sum()),
+                        "masked_lit": int((masked_b & lit).sum()), "certified": True}
+    np.savez_compressed(path, **arrays)
+    return out
+
+
+def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
+    """Per width: D0 once, R, G, T (and O, G_glass) per mode; writes the rows and the summary
+    with the argmin widths; `map_path` = a stage-17 map npz to mask."""
     cfg = sim.cfg
     cap = cfg.capillary
     k = float(sim.lines[0].k)
     b5 = cfg.validate_b5_estimator()
+    if b5["branch"] != "maslov":
+        raise ValueError("stage 17 defect diagnostics follow the Maslov branch (prefactor zero on an "
+                         f"exact caustic); b5_estimator.branch {b5['branch']!r} maps have no matching "
+                         "diagnostics yet — scan with branch: maslov")
     screen = [cap.screen, *cap.screens][b5["screen_index"]]
     index = rays_v3.load_index(archive)
     modes = index.modes("capillary")
@@ -430,7 +561,10 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print):
     rec = dict(meta.get("screen") or {}); rec.update((meta.get("capillary") or {}).get("screen") or {})
     base = dict(archive=archive, raw_cfg=cfg.raw, rays=opt["rays"], sections=opt["sections"], samples=int(opt["samples"]),
                 ring_step=float(opt["ring_step"]), cutoff=float(opt["cutoff"]), k=k, fresnel=(2.0 * sim.delta_f, 2.0 * sim.beta_f),
-                a_w=a_w, z_exit=float(cap.z1), z_target=float(screen.z), z_rec=float(rec["z"]), area=area, widths=list(widths))
+                a_w=a_w, a=float(cap.bores[0]["radius"]), glass=bool(opt["glass"]),
+                z_exit=float(cap.z1), z_target=float(screen.z), z_rec=float(rec["z"]), area=area, widths=list(widths),
+                z0_cap=float(cap.z0), bound=bool(opt["bound"]), bound_jmax=float(opt["bound_jmax"]),
+                bound_phase_step=float(opt["bound_phase_step"]))
     jobs = [dict(base, mode=m, parts=tuple(secs)) for m, secs in enumerate(modes)]
     out = os.path.join(out_dir, RESULT_DIR)
     os.makedirs(out, exist_ok=True)
@@ -446,26 +580,84 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print):
                "rays_per_mode_production": rays_prod, "widths": []}
     with open(os.path.join(out, "modes.jsonl"), "w", encoding="utf-8") as rows:
         for res in results:
-            scale = math.sqrt(res["rays"] / rays_prod)        # ray noise rescaled to the map's budget
             for key, terms in res["widths"].items():
                 terms["D0"] = d0[key]
                 terms["indicator"] = d0[key] + terms["R"] + terms["G"] + terms["T"]
-                terms["indicator_prod"] = d0[key] + sum(math.hypot(terms[t], scale * terms[t + "_shot"]) for t in ("R", "G", "T"))
+                terms["indicator_prod"] = indicator_at_budget(terms, d0[key], res["rays"], rays_prod, False)
+                terms["indicator_exit"] = d0[key] + terms["R_inside"] + terms["G"] + terms["T"]
+                terms["indicator_exit_prod"] = indicator_at_budget(terms, d0[key], res["rays"], rays_prod, True)
             rows.write(json.dumps(res) + "\n")
     for w in widths:
         key = f"{w*1e6:g}"
         rms = lambda term: float(np.sqrt(np.mean([r["widths"][key][term] ** 2 for r in results])))
         rec_w = {"width_m": w, "D0": d0[key], "indicator_rms": rms("indicator"), "indicator_prod_rms": rms("indicator_prod"),
                  "indicator_max": float(max(r["widths"][key]["indicator"] for r in results))}
-        for term in ("R", "R_shot", "R_inside", "G", "G_shot", "T", "T_shot"):
+        terms = ["R", "R_shot", "R_inside", "R_inside_shot", "G", "G_shot", "T", "T_shot", "O", "O_shot",
+                 "indicator_exit", "indicator_exit_prod"] + (["G_glass", "G_glass_shot"] if opt["glass"] else [])
+        for term in terms:
             rec_w[term + "_rms"] = rms(term)
+        bs = [r["widths"][key].get("bound") for r in results]
+        if bs and all(b and b.get("B") is not None for b in bs):
+            brms = lambda name: float(np.sqrt(np.mean([b[name] ** 2 for b in bs])))
+            for name in ("B", "B_tri", "B_exit", "B_target", "B_e0", "B_r0", "B_exact", "B_boundary", "B_tail", "B_T", "B_R_inside", "B_R_after"):
+                rec_w[name + "_rms"] = brms(name)
+            rec_w["B_sections"], rec_w["B_jmax"] = bs[0]["sections"], bs[0]["jmax"]
         summary["widths"].append(rec_w)
+        glass = f" G_glass rms {rec_w['G_glass_rms']:.4f} (noise {rec_w['G_glass_shot_rms']:.4f})" if opt["glass"] else ""
         log(f"  width {w*1e6:g} um: D0 {d0[key]:.4f} R rms {rec_w['R_rms']:.4f} (noise {rec_w['R_shot_rms']:.4f}, inside {rec_w['R_inside_rms']:.4f}) "
             f"G rms {rec_w['G_rms']:.4f} (noise {rec_w['G_shot_rms']:.4f}) T rms {rec_w['T_rms']:.4f} (noise {rec_w['T_shot_rms']:.4f}) "
-            f"-> indicator rms {rec_w['indicator_rms']:.4f}, at the map's rays {rec_w['indicator_prod_rms']:.4f}")
+            f"-> indicator rms {rec_w['indicator_rms']:.4f}, at the map's rays {rec_w['indicator_prod_rms']:.4f}; "
+            f"with exit propagation {rec_w['indicator_exit_prod_rms']:.4f}; O rms {rec_w['O_rms']:.4f} (noise {rec_w['O_shot_rms']:.4f}){glass}")
     best = min(summary["widths"], key=lambda r: r["indicator_prod_rms"])
     summary["argmin"] = {"width_m": best["width_m"], "indicator_rms": best["indicator_rms"],
-                         "indicator_prod_rms": best["indicator_prod_rms"]}
+                         "indicator_prod_rms": best["indicator_prod_rms"], "certified": False, "status": "indicator argmin; not an error bound"}
+    best = min(summary["widths"], key=lambda r: r["indicator_exit_prod_rms"])
+    summary["argmin_exit"] = {"width_m": best["width_m"], "indicator_exit_rms": best["indicator_exit_rms"],
+                              "indicator_exit_prod_rms": best["indicator_exit_prod_rms"], "certified": False, "status": "indicator argmin; not an error bound"}
+    with_b = [r for r in summary["widths"] if "B_rms" in r]
+    if with_b:
+        model = ("paraxial Dirichlet field on the bore r < a_w (DIR-ell), constant bend curvature; the frozen-window "
+                 "residual by Duhamel (int ||R|| dz); the diagnosed ray sample is the sample; the fan's complex scale "
+                 "is the least-squares fit to the point source on the entrance disc")
+        for name, key in (("argmin_bound_exit", "B_exit_rms"), ("argmin_bound_target", "B_target_rms")):
+            best = min(with_b, key=lambda r: r[key])
+            summary[name] = {"width_m": best["width_m"], key: best[key], "B_rms": best["B_rms"], "certified": True,
+                             "bound": "||E - E_map||(screen) <= [min(||exact modal part of e(L)|| + ||e(0) beyond the modes||, ||e(0)|| + ||boundary part||) + tail + T] + int ||R|| dz per mode, "
+                                      "relative to ||E_in||" + (" (residual inside the channel only: exit_propagation)" if "exit" in name
+                                                                 else " (residual to the target screen: frozen windows)"),
+                             "model": model}
+    if map_path is not None:
+        with np.load(map_path) as data:
+            width = float(data["width_m"])
+            map_rays = int(data["emitted_rays_per_mode"]) if "emitted_rays_per_mode" in data else rays_prod
+            map_modes = int(data["n_modes"]) if "n_modes" in data else len(results)
+        rec_w = min(summary["widths"], key=lambda r: abs(r["width_m"] - width))
+        if not math.isclose(rec_w["width_m"], width, rel_tol=1e-9):
+            raise ValueError(f"{map_path}: width {width:g} m is not among the scanned widths")
+        exit_prop = bool(b5["exit_propagation"])
+        key = f"{rec_w['width_m']*1e6:g}"
+        # the map's own mode prefix and ray budget, not the whole scan / largest budget
+        try:
+            eps = map_eps(results, key, d0[key], map_rays, map_modes, exit_prop)
+        except ValueError as exc:
+            raise ValueError(f"{map_path}: {exc}") from None
+        name = "mask-" + os.path.basename(map_path)
+        bound = None
+        used = results[:map_modes]
+        if all(r["widths"][key].get("bound") and r["widths"][key]["bound"].get("B") is not None for r in used):
+            bound = {"k": k, "z_exit": float(cap.z1), "area": len(cap.bores) * math.pi * a_w ** 2,
+                     "modes": [{"B": r["widths"][key]["bound"]["B_exit" if exit_prop else "B_target"],
+                                "E_in_dep": r["widths"][key]["E_in_dep"], "O_abs2": r["widths"][key]["O_abs2"],
+                                "O_area": r["widths"][key]["O_area"]} for r in used]}
+        summary["mask"] = {"map": map_path, "file": name, "width_m": width, "exit_propagation": exit_prop, "eps": eps,
+                           "rays_per_mode": map_rays, "modes": map_modes, "threshold": opt["mask_threshold"],
+                           "certified": False,
+                           "assumption": "relative field error eps spread uniformly over the cells with rays; not a bound",
+                           "bound_transfer": None if bound is None else
+                           "certified: Fresnel-kernel field bound beyond the exit, cell-concentration bound on the exit plane",
+                           **write_map_mask(map_path, eps, opt["mask_threshold"], os.path.join(out, name), bound, _screen_spec(screen))}
+        log(f"  mask: {summary['mask']['masked_lit']} of {summary['mask']['lit']} cells with rays above |d mu| "
+            f"{opt['mask_threshold']} (eps {eps:.4f})")
     summary["seconds"] = time.time() - t0
     summary["modes"] = len(results)
     with open(os.path.join(out, "defect.json"), "w", encoding="utf-8") as fh:
@@ -481,6 +673,10 @@ def main(argv=None):
     ap.add_argument("--modes", type=int, default=None); ap.add_argument("--jobs", type=int, default=None)
     ap.add_argument("--samples", type=int, default=None, help="residual sample points per disc and section")
     ap.add_argument("--cutoff", type=float, default=None, help="window support in widths")
+    ap.add_argument("--glass", action="store_true", help="also the glass interface trace G_glass")
+    ap.add_argument("--map", default=None, help="stage-17 map npz to mask")
+    ap.add_argument("--no-bound", action="store_true", help="skip the modal error bound B")
+    ap.add_argument("--bound-jmax", type=float, default=None, help="Dirichlet basis cutoff j_mn < jmax of the bound")
     args = ap.parse_args(argv)
     from .. import load
     from ..simulation import Simulation
@@ -490,12 +686,18 @@ def main(argv=None):
     for key in ("rays", "sections", "modes", "jobs", "samples", "cutoff"):
         if getattr(args, key) is not None:
             opt[key] = getattr(args, key)
+    opt["glass"] = opt["glass"] or args.glass
+    if args.no_bound:
+        opt["bound"] = False
+    if args.bound_jmax is not None:
+        opt["bound_jmax"] = float(args.bound_jmax)
     if cfg.capillary is None:
         raise ValueError("b5_defect needs a capillary scene")
     widths = ([float(v) * 1e-6 for v in args.widths.split(",")] if args.widths
               else [float(v) for v in cfg.validate_b5_estimator()["widths_m"]])
     t0 = time.time()
-    summary = run_defect(sim, os.path.abspath(args.archive), args.out, opt, widths)
+    summary = run_defect(sim, os.path.abspath(args.archive), args.out, opt, widths,
+                         map_path=os.path.abspath(args.map) if args.map else None)
     best = summary["argmin"]
     print(f"argmin indicator: width {best['width_m']*1e6:g} um (rms at the map's rays {best['indicator_prod_rms']:.4f}); {time.time() - t0:.0f} s; "
           f"rows in {os.path.join(args.out, RESULT_DIR)}")

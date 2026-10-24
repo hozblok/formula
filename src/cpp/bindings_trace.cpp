@@ -223,6 +223,26 @@ class BeamletGrid {
     for (auto &g : g_) {
       std::fill(g.begin(), g.end(), std::complex<double>(0.0, 0.0));
     }
+    for (auto &s : si_) {
+      std::fill(s.begin(), s.end(), 0.0);
+    }
+    for (auto &s : sw_) {
+      std::fill(s.begin(), s.end(), std::complex<double>(0.0, 0.0));
+    }
+  }
+
+  // Reference pixel of the self-pair cross term sum_i e_i(P) conj(e_i(ref)).
+  void set_reference(long ref) { ref_ = ref; }
+
+  // Track the ray self-pair diagonal per line: sum_i |e_i(P)|^2 and the
+  // cross term above; allocated on first use (24 B per pixel per line).
+  void set_self_pairs(bool on) {
+    track_ = on;
+    if (on && si_.empty()) {
+      const size_t npix = size_t(nx_) * ny_;
+      si_.assign(kms_.size(), std::vector<double>(npix, 0.0));
+      sw_.assign(kms_.size(), std::vector<std::complex<double>>(npix));
+    }
   }
 
   // Python-loop twin (pixel centers included): envelope
@@ -253,6 +273,29 @@ class BeamletGrid {
     const double h = dx_;
     const std::complex<double> c2 = im * std::conj(hxx);
     const std::complex<double> M = std::exp(2.0 * c2 * (h * h));
+    // self-pair diagonal: the ray's value at the reference (direct exp) when
+    // its window covers it; |v|^2 and v*conj(v_ref) go into the si/sw grids
+    double *si = nullptr;
+    std::complex<double> *sw = nullptr;
+    std::complex<double> vref_c(0.0, 0.0);
+    bool has_ref = false;
+    if (track_) {
+      si = si_.at(m).data();
+      sw = sw_.at(m).data();
+      const long iy_ref = ref_ / nx_, ix_ref = ref_ % nx_;
+      if (ref_ >= 0 && iy_ref >= iy_lo && iy_ref <= iy_hi && ix_ref >= ix_lo &&
+          ix_ref <= ix_hi) {
+        const double dy_ref = y0_ + (iy_ref + 0.5) * ey_ / ny_ - y;
+        const double t_ref = x0_ + (ix_ref + 0.5) * ex_ / nx_ - x;
+        const std::complex<double> b_ref =
+            im * (std::conj(2.0 * hxy * dy_ref) + tx);
+        const std::complex<double> a_ref =
+            im * (std::conj(hyy * (dy_ref * dy_ref)) + ty * dy_ref);
+        vref_c = std::conj(pref * std::exp(a_ref + b_ref * t_ref +
+                                           c2 * (t_ref * t_ref)));
+        has_ref = true;
+      }
+    }
     for (long iy = iy_lo; iy <= iy_hi; ++iy) {
       const double dy_off = y0_ + (iy + 0.5) * ey_ / ny_ - y;
       const std::complex<double> b =
@@ -270,11 +313,19 @@ class BeamletGrid {
       const std::complex<double> v0 =
           pref * std::exp(a + b * tp + c2 * (tp * tp));
       std::complex<double> *row = g.data() + size_t(iy) * nx_;
+      double *srow = track_ ? si + size_t(iy) * nx_ : nullptr;
+      std::complex<double> *wrow = track_ ? sw + size_t(iy) * nx_ : nullptr;
       std::complex<double> v = v0;
       std::complex<double> K =
           std::exp(b * h + c2 * (h * h) + 2.0 * c2 * (h * tp));
       for (long ix = ip; ix <= ix_hi; ++ix) {
         row[ix] += v;
+        if (track_) {
+          srow[ix] += std::norm(v);
+          if (has_ref) {
+            wrow[ix] += v * vref_c;
+          }
+        }
         v *= K;
         K *= M;
       }
@@ -284,6 +335,12 @@ class BeamletGrid {
         v *= K;
         K *= M;
         row[ix] += v;
+        if (track_) {
+          srow[ix] += std::norm(v);
+          if (has_ref) {
+            wrow[ix] += v * vref_c;
+          }
+        }
       }
     }
   }
@@ -397,33 +454,46 @@ class BeamletGrid {
     return py::make_tuple(w_spot, bad);
   }
 
-  // One mode's fold: W/I totals += wf*g*conj(g_ref) and wf*|g|^2 per line.
+  // One mode's fold: W/I totals += wf*g*conj(g_ref) and wf*|g|^2 per line;
+  // with subtract the ray self-pairs come off first and the U-statistic
+  // factor n/(n-1) restores the scale (n = the mode's quadrature rays).
   // The float32 delete-one rows stay inside (jackknife runs native too);
   // returns the float32-consistent ref intensity of the mode.
-  double fold(const std::vector<double> &wfs, long ref) {
+  double fold(const std::vector<double> &wfs, long ref, bool subtract = false,
+              long n_rays = 0) {
     const size_t npix = size_t(nx_) * ny_;
     std::vector<float> w_row(2 * npix, 0.0f);
     std::vector<float> i_row(npix, 0.0f);
     const std::complex<double> zero(0.0, 0.0);
+    const double f = (subtract && n_rays > 1)
+                         ? double(n_rays) / double(n_rays - 1)
+                         : 1.0;
+    if (subtract && !track_) {
+      throw std::invalid_argument("fold: self-pair subtraction needs set_self_pairs(true) before the deposits");
+    }
     for (size_t m = 0; m < g_.size(); ++m) {
-      const double wf = wfs.at(m);
+      const double wf = wfs.at(m) * f;
       const auto &g = g_.at(m);
+      const double *si = subtract ? si_.at(m).data() : nullptr;
+      const std::complex<double> *sw = subtract ? sw_.at(m).data() : nullptr;
       const std::complex<double> g_ref = g.at(size_t(ref));
-      const bool has_ref = g_ref != zero;
+      // subtract: -sw[p] survives an exact null of the summed field at ref
+      const bool has_ref = subtract || g_ref != zero;
       const std::complex<double> ref_c = std::conj(g_ref);
       for (size_t p = 0; p < npix; ++p) {
         const std::complex<double> v = g[p];
-        if (v == zero) {
+        if (v == zero && (si == nullptr || si[p] == 0.0)) {
           continue;
         }
-        const double a2 = wf * std::norm(v);
+        const double a2 = wf * (std::norm(v) - (si ? si[p] : 0.0));
         I_[p] += a2;
         i_row[p] += a2;
         if (has_ref) {
-          const std::complex<double> cross = v * ref_c;
-          W_[p] += wf * cross;
-          w_row[2 * p] += wf * cross.real();
-          w_row[2 * p + 1] += wf * cross.imag();
+          const std::complex<double> cross =
+              wf * (v * ref_c - (sw ? sw[p] : zero));
+          W_[p] += cross;
+          w_row[2 * p] += cross.real();
+          w_row[2 * p + 1] += cross.imag();
         }
       }
     }
@@ -438,32 +508,43 @@ class BeamletGrid {
   // rows exactly as fold builds them, the mode's float64 W/I contributions
   // (left fold over the lines, from zero) and the float32 ref intensity.
   // Nothing is retained; the totals stay untouched.
-  py::tuple fold_export(const std::vector<double> &wfs, long ref) const {
+  py::tuple fold_export(const std::vector<double> &wfs, long ref,
+                        bool subtract = false, long n_rays = 0) const {
     const size_t npix = size_t(nx_) * ny_;
     std::vector<float> w_row(2 * npix, 0.0f);
     std::vector<float> i_row(npix, 0.0f);
     std::vector<std::complex<double>> dw(npix);
     std::vector<double> di(npix, 0.0);
     const std::complex<double> zero(0.0, 0.0);
+    const double f = (subtract && n_rays > 1)
+                         ? double(n_rays) / double(n_rays - 1)
+                         : 1.0;
+    if (subtract && !track_) {
+      throw std::invalid_argument("fold_export: self-pair subtraction needs set_self_pairs(true) before the deposits");
+    }
     for (size_t m = 0; m < g_.size(); ++m) {
-      const double wf = wfs.at(m);
+      const double wf = wfs.at(m) * f;
       const auto &g = g_.at(m);
+      const double *si = subtract ? si_.at(m).data() : nullptr;
+      const std::complex<double> *sw = subtract ? sw_.at(m).data() : nullptr;
       const std::complex<double> g_ref = g.at(size_t(ref));
-      const bool has_ref = g_ref != zero;
+      // subtract: -sw[p] survives an exact null of the summed field at ref
+      const bool has_ref = subtract || g_ref != zero;
       const std::complex<double> ref_c = std::conj(g_ref);
       for (size_t p = 0; p < npix; ++p) {
         const std::complex<double> v = g[p];
-        if (v == zero) {
+        if (v == zero && (si == nullptr || si[p] == 0.0)) {
           continue;
         }
-        const double a2 = wf * std::norm(v);
+        const double a2 = wf * (std::norm(v) - (si ? si[p] : 0.0));
         di[p] += a2;
         i_row[p] += a2;
         if (has_ref) {
-          const std::complex<double> cross = v * ref_c;
-          dw[p] += wf * cross;
-          w_row[2 * p] += wf * cross.real();
-          w_row[2 * p + 1] += wf * cross.imag();
+          const std::complex<double> cross =
+              wf * (v * ref_c - (sw ? sw[p] : zero));
+          dw[p] += cross;
+          w_row[2 * p] += cross.real();
+          w_row[2 * p + 1] += cross.imag();
         }
       }
     }
@@ -484,14 +565,15 @@ class BeamletGrid {
     std::vector<double> loo;
     loo.reserve(nf);
     if (!(i_ref > 0.0)) {
-      // unlit reference: no pixel is estimable
+      // unlit or U-negative reference: no lit pixel is estimable
       for (size_t p = 0; p < npix; ++p) {
-        dub[p] = I_[p] > 0.0 ? 1 : 0;
+        dub[p] = I_[p] != 0.0 ? 1 : 0;
       }
     } else {
       for (size_t p = 0; p < npix; ++p) {
         const double i_pix = I_[p];
         if (i_pix <= 0.0) {
+          dub[p] = i_pix < 0.0 ? 1 : 0;   // U-negative: lit, not estimable
           continue;
         }
         jackknife_pixel(
@@ -538,6 +620,10 @@ class BeamletGrid {
   std::vector<double> I_;
   std::vector<std::vector<float>> fw_, fi_;   // per-fold delete-one rows
   std::vector<double> irefs_;
+  long ref_ = -1;                             // reference pixel of the self cross term
+  bool track_ = false;                        // self-pair diagonal tracked
+  std::vector<std::vector<double>> si_;       // per line: sum_i |e_i(P)|^2
+  std::vector<std::vector<std::complex<double>>> sw_;   // per line: sum_i e_i(P) conj(e_i(ref))
 };
 
 // Exact, order-free totals of the shared Stage-11 path: per pixel and
@@ -766,12 +852,13 @@ py::tuple jackknife_tile(py::buffer w_tot, py::buffer i_tot, double i_ref,
   loo.reserve(nf);
   if (!(i_ref > 0.0)) {
     for (size_t p = 0; p < npix; ++p) {
-      dub[p] = I[p] > 0.0 ? 1 : 0;
+      dub[p] = I[p] != 0.0 ? 1 : 0;
     }
   } else {
     for (size_t p = 0; p < npix; ++p) {
       const double i_pix = I[p];
       if (i_pix <= 0.0) {
+        dub[p] = i_pix < 0.0 ? 1 : 0;   // U-negative: lit, not estimable
         continue;
       }
       jackknife_pixel(
@@ -799,6 +886,10 @@ void register_trace(py::module_ &m) {
            py::arg("ex"), py::arg("ey"), py::arg("kms"), py::arg("zrs"),
            py::arg("zrs_t"), py::arg("ns"))
       .def("clear", &BeamletGrid::clear)
+      .def("set_reference", &BeamletGrid::set_reference, py::arg("ref"),
+           "Reference pixel of the self-pair cross term.")
+      .def("set_self_pairs", &BeamletGrid::set_self_pairs, py::arg("on"),
+           "Track the ray self-pair diagonal (|e_i|^2 and e_i conj(e_i,ref)) per line.")
       .def("add_ray", &BeamletGrid::add_ray, py::arg("x"), py::arg("y"),
            py::arg("dx"), py::arg("dy"), py::arg("opl"), py::arg("psi"),
            py::arg("segs"), py::arg("lenses"), py::arg("amps"),
@@ -807,10 +898,12 @@ void register_trace(py::module_ &m) {
            py::arg("pref"), py::arg("tx"), py::arg("ty"), py::arg("hxx"),
            py::arg("hxy"), py::arg("hyy"), py::arg("rx"), py::arg("ry"))
       .def("fold", &BeamletGrid::fold, py::arg("wfs"), py::arg("ref"),
-           "Fold one mode into the W/I totals and delete-one rows; "
-           "returns the mode's float32 ref intensity.")
+           py::arg("subtract") = false, py::arg("n_rays") = 0,
+           "Fold one mode into the W/I totals and delete-one rows (subtract: "
+           "ray self-pairs removed, U-statistic n/(n-1)); returns the mode's "
+           "float32 ref intensity.")
       .def("fold_export", &BeamletGrid::fold_export, py::arg("wfs"),
-           py::arg("ref"),
+           py::arg("ref"), py::arg("subtract") = false, py::arg("n_rays") = 0,
            "One mode's (w_row f32, i_row f32, dW f64, dI f64, i_ref) without "
            "retaining anything; the totals stay untouched.")
       .def("jackknife", &BeamletGrid::jackknife, py::arg("ref"),
@@ -822,6 +915,7 @@ void register_trace(py::module_ &m) {
       .def("items", &BeamletGrid::items,
            "Nonzero cells of one line: [(pixel, complex), ...].")
       .attr("lens_stride") = 4;
+  m.attr("BeamletGrid").attr("self_pairs") = 1;
 
   py::class_<ExactAccumulator>(
       m, "ExactAccumulator",

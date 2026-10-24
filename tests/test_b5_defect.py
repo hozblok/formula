@@ -69,3 +69,129 @@ def test_exit_tails_and_trace_of_a_straight_ray():
     assert g.shape == (2,) and np.all(g >= 0.0) and np.allclose(g_noise, g)   # one ray: all noise
     r, r_noise = D.volume_residual(seg, bores, 5e-6, np.array([0.1]), K, 1e-6, origin[2], 300, 4.0)
     assert r.shape == (1,) and r[0] > 0.0 and r_noise[0] == r[0]
+
+
+def test_glass_form_cancels_a_window_pair_with_its_fresnel_coefficient():
+    """An incident window and its mirror image times r on the wall x = a: the glass form
+    vanishes up to the envelope gradient, the Dirichlet trace is |1 + r|."""
+    sim = _one_ray_scene()
+    fresnel = (2 * sim.delta_f, 2 * sim.beta_f)
+    a, s, width, x_c = 5e-6, 4e-5, 50e-6, 4e-6
+    root = np.sqrt(complex(s * s - fresnel[0], fresnel[1]))
+    r = (s - root) / (s + root)
+    pre = (np.array([[x_c, 0.0], [2 * a - x_c, 0.0]]), np.array([[s, 0.0], [-s, 0.0]]), np.array([1.0, r]), np.zeros(2))
+    y = np.linspace(-20e-6, 20e-6, 9)
+    px, py = np.full((2, y.size), a), np.broadcast_to(y, (2, y.size))
+    normal = (np.ones(px.shape), np.zeros(px.shape))
+    plain = D.window_values(None, np.arange(2), 0.0, px, py, K, width, 0.0, pre=pre)
+    glass = D.window_values(None, np.arange(2), 0.0, px, py, K, width, 0.0, pre=pre, normal=normal, fresnel=fresnel)
+    scale = np.max(np.abs(plain[0]))
+    assert np.max(np.abs(plain.sum(axis=0))) == pytest.approx(abs(1 + r) * scale, rel=1e-6)
+    assert np.max(np.abs(glass.sum(axis=0))) < 0.05 * abs(1 + r) * scale
+    # the normal derivative against central differences
+    h = 1e-9
+    fd = (D.window_values(None, np.arange(2), 0.0, px + h, py, K, width, 0.0, pre=pre)
+          - D.window_values(None, np.arange(2), 0.0, px - h, py, K, width, 0.0, pre=pre)) / (2 * h)
+    k_g = K * np.sqrt(s * s - fresnel[0] + 1j * fresnel[1])
+    np.testing.assert_allclose(glass, plain - fd / (1j * k_g), rtol=1e-5, atol=1e-5 * scale)
+
+
+def test_outside_tails_of_a_final_window_match_direct_integration():
+    sim = _one_ray_scene()
+    bores = sim.cfg.raw["capillary"]["bores"]
+    origin = [0.0, 0.0, -0.5]
+    rows = [(4.2e-6 * 0.7 / 0.5, 0.0, 4.2e-6 / 0.5, 0.0, 0.7, [], [])]     # 4.2 um off axis at the exit z = 0.2
+    seg = D.build_segments(rows, origin, 0.2, bores, 0.0, K, (2 * sim.delta_f, 2 * sim.beta_f))
+    full, shot = D.exit_tails(seg, bores, 5e-6, 0.2, K, 1e-6, origin[2], 0.1e-6, 5.0, outside=True)
+    assert full == shot > 0.0
+    h = 0.02e-6
+    x = np.arange(-12e-6, 12e-6, h) + 0.5 * h
+    px, py = np.meshgrid(x, x)
+    vals = D.window_values(seg, np.array([0]), 0.2, px.reshape(1, -1), py.reshape(1, -1), K, 1e-6, origin[2])[0]
+    direct = float(np.sum(np.abs(vals) ** 2 * (np.hypot(px, py).ravel() > 5e-6)) * h * h)
+    assert full == pytest.approx(direct, rel=1e-2)
+
+
+def test_mask_of_a_stage17_map(tmp_path):
+    I = np.array([[4.0, 1.0], [0.25, -1.0]])
+    rays = np.array([[3, 1], [0, 0]])
+    path = tmp_path / "map.npz"
+    np.savez(path, I=I, matched_stage14_rays=rays, ref_index=np.array([0, 0]), x=np.arange(2.0), y=np.arange(2.0))
+    summary = D.write_map_mask(path, 0.1, 0.35, tmp_path / "mask.npz")
+    assert summary == {"cells": 4, "lit": 2, "masked": 3, "masked_lit": 1, "certified": False}
+    data = np.load(tmp_path / "mask.npz")
+    eta = 0.1 * np.sqrt(5.25 / 2)
+    assert data["dmu"][0, 1] == pytest.approx(2 * eta * (1.0 + 0.5))
+    assert data["masked"].tolist() == [[False, True], [True, True]]
+
+
+def test_indicator_noise_rescales_to_the_masked_maps_budget():
+    # a 100-ray measurement with R_shot = 1: eps 1 at a 100-ray map, 0.1 at 10000 rays
+    terms = {"R": 0.0, "R_shot": 1.0, "R_inside": 0.0, "R_inside_shot": 1.0,
+             "G": 0.0, "G_shot": 0.0, "T": 0.0, "T_shot": 0.0}
+    assert D.indicator_at_budget(terms, 0.0, 100, 100, False) == pytest.approx(1.0)
+    assert D.indicator_at_budget(terms, 0.0, 100, 10000, False) == pytest.approx(0.1)
+    assert D.indicator_at_budget(terms, 0.2, 100, 10000, True) == pytest.approx(0.3)
+
+
+def test_defect_diagnostics_refuse_a_continuous_branch_config(tmp_path):
+    # the diagnostics drop the prefactor on an exact caustic (Maslov branch); a
+    # continuous-branch map is another field there, so the scan refuses up front
+    from formula.capsysred.simulation import Simulation
+    raw = dict(_one_ray_scene().cfg.raw)
+    raw["b5_estimator"] = dict(raw["b5_estimator"], branch="continuous")
+    sim = Simulation.from_dict(raw)
+    with pytest.raises(ValueError, match="continuous"):
+        D.run_defect(sim, str(tmp_path / "no-archive"), str(tmp_path), D.options(sim.cfg), [1e-6])
+
+
+def test_map_eps_uses_the_snapshots_mode_prefix():
+    # a snapshot map of the first mode: its eps is that mode's indicator, not the
+    # scan-wide rms; more modes than diagnosed is an error
+    results = [{"rays": 100, "widths": {"1": {"R": 0.0, "R_shot": 0.0, "R_inside": 0.0, "R_inside_shot": 0.0,
+                                               "G": g, "G_shot": 0.0, "T": 0.0, "T_shot": 0.0}}}
+               for g in (0.02, 0.0, 0.0, 0.0)]
+    assert D.map_eps(results, "1", 0.0, 100, 1, False) == pytest.approx(0.02)
+    assert D.map_eps(results, "1", 0.0, 100, 4, False) == pytest.approx(0.01)
+    with pytest.raises(ValueError, match="5 modes"):
+        D.map_eps(results, "1", 0.0, 100, 5, False)
+
+
+def test_certified_mask_of_a_stage17_map(tmp_path):
+    """With per-mode bounds the map mask also carries the certified cells: on the exit plane
+    the cell-concentration transfer eta = B ||E_in|| / sqrt(A_cell); beyond it the Fresnel kernel."""
+    I = np.array([[4.0, 1.0], [0.25, -1.0]])
+    rays = np.array([[3, 1], [0, 0]])
+    path = tmp_path / "map.npz"
+    np.savez(path, I=I, matched_stage14_rays=rays, ref_index=np.array([0, 0]), x=np.arange(2.0), y=np.arange(2.0))
+    bound = {"k": K, "z_exit": 0.2, "area": math.pi * 25e-12,
+             "modes": [{"B": 0.1, "E_in_dep": 2.0, "O_abs2": 0.0, "O_area": 1.0}]}
+    spec = {"z": 0.2, "nx": 2, "ny": 2, "center": [0.0, 0.0], "edge_x": 2e-6, "edge_y": 2e-6}
+    summary = D.write_map_mask(path, 0.1, 0.35, tmp_path / "mask.npz", bound, spec)
+    assert summary["certified"] is False and summary["bound"]["certified"] is True
+    assert summary["bound"]["transfer"] == "cell"
+    eta = 0.1 * 2.0 / math.sqrt(1e-12)
+    assert summary["bound"]["eta"] == pytest.approx(eta)
+    data = np.load(tmp_path / "mask.npz")
+    assert data["dmu_bound"][0, 1] == pytest.approx(2 * eta * (1.0 + 0.5))
+    assert data["masked_bound"].tolist() == [[True, True], [True, True]]     # eta 2e5 masks every cell
+    far = D.write_map_mask(path, 0.1, 0.35, tmp_path / "mask2.npz", bound, dict(spec, z=0.3))
+    assert far["bound"]["transfer"] == "fresnel"
+    assert far["bound"]["eta"] == pytest.approx(K / (2 * math.pi * 0.1) * math.sqrt(math.pi * 25e-12) * 0.1 * 2.0)
+
+
+def test_modal_bound_of_one_window_is_finite_and_exact_for_an_absent_trace():
+    """A single on-axis window in a 5 um bore: the frame trace of the window is below the
+    cutoff, so the boundary part vanishes and B is the entrance defect plus T."""
+    sim = _one_ray_scene()
+    bores = sim.cfg.raw["capillary"]["bores"]
+    origin = [0.0, 0.0, -0.5]
+    rows = [(0.0, 0.0, 0.0, 0.0, 0.7, [], [])]
+    seg = D.build_segments(rows, origin, 0.2, bores, 0.0, K, (2 * sim.delta_f, 2 * sim.beta_f))
+    job = {"k": K, "a_w": 5e-6, "z0_cap": 0.0, "z_exit": 0.2, "bound_jmax": 30.0, "bound_phase_step": 0.7, "cutoff": 4.0}
+    bnd = D.modal_bound(seg, bores, job, origin, 0.5e-6, 0.0)
+    assert math.isfinite(bnd["B"]) and bnd["B"] > 0.0
+    assert bnd["B_boundary"] == pytest.approx(0.0, abs=1e-9) and bnd["B_T"] == 0.0
+    assert bnd["B"] == pytest.approx(min(bnd["B_exact"] + bnd["B_r0"], bnd["B_e0"]) + bnd["B_tail"], rel=1e-9)
+    assert bnd["B"] <= bnd["B_tri"] + 1e-12
+    assert bnd["sections"] >= 20 and bnd["modes"] > 0

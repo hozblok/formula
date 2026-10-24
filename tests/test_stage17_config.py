@@ -70,6 +70,7 @@ def test_b5_invalid_configuration(bad):
     {"widths_m": [True]}, {"widths_m": [1e-6, 1e-6]}, {"map_jobs": 0},
     {"map_stride": 0}, {"map_ray_budgets": [0]}, {"map_ray_budgets": [20001]},
     {"map_ray_budgets": [1, 1]}, {"map_snapshots": [5]}, {"map_snapshots": True},
+    {"branch": "principal"}, {"branch": None}, {"exit_propagation": 1}, {"exit_propagation": "yes"},
 ])
 def test_canonical_invalid_configuration(bad):
     raw = _raw()

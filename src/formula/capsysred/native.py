@@ -122,6 +122,8 @@ def make_beamlet_grid(nx: int, ny: int, x0: float, y0: float, ex: float,
     cls = getattr(_formula, "BeamletGrid", None)
     if cls is None or getattr(cls, "lens_stride", 3) != 4:   # stale .so: old API
         return None
+    if getattr(cls, "self_pairs", 0) != 1:   # stale .so: no self-pair diagonal
+        return None
     try:
         return cls(nx, ny, x0, y0, ex, ey, kms, zrs, zrs_t, ns)
     except TypeError:      # stale .so without the anisotropic launch
