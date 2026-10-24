@@ -45,6 +45,13 @@ def _interp_error(zs, s_at, norm):
     return float(np.sum(h ** 3 / 8.0 * np.maximum(d2[:-1], d2[1:])))
 
 
+def tail_sums(aw, jmax):
+    """sum 1/kappa^2 and sum 1/kappa^6 over the Bessel zeros j >= jmax of any order (consecutive
+    zeros at least pi apart): (a_w/pi)^2 (1/J^2 + 1/J), (a_w/pi)^6 (1/J^6 + 1/(5 J^5)), J = jmax/pi."""
+    J = float(jmax) / math.pi
+    return (aw / math.pi) ** 2 * (1.0 / J ** 2 + 1.0 / J), (aw / math.pi) ** 6 * (1.0 / J ** 6 + 1.0 / (5.0 * J ** 5))
+
+
 def trace_resolution(k, h, thetas, widths, phase_max=0.7, passage_min=4.0):
     """Whether the sections of spacing h resolve the method field's wall trace, from the beams
     themselves: the fastest beam phase k theta^2 h / 2 per section and the shortest envelope
@@ -181,8 +188,10 @@ class ModalBound:
     def tails(self, zs, ghat_z, extra_hat=None):
         """Modes beyond the Disc, two integrations by parts (alpha = kappa^2/2k):
         |c| sqrt(norm) <= 2 sqrt(pi) (|ghat(0)| + |ghat(L)|) / kappa + 4 sqrt(pi) k (|ghat'(0)| + |ghat'(L)|
-        + int |ghat''|) / kappa^3, summed with kappa_mn >= (n - 1/4) pi / a_w; `extra_hat`
-        [nz, n_extra] are coefficients of |m| beyond the Disc (every radial index is a tail)."""
+        + int |ghat''|) / kappa^3; every excluded mode has kappa >= jmax / a_w and consecutive
+        zeros are at least pi apart, so sum 1/kappa^2 <= (a_w/pi)^2 (1/J^2 + 1/J), sum 1/kappa^6
+        <= (a_w/pi)^6 (1/J^6 + 1/(5 J^5)) with J = jmax/pi, for every m; `extra_hat` [nz, n_extra]
+        are coefficients of |m| beyond the Disc (every radial index is a tail)."""
         d = self.disc
         aw = d.aw
         zs = np.asarray(zs, float)
@@ -191,9 +200,7 @@ class ModalBound:
         g2 = np.gradient(g1, zs, axis=0)
         end = np.abs(gh[0]) + np.abs(gh[-1])
         der = np.abs(g1[0]) + np.abs(g1[-1]) + np.trapezoid(np.abs(g2), zs, axis=0)
-        n_valid = d.valid.sum(axis=1)                                   # radial modes kept per m
-        s2 = (aw / math.pi) ** 2 / np.maximum(n_valid - 0.25, 0.75)       # sum_{n>N} 1/kappa^2
-        s6 = (aw / math.pi) ** 6 / (5.0 * np.maximum(n_valid - 0.25, 0.75) ** 5)
+        s2, s6 = tail_sums(aw, d.jmax)                                   # sum over the excluded radial modes
         t1 = math.sqrt(float(np.sum(4.0 * math.pi * end ** 2 * s2)))
         t2 = math.sqrt(float(np.sum(16.0 * math.pi * self.k ** 2 * der ** 2 * s6)))
         if extra_hat is not None and np.size(extra_hat):
@@ -201,10 +208,8 @@ class ModalBound:
             e1 = np.gradient(eh, zs, axis=0); e2 = np.gradient(e1, zs, axis=0)
             end_x = np.abs(eh[0]) + np.abs(eh[-1])
             der_x = np.abs(e1[0]) + np.abs(e1[-1]) + np.trapezoid(np.abs(e2), zs, axis=0)
-            all2 = (aw / math.pi) ** 2 * 2.2                               # sum_{n>=1} 1/(n-1/4)^2 < 2.2
-            all6 = (aw / math.pi) ** 6 * 4.1                               # sum_{n>=1} 1/(n-1/4)^6 < 4.1
-            t1 = math.hypot(t1, math.sqrt(float(np.sum(4.0 * math.pi * end_x ** 2 * all2))))
-            t2 = math.hypot(t2, math.sqrt(float(np.sum(16.0 * math.pi * self.k ** 2 * der_x ** 2 * all6))))
+            t1 = math.hypot(t1, math.sqrt(float(np.sum(4.0 * math.pi * end_x ** 2 * s2))))    # j_m1 >= jmax there too
+            t2 = math.hypot(t2, math.sqrt(float(np.sum(16.0 * math.pi * self.k ** 2 * der_x ** 2 * s6))))
         return t1, t2
 
 
