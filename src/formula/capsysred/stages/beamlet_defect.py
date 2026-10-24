@@ -356,6 +356,34 @@ def _ring_sum(seg, idx, z, cx, cy, radii, phis, k, z_src, window, stretch, glass
     return out
 
 
+def _outline_sum(seg, idx, z, cx, cy, sq, k, z_src, window):
+    """Sum of the selected beams on the outline nodes of the square `sq` (bound_modal.Square)
+    around (cx, cy), each beam within its window along the perimeter; returns [4 nq]."""
+    n_u = 4 * sq.nq
+    out = np.zeros(n_u, complex)
+    if idx.size == 0:
+        return out
+    w, bx, by = beam_width(seg, idx, z, k)
+    w = np.where(np.isfinite(w), w, sq.aw)
+    m0 = sq.arc_index(cx, cy, bx, by)
+    half = np.minimum(np.ceil(window * w / sq.h).astype(int) + 1, n_u // 2)
+    order = np.argsort(half)
+    idx, half, m0 = idx[order], half[order], m0[order]
+    px_tab, py_tab = sq.lab(cx, cy, sq.face_x, sq.face_y)
+    start = 0
+    while start < idx.size:
+        h = half[start]
+        stop = start
+        while stop < idx.size and half[stop] == h:
+            stop += 1
+        stop = min(stop, start + max(1, min(2048, _POINTS // (2 * h + 1))))
+        cols = (m0[start:stop, None] + np.arange(-h, h + 1)[None, :]) % n_u
+        vals = beam_values(seg, idx[start:stop], z, px_tab[cols], py_tab[cols], k, z_src)
+        np.add.at(out, cols, vals)
+        start = stop
+    return out
+
+
 def _halves(seg, idx, z, cx, cy, radii, phis, k, z_src, window, stretch, glass=None):
     """Beam sums of the even and odd ray halves: |a + b|^2 is the full sum, |a - b|^2 its
     ray-quadrature noise."""
@@ -446,12 +474,16 @@ def _channel(bore, a_w, disc, k):
 
 
 def modal_bound(seg, bores, job, origin, t_full):
-    """B of the full-beam field of one mode (bound_modal.bores_bound): per circular bore the
-    entrance defect against the point source, the frame wall trace of the beams at sections
-    resolving the fastest mode phase, its boundary part and the mode tails; T from the exit
-    tails.  Circular bores only (the Disc basis)."""
+    """B of the full-beam field of one mode (bound_modal.bores_bound): per bore the entrance
+    defect against the point source, the frame wall trace of the beams at sections resolving
+    the fastest mode phase, its boundary part and the mode tails; T from the exit tails.
+    Circular bores (Disc basis) or straight square bores (sine basis); other outlines have
+    no Dirichlet mode basis: {"B": None, "reason"}."""
     k, a_w, z_src = job["k"], job["a_w"], origin[2]
     z0, L = job["z0_cap"], job["z_exit"] - job["z0_cap"]
+    shapes = [_shape(b, a_w) for b in bores]
+    if any(sh is not None for sh in shapes):
+        return square_bound(seg, bores, shapes, job, origin, t_full)
     disc = _disc(a_w, job["bound_jmax"])
     chans = [_channel(b, a_w, disc, k) for b in bores]
     stretch = np.ones(disc.nphi)
@@ -472,6 +504,44 @@ def modal_bound(seg, bores, job, origin, t_full):
 
     return bound_modal.bores_bound(chans, L, sample, lambda ch: ch.entrance_field(origin[:2], z0 - z_src),
                                    job["bound_phase_step"], t_full)
+
+
+def square_bound(seg, bores, shapes, job, origin, t_full):
+    """B over straight square bores (bound_modal.squares_bound); the trace on the outline
+    nodes, the entrance fan on a stretched polar grid of the square."""
+    k, a_w, z_src = job["k"], job["a_w"], origin[2]
+    z0, L = job["z0_cap"], job["z_exit"] - job["z0_cap"]
+    if any(b.get("bend") or sh is None or sh[0] != 4 or not np.allclose(sh[2], 1.0) for b, sh in zip(bores, shapes)):
+        return {"B": None, "reason": "Dirichlet mode basis only for circular bores (Bessel) and straight square bores (sines)"}
+    M = max(4, int(2.0 * job["bound_jmax"] / math.pi))      # kappa a_w = (pi/2) sqrt(m^2 + n^2) <= jmax on the axes
+    sqs = [bound_modal.Square(a_w, M, sh[1]) for sh in shapes]
+    centers = [(float(b["center"][0]), float(b["center"][1])) for b in bores]
+
+    def active(b, z, cx, cy):
+        cand = np.flatnonzero(seg.bore == b)
+        act = cand[(seg.z0[cand] <= z + 0.1) & (seg.z1[cand] >= z - 0.1)]
+        w, bx, by = beam_width(seg, act, z, k)
+        reach = a_w * math.sqrt(2.0) + job["window"] * np.where(np.isfinite(w), w, 0.0)
+        return act[np.hypot(bx - cx, by - cy) <= reach]
+
+    def sample_disc(b, radii, phis, stretch, cx, cy):
+        idx = active(b, z0, cx, cy)
+        out = np.zeros((radii.size, phis.size), complex)
+        for lo in range(0, radii.size, 8):
+            ra, rb = _halves(seg, idx, z0, cx, cy, radii[lo:lo + 8], phis, k, z_src, job["window"], stretch)
+            out[lo:lo + 8] = ra + rb
+        return out
+
+    def sample_outline(b, zr, sq, cx, cy):
+        z = z0 + zr
+        return _outline_sum(seg, active(b, z, cx, cy), z, cx, cy, sq, k, z_src, job["window"])
+
+    z_in = z0 - z_src
+    lam = 2.0 * math.pi / k
+    e_in = lambda px, py: (np.exp(1j * k * ((px - origin[0]) ** 2 + (py - origin[1]) ** 2) / (2.0 * z_in))
+                           / (1j * lam * z_in))
+    return bound_modal.squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in,
+                                     job["bound_phase_step"], t_full)
 
 
 # ------------------------------------------------------------------ per mode
@@ -517,10 +587,7 @@ def mode_job(job):
         out["G_glass"] = math.sqrt(float(np.sum(np.maximum(gg_full - gg_shot, 0.0))) * dz / glass_area) / rms_field
         out["G_glass_shot"] = math.sqrt(float(np.sum(gg_shot)) * dz / glass_area) / rms_field
     if job["bound"]:
-        if any(b.get("sides") for b in bores):
-            out["bound"] = {"B": None, "reason": "polygon bore: no Dirichlet mode basis"}
-        else:
-            out["bound"] = modal_bound(seg, bores, job, origin, t_full)
+        out["bound"] = modal_bound(seg, bores, job, origin, t_full)
     out["seconds"] = time.time() - t0
     return out
 

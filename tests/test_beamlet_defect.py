@@ -240,6 +240,24 @@ def test_modal_bound_of_a_single_beam_is_finite():
     assert len(res["bores"]) == 1 and res["C_fit"][0] > 0.0
 
 
+def test_modal_bound_of_a_single_beam_in_a_square_bore():
+    # the same beam in a square bore of half-side a_w: the sine basis path, finite components,
+    # the boundary part from the +x face; a hexagon has no basis
+    bores = [{"center": [0.0, 0.0], "radius": 24e-6, "sides": 4}]
+    seg = D.Segments(1)
+    seg.qxx[0] = seg.qyy[0] = complex(0.0, 0.5 * (4e-6) ** 2 * K)
+    seg.a[0] = 1.0; seg.fres[0] = 1.0; seg.x0[0] = 18e-6; seg.z1[0] = 0.02
+    job = {"k": K, "a_w": 24e-6, "z0_cap": 0.0, "z_exit": 0.02, "bound_jmax": 40.0, "bound_phase_step": 0.7, "window": 4.0}
+    res = D.modal_bound(seg, bores, job, [0.0, 0.0, -0.5], 0.0)
+    assert res["basis"] == "square sines" and res["sections"] >= 20 and res["modes"] == 25 ** 2
+    for key in ("B", "B_e0", "B_boundary", "B_tail", "B_T"):
+        assert math.isfinite(res[key]) and res[key] >= 0.0
+    assert res["B_T"] == 0.0 and res["B_boundary"] > 0.0
+    assert res["B"] >= res["B_e0"] + res["B_boundary"]
+    hexa = D.modal_bound(seg, [dict(bores[0], sides=6)], job, [0.0, 0.0, -0.5], 0.0)
+    assert hexa["B"] is None and "basis" in hexa["reason"]
+
+
 def test_run_defect_publishes_the_bound(tmp_path):
     # a traced straight bore: every mode carries the bound, the summary its rms and argmin
     from formula.capsysred.simulation import Simulation
