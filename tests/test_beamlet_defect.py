@@ -269,13 +269,14 @@ def test_run_defect_publishes_the_bound(tmp_path):
                                     "n_modes": 2, "n_rays": 40},
                          "screen": {"z": 0.3, "center": [0.0, 0.0], "edge_x": 4e-6, "edge_y": 4e-6, "nx": 4, "ny": 4}},
            "beamlet": {"w0": 1e-6, "w0_t": None, "window_sigmas": 3.0},
-           "beamlet_defect": {"rays": 40, "sections": 10, "bound_jmax": 40.0}}
+           "beamlet_defect": {"rays": 40, "sections": 10, "bound_jmax": 40.0, "bound_phase_step": 0.35}}
     sim = Simulation.from_dict(raw)
     _record(sim, str(tmp_path))
     opt = D.options(sim.cfg)
     summary = D.run_defect(sim, str(tmp_path / "rays-modes"), str(tmp_path), opt, [(1e-6, None, None)], log=lambda s: None)
     rec = summary["launches"][0]
     assert rec["B_modes"] == 2 and math.isfinite(rec["B_rms"]) and rec["B_rms"] > 0.0
+    assert rec["B_resolved"] and rec["B_phase_per_section"] <= 0.7
     assert summary["argmin_bound"]["certified"] is True and summary["argmin"]["certified"] is False
     rows = [json.loads(l) for l in open(tmp_path / D.RESULT_DIR / "modes.jsonl", encoding="utf-8")]
     assert all(r["bound"]["B"] >= r["bound"]["B_e0"] for r in rows)
@@ -345,3 +346,48 @@ def test_tensor_sum_matches_beam_values_for_separable_beams():
     px, py = np.meshgrid(xs, ys, indexing="ij")
     direct = D.beam_values(seg, np.arange(5), z, px.reshape(1, -1), py.reshape(1, -1), K, -0.5).sum(axis=0).reshape(px.shape)
     assert np.allclose(tensor, direct, rtol=1e-5, atol=1e-6 * np.abs(direct).max())   # the k z phase (2e10 rad) rounds differently
+
+
+def test_trace_sampling_sees_the_first_segment_and_the_wavefront_curvature():
+    """A ray from the source through the channel (one segment starting before z0) at 1 mrad:
+    phase k theta^2 h / 2 = 10.2 rad per section, not resolved.  An on-axis Gaussian beam with
+    its 60 nm waist inside the square bore (zero central angle): the wavefront curvature at the
+    wall and the Gouy rate exceed the sections, not resolved, and the sampled B falls below the
+    norm-loss lower bound of the error -- the gate, not B, carries the certification."""
+    seg = D.Segments(1)
+    seg.qxx[0] = seg.qyy[0] = complex(0.0, 0.5 * K * 1e-12)              # w = 1 um
+    seg.a[0] = seg.fres[0] = 1.0
+    seg.x0[0], seg.z0[0], seg.ux[0], seg.z1[0] = 13e-6, -0.01, 1e-3, 0.01       # reaches the wall at z = 1 mm
+    bores = [{"center": [0.0, 0.0], "radius": 24e-6}]
+    s = D.trace_sampling(seg, bores, None, K, 5e-4, 0.0, z_exit=0.01, a_w=24e-6, share_max=0.01)
+    assert not s["resolved"] and s["phase_per_section"] > 10.0 and s["passage_sections"] < 4.0
+    far = D.Segments(1)                                                        # the same ray 14 um from the wall: no trace
+    far.qxx[0] = far.qyy[0] = complex(0.0, 0.5 * K * 1e-12)
+    far.a[0] = far.fres[0] = 1.0
+    far.x0[0], far.z0[0], far.ux[0], far.z1[0] = -10e-6, -0.01, 1e-3, 0.01
+    s = D.trace_sampling(far, bores, None, K, 5e-4, 0.0, z_exit=0.01, a_w=24e-6, share_max=0.01)
+    assert s["unresolved_share"] < 1e-30 and s["resolved"]
+    from formula.capsysred.stages import bound_modal as B
+    aw = 4e-6
+    L, zf, w0 = 0.2 * K * aw ** 2, 0.005 * K * aw ** 2, 0.015 * aw
+    zr = 0.5 * K * w0 ** 2
+    q0 = complex(-zf, -zr)
+    g = D.Segments(1)
+    g.qxx[0] = g.qyy[0] = complex(-zf, zr)
+    g.a[0] = g.fres[0] = 1.0
+    g.z1[0] = L
+
+    def f(x, y, z=0.0):
+        q = q0 + z
+        return q0 / q * np.exp(0.5j * K * (x * x + y * y) / q)
+
+    sq = B.Square(aw, 4)
+    r = B.squares_bound([sq], [(0.0, 0.0)], K, L,
+                        lambda b, radii, phis, stretch, cx, cy: f(radii[:, None] * stretch[None, :] * np.cos(phis),
+                                                                 radii[:, None] * stretch[None, :] * np.sin(phis)),
+                        lambda b, z, sq_, cx, cy: f(sq_.face_x, sq_.face_y, z), f, nr=96, nphi=1024)
+    s = D.trace_sampling(g, [{"center": [0.0, 0.0], "radius": aw, "sides": 4}], None, K, L / r["sections"], 0.0, z_exit=L, a_w=aw)
+    arg = lambda q: aw * math.sqrt(K * zr) / abs(q)
+    lower = 1.0 - math.erf(arg(q0 + L)) / math.erf(arg(q0))                 # 1 - ||E_method(L)|| / ||E_in||
+    assert not s["resolved"] and s["phase_per_section"] > 10.0
+    assert r["B"] < lower < 1.0                                              # the uncertified estimate is violated here
