@@ -793,7 +793,7 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print, mask=None):
         summary["argmin_bound"] = {
             "w0_m": best["w0_m"], "w0_t_m": best["w0_t_m"], "waist_z_m": best["waist_z_m"],
             "B_rms": best["B_rms"], "B_max": best["B_max"], "certified": True,
-            "bound": "||E - E_dep||(L) <= min(||exact modal part of e(L)|| + ||e(0) beyond the modes||, ||e(0)|| + ||boundary part||) + tail + T per mode (bound_modal), relative to ||E_in||",
+            "bound": "||E - E_dep||(L) <= min(||exact modal part of e(L)|| + ||e(0) beyond the modes||, ||e(0)|| + ||boundary part||) + interpolation of the sampled forcing + tail + T per mode (bound_modal), relative to ||E_in||",
             "model": "paraxial Dirichlet field on the bore r < a_w (DIR-ell), constant bend curvature; the diagnosed ray sample "
                      "is the sample (ray statistics not rescaled); the complex scale C of the fan is the least-squares fit "
                      "to the point source on the entrance disc"}
@@ -843,6 +843,7 @@ def main(argv=None):
     ap.add_argument("--mask", default=None, help="stage-11 mu-beamlet.jsonl of the configured launch to mask")
     ap.add_argument("--no-bound", action="store_true", help="skip the modal error bound B")
     ap.add_argument("--bound-jmax", type=float, default=None, help="Dirichlet basis cutoff j_mn < jmax of the bound")
+    ap.add_argument("--bound-phase-step", type=float, default=None, help="section count of the bound: fastest mode phase per section, rad")
     args = ap.parse_args(argv)
     from .. import load
     from ..simulation import Simulation
@@ -858,6 +859,8 @@ def main(argv=None):
         opt["bound"] = False
     if args.bound_jmax is not None:
         opt["bound_jmax"] = float(args.bound_jmax)
+    if args.bound_phase_step is not None:
+        opt["bound_phase_step"] = float(args.bound_phase_step)
     cap = cfg.capillary
     if cap is None:
         raise ValueError("beamlet_defect needs a capillary scene")

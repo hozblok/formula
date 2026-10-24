@@ -71,6 +71,8 @@ def test_modal_evolution_reproduces_a_gaussian_beam(rbend, n_sec, L, jmax):
     if rbend is None:
         t1, t2 = mb.tails(zs, ghat, B.extra_hat(disc, g))
         assert 0.0 <= t1 + t2 < 0.1 * n_true
+    itp = mb.interp_error(zs, ghat)
+    assert 0.0 <= itp < (1e-3 if n_sec >= 100 else 0.05) * n_true     # h^3 s''/8 per section
 
 
 def test_zero_trace_leaves_the_initial_norm():
@@ -118,6 +120,7 @@ def test_square_modal_evolution_reproduces_a_gaussian_beam():
     assert err < 0.3 * sb.norm(free - cL_true)
     t1, t2 = sb.tails(zs, G)
     assert 0.0 <= t1 + t2 < 0.1 * n_true
+    assert 0.0 <= sb.interp_error(zs, G) < 1e-3 * n_true
     # the outline order and the arc index agree: node j is met first along its own ray
     px, py = sq.lab(0.0, 0.0, sq.face_x, sq.face_y)
     assert np.array_equal(sq.arc_index(0.0, 0.0, 0.5 * px, 0.5 * py), np.arange(4 * sq.nq))
