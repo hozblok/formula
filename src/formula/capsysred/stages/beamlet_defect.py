@@ -312,6 +312,9 @@ def _normals(shape, phis):
     return np.cos(angles[face]), np.sin(angles[face])
 
 
+_POINTS = 1 << 21          # beam-point budget of one block of a ring sum
+
+
 def _ring_sum(seg, idx, z, cx, cy, radii, phis, k, z_src, window, stretch, glass=None):
     """Sum of the selected beams on the points (radii * stretch(phi), phis) around (cx, cy),
     evaluating each beam only within its angular window; returns [n_r, n_phi].  `glass`
@@ -333,7 +336,7 @@ def _ring_sum(seg, idx, z, cx, cy, radii, phis, k, z_src, window, stretch, glass
         stop = start
         while stop < idx.size and half[stop] == h:
             stop += 1
-        stop = min(stop, start + 2048)
+        stop = min(stop, start + max(1, min(2048, _POINTS // (n_r * (2 * h + 1)))))   # bounded [beams, n_r, 2h+1]
         sel = idx[start:stop]
         m0 = np.rint((phi_b[start:stop] - phis[0]) / dphi).astype(int)
         cols = (m0[:, None] + np.arange(-h, h + 1)[None, :]) % n_phi      # [n_sel, 2h+1]

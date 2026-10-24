@@ -286,9 +286,10 @@ def _polar_sum(seg, idx, z, cx, cy, radii, phis, k, width, z_src, cutoff, residu
     phi_b = np.arctan2(X[:, 1] - cy, X[:, 0] - cx)
     dphi = phis[1] - phis[0]
     h = min(int(math.ceil((cutoff * width) / (max(radii.min(), 1e-12) * dphi))) + 1, n_phi // 2)
-    for start in range(0, idx.size, 1024):
-        sel = idx[start:start + 1024]
-        m0 = np.rint((phi_b[start:start + 1024] - phis[0]) / dphi).astype(int)
+    block = max(1, min(1024, (1 << 21) // (n_r * (2 * h + 1))))             # bounded [windows, n_r, 2h+1]
+    for start in range(0, idx.size, block):
+        sel = idx[start:start + block]
+        m0 = np.rint((phi_b[start:start + block] - phis[0]) / dphi).astype(int)
         cols = (m0[:, None] + np.arange(-h, h + 1)[None, :]) % n_phi
         px = cx + radii[None, :, None] * np.cos(phis[cols])[:, None, :]
         py = cy + radii[None, :, None] * np.sin(phis[cols])[:, None, :]
