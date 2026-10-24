@@ -70,9 +70,10 @@ def trace_resolution(k, h, thetas, widths, phase_max=0.7, passage_min=4.0, kappa
     ring_min points, else the sampled trace aliases.  `weights` = each beam's trace amplitude at
     the wall; the beams failing any criterion may carry at most `share_max` of `weight_total`
     (default: the sum of the weights; none may fail by default); `ring_widths` the widths along
-    the wall (default: widths).  Published: the unresolved share, the (1 - share_max) weight quantiles of
-    the phase and the share_max quantiles of the passages, so the interpolation term and the
-    sampled tails are estimates only when resolved.  With kappa_cut also band_ratio = k theta /
+    the wall (default: widths).  Published: the unresolved share and the quantiles of the phase
+    (from above) and of the passages (from below) that leave exactly that admissible weight
+    beyond them, so the interpolation term and the sampled tails are estimates only when
+    resolved.  With kappa_cut also band_ratio = k theta /
     kappa_cut over `theta_band` (the central angles; default thetas), same quantile: the trace
     lives in modes up to kappa ~ k theta, so the tails decay only below 1 (a looseness
     diagnostic)."""
@@ -100,7 +101,8 @@ def trace_resolution(k, h, thetas, widths, phase_max=0.7, passage_min=4.0, kappa
         ring = rw / ring_h if ring_h else np.full(th.size, np.inf)
     fail = (phase > phase_max) | (passage < passage_min) | (ring < ring_min)
     share = float(wt[fail].sum() / total) if total > 0 else 0.0
-    hi, lo = 1.0 - share_max, share_max
+    lo = min(max(share_max * total / float(wt.sum()), 0.0), 1.0)        # the share's weight on the pairs' own scale
+    hi = 1.0 - lo
     out.update(phase_per_section=_wquantile(phase, wt, hi), passage_sections=_wquantile(passage, wt, lo),
                unresolved_share=share, resolved=bool(share <= share_max))
     if ring_h:
