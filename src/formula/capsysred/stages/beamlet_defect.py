@@ -528,6 +528,9 @@ def mode_job(job):
     t_full, t_shot = exit_tails(seg, bores, job["a_w"], job["z_exit"], job["k"], origin[2], job["ring_step"], job["window"])
     o_full, o_shot = exit_tails(seg, bores, job["a_w"], job["z_exit"], job["k"], origin[2], job["ring_step"], job["window"],
                                 outside=True)
+    w_fin, _, _ = beam_width(seg, np.flatnonzero(seg.final), job["z_exit"], job["k"])
+    depth_out = (job["window"] + 2.0) * float(np.max(w_fin[np.isfinite(w_fin)], initial=0.0))
+    area_out = len(cap.bores) * math.pi * ((job["a_w"] + depth_out) ** 2 - job["a_w"] ** 2)
     if job["glass"]:
         gg_full, gg_shot = wall_trace(seg, bores, job["a"], zs, job["k"], origin[2], job["ring_step"], job["window"],
                                       fresnel=job["fresnel"])
@@ -541,6 +544,7 @@ def mode_job(job):
            "G_shot": math.sqrt(float(np.sum(g_shot)) * dz / wall_area) / rms_field,
            "T": math.sqrt(max(t_full - t_shot, 0.0)) / norm, "T_shot": math.sqrt(t_shot) / norm,
            "O": math.sqrt(max(o_full - o_shot, 0.0)) / norm, "O_shot": math.sqrt(o_shot) / norm,
+           "O_abs2": float(o_full), "O_area": area_out, "E_in_dep": norm,
            "trace_profile": (np.sqrt(g_coh / (2.0 * math.pi * job["a_w"] * len(cap.bores))) / rms_field).tolist()}
     if job["glass"]:
         glass_area = length * 2.0 * math.pi * job["a"] * len(cap.bores)
@@ -615,9 +619,42 @@ def uniform_mask(intensity, lit, ref, eps, threshold):
     return dmu, ~(dmu <= threshold)
 
 
-def write_mask(cfg, rows_path, eps, threshold, path):
+def bound_eta(bound, spec, z_exit):
+    """Field-error amplitude eta of a screen from the per-mode bounds B_s (deposit units):
+    beyond the exit (z_s > 0) the Fresnel kernel bounds the field uniformly,
+    |e(P)| <= k / (2 pi z_s) (sqrt|Omega| B_s ||E_in||_s + sqrt|A_out| ||E_dep||_out,s);
+    on the exit plane only the cell average, |<e>_cell| <= B_s ||E_in||_s / sqrt(A_cell).
+    eta^2 = sum_s eps_s^2 (equal mode weights, as the map's W and I)."""
+    z_s = float(spec["z"]) - z_exit
+    if z_s > 0.0:
+        pref = bound["k"] / (2.0 * math.pi * z_s)
+        eps = [pref * (math.sqrt(bound["area"]) * m["B"] * m["E_in_dep"] + math.sqrt(m["O_area"]) * math.sqrt(max(m["O_abs2"], 0.0)))
+               for m in bound["modes"]]
+        kind = "fresnel"
+    else:
+        a_cell = float(spec["edge_x"]) / spec["nx"] * float(spec["edge_y"]) / spec["ny"]
+        eps = [m["B"] * m["E_in_dep"] / math.sqrt(a_cell) for m in bound["modes"]]
+        kind = "cell"
+    return math.sqrt(sum(e * e for e in eps)), kind
+
+
+def bound_mask(intensity, ref, eta, threshold):
+    """|d mu| <= 2 eta (1 / sqrt(I) + 1 / sqrt(I_ref)) from a certified field-error amplitude
+    eta; cells with I <= 0 (and every cell when I_ref <= 0) are not estimable: masked."""
+    I = np.asarray(intensity, float)
+    i_ref = float(I.flat[ref])
+    if not i_ref > 0.0:
+        return np.full(I.shape, np.inf), np.ones(I.shape, bool)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        dmu = 2.0 * eta * (1.0 / np.sqrt(np.where(I > 0, I, np.nan)) + 1.0 / math.sqrt(i_ref))
+    dmu = np.where(I > 0, dmu, np.inf)
+    return dmu, ~(dmu <= threshold)
+
+
+def write_mask(cfg, rows_path, eps, threshold, path, bound=None):
     """Cell mask of the capillary screens of a stage-11 mu-beamlet.jsonl; lit = cells
-    with ray centres."""
+    with ray centres.  The heuristic uniform mask always; with `bound` (k, area, z_exit,
+    modes [{B, E_in_dep, O_abs2, O_area}]) also the certified mask of bound_eta."""
     cap = cfg.capillary
     screens = {"capillary": cap.screen, **{f"capillary-s{i}": s for i, s in enumerate(cap.screens, 1)}}
     tables = {}
@@ -635,12 +672,21 @@ def write_mask(cfg, rows_path, eps, threshold, path):
             if [r["pixel"] for r in rows] != list(range(len(rows))) or ref >= len(rows):
                 raise ValueError(f"{rows_path}: {tag} rows do not cover the screen grid")
             lit = np.array([r["n_rays"] > 0 for r in rows])
-            dmu, masked = uniform_mask([r["I"] for r in rows], lit, ref, eps, threshold)
-            for r, d, m in zip(rows, dmu, masked):
-                out.write(json.dumps({"stage": tag, "pixel": r["pixel"], "x_um": r["x_um"], "y_um": r["y_um"],
-                                      "dmu": float(d) if np.isfinite(d) else None, "masked": bool(m)}) + "\n")
+            I = [r["I"] for r in rows]
+            dmu, masked = uniform_mask(I, lit, ref, eps, threshold)
             summary[tag] = {"cells": len(rows), "lit": int(lit.sum()), "masked": int(masked.sum()),
-                            "masked_lit": int((masked & lit).sum())}
+                            "masked_lit": int((masked & lit).sum()), "certified": False}
+            extra = [{} for _ in rows]
+            if bound is not None:
+                eta, kind = bound_eta(bound, spec, bound["z_exit"])
+                dmu_b, masked_b = bound_mask(I, ref, eta, threshold)
+                extra = [{"dmu_bound": float(d) if np.isfinite(d) else None, "masked_bound": bool(m)}
+                         for d, m in zip(dmu_b, masked_b)]
+                summary[tag]["bound"] = {"eta": eta, "transfer": kind, "masked": int(masked_b.sum()),
+                                         "masked_lit": int((masked_b & lit).sum()), "certified": True}
+            for r, d, m, x in zip(rows, dmu, masked, extra):
+                out.write(json.dumps({"stage": tag, "pixel": r["pixel"], "x_um": r["x_um"], "y_um": r["y_um"],
+                                      "dmu": float(d) if np.isfinite(d) else None, "masked": bool(m), **x}) + "\n")
     return summary
 
 
@@ -653,6 +699,7 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print, mask=None):
     os.makedirs(out, exist_ok=True)
     summary = {"archive": archive, "options": opt, "launches": []}
     rows_path = os.path.join(out, "modes.jsonl")
+    first_results = None
     with open(rows_path, "w", encoding="utf-8") as rows:
         for w0, w0_t, waist_z in launches:
             jobs, meta = launch_jobs(sim, archive, index, opt, w0, w0_t, waist_z)
@@ -664,6 +711,8 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print, mask=None):
                         results.append(res)
             else:
                 results = [mode_job(j) for j in jobs]
+            if first_results is None:
+                first_results = (results, meta)
             for res in results:
                 res["D0"] = meta["D0"]
                 # ray noise rescaled from the scanned to the production ray count
@@ -716,11 +765,22 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print, mask=None):
             raise ValueError(f"{mask}: the stage-11 map covers {n_map} modes, the diagnostics "
                              f"{summary['launches'][0]['modes']}; run the scan without --modes")
         eps = summary["launches"][0]["indicator_prod_rms"]
+        results0, meta0 = first_results
+        bound = None
+        if all(r.get("bound") and r["bound"].get("B") is not None for r in results0):
+            bound = {"k": float(sim.lines[0].k), "z_exit": float(sim.cfg.capillary.z1),
+                     "area": len(sim.cfg.capillary.bores) * math.pi * meta0["a_w_m"] ** 2,
+                     "modes": [{"B": r["bound"]["B"], "E_in_dep": r["E_in_dep"], "O_abs2": r["O_abs2"], "O_area": r["O_area"]}
+                               for r in results0]}
         summary["mask"] = {"map": mask, "eps": eps, "threshold": opt["mask_threshold"], "certified": False,
                            "assumption": "relative field error eps spread uniformly over the lit cells; not a bound",
-                           "screens": write_mask(sim.cfg, mask, eps, opt["mask_threshold"], os.path.join(out, "mask.jsonl"))}
+                           "bound_transfer": None if bound is None else
+                           "certified: Fresnel-kernel field bound beyond the exit, cell-concentration bound on the exit plane",
+                           "screens": write_mask(sim.cfg, mask, eps, opt["mask_threshold"], os.path.join(out, "mask.jsonl"), bound)}
         for tag, rec in summary["mask"]["screens"].items():
-            log(f"  mask {tag}: {rec['masked_lit']} of {rec['lit']} lit cells above |d mu| {opt['mask_threshold']} (eps {eps:.4f})")
+            log(f"  mask {tag}: {rec['masked_lit']} of {rec['lit']} lit cells above |d mu| {opt['mask_threshold']} (eps {eps:.4f})"
+                + (f"; certified ({rec['bound']['transfer']}, eta {rec['bound']['eta']:.3g}): {rec['bound']['masked_lit']} of {rec['lit']}"
+                   if "bound" in rec else ""))
     with open(os.path.join(out, "defect.json"), "w", encoding="utf-8") as fh:
         json.dump(summary, fh, indent=1)
     return summary
