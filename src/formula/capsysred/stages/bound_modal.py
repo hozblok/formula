@@ -168,3 +168,58 @@ class ModalBound:
             t1 = math.hypot(t1, math.sqrt(float(np.sum(4.0 * math.pi * end_x ** 2 * all2))))
             t2 = math.hypot(t2, math.sqrt(float(np.sum(16.0 * math.pi * self.k ** 2 * der_x ** 2 * all6))))
         return t1, t2
+
+
+
+def bores_bound(chans, L, sample, entrance, phase_step=0.7, t_abs2=0.0):
+    """B of one mode's method field over circular bores (the FBChannels share one Disc).
+    sample(b, z_rel, radii, phis_lab, cx, cy) -> the method field on polar points around the
+    bore axis at z0 + z_rel (raw units); entrance(ch) -> E_in on the Disc polar grid of bore
+    b.  C = least-squares complex scale of the fan against E_in over all bores; per bore
+    e0 = ||E_in - E_m(0)/C||, the frame wall trace at sections resolving the fastest mode
+    phase, its boundary part and tails; bores in quadrature, T (sqrt t_abs2 / |C|) by the
+    triangle inequality.  Returns the relative components (divided by ||E_in||)."""
+    disc, k = chans[0].disc, chans[0].k
+    a_w = disc.aw
+    alpha_max = max(disc.kap2max / (2.0 * k) + (0.0 if ch.rb is None else k * a_w / ch.rb) for ch in chans)
+    n_sec = max(int(math.ceil(L * alpha_max / phase_step)), 20)
+    zs = np.linspace(0.0, L, n_sec + 1)
+    wq = (disc.wr * disc.r)[:, None] * (2.0 * math.pi / disc.nphi)
+    ein, efan, ein2, num = [], [], 0.0, 0j
+    for b, ch in enumerate(chans):
+        t, _ = ch.frame_axes()
+        phis = disc.phi + math.atan2(t[1], t[0])
+        cx, cy = ch.axis(0.0)
+        fan = sample(b, 0.0, disc.r, phis, cx, cy)
+        e_in = entrance(ch)
+        ein.append(e_in); efan.append(fan)
+        ein2 += float(np.sum(wq * np.abs(e_in) ** 2))
+        num += complex(np.sum(wq * np.conj(e_in) * fan))
+    C = num / ein2 if ein2 > 0 else 1.0 + 0j
+    per_bore, b_sq = [], 0.0
+    for b, ch in enumerate(chans):
+        t, _ = ch.frame_axes()
+        phis = disc.phi + math.atan2(t[1], t[0])
+        e0 = math.sqrt(float(np.sum(wq * np.abs(ein[b] - efan[b] / C) ** 2)))
+        g = np.zeros((len(zs), disc.nphi), complex)
+        for jz, zr in enumerate(zs):
+            cx, cy = ch.axis(zr)
+            _, _, phase = frame_ring(ch, zr)
+            g[jz] = sample(b, zr, np.array([a_w]), phis, cx, cy)[0] * phase / C
+        mb = ModalBound(ch)
+        ghat = ring_hat(disc, g)
+        bnd = mb.norm(mb.boundary_part(zs, ghat, L))
+        t1, t2 = mb.tails(zs, ghat, extra_hat(disc, g))
+        bb = e0 + bnd + t1 + t2
+        b_sq += bb * bb
+        per_bore.append({"bore": b, "e0": e0, "boundary": bnd, "tail": t1 + t2, "B": bb})
+    norm_in = math.sqrt(ein2)
+    t_abs = math.sqrt(max(t_abs2, 0.0)) / abs(C)
+    return {"B": (math.sqrt(b_sq) + t_abs) / norm_in,
+            "B_e0": math.sqrt(sum(r["e0"] ** 2 for r in per_bore)) / norm_in,
+            "B_boundary": math.sqrt(sum(r["boundary"] ** 2 for r in per_bore)) / norm_in,
+            "B_tail": math.sqrt(sum(r["tail"] ** 2 for r in per_bore)) / norm_in,
+            "B_T": t_abs / norm_in,
+            "bores": [{k_: (v / norm_in if k_ != "bore" else v) for k_, v in r.items()} for r in per_bore],
+            "C_fit": [abs(C), math.atan2(C.imag, C.real)], "sections": n_sec, "jmax": float(disc.jmax),
+            "modes": int(disc.valid.sum()), "E_in_norm": norm_in}
