@@ -78,6 +78,16 @@ def gaussian_cell_average(offset, direction, k, width, cell_width, order=12, m=N
     return result
 
 
+def cell_order(k, cell_width, tilt, m, width_eff, reach):
+    """Gauss-Legendre order for one receiver cell: the phase swing over half a cell from
+    the ray tilt, from the window's chirp slope k |Im m| |offset| at the farthest kept
+    offset `reach`, and from its curvature; at least 12 nodes."""
+    half_phase = k * cell_width * tilt / 2
+    chirp = 0.0 if m is None else k * abs(m.imag) * (reach + cell_width / 2) * cell_width / 2
+    curve = 0.0 if m is None else k * cell_width**2 / 8 * abs(m.imag)
+    return max(12, 4 * math.ceil((0.75 * (half_phase + chirp + curve) + cell_width / width_eff + 12) / 4))
+
+
 def spread_window(gamma, distance):
     """Window exp(-k gamma d.d / 2) propagated freely over `distance`: its complex
     curvature gamma / (1 + i gamma L) and the 2D amplitude factor 1 / (1 + i gamma L)."""
@@ -141,12 +151,12 @@ def reconstruct_field(points, directions, phase, fresnel, Q, P, maslov, *,
     coefficient = (k / (2 * np.pi)) * area * amplitude * prefactor * fresnel * np.exp(1j * phase)
     valid &= coefficient != 0
     half_phase = float(k * cell_width * np.abs(directions).max(initial=0) / 2)
-    curve_phase = 0.0 if m is None else float(k * cell_width**2 / 8 * abs(m.imag))
-    order = max(12, 4*math.ceil((0.75*(half_phase + curve_phase) + cell_width/width_eff + 12)/4))
+    reach = cutoff * width_eff + cell_width / 2        # farthest kept cell / reference offset
+    order = cell_order(k, cell_width, float(np.abs(directions).max(initial=0)), m, width_eff, reach)
     if order > 256:
         raise ValueError("receiver cell phase requires more than 256 quadrature nodes")
-    rx = math.ceil((cutoff * width_eff + cell_width / 2) / dx) + 1
-    ry = math.ceil((cutoff * width_eff + cell_width / 2) / dy) + 1
+    rx = math.ceil(reach / dx) + 1
+    ry = math.ceil(reach / dy) + 1
     sx, sy = np.arange(-rx, rx + 1), np.arange(-ry, ry + 1)
     field = np.zeros((len(y), len(x)), complex)
     self_intensity = np.zeros(field.shape, float)
@@ -160,8 +170,8 @@ def reconstruct_field(points, directions, phase, fresnel, Q, P, maslov, *,
     ids = np.flatnonzero(valid)
     for start in range(0, len(ids), int(batch_size)):
         batch = ids[start:start + int(batch_size)]
-        batch_phase = k*cell_width*np.abs(directions[batch]).max(initial=0)/2
-        batch_order = max(12, 4*math.ceil((0.75*(batch_phase + curve_phase) + cell_width/width_eff + 12)/4))
+        batch_order = cell_order(k, cell_width, float(np.abs(directions[batch]).max(initial=0)), m,
+                                 width_eff, reach)
         center = points[batch]
         ix = (np.broadcast_to(np.arange(len(x)), (len(batch), len(x))) if len(x) <= len(sx)
               else np.floor((center[:, 0] - x[0]) / dx).astype(np.int64)[:, None] + sx)
@@ -169,13 +179,13 @@ def reconstruct_field(points, directions, phase, fresnel, Q, P, maslov, *,
               else np.floor((center[:, 1] - y[0]) / dy).astype(np.int64)[:, None] + sy)
         tx = x[np.clip(ix, 0, len(x)-1)] - center[:, 0, None]
         ty = y[np.clip(iy, 0, len(y)-1)] - center[:, 1, None]
-        mx = ((ix >= 0) & (ix < len(x)) & (np.abs(tx) <= cutoff * width_eff + cell_width / 2))
-        my = ((iy >= 0) & (iy < len(y)) & (np.abs(ty) <= cutoff * width_eff + cell_width / 2))
+        mx = ((ix >= 0) & (ix < len(x)) & (np.abs(tx) <= reach))
+        my = ((iy >= 0) & (iy < len(y)) & (np.abs(ty) <= reach))
         inside = mx.any(axis=1) & my.any(axis=1)
         used += int(inside.sum())
         skipped += int((~inside).sum())
         ref_offsets = ref_xy-center
-        ref_keep = np.all(np.abs(ref_offsets) <= cutoff*width_eff+cell_width/2, axis=1)
+        ref_keep = np.all(np.abs(ref_offsets) <= reach, axis=1)
         gx = gaussian_cell_average(tx, directions[batch, 0, None], k, width, cell_width, batch_order, m)
         gy = gaussian_cell_average(ty, directions[batch, 1, None], k, width, cell_width, batch_order, m)
         ref_kernel = gaussian_cell_average(ref_offsets, directions[batch], k, width, cell_width, batch_order, m)

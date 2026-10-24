@@ -507,9 +507,13 @@ def uniform_mask(intensity, lit, ref, eps, threshold):
     field error eps spread uniformly over the lit cells; masked = not below threshold."""
     I = np.asarray(intensity, float)
     eta = eps * math.sqrt(float(np.sum(np.maximum(I, 0.0))) / max(int(np.sum(lit)), 1))
+    i_ref = float(I.flat[ref])
+    if not i_ref > 0.0:              # unlit or U-statistic-negative reference: nothing estimable
+        dmu = np.full(I.shape, np.inf)
+        return dmu, np.ones(I.shape, bool)
     with np.errstate(divide="ignore", invalid="ignore"):
-        dmu = 2.0 * eta * (1.0 / np.sqrt(I) + 1.0 / math.sqrt(I.flat[ref]))
-    dmu = np.where((I > 0) & (I.flat[ref] > 0), dmu, np.inf)
+        dmu = 2.0 * eta * (1.0 / np.sqrt(np.where(I > 0, I, np.nan)) + 1.0 / math.sqrt(i_ref))
+    dmu = np.where(I > 0, dmu, np.inf)
     return dmu, ~(dmu <= threshold)
 
 
