@@ -52,18 +52,23 @@ def tail_sums(aw, jmax):
     return (aw / math.pi) ** 2 * (1.0 / J ** 2 + 1.0 / J), (aw / math.pi) ** 6 * (1.0 / J ** 6 + 1.0 / (5.0 * J ** 5))
 
 
-def trace_resolution(k, h, thetas, widths, phase_max=0.7, passage_min=4.0):
+def trace_resolution(k, h, thetas, widths, phase_max=0.7, passage_min=4.0, kappa_cut=None):
     """Whether the sections of spacing h resolve the method field's wall trace, from the beams
     themselves: the fastest beam phase k theta^2 h / 2 per section and the shortest envelope
     passage w / theta in sections.  The interpolation term and the sampled tails are estimates
-    only when both hold; the result is published next to B."""
+    only when both hold; the result is published next to B.  With the basis cutoff kappa_cut
+    also band_ratio = k theta_max / kappa_cut: the beams' wall trace lives in modes up to
+    kappa ~ k theta, so the tails decay only below 1 (a diagnostic of looseness, not a gate)."""
     th = np.asarray(thetas, float)
     w = np.asarray(widths, float)
     ok = np.isfinite(th) & np.isfinite(w) & (th > 0)
     phase = float(np.max(0.5 * k * th[ok] ** 2 * h)) if ok.any() else 0.0
     passage = float(np.min(w[ok] / th[ok]) / h) if ok.any() else math.inf
-    return {"phase_per_section": phase, "passage_sections": passage, "sections_h": float(h),
-            "resolved": bool(phase <= phase_max and passage >= passage_min)}
+    out = {"phase_per_section": phase, "passage_sections": passage, "sections_h": float(h),
+           "resolved": bool(phase <= phase_max and passage >= passage_min)}
+    if kappa_cut:
+        out["band_ratio"] = float(k * np.max(th[ok]) / kappa_cut) if ok.any() else 0.0
+    return out
 
 
 def disc_for(a_w: float, k: float, L: float, n_sections: int, phase_step: float = 0.7) -> Disc:
@@ -128,12 +133,39 @@ def _filon(th):
     return e0, e1
 
 
-class ModalBound:
-    """Boundary-forced modal evolution in one bore and the bound's components."""
+def _phi12(X):
+    """phi_1(X) = (e^X - 1)/X and phi_2(X) = (e^X - 1 - X)/X^2 (series below |X| = 1e-2)."""
+    X = np.asarray(X, complex)
+    small = np.abs(X) < 1e-2
+    Xs = np.where(small, 1.0, X)
+    em1 = np.expm1(Xs)
+    p1 = np.where(small, 1.0 + X / 2 + X ** 2 / 6 + X ** 3 / 24 + X ** 4 / 120, em1 / Xs)
+    p2 = np.where(small, 0.5 + X / 6 + X ** 2 / 24 + X ** 3 / 120 + X ** 4 / 720, (em1 - Xs) / Xs ** 2)
+    return p1, p2
 
-    def __init__(self, chan: FBChannel, sub_phase: float = 0.1):
+
+def _apply_v_batch(chan, W):
+    """FBChannel.apply_v on a stack W [k, 2M+1, nmax] (real blocks on the real and imaginary parts)."""
+    if chan.vscale == 0.0:
+        return np.zeros_like(W)
+    up, dn = chan.disc.shift_blocks()
+    out = np.zeros_like(W)
+    for part, f in ((W.real, 1.0), (W.imag, 1j)):
+        v = np.ascontiguousarray(part.transpose(1, 2, 0))                   # [m, j, k]
+        out[:, 1:] += f * (up[:-1] @ v[:-1]).transpose(2, 0, 1)
+        out[:, :-1] += f * (dn[1:] @ v[1:]).transpose(2, 0, 1)
+    return chan.vscale * out
+
+
+class ModalBound:
+    """Boundary-forced modal evolution in one lossless bore and the bound's components."""
+
+    def __init__(self, chan: FBChannel, tol: float = 1e-12):
+        if np.any(chan.gamma):
+            raise ValueError("ModalBound: a lossless channel is expected (the bound's model)")
         self.chan, self.disc, self.k = chan, chan.disc, chan.k
-        self.sub_phase = float(sub_phase)
+        self.tol = float(tol)
+        self._cheb = {}
         d = self.disc
         # J_|m|+1(j_mn) per signed m and radial index (0 where no mode)
         jp = np.zeros((d.M + 1, d.nmax))
@@ -150,9 +182,9 @@ class ModalBound:
 
     def boundary_part(self, zs, ghat_z, L):
         """int_0^L e^{-iH(L-z)} s(z) dz over the sections zs (zs[0] = 0, zs[-1] = L), s linear on
-        each section.  Straight bore: diagonal phases with the exact (Filon) weights
-        h [E1 s_j + (E0 - E1) s_j+1]; bent bore: exponential trapezoid steps with the
-        Chebyshev propagator.  Returns the coefficient array."""
+        each section: exact weights h [phi_1(X) s_j + phi_2(X) (s_j+1 - s_j)], X = -iHh.
+        Straight bore: diagonal (Filon) weights; bent bore: e^{X}, phi_1(X), phi_2(X) as
+        Chebyshev series on the spectrum of H.  Returns the coefficient array."""
         zs = np.asarray(zs, float)
         s = self.forcing(ghat_z)
         h = np.diff(zs)
@@ -163,19 +195,43 @@ class ModalBound:
                 e0, e1 = _filon(a * h[j])
                 out = out * np.exp(-1j * a * h[j]) + h[j] * (e1 * s[j] + (e0 - e1) * s[j + 1])
             return out
-        # bent bore: exponential trapezoid on sub-steps short enough that the fastest mode
-        # advances at most `sub_phase` rad per sub-step (error ~ phase^2), s linear in between
-        emin, emax = self.chan._spectral_bounds()
         c = np.zeros_like(s[0])
         for j in range(len(h)):
-            n_sub = max(1, int(math.ceil(max(abs(emin), abs(emax)) * h[j] / self.sub_phase)))
-            d = h[j] / n_sub
-            for q in range(n_sub):
-                s_a = s[j] + (s[j + 1] - s[j]) * (q / n_sub)
-                s_b = s[j] + (s[j + 1] - s[j]) * ((q + 1) / n_sub)
-                c, _ = self.chan.propagate(c + 0.5 * d * s_a, d)
-                c = c + 0.5 * d * s_b
+            e, p1, p2 = self.cheb_apply(h[j], np.stack([c, s[j], s[j + 1] - s[j]]))
+            c = e + h[j] * (p1 + p2)
         return c
+
+    def cheb_coef(self, h):
+        """Chebyshev coefficients (rows) of e^{-ixh}, phi_1(-ixh), phi_2(-ixh) on the spectrum
+        of H to `tol`, with the spectrum's centre and half-width."""
+        key = round(float(h), 15)
+        if key not in self._cheb:
+            emin, emax = self.chan._spectral_bounds()
+            ec, dE = 0.5 * (emax + emin), 0.5 * (emax - emin) * 1.02
+            n = int(dE * h) + 8
+            while True:
+                th = math.pi * (np.arange(n + 1) + 0.5) / (n + 1)                 # nodes cos(th)
+                X = -1j * (ec + dE * np.cos(th)) * h
+                f = np.stack([np.exp(X), *_phi12(X)])
+                a = f @ np.cos(np.outer(th, np.arange(n + 1))) * (2.0 / (n + 1))
+                a[:, 0] *= 0.5
+                if np.all(np.abs(a[:, -4:]) < self.tol):
+                    break
+                n += 8
+            self._cheb[key] = (ec, dE, a)
+        return self._cheb[key]
+
+    def cheb_apply(self, h, V):
+        """f_i(H) V[i] for the three functions of cheb_coef, one Chebyshev recurrence on the stack."""
+        ec, dE, a = self.cheb_coef(h)
+        ch = self.chan
+        hs = lambda W: (ch.h0[None] * W + _apply_v_batch(ch, W) - ec * W) / dE
+        p0, p1 = V, hs(V)
+        out = a[:, 0, None, None] * p0 + a[:, 1, None, None] * p1
+        for n in range(2, a.shape[1]):
+            p0, p1 = p1, 2.0 * hs(p1) - p0
+            out = out + a[:, n, None, None] * p1
+        return out
 
     def norm(self, c):
         return math.sqrt(self.disc.norm(c))
@@ -294,7 +350,8 @@ def _assemble(parts, C):
         bnd, itp, tail = p["bnd1"] / ac, p["itp1"] / ac, (p["t1"] + p["t2"]) / ac
         tri = e0 + bnd + itp + tail
         per_bore.append({"bore": p["bore"], "e0": e0, "r0": r0, "exact": exact, "boundary": bnd, "interp": itp,
-                         "tail": tail, "B": min(exact + r0 + itp + tail, tri), "B_tri": tri})
+                         "tail": tail, "tail_end": p["t1"] / ac, "tail_der": p["t2"] / ac,
+                         "B": min(exact + r0 + itp + tail, tri), "B_tri": tri})
     ein2, num = parts["ein2"], parts["num"]
     norm_in = math.sqrt(ein2)
     t_abs = math.sqrt(max(parts["t_abs2"], 0.0)) / ac

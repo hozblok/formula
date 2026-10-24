@@ -514,7 +514,7 @@ def modal_bound(seg, bores, job, origin, t_full, e_in_dep=None):
     if any(sh is not None for sh in shapes):
         out = square_bound(seg, bores, shapes, job, origin, t_full, e_in_dep)
         if out.get("B") is not None:
-            out["sampling"] = trace_sampling(seg, bores, None, k, L / out["sections"], z0)
+            out["sampling"] = trace_sampling(seg, bores, None, k, L / out["sections"], z0, math.pi * out["jmax"] / (2.0 * a_w))
         return out
     disc = _disc(a_w, job["bound_jmax"])
     chans = [_channel(b, a_w, disc, k) for b in bores]          # lossless Dirichlet wall: the bound's model
@@ -536,16 +536,16 @@ def modal_bound(seg, bores, job, origin, t_full, e_in_dep=None):
 
     out = bound_modal.bores_bound(chans, L, sample, lambda ch: ch.entrance_field(origin[:2], z0 - z_src),
                                   job["bound_phase_step"], t_full, e_in_dep)
-    out["sampling"] = trace_sampling(seg, bores, chans, k, L / out["sections"], z0)
+    out["sampling"] = trace_sampling(seg, bores, chans, k, L / out["sections"], z0, out["jmax"] / a_w)
     return out
 
 
-def trace_sampling(seg, bores, chans, k, h, z0):
+def trace_sampling(seg, bores, chans, k, h, z0, kappa_cut=None):
     """bound_modal.trace_resolution from the segments inside the channel: the beam angle to the
     bore axis (minus the bend slope at the segment start) and the beam width there."""
     idx = np.flatnonzero((seg.z0 >= z0 - 1e-12) & np.isfinite(seg.z0))
     if idx.size == 0:
-        return bound_modal.trace_resolution(k, h, [], [])
+        return bound_modal.trace_resolution(k, h, [], [], kappa_cut=kappa_cut)
     ux, uy = seg.ux[idx].copy(), seg.uy[idx].copy()
     if chans is not None:
         for b, ch in enumerate(chans):
@@ -554,7 +554,7 @@ def trace_sampling(seg, bores, chans, k, h, z0):
                 sl = np.array([ch.slope(z) for z in seg.z0[idx][m] - z0])
                 ux[m] -= sl[:, 0]; uy[m] -= sl[:, 1]
     w, _, _ = beam_width_at_start(seg, idx, k)
-    return bound_modal.trace_resolution(k, h, np.hypot(ux, uy), w)
+    return bound_modal.trace_resolution(k, h, np.hypot(ux, uy), w, kappa_cut=kappa_cut)
 
 
 def beam_width_at_start(seg, idx, k):
@@ -880,7 +880,8 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print, mask=None):
                      "DIR-ell damping would add a source -Gamma E_method, not included), constant bend curvature; the diagnosed "
                      "ray sample is the sample (ray statistics not rescaled); fan scale: one magnitude per launch (mean of the "
                      "modes' least-squares magnitudes), least-squares phase per mode; sections resolve the trace only where "
-                     "bound.sampling.resolved"}
+                     "bound.sampling.resolved; the tails decay only where bound.sampling.band_ratio = k theta_max a_w / jmax "
+                     "< 1 (modes with kappa ~ k theta carry the beams' wall trace)"}
     if mask is not None:
         n_map = int(sim.cfg.capillary.source.n_modes)
         if summary["launches"][0]["modes"] != n_map:

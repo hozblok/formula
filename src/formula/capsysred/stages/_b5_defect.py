@@ -448,16 +448,16 @@ def modal_bound(seg, bores, job, origin, width, t_full, e_in_dep=None):
 
     out = bound_modal.bores_bound(chans, L, sample, lambda ch: ch.entrance_field(origin[:2], z0 - z_src),
                                   job["bound_phase_step"], t_full, e_in_dep)
-    out["sampling"] = trace_sampling17(seg, chans, k, L / out["sections"], z0, width)
+    out["sampling"] = trace_sampling17(seg, chans, k, L / out["sections"], z0, width, out["jmax"] / a_w)
     return out
 
 
-def trace_sampling17(seg, chans, k, h, z0, width):
+def trace_sampling17(seg, chans, k, h, z0, width, kappa_cut=None):
     """bound_modal.trace_resolution for frozen windows: the segment angle to the bore axis (minus
     the bend slope at the segment start) and the window width."""
     idx = np.flatnonzero(seg.valid & (seg.p0[:, 2] >= z0 - 1e-12))
     if idx.size == 0:
-        return bound_modal.trace_resolution(k, h, [], [])
+        return bound_modal.trace_resolution(k, h, [], [], kappa_cut=kappa_cut)
     u = seg.u[idx]
     ux, uy = u[:, 0] / u[:, 2], u[:, 1] / u[:, 2]
     if chans is not None:
@@ -466,7 +466,7 @@ def trace_sampling17(seg, chans, k, h, z0, width):
             if m.any() and ch.rb is not None:
                 sl = np.array([ch.slope(z) for z in seg.p0[idx][m, 2] - z0])
                 ux[m] -= sl[:, 0]; uy[m] -= sl[:, 1]
-    return bound_modal.trace_resolution(k, h, np.hypot(ux, uy), np.full(idx.size, width))
+    return bound_modal.trace_resolution(k, h, np.hypot(ux, uy), np.full(idx.size, width), kappa_cut=kappa_cut)
 
 
 def _points_sum(seg, idx, z, px, py, k, width, z_src, cutoff, a_w):
@@ -536,7 +536,7 @@ def square_bound(seg, bores, shapes, job, origin, width, t_full, e_in_dep=None):
                            / (1j * lam * z_in))
     out = bound_modal.squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in,
                                     job["bound_phase_step"], t_full, e_in_dep=e_in_dep)
-    out["sampling"] = trace_sampling17(seg, None, k, L / out["sections"], z0, width)
+    out["sampling"] = trace_sampling17(seg, None, k, L / out["sections"], z0, width, math.pi * out["jmax"] / (2.0 * a_w))
     return out
 
 
@@ -753,7 +753,8 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
                  "DIR-ell damping would add a source -Gamma E_method, not included), constant bend curvature; the frozen-window "
                  "residual by Duhamel (int ||R|| dz, full norm); the diagnosed ray sample is the sample; fan scale: one "
                  "magnitude per width (mean of the modes' least-squares magnitudes), least-squares phase per mode; sections "
-                 "resolve the trace only where bound.sampling.resolved")
+                 "resolve the trace only where bound.sampling.resolved; the tails decay only where "
+                 "bound.sampling.band_ratio = k theta_max a_w / jmax < 1 (modes with kappa ~ k theta carry the beams' wall trace)")
         for name, key in (("argmin_bound_exit", "B_exit_rms"), ("argmin_bound_target", "B_target_rms")):
             best = min(with_b, key=lambda r: r[key])
             summary[name] = {"width_m": best["width_m"], key: best[key], "B_rms": best["B_rms"],
