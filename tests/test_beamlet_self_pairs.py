@@ -286,3 +286,25 @@ def test_negative_u_intensity_is_dubious_in_every_path():
     assert list(dub) == [0, 1, 0, 0]
     _, _, dub, _ = jackknife_tile(w, i_tot, -1.0, rows_w, rows_i, [0.0, 0.0], 1e-6, 0.0)
     assert list(dub) == [1, 1, 0, 1]
+
+
+def test_subtract_refuses_a_single_ray():
+    # one ray per mode: no distinct pairs, the U-statistic is undefined — the config
+    # and both fold paths refuse instead of publishing I = 0 as a confident zero
+    one = dict(TINY, beamlet={"self_pairs": "subtract"})
+    one["capillary"] = dict(TINY["capillary"], source=dict(TINY["capillary"]["source"], n_rays=1))
+    with pytest.raises(ValueError, match="two rays"):
+        Simulation.from_dict(one).cfg.validate_beamlet()
+    lines = _lines(1)
+    scr = ScreenGrid(SimpleNamespace(z=0.06, nx=3, ny=1, center=[0.0, 0.0], edge_x=3.0e-6, edge_y=1.0e-6))
+    for use_native, sp in ((False, "subtract"), (True, "subtract"), (False, "keep")):
+        if use_native and not _grid_ok():
+            continue
+        field = BeamletField(lines, scr, 1, 5.0e-7, 3.0, None, use_native=use_native, self_pairs=sp)
+        field.new_mode()
+        field.add_ray(_rec(0, scr, 0.0, 0.0, 0.0, 0.0, 0.06), [1.0 + 0.0j])
+        if sp == "keep":
+            field.fold_mode(n_rays=1)                     # keep: no pairs needed
+        else:
+            with pytest.raises(ValueError, match="two rays"):
+                (field.fold_export if use_native else field.fold_mode)(1)
