@@ -443,69 +443,32 @@ def _channel(bore, a_w, disc, k):
 
 
 def modal_bound(seg, bores, job, origin, t_full):
-    """B of the full-beam field of one mode (bound_modal): per bore the entrance defect
-    ||E_in - E_full(0)/C|| on the frame polar grid (C the least-squares complex scale of the
-    fan against the point source, common to the bores), the wall trace in the bend frame
-    at sections resolving the fastest mode's phase, its boundary part and the mode tails;
-    bores add in quadrature, T (sqrt t_full / |C|) by the triangle inequality.  Circular
-    bores only (the Disc basis)."""
+    """B of the full-beam field of one mode (bound_modal.bores_bound): per circular bore the
+    entrance defect against the point source, the frame wall trace of the beams at sections
+    resolving the fastest mode phase, its boundary part and the mode tails; T from the exit
+    tails.  Circular bores only (the Disc basis)."""
     k, a_w, z_src = job["k"], job["a_w"], origin[2]
-    z0, z1 = job["z0_cap"], job["z_exit"]
-    L = z1 - z0
+    z0, L = job["z0_cap"], job["z_exit"] - job["z0_cap"]
     disc = _disc(a_w, job["bound_jmax"])
     chans = [_channel(b, a_w, disc, k) for b in bores]
-    alpha_max = max(disc.kap2max / (2.0 * k) + (0.0 if ch.rb is None else k * a_w / ch.rb) for ch in chans)
-    n_sec = max(int(math.ceil(L * alpha_max / job["bound_phase_step"])), 20)
-    zs = np.linspace(0.0, L, n_sec + 1)
-    wq = (disc.wr * disc.r)[:, None] * (2.0 * math.pi / disc.nphi)         # polar quadrature weights
     stretch = np.ones(disc.nphi)
-    ein, efan, ein2, num = [], [], 0.0, 0j
-    for b, ch in enumerate(chans):
-        t, _ = ch.frame_axes()
-        phis = disc.phi + math.atan2(t[1], t[0])
+
+    def sample(b, zr, radii, phis, cx, cy):
+        z = z0 + zr
         cand = np.flatnonzero(seg.bore == b)
-        cx, cy = ch.axis(0.0)
-        w, bx, by = beam_width(seg, cand, z0, k)
-        near = np.hypot(bx - cx, by - cy) <= a_w + job["window"] * np.where(np.isfinite(w), w, 0.0)
-        ra, rb = _halves(seg, cand[near], z0, cx, cy, disc.r, phis, k, z_src, job["window"], stretch)
-        fan = ra + rb
-        e_in = ch.entrance_field(origin[:2], z0 - z_src)
-        ein.append(e_in); efan.append(fan)
-        ein2 += float(np.sum(wq * np.abs(e_in) ** 2))
-        num += complex(np.sum(wq * np.conj(e_in) * fan))
-    C = num / ein2 if ein2 > 0 else 1.0 + 0j
-    per_bore, b_sq = [], 0.0
-    for b, ch in enumerate(chans):
-        t, _ = ch.frame_axes()
-        phis = disc.phi + math.atan2(t[1], t[0])
-        e0 = math.sqrt(float(np.sum(wq * np.abs(ein[b] - efan[b] / C) ** 2)))
-        g = np.zeros((len(zs), disc.nphi), complex)
-        cand = np.flatnonzero(seg.bore == b)
-        for jz, zr in enumerate(zs):
-            z = z0 + zr
-            cx, cy = ch.axis(zr)
-            act = cand[(seg.z0[cand] <= z + 0.1) & (seg.z1[cand] >= z - 0.1)]
-            w, bx, by = beam_width(seg, act, z, k)
-            near = np.hypot(bx - cx, by - cy) <= a_w + job["window"] * np.where(np.isfinite(w), w, 0.0)
-            ra, rb = _halves(seg, act[near], z, cx, cy, np.array([a_w]), phis, k, z_src, job["window"], stretch)
-            _, _, phase = bound_modal.frame_ring(ch, zr)
-            g[jz] = (ra[0] + rb[0]) * phase / C
-        mb = bound_modal.ModalBound(ch)
-        ghat = bound_modal.ring_hat(disc, g)
-        bnd = mb.norm(mb.boundary_part(zs, ghat, L))
-        t1, t2 = mb.tails(zs, ghat, bound_modal.extra_hat(disc, g))
-        bb = e0 + bnd + t1 + t2
-        b_sq += bb * bb
-        per_bore.append({"bore": b, "e0": e0, "boundary": bnd, "tail": t1 + t2, "B": bb})
-    norm_in = math.sqrt(ein2)
-    t_abs = math.sqrt(max(t_full, 0.0)) / abs(C)
-    return {"B": (math.sqrt(b_sq) + t_abs) / norm_in,
-            "B_e0": math.sqrt(sum(r["e0"] ** 2 for r in per_bore)) / norm_in,
-            "B_boundary": math.sqrt(sum(r["boundary"] ** 2 for r in per_bore)) / norm_in,
-            "B_tail": math.sqrt(sum(r["tail"] ** 2 for r in per_bore)) / norm_in,
-            "B_T": t_abs / norm_in, "bores": [{k_: (v / norm_in if k_ != "bore" else v) for k_, v in r.items()} for r in per_bore],
-            "C_fit": [abs(C), math.atan2(C.imag, C.real)], "sections": n_sec, "jmax": float(job["bound_jmax"]),
-            "modes": int(disc.valid.sum()), "E_in_norm": norm_in}
+        act = cand[(seg.z0[cand] <= z + 0.1) & (seg.z1[cand] >= z - 0.1)]
+        w, bx, by = beam_width(seg, act, z, k)
+        reach = a_w + job["window"] * np.where(np.isfinite(w), w, 0.0)
+        idx = act[np.hypot(bx - cx, by - cy) <= reach]
+        # blocks of radii: _ring_sum holds [beams, radii, window] per chunk
+        out = np.zeros((radii.size, phis.size), complex)
+        for lo in range(0, radii.size, 8):
+            ra, rb = _halves(seg, idx, z, cx, cy, radii[lo:lo + 8], phis, k, z_src, job["window"], stretch)
+            out[lo:lo + 8] = ra + rb
+        return out
+
+    return bound_modal.bores_bound(chans, L, sample, lambda ch: ch.entrance_field(origin[:2], z0 - z_src),
+                                   job["bound_phase_step"], t_full)
 
 
 # ------------------------------------------------------------------ per mode
