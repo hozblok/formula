@@ -24,7 +24,7 @@ import numpy as np
 from numpy.polynomial.legendre import leggauss
 from scipy.special import jv
 
-from .wave_fb import Disc, FBChannel
+from .wave_fb import Disc, FBChannel, wall_offset
 
 
 def disc_for(a_w: float, k: float, L: float, n_sections: int, phase_step: float = 0.7) -> Disc:
@@ -280,12 +280,33 @@ class Square:
         return Sw @ np.asarray(E) @ Sw.T / self.aw
 
 
-class SquareBound:
-    """Boundary-forced sine-mode evolution in a straight square bore and the bound's tails."""
+def slab_damping(kappa, k, delta, beta, aw):
+    """DIR-ell amplitude damping of a slab mode of wall wavenumber kappa (wave_fb.mode_damping
+    per wall pair): kappa^2 Im ell / (k a_w) times the exact Fresnel loss at the grazing angle
+    kappa / k relative to its theta -> 0 form."""
+    ell = wall_offset(k, delta, beta)
+    thw = np.asarray(kappa, float) / k
+    q = np.sqrt(thw * thw - 2.0 * delta + 2j * beta)
+    q = np.where(q.imag < 0.0, -q, q)
+    loss = 4.0 * thw * q.real / np.abs(thw + q) ** 2
+    loss0 = 4.0 * thw * beta / (2.0 * delta) ** 1.5
+    factor = np.divide(loss, loss0, out=np.ones_like(loss), where=loss0 > 0.0)
+    return np.asarray(kappa) ** 2 * ell.imag / (aw * k) * factor
 
-    def __init__(self, sq: Square, k: float):
+
+def square_damping(sq: Square, k, delta, beta):
+    """Per-mode damping [M, M] of the square: the x faces see kappa_m, the y faces kappa_n."""
+    g = slab_damping(np.arange(1, sq.M + 1) * math.pi / (2.0 * sq.aw), k, delta, beta, sq.aw)
+    return g[:, None] + g[None, :]
+
+
+class SquareBound:
+    """Boundary-forced sine-mode evolution in a straight square bore and the bound's tails;
+    `gamma` [M, M] = DIR-ell damping (square_damping), none = lossless Dirichlet."""
+
+    def __init__(self, sq: Square, k: float, gamma=None):
         self.sq, self.k = sq, float(k)
-        self.alpha = sq.kap2 / (2.0 * self.k)
+        self.alpha = sq.kap2 / (2.0 * self.k) - (0.0 if gamma is None else 1j * np.asarray(gamma))
         n = np.arange(1, sq.nq + 1)
         self.sgn = (-1.0) ** n                                  # (-1)^n, n <= nq
         self.mp = n * math.pi / (2.0 * sq.aw ** 2)              # n pi / 2 aw^2
@@ -349,11 +370,12 @@ class SquareBound:
         return t1, t2
 
 
-def squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in, phase_step=0.7, t_abs2=0.0, nr=48, nphi=384):
+def squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in, phase_step=0.7, t_abs2=0.0, nr=48, nphi=384, gamma=None):
     """B of one mode's method field over straight square bores (one Square per bore, same aw and M).
     sample_disc(b, radii, phis, stretch, cx, cy) -> the fan on the stretched polar grid of bore b
     at z0 (raw units); sample_outline(b, z_rel, sq, cx, cy) -> the fan on its outline nodes at
-    z0 + z_rel; e_in(px, py) -> E_in at lab points.  Assembled as bores_bound."""
+    z0 + z_rel; e_in(px, py) -> E_in at lab points; gamma = square_damping(...) or None.
+    Assembled as bores_bound."""
     aw = sqs[0].aw
     alpha_max = max(sq.kap2max for sq in sqs) / (2.0 * k)
     n_sec = max(int(math.ceil(L * alpha_max / phase_step)), 20)
@@ -378,7 +400,7 @@ def squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in, phase_s
         cx, cy = centers[b]
         e0 = math.sqrt(float(np.sum(wqs[b] * np.abs(ein[b] - efan[b] / C) ** 2)))
         g = np.array([sample_outline(b, zr, sq, cx, cy) for zr in zs]) / C
-        sb = SquareBound(sq, k)
+        sb = SquareBound(sq, k, gamma)
         G = sb.face_coef(g)
         bnd = sb.norm(sb.boundary_part(zs, G, L))
         t1, t2 = sb.tails(zs, G)
