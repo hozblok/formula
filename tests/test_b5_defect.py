@@ -118,7 +118,7 @@ def test_mask_of_a_stage17_map(tmp_path):
     path = tmp_path / "map.npz"
     np.savez(path, I=I, matched_stage14_rays=rays, ref_index=np.array([0, 0]), x=np.arange(2.0), y=np.arange(2.0))
     summary = D.write_map_mask(path, 0.1, 0.35, tmp_path / "mask.npz")
-    assert summary == {"cells": 4, "lit": 2, "masked": 3, "masked_lit": 1}
+    assert summary == {"cells": 4, "lit": 2, "masked": 3, "masked_lit": 1, "certified": False}
     data = np.load(tmp_path / "mask.npz")
     eta = 0.1 * np.sqrt(5.25 / 2)
     assert data["dmu"][0, 1] == pytest.approx(2 * eta * (1.0 + 0.5))
@@ -155,3 +155,42 @@ def test_map_eps_uses_the_snapshots_mode_prefix():
     assert D.map_eps(results, "1", 0.0, 100, 4, False) == pytest.approx(0.01)
     with pytest.raises(ValueError, match="5 modes"):
         D.map_eps(results, "1", 0.0, 100, 5, False)
+
+
+def test_certified_mask_of_a_stage17_map(tmp_path):
+    """With per-mode bounds the map mask also carries the certified cells: on the exit plane
+    the cell-concentration transfer eta = B ||E_in|| / sqrt(A_cell); beyond it the Fresnel kernel."""
+    I = np.array([[4.0, 1.0], [0.25, -1.0]])
+    rays = np.array([[3, 1], [0, 0]])
+    path = tmp_path / "map.npz"
+    np.savez(path, I=I, matched_stage14_rays=rays, ref_index=np.array([0, 0]), x=np.arange(2.0), y=np.arange(2.0))
+    bound = {"k": K, "z_exit": 0.2, "area": math.pi * 25e-12,
+             "modes": [{"B": 0.1, "E_in_dep": 2.0, "O_abs2": 0.0, "O_area": 1.0}]}
+    spec = {"z": 0.2, "nx": 2, "ny": 2, "center": [0.0, 0.0], "edge_x": 2e-6, "edge_y": 2e-6}
+    summary = D.write_map_mask(path, 0.1, 0.35, tmp_path / "mask.npz", bound, spec)
+    assert summary["certified"] is False and summary["bound"]["certified"] is True
+    assert summary["bound"]["transfer"] == "cell"
+    eta = 0.1 * 2.0 / math.sqrt(1e-12)
+    assert summary["bound"]["eta"] == pytest.approx(eta)
+    data = np.load(tmp_path / "mask.npz")
+    assert data["dmu_bound"][0, 1] == pytest.approx(2 * eta * (1.0 + 0.5))
+    assert data["masked_bound"].tolist() == [[True, True], [True, True]]     # eta 2e5 masks every cell
+    far = D.write_map_mask(path, 0.1, 0.35, tmp_path / "mask2.npz", bound, dict(spec, z=0.3))
+    assert far["bound"]["transfer"] == "fresnel"
+    assert far["bound"]["eta"] == pytest.approx(K / (2 * math.pi * 0.1) * math.sqrt(math.pi * 25e-12) * 0.1 * 2.0)
+
+
+def test_modal_bound_of_one_window_is_finite_and_exact_for_an_absent_trace():
+    """A single on-axis window in a 5 um bore: the frame trace of the window is below the
+    cutoff, so the boundary part vanishes and B is the entrance defect plus T."""
+    sim = _one_ray_scene()
+    bores = sim.cfg.raw["capillary"]["bores"]
+    origin = [0.0, 0.0, -0.5]
+    rows = [(0.0, 0.0, 0.0, 0.0, 0.7, [], [])]
+    seg = D.build_segments(rows, origin, 0.2, bores, 0.0, K, (2 * sim.delta_f, 2 * sim.beta_f))
+    job = {"k": K, "a_w": 5e-6, "z0_cap": 0.0, "z_exit": 0.2, "bound_jmax": 30.0, "bound_phase_step": 0.7, "cutoff": 4.0}
+    bnd = D.modal_bound(seg, bores, job, origin, 0.5e-6, 0.0)
+    assert math.isfinite(bnd["B"]) and bnd["B"] > 0.0
+    assert bnd["B_boundary"] == pytest.approx(0.0, abs=1e-9) and bnd["B_T"] == 0.0
+    assert bnd["B"] == pytest.approx(bnd["B_e0"] + bnd["B_tail"], rel=1e-9)
+    assert bnd["sections"] >= 20 and bnd["modes"] > 0

@@ -46,11 +46,14 @@ import numpy as np
 
 from .. import rays_v3
 from ._b5_transport import count_free_caustics, reflect_variations, wall_normal_derivative
-from .beamlet_defect import uniform_mask
+from . import bound_modal
+from .beamlet import _screen_spec
+from .beamlet_defect import _channel, _disc, bound_eta, bound_mask, uniform_mask
 
 RESULT_DIR = "stage17-defect"
 DEFAULTS = {"rays": 20000, "sections": 40, "samples": 300, "ring_step": 0.5e-6, "cutoff": 5.0,
-            "modes": None, "jobs": 1, "glass": False, "mask_threshold": 0.05}
+            "modes": None, "jobs": 1, "glass": False, "mask_threshold": 0.05,
+            "bound": True, "bound_jmax": 160.0, "bound_phase_step": 0.7}
 
 
 def options(cfg):
@@ -67,8 +70,12 @@ def options(cfg):
     for key in ("ring_step", "cutoff", "mask_threshold"):
         if not isinstance(opt[key], (int, float)) or opt[key] <= 0:
             raise ValueError(f"b5_defect.{key}: a positive number")
-    if not isinstance(opt["glass"], bool):
-        raise ValueError("b5_defect.glass: true or false")
+    for key in ("glass", "bound"):
+        if not isinstance(opt[key], bool):
+            raise ValueError(f"b5_defect.{key}: true or false")
+    for key in ("bound_jmax", "bound_phase_step"):
+        if not isinstance(opt[key], (int, float)) or opt[key] <= 0:
+            raise ValueError(f"b5_defect.{key}: a positive number")
     return opt
 
 
@@ -402,6 +409,30 @@ def exit_tails(seg, bores, a_w, z_exit, k, width, z_src, ring_step, cutoff, outs
 
 
 # ------------------------------------------------------------------ per mode
+def modal_bound(seg, bores, job, origin, width, t_full):
+    """B of the frozen-window field of one mode and width (bound_modal.bores_bound): the
+    entrance defect against the point source, the frame wall trace of the windows, its
+    boundary part and the mode tails; T from the exit tails.  The volume residual R is added
+    by the caller (Duhamel, int ||R|| dz).  Circular bores only."""
+    k, a_w, z_src = job["k"], job["a_w"], origin[2]
+    z0, L = job["z0_cap"], job["z_exit"] - job["z0_cap"]
+    disc = _disc(a_w, job["bound_jmax"])
+    chans = [_channel(b, a_w, disc, k) for b in bores]
+
+    def sample(b, zr, radii, phis, cx, cy):
+        z = z0 + zr
+        cand = np.flatnonzero(seg.bore == b)
+        idx = cand[near(seg, cand, z, cx, cy, a_w, job["cutoff"] * width)]
+        out = np.zeros((radii.size, phis.size), complex)
+        for lo in range(0, radii.size, 8):
+            ra, rb = _halves(seg, idx, z, cx, cy, radii[lo:lo + 8], phis, k, width, z_src, job["cutoff"])
+            out[lo:lo + 8] = ra + rb
+        return out
+
+    return bound_modal.bores_bound(chans, L, sample, lambda ch: ch.entrance_field(origin[:2], z0 - z_src),
+                                   job["bound_phase_step"], t_full)
+
+
 def mode_job(job):
     t0 = time.time()
     from ..simulation import Simulation
@@ -444,6 +475,22 @@ def mode_job(job):
             glass_scale = dz_in / ((z1 - z0) * 2.0 * math.pi * job["a"] * len(bores))
             terms["G_glass"] = math.sqrt(float(np.sum(coh(gg))) * glass_scale) / rms_field
             terms["G_glass_shot"] = math.sqrt(float(np.sum(gg[1])) * glass_scale) / rms_field
+        terms["E_in_dep"] = norm
+        terms["O_abs2"] = float(o_full)
+        w_fin = width
+        terms["O_area"] = len(bores) * math.pi * ((job["a_w"] + (job["cutoff"] + 2.0) * w_fin) ** 2 - job["a_w"] ** 2)
+        if job.get("bound"):
+            if any(b.get("sides") for b in bores):
+                terms["bound"] = {"B": None, "reason": "polygon bore: no Dirichlet mode basis"}
+            else:
+                bnd = modal_bound(seg, bores, job, origin, width, t_full)
+                # the full-flight residual of the frozen windows enters by Duhamel: inside the
+                # channel for the exit_propagation map, to the target screen otherwise
+                r_in, r_all = terms["R_inside"], terms["R"]
+                bnd["B_exit"] = bnd["B"] + r_in                 # exit_propagation map (no residual after the exit)
+                bnd["B_target"] = bnd["B"] + r_all              # frozen windows to the target screen
+                bnd["B_R_inside"], bnd["B_R_after"] = r_in, r_all - r_in
+                terms["bound"] = bnd
         out[f"{width*1e6:g}"] = terms
     return {"mode": job["mode"], "rays": total, "fates": fates, "segments": int(seg.p0.shape[0]),
             "valid_segments": int(seg.valid.sum()), "widths": out, "seconds": time.time() - t0}
@@ -466,16 +513,26 @@ def map_eps(results, key, d0, rays, modes, exit_prop):
                                   for r in results[:modes]])))
 
 
-def write_map_mask(npz_path, eps, threshold, path):
+def write_map_mask(npz_path, eps, threshold, path, bound=None, spec=None):
     """Cell mask of a stage-17 map under the uniform-error assumption; lit = cells with
-    rays of the matched ray estimator."""
+    rays of the matched ray estimator.  With `bound` (as beamlet_defect.bound_eta) and the
+    screen `spec` also the certified mask: dmu_bound / masked_bound in the npz."""
     with np.load(npz_path) as data:
         I, lit = data["I"], data["matched_stage14_rays"] > 0
         ref = int(np.ravel_multi_index(tuple(int(v) for v in data["ref_index"]), I.shape))
         x, y = data["x"], data["y"]
     dmu, masked = uniform_mask(I, lit, ref, eps, threshold)
-    np.savez_compressed(path, x=x, y=y, dmu=dmu, masked=masked, eps=np.array(eps), threshold=np.array(threshold))
-    return {"cells": int(I.size), "lit": int(lit.sum()), "masked": int(masked.sum()), "masked_lit": int((masked & lit).sum())}
+    arrays = dict(x=x, y=y, dmu=dmu, masked=masked, eps=np.array(eps), threshold=np.array(threshold))
+    out = {"cells": int(I.size), "lit": int(lit.sum()), "masked": int(masked.sum()), "masked_lit": int((masked & lit).sum()),
+           "certified": False}
+    if bound is not None:
+        eta, kind = bound_eta(bound, spec, bound["z_exit"])
+        dmu_b, masked_b = bound_mask(I, ref, eta, threshold)
+        arrays.update(dmu_bound=dmu_b, masked_bound=masked_b, eta_bound=np.array(eta))
+        out["bound"] = {"eta": eta, "transfer": kind, "masked": int(masked_b.sum()),
+                        "masked_lit": int((masked_b & lit).sum()), "certified": True}
+    np.savez_compressed(path, **arrays)
+    return out
 
 
 def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
@@ -504,7 +561,9 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
     base = dict(archive=archive, raw_cfg=cfg.raw, rays=opt["rays"], sections=opt["sections"], samples=int(opt["samples"]),
                 ring_step=float(opt["ring_step"]), cutoff=float(opt["cutoff"]), k=k, fresnel=(2.0 * sim.delta_f, 2.0 * sim.beta_f),
                 a_w=a_w, a=float(cap.bores[0]["radius"]), glass=bool(opt["glass"]),
-                z_exit=float(cap.z1), z_target=float(screen.z), z_rec=float(rec["z"]), area=area, widths=list(widths))
+                z_exit=float(cap.z1), z_target=float(screen.z), z_rec=float(rec["z"]), area=area, widths=list(widths),
+                z0_cap=float(cap.z0), bound=bool(opt["bound"]), bound_jmax=float(opt["bound_jmax"]),
+                bound_phase_step=float(opt["bound_phase_step"]))
     jobs = [dict(base, mode=m, parts=tuple(secs)) for m, secs in enumerate(modes)]
     out = os.path.join(out_dir, RESULT_DIR)
     os.makedirs(out, exist_ok=True)
@@ -536,6 +595,12 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
                  "indicator_exit", "indicator_exit_prod"] + (["G_glass", "G_glass_shot"] if opt["glass"] else [])
         for term in terms:
             rec_w[term + "_rms"] = rms(term)
+        bs = [r["widths"][key].get("bound") for r in results]
+        if bs and all(b and b.get("B") is not None for b in bs):
+            brms = lambda name: float(np.sqrt(np.mean([b[name] ** 2 for b in bs])))
+            for name in ("B", "B_exit", "B_target", "B_e0", "B_boundary", "B_tail", "B_T", "B_R_inside", "B_R_after"):
+                rec_w[name + "_rms"] = brms(name)
+            rec_w["B_sections"], rec_w["B_jmax"] = bs[0]["sections"], bs[0]["jmax"]
         summary["widths"].append(rec_w)
         glass = f" G_glass rms {rec_w['G_glass_rms']:.4f} (noise {rec_w['G_glass_shot_rms']:.4f})" if opt["glass"] else ""
         log(f"  width {w*1e6:g} um: D0 {d0[key]:.4f} R rms {rec_w['R_rms']:.4f} (noise {rec_w['R_shot_rms']:.4f}, inside {rec_w['R_inside_rms']:.4f}) "
@@ -548,6 +613,18 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
     best = min(summary["widths"], key=lambda r: r["indicator_exit_prod_rms"])
     summary["argmin_exit"] = {"width_m": best["width_m"], "indicator_exit_rms": best["indicator_exit_rms"],
                               "indicator_exit_prod_rms": best["indicator_exit_prod_rms"], "certified": False, "status": "indicator argmin; not an error bound"}
+    with_b = [r for r in summary["widths"] if "B_rms" in r]
+    if with_b:
+        model = ("paraxial Dirichlet field on the bore r < a_w (DIR-ell), constant bend curvature; the frozen-window "
+                 "residual by Duhamel (int ||R|| dz); the diagnosed ray sample is the sample; the fan's complex scale "
+                 "is the least-squares fit to the point source on the entrance disc")
+        for name, key in (("argmin_bound_exit", "B_exit_rms"), ("argmin_bound_target", "B_target_rms")):
+            best = min(with_b, key=lambda r: r[key])
+            summary[name] = {"width_m": best["width_m"], key: best[key], "B_rms": best["B_rms"], "certified": True,
+                             "bound": "||E - E_map||(screen) <= [||e(0)|| + ||boundary part|| + tail + T] + int ||R|| dz per mode, "
+                                      "relative to ||E_in||" + (" (residual inside the channel only: exit_propagation)" if "exit" in name
+                                                                 else " (residual to the target screen: frozen windows)"),
+                             "model": model}
     if map_path is not None:
         with np.load(map_path) as data:
             width = float(data["width_m"])
@@ -564,11 +641,20 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
         except ValueError as exc:
             raise ValueError(f"{map_path}: {exc}") from None
         name = "mask-" + os.path.basename(map_path)
+        bound = None
+        used = results[:map_modes]
+        if all(r["widths"][key].get("bound") and r["widths"][key]["bound"].get("B") is not None for r in used):
+            bound = {"k": k, "z_exit": float(cap.z1), "area": len(cap.bores) * math.pi * a_w ** 2,
+                     "modes": [{"B": r["widths"][key]["bound"]["B_exit" if exit_prop else "B_target"],
+                                "E_in_dep": r["widths"][key]["E_in_dep"], "O_abs2": r["widths"][key]["O_abs2"],
+                                "O_area": r["widths"][key]["O_area"]} for r in used]}
         summary["mask"] = {"map": map_path, "file": name, "width_m": width, "exit_propagation": exit_prop, "eps": eps,
                            "rays_per_mode": map_rays, "modes": map_modes, "threshold": opt["mask_threshold"],
                            "certified": False,
                            "assumption": "relative field error eps spread uniformly over the cells with rays; not a bound",
-                           **write_map_mask(map_path, eps, opt["mask_threshold"], os.path.join(out, name))}
+                           "bound_transfer": None if bound is None else
+                           "certified: Fresnel-kernel field bound beyond the exit, cell-concentration bound on the exit plane",
+                           **write_map_mask(map_path, eps, opt["mask_threshold"], os.path.join(out, name), bound, _screen_spec(screen))}
         log(f"  mask: {summary['mask']['masked_lit']} of {summary['mask']['lit']} cells with rays above |d mu| "
             f"{opt['mask_threshold']} (eps {eps:.4f})")
     summary["seconds"] = time.time() - t0
@@ -588,6 +674,8 @@ def main(argv=None):
     ap.add_argument("--cutoff", type=float, default=None, help="window support in widths")
     ap.add_argument("--glass", action="store_true", help="also the glass interface trace G_glass")
     ap.add_argument("--map", default=None, help="stage-17 map npz to mask")
+    ap.add_argument("--no-bound", action="store_true", help="skip the modal error bound B")
+    ap.add_argument("--bound-jmax", type=float, default=None, help="Dirichlet basis cutoff j_mn < jmax of the bound")
     args = ap.parse_args(argv)
     from .. import load
     from ..simulation import Simulation
@@ -598,6 +686,10 @@ def main(argv=None):
         if getattr(args, key) is not None:
             opt[key] = getattr(args, key)
     opt["glass"] = opt["glass"] or args.glass
+    if args.no_bound:
+        opt["bound"] = False
+    if args.bound_jmax is not None:
+        opt["bound_jmax"] = float(args.bound_jmax)
     if cfg.capillary is None:
         raise ValueError("b5_defect needs a capillary scene")
     widths = ([float(v) * 1e-6 for v in args.widths.split(",")] if args.widths
