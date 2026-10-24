@@ -230,3 +230,36 @@ def test_bound_covers_the_error_of_a_wrong_method_field(wrong):
         assert err < 0.05 * scale                                        # only the wall leakage of A
     else:
         assert err > 0.1 * scale and bound > 0.1 * scale                 # the wrong input is seen
+
+
+def test_square_tail_covers_the_infinite_normal_index():
+    """A stationary method field whose wall trace is one face harmonic (n = 9) excites the modes
+    (m, 9) for every normal index m; after L = 8/pi each has phase -1, so the exact relative
+    error is 2.  The tail must reach m -> infinity: B >= 2 (aw = k = 1, M = 8, nq = 64)."""
+    sq = B.Square(1.0, 8, nq=64)
+    f = lambda x, y: np.sinh(9 * math.pi * x / 2) / math.sinh(9 * math.pi / 2) * np.sin(9 * math.pi * (y + 1) / 2)
+    sample_disc = lambda b, radii, phis, stretch, cx, cy: f(radii[:, None] * stretch[None, :] * np.cos(phis)[None, :],
+                                                           radii[:, None] * stretch[None, :] * np.sin(phis)[None, :]) + 0j
+    sample_outline = lambda b, zr, sq_, cx, cy: f(sq_.face_x, sq_.face_y) + 0j
+    out = B.squares_bound([sq], [(0.0, 0.0)], 1.0, 8.0 / math.pi, sample_disc, sample_outline,
+                          lambda px, py: f(px, py) + 0j, phase_step=0.7, nr=100, nphi=2048)
+    assert abs(out["C_fit"][0] - 1.0) < 1e-9 and out["B_e0"] < 1e-9
+    assert out["B"] >= 2.0 * (1.0 - 1e-6)
+    assert out["B"] < 2.3
+
+
+def test_fan_scale_from_the_deposit_norm_flags_an_amplitude_defect():
+    """Method field = 2 x the lowest Disc mode: with the deposit-unit norm of E_in fixing the
+    scale, the doubled amplitude is error (B ~ 1); the least-squares scale alone hides it."""
+    chan = FBChannel(np.zeros(2), None, None, Disc(AW, 20.0), K)
+    disc = chan.disc
+    c = np.zeros(disc.valid.shape, complex)
+    c[list(disc.ms).index(0), 0] = 1.0
+    phi = disc.to_grid(c)
+    norm_phi = math.sqrt(disc.norm(c))
+    sample = lambda b, zr, radii, phis, cx, cy: (2.0 * phi if radii.size > 1 else np.zeros((1, disc.nphi), complex))
+    fixed = B.bores_bound([chan], 0.01, sample, lambda ch: phi, 0.7, 0.0, e_in_dep=norm_phi)
+    lsq = B.bores_bound([chan], 0.01, sample, lambda ch: phi, 0.7, 0.0)
+    assert abs(fixed["C_fit"][0] - 1.0) < 1e-6 and abs(fixed["scale_defect"] - 1.0) < 1e-6
+    assert abs(fixed["B"] - 1.0) < 1e-3
+    assert abs(lsq["C_fit"][0] - 2.0) < 1e-6 and lsq["B"] < 1e-6 and abs(lsq["scale_defect"]) < 1e-9

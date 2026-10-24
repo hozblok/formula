@@ -314,11 +314,13 @@ def test_certified_mask_transfer(tmp_path):
     ref = 10
     eta_cell = 0.1 * 2.0 / math.sqrt(1e-6 * 1e-6)
     eta_fres = K / (2.0 * math.pi * 0.1) * math.sqrt(math.pi * 25e-12) * 0.1 * 2.0
-    for rows_, eta, kind in ((exit_rows, eta_cell, "cell"), (far_rows, eta_fres, "fresnel")):
+    # the exit plane holds point samples: no certified transfer there
+    assert summary["capillary"]["bound"]["certified"] is False and "point" in summary["capillary"]["bound"]["reason"]
+    assert all("dmu_bound" not in r for r in exit_rows)
+    for rows_, eta, kind in ((far_rows, eta_fres, "fresnel"),):
         tag = rows_[0]["stage"]
         assert summary[tag]["bound"]["transfer"] == kind and summary[tag]["bound"]["certified"] is True
         assert summary[tag]["bound"]["eta"] == pytest.approx(eta)
         assert rows_[12]["dmu_bound"] == pytest.approx(2.0 * eta * (1.0 / math.sqrt(12.0) + 1.0 / math.sqrt(10.0)))
         assert rows_[0]["dmu_bound"] is None and rows_[0]["masked_bound"]
         assert "dmu" in rows_[12] and summary[tag]["certified"] is False
-    assert summary["capillary"]["bound"]["masked"] == 16        # eta ~ 2e5: nothing survives the cell transfer

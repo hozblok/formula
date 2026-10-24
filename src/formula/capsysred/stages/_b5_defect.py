@@ -48,7 +48,7 @@ from .. import rays_v3
 from ._b5_transport import count_free_caustics, reflect_variations, wall_normal_derivative
 from . import bound_modal
 from .beamlet import _screen_spec
-from .beamlet_defect import _channel, _disc, _shape, bound_eta, bound_mask, uniform_mask
+from .beamlet_defect import _channel, _disc, _shape, bore_area, bound_eta, bound_mask, uniform_mask
 
 RESULT_DIR = "stage17-defect"
 DEFAULTS = {"rays": 20000, "sections": 40, "samples": 300, "ring_step": 0.5e-6, "cutoff": 5.0,
@@ -410,7 +410,7 @@ def exit_tails(seg, bores, a_w, z_exit, k, width, z_src, ring_step, cutoff, outs
 
 
 # ------------------------------------------------------------------ per mode
-def modal_bound(seg, bores, job, origin, width, t_full):
+def modal_bound(seg, bores, job, origin, width, t_full, e_in_dep=None):
     """B of the frozen-window field of one mode and width (bound_modal.bores_bound): the
     entrance defect against the point source, the frame wall trace of the windows, its
     boundary part and the mode tails; T from the exit tails.  The volume residual R is added
@@ -419,9 +419,9 @@ def modal_bound(seg, bores, job, origin, width, t_full):
     z0, L = job["z0_cap"], job["z_exit"] - job["z0_cap"]
     shapes = [_shape(b, a_w) for b in bores]
     if any(sh is not None for sh in shapes):
-        return square_bound(seg, bores, shapes, job, origin, width, t_full)
+        return square_bound(seg, bores, shapes, job, origin, width, t_full, e_in_dep)
     disc = _disc(a_w, job["bound_jmax"])
-    chans = [_channel(b, a_w, disc, k, job.get("fresnel")) for b in bores]
+    chans = [_channel(b, a_w, disc, k) for b in bores]          # lossless Dirichlet wall: the bound's model
 
     def sample(b, zr, radii, phis, cx, cy):
         z = z0 + zr
@@ -434,7 +434,7 @@ def modal_bound(seg, bores, job, origin, width, t_full):
         return out
 
     return bound_modal.bores_bound(chans, L, sample, lambda ch: ch.entrance_field(origin[:2], z0 - z_src),
-                                   job["bound_phase_step"], t_full)
+                                   job["bound_phase_step"], t_full, e_in_dep)
 
 
 def _outline_sum(seg, idx, z, cx, cy, sq, k, width, z_src, cutoff):
@@ -456,7 +456,7 @@ def _outline_sum(seg, idx, z, cx, cy, sq, k, width, z_src, cutoff):
     return out
 
 
-def square_bound(seg, bores, shapes, job, origin, width, t_full):
+def square_bound(seg, bores, shapes, job, origin, width, t_full, e_in_dep=None):
     """B over straight square bores for the frozen windows (bound_modal.squares_bound)."""
     k, a_w, z_src = job["k"], job["a_w"], origin[2]
     z0, L = job["z0_cap"], job["z_exit"] - job["z0_cap"]
@@ -486,10 +486,8 @@ def square_bound(seg, bores, shapes, job, origin, width, t_full):
     lam = 2.0 * math.pi / k
     e_in = lambda px, py: (np.exp(1j * k * ((px - origin[0]) ** 2 + (py - origin[1]) ** 2) / (2.0 * z_in))
                            / (1j * lam * z_in))
-    fres = job.get("fresnel")
-    gamma = None if fres is None else bound_modal.square_damping(sqs[0], k, 0.5 * fres[0], 0.5 * fres[1])
     return bound_modal.squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in,
-                                     job["bound_phase_step"], t_full, gamma=gamma)
+                                     job["bound_phase_step"], t_full, e_in_dep=e_in_dep)
 
 
 def mode_job(job):
@@ -539,14 +537,17 @@ def mode_job(job):
         w_fin = width
         terms["O_area"] = len(bores) * math.pi * ((job["a_w"] + (job["cutoff"] + 2.0) * w_fin) ** 2 - job["a_w"] ** 2)
         if job.get("bound"):
-            bnd = modal_bound(seg, bores, job, origin, width, t_full)
+            bnd = modal_bound(seg, bores, job, origin, width, t_full, norm)
             if bnd.get("B") is not None:
-                # the full-flight residual of the frozen windows enters by Duhamel: inside the
-                # channel for the exit_propagation map, to the target screen otherwise
-                r_in, r_all = terms["R_inside"], terms["R"]
-                bnd["B_exit"] = bnd["B"] + r_in                 # exit_propagation map (no residual after the exit)
+                # the residual of the frozen windows enters by Duhamel with its full norm (the
+                # ray-noise part is error of this sample too): inside the channel for the
+                # exit_propagation map; to the target screen its L2 norm there, over the bore
+                # disc only (not a certified bound: see argmin_bound_target)
+                r_in_full = r_int(r_in[0], np.zeros(0))
+                r_all = r_int(r_in[0], r_out[0])
+                bnd["B_exit"] = bnd["B"] + r_in_full            # exit_propagation map (no residual after the exit)
                 bnd["B_target"] = bnd["B"] + r_all              # frozen windows to the target screen
-                bnd["B_R_inside"], bnd["B_R_after"] = r_in, r_all - r_in
+                bnd["B_R_inside"], bnd["B_R_after"] = r_in_full, r_all - r_in_full
             terms["bound"] = bnd
         out[f"{width*1e6:g}"] = terms
     return {"mode": job["mode"], "rays": total, "fates": fates, "segments": int(seg.p0.shape[0]),
@@ -578,16 +579,23 @@ def write_map_mask(npz_path, eps, threshold, path, bound=None, spec=None):
         I, lit = data["I"], data["matched_stage14_rays"] > 0
         ref = int(np.ravel_multi_index(tuple(int(v) for v in data["ref_index"]), I.shape))
         x, y = data["x"], data["y"]
+        plugin = data["pluginI"] if "pluginI" in data else None
     dmu, masked = uniform_mask(I, lit, ref, eps, threshold)
     arrays = dict(x=x, y=y, dmu=dmu, masked=masked, eps=np.array(eps), threshold=np.array(threshold))
     out = {"cells": int(I.size), "lit": int(lit.sum()), "masked": int(masked.sum()), "masked_lit": int((masked & lit).sum()),
            "certified": False}
     if bound is not None:
-        eta, kind = bound_eta(bound, spec, bound["z_exit"])
-        dmu_b, masked_b = bound_mask(I, ref, eta, threshold)
-        arrays.update(dmu_bound=dmu_b, masked_bound=masked_b, eta_bound=np.array(eta))
-        out["bound"] = {"eta": eta, "transfer": kind, "masked": int(masked_b.sum()),
-                        "masked_lit": int((masked_b & lit).sum()), "certified": True}
+        # the field bound certifies the coherent (plugin) map of cell averages, not the U-statistic I
+        eta, kind = bound_eta(bound, spec, bound["z_exit"], averaged=True)
+        if plugin is None:
+            eta, kind = None, "no plugin (coherent) map in the npz: the U-statistic is not a field inner product"
+        if eta is None:
+            out["bound"] = {"certified": False, "reason": kind}
+        else:
+            dmu_b, masked_b = bound_mask(plugin, ref, eta, threshold)
+            arrays.update(dmu_bound=dmu_b, masked_bound=masked_b, eta_bound=np.array(eta))
+            out["bound"] = {"eta": eta, "transfer": kind, "map": "pluginI", "masked": int(masked_b.sum()),
+                            "masked_lit": int((masked_b & lit).sum()), "certified": True}
     np.savez_compressed(path, **arrays)
     return out
 
@@ -677,7 +685,11 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
                  "is the least-squares fit to the point source on the entrance disc")
         for name, key in (("argmin_bound_exit", "B_exit_rms"), ("argmin_bound_target", "B_target_rms")):
             best = min(with_b, key=lambda r: r[key])
-            summary[name] = {"width_m": best["width_m"], key: best[key], "B_rms": best["B_rms"], "certified": True,
+            summary[name] = {"width_m": best["width_m"], key: best[key], "B_rms": best["B_rms"],
+                             "certified": "exit" in name,
+                             **({} if "exit" in name else
+                                {"status": "not a bound: the post-exit residual is integrated over the bore disc only and "
+                                           "its transfer to the screen is not bounded"}),
                              "bound": "||E - E_map||(screen) <= [min(||exact modal part of e(L)|| + ||e(0) beyond the modes||, ||e(0)|| + ||boundary part||) + interpolation of the sampled forcing + tail + T] + int ||R|| dz per mode, "
                                       "relative to ||E_in||" + (" (residual inside the channel only: exit_propagation)" if "exit" in name
                                                                  else " (residual to the target screen: frozen windows)"),
@@ -698,19 +710,25 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
         except ValueError as exc:
             raise ValueError(f"{map_path}: {exc}") from None
         name = "mask-" + os.path.basename(map_path)
-        bound = None
+        bound, why = None, None
         used = results[:map_modes]
-        if all(r["widths"][key].get("bound") and r["widths"][key]["bound"].get("B") is not None for r in used):
-            bound = {"k": k, "z_exit": float(cap.z1), "area": len(cap.bores) * math.pi * a_w ** 2,
-                     "modes": [{"B": r["widths"][key]["bound"]["B_exit" if exit_prop else "B_target"],
+        if not all(r["widths"][key].get("bound") and r["widths"][key]["bound"].get("B") is not None for r in used):
+            why = "no modal bound for this outline"
+        elif not exit_prop:
+            why = "frozen windows to the target screen: the post-exit residual transfer is not bounded"
+        elif map_rays != int(opt["rays"]):
+            why = f"sample mismatch: B is for the first {opt['rays']} rays per mode, the map for {map_rays}"
+        else:
+            bound = {"k": k, "z_exit": float(cap.z1), "area": bore_area(cfg.raw["capillary"]["bores"], a_w),
+                     "modes": [{"B": r["widths"][key]["bound"]["B_exit"],
                                 "E_in_dep": r["widths"][key]["E_in_dep"], "O_abs2": r["widths"][key]["O_abs2"],
                                 "O_area": r["widths"][key]["O_area"]} for r in used]}
         summary["mask"] = {"map": map_path, "file": name, "width_m": width, "exit_propagation": exit_prop, "eps": eps,
                            "rays_per_mode": map_rays, "modes": map_modes, "threshold": opt["mask_threshold"],
                            "certified": False,
                            "assumption": "relative field error eps spread uniformly over the cells with rays; not a bound",
-                           "bound_transfer": None if bound is None else
-                           "certified: Fresnel-kernel field bound beyond the exit, cell-concentration bound on the exit plane",
+                           "bound_transfer": why if bound is None else
+                           "Fresnel-kernel field bound beyond the exit / cell-average bound on it, for the plugin (coherent) map of the diagnosed sample",
                            **write_map_mask(map_path, eps, opt["mask_threshold"], os.path.join(out, name), bound, _screen_spec(screen))}
         log(f"  mask: {summary['mask']['masked_lit']} of {summary['mask']['lit']} cells with rays above |d mu| "
             f"{opt['mask_threshold']} (eps {eps:.4f})")
