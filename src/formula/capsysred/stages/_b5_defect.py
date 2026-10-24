@@ -48,7 +48,7 @@ from .. import rays_v3
 from ._b5_transport import count_free_caustics, reflect_variations, wall_normal_derivative
 from . import bound_modal
 from .beamlet import _screen_spec
-from .beamlet_defect import _channel, _disc, bound_eta, bound_mask, uniform_mask
+from .beamlet_defect import _channel, _disc, _shape, bound_eta, bound_mask, uniform_mask
 
 RESULT_DIR = "stage17-defect"
 DEFAULTS = {"rays": 20000, "sections": 40, "samples": 300, "ring_step": 0.5e-6, "cutoff": 5.0,
@@ -417,6 +417,9 @@ def modal_bound(seg, bores, job, origin, width, t_full):
     by the caller (Duhamel, int ||R|| dz).  Circular bores only."""
     k, a_w, z_src = job["k"], job["a_w"], origin[2]
     z0, L = job["z0_cap"], job["z_exit"] - job["z0_cap"]
+    shapes = [_shape(b, a_w) for b in bores]
+    if any(sh is not None for sh in shapes):
+        return square_bound(seg, bores, shapes, job, origin, width, t_full)
     disc = _disc(a_w, job["bound_jmax"])
     chans = [_channel(b, a_w, disc, k, job.get("fresnel")) for b in bores]
 
@@ -432,6 +435,61 @@ def modal_bound(seg, bores, job, origin, width, t_full):
 
     return bound_modal.bores_bound(chans, L, sample, lambda ch: ch.entrance_field(origin[:2], z0 - z_src),
                                    job["bound_phase_step"], t_full)
+
+
+def _outline_sum(seg, idx, z, cx, cy, sq, k, width, z_src, cutoff):
+    """Sum of the selected windows on the outline nodes of the square `sq` (bound_modal.Square),
+    each window within its support along the perimeter; returns [4 nq]."""
+    n_u = 4 * sq.nq
+    out = np.zeros(n_u, complex)
+    if idx.size == 0:
+        return out
+    X = states(seg, idx, z)[0]
+    m0 = sq.arc_index(cx, cy, X[:, 0], X[:, 1])
+    h = min(int(math.ceil(cutoff * width / sq.h)) + 1, n_u // 2)
+    px_tab, py_tab = sq.lab(cx, cy, sq.face_x, sq.face_y)
+    block = max(1, min(1024, (1 << 21) // (2 * h + 1)))
+    for start in range(0, idx.size, block):
+        sel = idx[start:start + block]
+        cols = (m0[start:start + block, None] + np.arange(-h, h + 1)[None, :]) % n_u
+        np.add.at(out, cols, window_values(seg, sel, z, px_tab[cols], py_tab[cols], k, width, z_src))
+    return out
+
+
+def square_bound(seg, bores, shapes, job, origin, width, t_full):
+    """B over straight square bores for the frozen windows (bound_modal.squares_bound)."""
+    k, a_w, z_src = job["k"], job["a_w"], origin[2]
+    z0, L = job["z0_cap"], job["z_exit"] - job["z0_cap"]
+    if any(b.get("bend") or sh is None or sh[0] != 4 or not np.allclose(sh[2], 1.0) for b, sh in zip(bores, shapes)):
+        return {"B": None, "reason": "Dirichlet mode basis only for circular bores (Bessel) and straight square bores (sines)"}
+    M = max(4, int(2.0 * job["bound_jmax"] / math.pi))
+    sqs = [bound_modal.Square(a_w, M, sh[1]) for sh in shapes]
+    centers = [(float(b["center"][0]), float(b["center"][1])) for b in bores]
+
+    def active(b, z, cx, cy):
+        cand = np.flatnonzero(seg.bore == b)
+        return cand[near(seg, cand, z, cx, cy, a_w * math.sqrt(2.0), job["cutoff"] * width)]
+
+    def sample_disc(b, radii, phis, stretch, cx, cy):
+        idx = active(b, z0, cx, cy)
+        out = np.zeros((radii.size, phis.size), complex)
+        for lo in range(0, radii.size, 8):
+            ra, rb = _halves(seg, idx, z0, cx, cy, radii[lo:lo + 8] * 1.0, phis, k, width, z_src, job["cutoff"])
+            out[lo:lo + 8] = ra + rb
+        return out
+
+    def sample_outline(b, zr, sq, cx, cy):
+        z = z0 + zr
+        return _outline_sum(seg, active(b, z, cx, cy), z, cx, cy, sq, k, width, z_src, job["cutoff"])
+
+    z_in = z0 - z_src
+    lam = 2.0 * math.pi / k
+    e_in = lambda px, py: (np.exp(1j * k * ((px - origin[0]) ** 2 + (py - origin[1]) ** 2) / (2.0 * z_in))
+                           / (1j * lam * z_in))
+    fres = job.get("fresnel")
+    gamma = None if fres is None else bound_modal.square_damping(sqs[0], k, 0.5 * fres[0], 0.5 * fres[1])
+    return bound_modal.squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in,
+                                     job["bound_phase_step"], t_full, gamma=gamma)
 
 
 def mode_job(job):
@@ -481,17 +539,15 @@ def mode_job(job):
         w_fin = width
         terms["O_area"] = len(bores) * math.pi * ((job["a_w"] + (job["cutoff"] + 2.0) * w_fin) ** 2 - job["a_w"] ** 2)
         if job.get("bound"):
-            if any(b.get("sides") for b in bores):
-                terms["bound"] = {"B": None, "reason": "polygon bore: no Dirichlet mode basis"}
-            else:
-                bnd = modal_bound(seg, bores, job, origin, width, t_full)
+            bnd = modal_bound(seg, bores, job, origin, width, t_full)
+            if bnd.get("B") is not None:
                 # the full-flight residual of the frozen windows enters by Duhamel: inside the
                 # channel for the exit_propagation map, to the target screen otherwise
                 r_in, r_all = terms["R_inside"], terms["R"]
                 bnd["B_exit"] = bnd["B"] + r_in                 # exit_propagation map (no residual after the exit)
                 bnd["B_target"] = bnd["B"] + r_all              # frozen windows to the target screen
                 bnd["B_R_inside"], bnd["B_R_after"] = r_in, r_all - r_in
-                terms["bound"] = bnd
+            terms["bound"] = bnd
         out[f"{width*1e6:g}"] = terms
     return {"mode": job["mode"], "rays": total, "fates": fates, "segments": int(seg.p0.shape[0]),
             "valid_segments": int(seg.valid.sum()), "widths": out, "seconds": time.time() - t0}
