@@ -21,6 +21,7 @@ lives on the trace.  The exact Dirichlet field (g = 0, e(0) = 0) gives 0.
 import math
 
 import numpy as np
+from numpy.polynomial.legendre import leggauss
 from scipy.special import jv
 
 from .wave_fb import Disc, FBChannel
@@ -223,3 +224,174 @@ def bores_bound(chans, L, sample, entrance, phase_step=0.7, t_abs2=0.0):
             "bores": [{k_: (v / norm_in if k_ != "bore" else v) for k_, v in r.items()} for r in per_bore],
             "C_fit": [abs(C), math.atan2(C.imag, C.real)], "sections": n_sec, "jmax": float(disc.jmax),
             "modes": int(disc.valid.sum()), "E_in_norm": norm_in}
+
+
+# ------------------------------------------------------------------ square bore
+class Square:
+    """Dirichlet sine basis of a straight square bore |x'|, |y'| < aw in the bore frame
+    (rotation rot about the centre): phi_mn = sin(m pi (x'+aw)/2aw) sin(n pi (y'+aw)/2aw) / aw,
+    kappa^2 = (pi/2aw)^2 (m^2 + n^2), 1 <= m, n <= M.  Outline nodes: nq midpoints per face,
+    faces +x, +y, -x, -y in arc order from the corner (aw, -aw); sampled trace coefficients
+    exist up to n = nq (the band limit of the sampling)."""
+
+    def __init__(self, aw, M, rot=0.0, nq=None):
+        self.aw, self.M, self.rot = float(aw), int(M), float(rot)
+        self.nq = int(nq or 8 * self.M)
+        m = np.arange(1, self.M + 1)
+        self.kap2 = (math.pi / (2.0 * self.aw)) ** 2 * (m[:, None] ** 2 + m[None, :] ** 2)
+        self.kap2max = float(self.kap2.max())
+        self.h = 2.0 * self.aw / self.nq
+        self.s = -self.aw + (np.arange(self.nq) + 0.5) * self.h
+        aw, s = self.aw, self.s
+        self.face_x = np.concatenate([np.full(self.nq, aw), -s, np.full(self.nq, -aw), s])
+        self.face_y = np.concatenate([s, np.full(self.nq, aw), -s, np.full(self.nq, -aw)])
+        self.cr, self.sr = math.cos(self.rot), math.sin(self.rot)
+        # tensor Gauss grid of the cross-section (to_modes, tests)
+        t, w = leggauss(self.nq)
+        self.gq, self.gw = aw * t, aw * w
+        self.Sg = np.sin(m[:, None] * math.pi * (self.gq[None, :] + aw) / (2.0 * aw))
+
+    def lab(self, cx, cy, xf, yf):
+        return cx + self.cr * xf - self.sr * yf, cy + self.sr * xf + self.cr * yf
+
+    def frame(self, cx, cy, px, py):
+        dx, dy = px - cx, py - cy
+        return self.cr * dx + self.sr * dy, -self.sr * dx + self.cr * dy
+
+    def arc_index(self, cx, cy, px, py):
+        """Outline node met first along the ray from the centre through (px, py)."""
+        xf, yf = self.frame(cx, cy, px, py)
+        ax, ay = np.abs(xf), np.abs(yf)
+        r = np.maximum(np.maximum(ax, ay), 1e-30)
+        xh, yh = xf * (self.aw / r), yf * (self.aw / r)
+        aw = self.aw
+        u = np.where(ax >= ay, np.where(xf > 0, yh + aw, 5.0 * aw - yh),
+                     np.where(yf > 0, 3.0 * aw - xh, 7.0 * aw + xh))
+        return np.floor(u / self.h).astype(int) % (4 * self.nq)
+
+    def grid(self, cx=0.0, cy=0.0):
+        """Lab positions [nq, nq] of the tensor Gauss grid (x along axis 0)."""
+        xf, yf = np.meshgrid(self.gq, self.gq, indexing="ij")
+        return self.lab(cx, cy, xf, yf)
+
+    def to_modes(self, E):
+        """Coefficients [M, M] of values on the tensor Gauss grid (orthonormal basis)."""
+        Sw = self.Sg * self.gw[None, :]
+        return Sw @ np.asarray(E) @ Sw.T / self.aw
+
+
+class SquareBound:
+    """Boundary-forced sine-mode evolution in a straight square bore and the bound's tails."""
+
+    def __init__(self, sq: Square, k: float):
+        self.sq, self.k = sq, float(k)
+        self.alpha = sq.kap2 / (2.0 * self.k)
+        n = np.arange(1, sq.nq + 1)
+        self.sgn = (-1.0) ** n                                  # (-1)^n, n <= nq
+        self.mp = n * math.pi / (2.0 * sq.aw ** 2)              # n pi / 2 aw^2
+        self.S = np.sin(n[:, None] * math.pi * (sq.s[None, :] + sq.aw) / (2.0 * sq.aw))   # [nq, nq]
+
+    def face_coef(self, g_outline):
+        """G^f_n = int_face g s_n ds [..., 4, nq] in the face coordinate (y on the x faces, x on
+        the y faces), midpoint rule on the outline nodes."""
+        g = np.asarray(g_outline)
+        g = g.reshape(g.shape[:-1] + (4, self.sq.nq))
+        G = np.einsum("...fq,nq->...fn", g, self.S) * self.sq.h
+        flip = -self.sgn                                        # nodes run backwards on faces +y, -x
+        G[..., 1, :] *= flip
+        G[..., 2, :] *= flip
+        return G
+
+    def _forcing(self, G, n):
+        """s_mn = (i/2k) int g d_n phi_mn ds for m, n <= n from the face coefficients [4, nq]."""
+        gpx, gpy, gmx, gmy = (G[f, :n] for f in range(4))
+        mp, sgn = self.mp[:n], self.sgn[:n]
+        f = (mp[:, None] * (sgn[:, None] * gpx[None, :] - gmx[None, :])
+             + mp[None, :] * (sgn[None, :] * gpy[:, None] - gmy[:, None]))
+        return 1j / (2.0 * self.k) * f
+
+    def boundary_part(self, zs, G, L):
+        """int_0^L e^{-i alpha (L-z)} s(z) dz over the sections (Filon weights, s linear per
+        section) for the M-box; G [nz, 4, nq]."""
+        zs = np.asarray(zs, float)
+        M = self.sq.M
+        s = np.array([self._forcing(Gz, M) for Gz in G])
+        h = np.diff(zs)
+        out = np.zeros_like(s[0])
+        for j in range(len(h)):
+            e0, e1 = _filon(self.alpha * h[j])
+            out = out * np.exp(-1j * self.alpha * h[j]) + h[j] * (e1 * s[j] + (e0 - e1) * s[j + 1])
+        return out
+
+    def norm(self, c):
+        return float(np.sqrt(np.sum(np.abs(c) ** 2)))
+
+    def tails(self, zs, G):
+        """Modes outside the M-box up to the sampling band n <= nq, two integrations by parts:
+        |c| <= (|s(0)| + |s(L)|)/alpha + (|s'(0)| + |s'(L)| + int |s''| dz)/alpha^2."""
+        zs = np.asarray(zs, float)
+        nq, M = self.sq.nq, self.sq.M
+        n = np.arange(1, nq + 1)
+        alpha = (math.pi / (2.0 * self.sq.aw)) ** 2 * (n[:, None] ** 2 + n[None, :] ** 2) / (2.0 * self.k)
+        tail = np.ones((nq, nq), bool)
+        tail[:M, :M] = False
+        G1 = np.gradient(G, zs, axis=0)
+        G2 = np.gradient(G1, zs, axis=0)
+        f = lambda Gz: np.abs(self._forcing(Gz, nq))
+        end = f(G[0]) + f(G[-1])
+        w = np.gradient(zs)                                     # trapezoid weights
+        w[0] *= 0.5; w[-1] *= 0.5
+        der = f(G1[0]) + f(G1[-1])
+        for j in range(len(zs)):
+            der = der + w[j] * f(G2[j])
+        t1 = math.sqrt(float(np.sum((end[tail] / alpha[tail]) ** 2)))
+        t2 = math.sqrt(float(np.sum((der[tail] / alpha[tail] ** 2) ** 2)))
+        return t1, t2
+
+
+def squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in, phase_step=0.7, t_abs2=0.0, nr=48, nphi=384):
+    """B of one mode's method field over straight square bores (one Square per bore, same aw and M).
+    sample_disc(b, radii, phis, stretch, cx, cy) -> the fan on the stretched polar grid of bore b
+    at z0 (raw units); sample_outline(b, z_rel, sq, cx, cy) -> the fan on its outline nodes at
+    z0 + z_rel; e_in(px, py) -> E_in at lab points.  Assembled as bores_bound."""
+    aw = sqs[0].aw
+    alpha_max = max(sq.kap2max for sq in sqs) / (2.0 * k)
+    n_sec = max(int(math.ceil(L * alpha_max / phase_step)), 20)
+    zs = np.linspace(0.0, L, n_sec + 1)
+    t, wt = leggauss(nr)
+    t, wt = 0.5 * (t + 1.0), 0.5 * wt
+    ein, efan, wqs, ein2, num = [], [], [], 0.0, 0j
+    for b, sq in enumerate(sqs):
+        cx, cy = centers[b]
+        phis = sq.rot - 0.25 * math.pi + (np.arange(nphi) + 0.5) * 2.0 * math.pi / nphi
+        stretch = 1.0 / np.cos(((phis - sq.rot + 0.25 * math.pi) % (0.5 * math.pi)) - 0.25 * math.pi)
+        wq = (aw * aw * t * wt)[:, None] * (stretch ** 2)[None, :] * (2.0 * math.pi / nphi)
+        rr = (aw * t)[:, None] * stretch[None, :]
+        e = e_in(cx + rr * np.cos(phis)[None, :], cy + rr * np.sin(phis)[None, :])
+        fan = sample_disc(b, aw * t, phis, stretch, cx, cy)
+        ein.append(e); efan.append(fan); wqs.append(wq)
+        ein2 += float(np.sum(wq * np.abs(e) ** 2))
+        num += complex(np.sum(wq * np.conj(e) * fan))
+    C = num / ein2 if ein2 > 0 else 1.0 + 0j
+    per_bore, b_sq = [], 0.0
+    for b, sq in enumerate(sqs):
+        cx, cy = centers[b]
+        e0 = math.sqrt(float(np.sum(wqs[b] * np.abs(ein[b] - efan[b] / C) ** 2)))
+        g = np.array([sample_outline(b, zr, sq, cx, cy) for zr in zs]) / C
+        sb = SquareBound(sq, k)
+        G = sb.face_coef(g)
+        bnd = sb.norm(sb.boundary_part(zs, G, L))
+        t1, t2 = sb.tails(zs, G)
+        bb = e0 + bnd + t1 + t2
+        b_sq += bb * bb
+        per_bore.append({"bore": b, "e0": e0, "boundary": bnd, "tail": t1 + t2, "B": bb})
+    norm_in = math.sqrt(ein2)
+    t_abs = math.sqrt(max(t_abs2, 0.0)) / abs(C)
+    return {"B": (math.sqrt(b_sq) + t_abs) / norm_in,
+            "B_e0": math.sqrt(sum(r["e0"] ** 2 for r in per_bore)) / norm_in,
+            "B_boundary": math.sqrt(sum(r["boundary"] ** 2 for r in per_bore)) / norm_in,
+            "B_tail": math.sqrt(sum(r["tail"] ** 2 for r in per_bore)) / norm_in,
+            "B_T": t_abs / norm_in,
+            "bores": [{k_: (v / norm_in if k_ != "bore" else v) for k_, v in r.items()} for r in per_bore],
+            "C_fit": [abs(C), math.atan2(C.imag, C.real)], "sections": n_sec, "jmax": float(sqs[0].M),
+            "modes": int(sqs[0].M ** 2), "E_in_norm": norm_in, "basis": "square sines"}
