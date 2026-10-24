@@ -265,15 +265,20 @@ def bore_axis(bore, z):
     return c
 
 
-def _shape(bore):
-    """(sides, rotation, apothem / radius per face) of a polygon bore, None for a circle."""
+def _shape(bore, a_w=None):
+    """(sides, rotation, apothem / radius per face) of a polygon bore, None for a circle; with
+    `a_w` the outline offset outward by a_w - radius (each face apothem + offset, over a_w)."""
     sides = bore.get("sides")
     if not sides:
         return None
     rot = bore.get("rotation")
     rot = float(rot) if rot is not None else math.radians(float(bore.get("rotation_deg", 0.0)))
     aps = bore.get("apothems")
-    ratio = np.array([float(a) for a in aps]) / float(bore["radius"]) if aps is not None else np.ones(int(sides))
+    if aps is None and a_w is None:
+        return int(sides), rot, np.ones(int(sides))
+    a = float(bore["radius"])
+    apothems = np.array([float(v) for v in aps]) if aps is not None else np.full(int(sides), a)
+    ratio = apothems / a if a_w is None else (apothems + (float(a_w) - a)) / float(a_w)
     return int(sides), rot, ratio
 
 
@@ -364,7 +369,7 @@ def wall_trace(seg, bores, a_w, zs, k, z_src, ring_step, window, fresnel=None):
     for jz, z in enumerate(zs):
         active = (seg.z0 <= z + 0.1) & (seg.z1 >= z - 0.1)                   # every segment is a full beam; cheap pre-cut
         for b, bore in enumerate(bores):
-            shape = _shape(bore)
+            shape = _shape(bore, a_w)
             stretch = _stretch(shape, phis)
             glass = None if fresnel is None else (_normals(shape, phis), fresnel)
             cx, cy = bore_axis(bore, z)
@@ -388,7 +393,7 @@ def exit_tails(seg, bores, a_w, z_exit, k, z_src, ring_step, window, outside=Fal
     phis = np.arange(n_phi) * 2.0 * math.pi / n_phi
     full = shot = 0.0
     for b, bore in enumerate(bores):
-        stretch = _stretch(_shape(bore), phis)
+        stretch = _stretch(_shape(bore, a_w), phis)
         cx, cy = bore_axis(bore, z_exit)
         cand = np.flatnonzero((seg.final if outside else ~seg.final) & (seg.bore == b))
         if cand.size == 0:
