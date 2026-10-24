@@ -55,7 +55,7 @@ from ..surfaces import CapillaryBundle
 from .altcoh import FloatLineAmplitudes
 from .beamlet import _launch, _reference_pixel, _screen_spec
 from . import bound_modal
-from .wave_fb import Disc, FBChannel
+from .wave_fb import Disc, FBChannel, mode_damping
 
 RESULT_DIR = "stage11-defect"
 DEFAULTS = {"rays": 50000, "sections": 60, "ring_step": 0.5e-6, "window": 4.0,
@@ -465,12 +465,15 @@ def _disc(a_w, jmax):
     return _DISCS[key]
 
 
-def _channel(bore, a_w, disc, k):
+def _channel(bore, a_w, disc, k, fresnel=None):
+    """FBChannel of a bore; `fresnel` = (2 delta, 2 beta) adds the DIR-ell per-mode damping of
+    the fb wave (wave_fb.mode_damping), none = lossless Dirichlet."""
     c0 = np.array([float(bore["center"][0]), float(bore["center"][1])])
+    gamma = None if fresnel is None else mode_damping(disc, k, 0.5 * fresnel[0], 0.5 * fresnel[1])
     bend = bore.get("bend")
     if not bend:
-        return FBChannel(c0, None, None, disc, k)
-    return FBChannel(c0, np.array([float(bend["toward"][0]), float(bend["toward"][1])]), float(bend["radius"]), disc, k)
+        return FBChannel(c0, None, None, disc, k, gamma)
+    return FBChannel(c0, np.array([float(bend["toward"][0]), float(bend["toward"][1])]), float(bend["radius"]), disc, k, gamma)
 
 
 def modal_bound(seg, bores, job, origin, t_full):
@@ -485,7 +488,7 @@ def modal_bound(seg, bores, job, origin, t_full):
     if any(sh is not None for sh in shapes):
         return square_bound(seg, bores, shapes, job, origin, t_full)
     disc = _disc(a_w, job["bound_jmax"])
-    chans = [_channel(b, a_w, disc, k) for b in bores]
+    chans = [_channel(b, a_w, disc, k, job.get("fresnel")) for b in bores]
     stretch = np.ones(disc.nphi)
 
     def sample(b, zr, radii, phis, cx, cy):
@@ -540,8 +543,10 @@ def square_bound(seg, bores, shapes, job, origin, t_full):
     lam = 2.0 * math.pi / k
     e_in = lambda px, py: (np.exp(1j * k * ((px - origin[0]) ** 2 + (py - origin[1]) ** 2) / (2.0 * z_in))
                            / (1j * lam * z_in))
+    fres = job.get("fresnel")
+    gamma = None if fres is None else bound_modal.square_damping(sqs[0], k, 0.5 * fres[0], 0.5 * fres[1])
     return bound_modal.squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in,
-                                     job["bound_phase_step"], t_full)
+                                     job["bound_phase_step"], t_full, gamma=gamma)
 
 
 # ------------------------------------------------------------------ per mode

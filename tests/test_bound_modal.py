@@ -133,3 +133,24 @@ def test_square_face_coefficients_are_the_sine_transform():
     for f, coord in enumerate((sq.s, -sq.s, -sq.s, sq.s)):
         S = np.sin(n[:, None] * math.pi * (coord[None, :] + AW) / (2.0 * AW))
         assert np.allclose(G[f], (S @ g[f * sq.nq:(f + 1) * sq.nq]) * sq.h)
+
+
+def test_damping_contracts_the_evolution_and_matches_the_slab_form():
+    """DIR-ell damping: the square's per-mode rate is the sum of the two slab rates, the damped
+    evolution contracts, and the Filon weights hold for the complex exponent."""
+    delta, beta = 7.125763840840871e-06, 9.207952277589002e-08
+    sq = B.Square(AW, 20, nq=64)
+    gam = B.square_damping(sq, K, delta, beta)
+    g1 = B.slab_damping(np.arange(1, 21) * math.pi / (2.0 * AW), K, delta, beta, AW)
+    assert np.allclose(gam, g1[:, None] + g1[None, :]) and np.all(gam > 0.0)
+    assert gam[-1, -1] > 10.0 * gam[0, 0]                     # steep modes lose more
+    sb = B.SquareBound(sq, K, gam)
+    c = np.ones((20, 20), complex)
+    assert sb.norm(c * np.exp(-1j * sb.alpha * 0.05)) < sb.norm(c)
+    th = (sb.alpha * 1e-3).ravel()[:5]
+    e0, e1 = B._filon(th)
+    t = np.linspace(0.0, 1.0, 20001)
+    for j in range(5):
+        w0 = np.trapezoid(np.exp(-1j * th[j] * (1.0 - t)), t)
+        w1 = np.trapezoid(np.exp(-1j * th[j] * t) * t, t)
+        assert abs(e0[j] - w0) < 1e-8 and abs(e1[j] - w1) < 1e-8

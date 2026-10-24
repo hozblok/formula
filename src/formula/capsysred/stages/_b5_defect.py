@@ -418,7 +418,7 @@ def modal_bound(seg, bores, job, origin, width, t_full):
     k, a_w, z_src = job["k"], job["a_w"], origin[2]
     z0, L = job["z0_cap"], job["z_exit"] - job["z0_cap"]
     disc = _disc(a_w, job["bound_jmax"])
-    chans = [_channel(b, a_w, disc, k) for b in bores]
+    chans = [_channel(b, a_w, disc, k, job.get("fresnel")) for b in bores]
 
     def sample(b, zr, radii, phis, cx, cy):
         z = z0 + zr
