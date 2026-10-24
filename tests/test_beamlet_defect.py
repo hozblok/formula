@@ -236,7 +236,8 @@ def test_modal_bound_of_a_single_beam_is_finite():
     for key in ("B", "B_e0", "B_boundary", "B_tail", "B_T"):
         assert math.isfinite(res[key]) and res[key] >= 0.0
     assert res["B_T"] == 0.0 and res["B_boundary"] > 0.0
-    assert res["B"] >= res["B_e0"] + res["B_boundary"]
+    assert res["B_tri"] >= res["B_e0"] + res["B_boundary"] and res["B"] <= res["B_tri"] + 1e-12
+    assert res["B_exact"] > 0.0 and res["B_r0"] >= 0.0
     assert len(res["bores"]) == 1 and res["C_fit"][0] > 0.0
 
 
@@ -253,7 +254,7 @@ def test_modal_bound_of_a_single_beam_in_a_square_bore():
     for key in ("B", "B_e0", "B_boundary", "B_tail", "B_T"):
         assert math.isfinite(res[key]) and res[key] >= 0.0
     assert res["B_T"] == 0.0 and res["B_boundary"] > 0.0
-    assert res["B"] >= res["B_e0"] + res["B_boundary"]
+    assert res["B_tri"] >= res["B_e0"] + res["B_boundary"] and res["B"] <= res["B_tri"] + 1e-12
     hexa = D.modal_bound(seg, [dict(bores[0], sides=6)], job, [0.0, 0.0, -0.5], 0.0)
     assert hexa["B"] is None and "basis" in hexa["reason"]
 
