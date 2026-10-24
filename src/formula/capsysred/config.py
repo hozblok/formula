@@ -579,6 +579,11 @@ class Config:
         sp = beamlet.get("self_pairs", "keep")
         if sp not in ("keep", "subtract"):
             raise ValueError(f"beamlet self_pairs: \"keep\" or \"subtract\", got {sp!r}")
+        if sp == "subtract":
+            for src in (getattr(self.capillary, "source", None), getattr(self, "free_source", None)):
+                if src is not None and src.n_rays < 2:
+                    raise ValueError("beamlet self_pairs: subtract pairs distinct rays — needs at least "
+                                     f"two rays per mode, the source has {src.n_rays}")
         self.beamlet_self_pairs = sp
 
     def validate_wave_estimator(self) -> dict:
