@@ -531,10 +531,10 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
             f"with exit propagation {rec_w['indicator_exit_prod_rms']:.4f}; O rms {rec_w['O_rms']:.4f} (noise {rec_w['O_shot_rms']:.4f}){glass}")
     best = min(summary["widths"], key=lambda r: r["indicator_prod_rms"])
     summary["argmin"] = {"width_m": best["width_m"], "indicator_rms": best["indicator_rms"],
-                         "indicator_prod_rms": best["indicator_prod_rms"]}
+                         "indicator_prod_rms": best["indicator_prod_rms"], "certified": False, "status": "indicator argmin; not an error bound"}
     best = min(summary["widths"], key=lambda r: r["indicator_exit_prod_rms"])
     summary["argmin_exit"] = {"width_m": best["width_m"], "indicator_exit_rms": best["indicator_exit_rms"],
-                              "indicator_exit_prod_rms": best["indicator_exit_prod_rms"]}
+                              "indicator_exit_prod_rms": best["indicator_exit_prod_rms"], "certified": False, "status": "indicator argmin; not an error bound"}
     if map_path is not None:
         with np.load(map_path) as data:
             width = float(data["width_m"])
@@ -549,7 +549,7 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
                                      for r in results])))
         name = "mask-" + os.path.basename(map_path)
         summary["mask"] = {"map": map_path, "file": name, "width_m": width, "exit_propagation": exit_prop, "eps": eps,
-                           "rays_per_mode": map_rays, "threshold": opt["mask_threshold"],
+                           "rays_per_mode": map_rays, "threshold": opt["mask_threshold"], "certified": False,
                            "assumption": "relative field error eps spread uniformly over the cells with rays; not a bound",
                            **write_map_mask(map_path, eps, opt["mask_threshold"], os.path.join(out, name))}
         log(f"  mask: {summary['mask']['masked_lit']} of {summary['mask']['lit']} cells with rays above |d mu| "
