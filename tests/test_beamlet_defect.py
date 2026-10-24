@@ -2,6 +2,7 @@
 algebra, the entrance-kernel defect, the image cancellation on a flat wall, and the
 exit tails of a straight ray."""
 import cmath
+import json
 import math
 
 import numpy as np
@@ -219,3 +220,46 @@ def test_uniform_mask_without_a_positive_reference():
     for i_ref in (0.0, -1.0):
         dmu, masked = D.uniform_mask(np.array([i_ref, 1.0]), np.array([True, True]), 0, 0.1, 0.05)
         assert np.isinf(dmu).all() and masked.all()
+
+
+
+def test_modal_bound_of_a_single_beam_is_finite():
+    # one straight beam near the wall of a straight bore: the pipeline runs end to end,
+    # the components are finite and the complex scale is the beam's own projection
+    bores = [{"center": [0.0, 0.0], "radius": 24e-6}]
+    seg = D.Segments(1)
+    seg.qxx[0] = seg.qyy[0] = complex(0.0, 0.5 * (4e-6) ** 2 * K)
+    seg.a[0] = 1.0; seg.fres[0] = 1.0; seg.x0[0] = 18e-6; seg.z1[0] = 0.02
+    job = {"k": K, "a_w": 24e-6, "z0_cap": 0.0, "z_exit": 0.02, "bound_jmax": 60.0, "bound_phase_step": 0.7, "window": 4.0}
+    res = D.modal_bound(seg, bores, job, [0.0, 0.0, -0.5], 0.0)
+    assert res["sections"] >= 20 and res["modes"] > 100
+    for key in ("B", "B_e0", "B_boundary", "B_tail", "B_T"):
+        assert math.isfinite(res[key]) and res[key] >= 0.0
+    assert res["B_T"] == 0.0 and res["B_boundary"] > 0.0
+    assert res["B"] >= res["B_e0"] + res["B_boundary"]
+    assert len(res["bores"]) == 1 and res["C_fit"][0] > 0.0
+
+
+def test_run_defect_publishes_the_bound(tmp_path):
+    # a traced straight bore: every mode carries the bound, the summary its rms and argmin
+    from formula.capsysred.simulation import Simulation
+    from tests.test_capsysred import _record
+    raw = {"precision": 32, "energy_kev": 8.048, "seed": 1,
+           "capillary": {"bores": [{"center": [0.0, 0.0], "radius": 5e-6}], "z0": 0.0, "z1": 0.2,
+                         "source": {"shape": "gaussian", "size": 1.5e-6, "position": [0.0, 0.0, -0.5],
+                                    "n_modes": 2, "n_rays": 40},
+                         "screen": {"z": 0.3, "center": [0.0, 0.0], "edge_x": 4e-6, "edge_y": 4e-6, "nx": 4, "ny": 4}},
+           "beamlet": {"w0": 1e-6, "w0_t": None, "window_sigmas": 3.0},
+           "beamlet_defect": {"rays": 40, "sections": 10, "bound_jmax": 40.0}}
+    sim = Simulation.from_dict(raw)
+    _record(sim, str(tmp_path))
+    opt = D.options(sim.cfg)
+    summary = D.run_defect(sim, str(tmp_path / "rays-modes"), str(tmp_path), opt, [(1e-6, None, None)], log=lambda s: None)
+    rec = summary["launches"][0]
+    assert rec["B_modes"] == 2 and math.isfinite(rec["B_rms"]) and rec["B_rms"] > 0.0
+    assert summary["argmin_bound"]["certified"] is True and summary["argmin"]["certified"] is False
+    rows = [json.loads(l) for l in open(tmp_path / D.RESULT_DIR / "modes.jsonl", encoding="utf-8")]
+    assert all(r["bound"]["B"] >= r["bound"]["B_e0"] for r in rows)
+    opt["bound"] = False
+    summary = D.run_defect(sim, str(tmp_path / "rays-modes"), str(tmp_path), opt, [(1e-6, None, None)], log=lambda s: None)
+    assert "argmin_bound" not in summary and "B_rms" not in summary["launches"][0]

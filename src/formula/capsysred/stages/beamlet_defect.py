@@ -54,10 +54,13 @@ from ..screen import ScreenGrid
 from ..surfaces import CapillaryBundle
 from .altcoh import FloatLineAmplitudes
 from .beamlet import _launch, _reference_pixel, _screen_spec
+from . import bound_modal
+from .wave_fb import Disc, FBChannel
 
 RESULT_DIR = "stage11-defect"
 DEFAULTS = {"rays": 50000, "sections": 60, "ring_step": 0.5e-6, "window": 4.0,
-            "modes": None, "jobs": 1, "scan": None, "glass": False, "mask_threshold": 0.05}
+            "modes": None, "jobs": 1, "scan": None, "glass": False, "mask_threshold": 0.05,
+            "bound": True, "bound_jmax": 160.0, "bound_phase_step": 0.7}
 
 
 def options(cfg):
@@ -74,8 +77,12 @@ def options(cfg):
     for key in ("ring_step", "window", "mask_threshold"):
         if not isinstance(opt[key], (int, float)) or opt[key] <= 0:
             raise ValueError(f"beamlet_defect.{key}: a positive number")
-    if not isinstance(opt["glass"], bool):
-        raise ValueError("beamlet_defect.glass: true or false")
+    for key in ("glass", "bound"):
+        if not isinstance(opt[key], bool):
+            raise ValueError(f"beamlet_defect.{key}: true or false")
+    for key in ("bound_jmax", "bound_phase_step"):
+        if not isinstance(opt[key], (int, float)) or opt[key] <= 0:
+            raise ValueError(f"beamlet_defect.{key}: a positive number")
     if opt["scan"] is not None:
         if not isinstance(opt["scan"], list) or not all(
                 isinstance(p, list) and len(p) == 2 and all(isinstance(v, (int, float)) for v in p) for p in opt["scan"]):
@@ -416,6 +423,91 @@ def exit_tails(seg, bores, a_w, z_exit, k, z_src, ring_step, window, outside=Fal
     return full, shot
 
 
+# ------------------------------------------------------------------ modal bound
+_DISCS = {}
+
+
+def _disc(a_w, jmax):
+    key = (round(float(a_w), 15), float(jmax))
+    if key not in _DISCS:
+        _DISCS[key] = Disc(a_w, jmax)
+    return _DISCS[key]
+
+
+def _channel(bore, a_w, disc, k):
+    c0 = np.array([float(bore["center"][0]), float(bore["center"][1])])
+    bend = bore.get("bend")
+    if not bend:
+        return FBChannel(c0, None, None, disc, k)
+    return FBChannel(c0, np.array([float(bend["toward"][0]), float(bend["toward"][1])]), float(bend["radius"]), disc, k)
+
+
+def modal_bound(seg, bores, job, origin, t_full):
+    """B of the full-beam field of one mode (bound_modal): per bore the entrance defect
+    ||E_in - E_full(0)/C|| on the frame polar grid (C the least-squares complex scale of the
+    fan against the point source, common to the bores), the wall trace in the bend frame
+    at sections resolving the fastest mode's phase, its boundary part and the mode tails;
+    bores add in quadrature, T (sqrt t_full / |C|) by the triangle inequality.  Circular
+    bores only (the Disc basis)."""
+    k, a_w, z_src = job["k"], job["a_w"], origin[2]
+    z0, z1 = job["z0_cap"], job["z_exit"]
+    L = z1 - z0
+    disc = _disc(a_w, job["bound_jmax"])
+    chans = [_channel(b, a_w, disc, k) for b in bores]
+    alpha_max = max(disc.kap2max / (2.0 * k) + (0.0 if ch.rb is None else k * a_w / ch.rb) for ch in chans)
+    n_sec = max(int(math.ceil(L * alpha_max / job["bound_phase_step"])), 20)
+    zs = np.linspace(0.0, L, n_sec + 1)
+    wq = (disc.wr * disc.r)[:, None] * (2.0 * math.pi / disc.nphi)         # polar quadrature weights
+    stretch = np.ones(disc.nphi)
+    ein, efan, ein2, num = [], [], 0.0, 0j
+    for b, ch in enumerate(chans):
+        t, _ = ch.frame_axes()
+        phis = disc.phi + math.atan2(t[1], t[0])
+        cand = np.flatnonzero(seg.bore == b)
+        cx, cy = ch.axis(0.0)
+        w, bx, by = beam_width(seg, cand, z0, k)
+        near = np.hypot(bx - cx, by - cy) <= a_w + job["window"] * np.where(np.isfinite(w), w, 0.0)
+        ra, rb = _halves(seg, cand[near], z0, cx, cy, disc.r, phis, k, z_src, job["window"], stretch)
+        fan = ra + rb
+        e_in = ch.entrance_field(origin[:2], z0 - z_src)
+        ein.append(e_in); efan.append(fan)
+        ein2 += float(np.sum(wq * np.abs(e_in) ** 2))
+        num += complex(np.sum(wq * np.conj(e_in) * fan))
+    C = num / ein2 if ein2 > 0 else 1.0 + 0j
+    per_bore, b_sq = [], 0.0
+    for b, ch in enumerate(chans):
+        t, _ = ch.frame_axes()
+        phis = disc.phi + math.atan2(t[1], t[0])
+        e0 = math.sqrt(float(np.sum(wq * np.abs(ein[b] - efan[b] / C) ** 2)))
+        g = np.zeros((len(zs), disc.nphi), complex)
+        cand = np.flatnonzero(seg.bore == b)
+        for jz, zr in enumerate(zs):
+            z = z0 + zr
+            cx, cy = ch.axis(zr)
+            act = cand[(seg.z0[cand] <= z + 0.1) & (seg.z1[cand] >= z - 0.1)]
+            w, bx, by = beam_width(seg, act, z, k)
+            near = np.hypot(bx - cx, by - cy) <= a_w + job["window"] * np.where(np.isfinite(w), w, 0.0)
+            ra, rb = _halves(seg, act[near], z, cx, cy, np.array([a_w]), phis, k, z_src, job["window"], stretch)
+            _, _, phase = bound_modal.frame_ring(ch, zr)
+            g[jz] = (ra[0] + rb[0]) * phase / C
+        mb = bound_modal.ModalBound(ch)
+        ghat = bound_modal.ring_hat(disc, g)
+        bnd = mb.norm(mb.boundary_part(zs, ghat, L))
+        t1, t2 = mb.tails(zs, ghat, bound_modal.extra_hat(disc, g))
+        bb = e0 + bnd + t1 + t2
+        b_sq += bb * bb
+        per_bore.append({"bore": b, "e0": e0, "boundary": bnd, "tail": t1 + t2, "B": bb})
+    norm_in = math.sqrt(ein2)
+    t_abs = math.sqrt(max(t_full, 0.0)) / abs(C)
+    return {"B": (math.sqrt(b_sq) + t_abs) / norm_in,
+            "B_e0": math.sqrt(sum(r["e0"] ** 2 for r in per_bore)) / norm_in,
+            "B_boundary": math.sqrt(sum(r["boundary"] ** 2 for r in per_bore)) / norm_in,
+            "B_tail": math.sqrt(sum(r["tail"] ** 2 for r in per_bore)) / norm_in,
+            "B_T": t_abs / norm_in, "bores": [{k_: (v / norm_in if k_ != "bore" else v) for k_, v in r.items()} for r in per_bore],
+            "C_fit": [abs(C), math.atan2(C.imag, C.real)], "sections": n_sec, "jmax": float(job["bound_jmax"]),
+            "modes": int(disc.valid.sum()), "E_in_norm": norm_in}
+
+
 # ------------------------------------------------------------------ per mode
 def mode_job(job):
     t0 = time.time()
@@ -454,6 +546,11 @@ def mode_job(job):
         glass_area = length * 2.0 * math.pi * job["a"] * len(cap.bores)
         out["G_glass"] = math.sqrt(float(np.sum(np.maximum(gg_full - gg_shot, 0.0))) * dz / glass_area) / rms_field
         out["G_glass_shot"] = math.sqrt(float(np.sum(gg_shot)) * dz / glass_area) / rms_field
+    if job["bound"]:
+        if any(b.get("sides") for b in bores):
+            out["bound"] = {"B": None, "reason": "polygon bore: no Dirichlet mode basis"}
+        else:
+            out["bound"] = modal_bound(seg, bores, job, origin, t_full)
     out["seconds"] = time.time() - t0
     return out
 
@@ -487,7 +584,8 @@ def launch_jobs(sim, archive, index, opt, w0, w0_t, waist_z):
     base = dict(archive=archive, raw_cfg=cfg.raw, rays=opt["rays"], sections=opt["sections"],
                 ring_step=float(opt["ring_step"]), window=float(opt["window"]), k=k, zr_t=zr_t, zr_s=zr_s,
                 waist_dz=waist_dz, fresnel=fres, a_w=a_w, a=float(cap.bores[0]["radius"]), glass=bool(opt["glass"]),
-                z_exit=z1, z_rec=rec, norm_per_ray=norm_per_ray, area=area)
+                z_exit=z1, z_rec=rec, norm_per_ray=norm_per_ray, area=area, z0_cap=z0,
+                bound=bool(opt["bound"]), bound_jmax=float(opt["bound_jmax"]), bound_phase_step=float(opt["bound_phase_step"]))
     jobs = [dict(base, mode=m, parts=tuple(secs)) for m, secs in enumerate(modes)]
     meta = {"w0_m": w0, "w0_t_m": w0_t, "waist_z_m": waist_z, "waist_dz_m": waist_dz, "D0": d0,
             "rays_per_mode_production": int(max(secs[-1].r1 for secs in modes)),
@@ -584,15 +682,34 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print, mask=None):
             if opt["glass"]:
                 rec.update(G_glass_rms=rms("G_glass"), G_glass_shot_rms=rms("G_glass_shot"))
                 glass = f" G_glass rms {rec['G_glass_rms']:.4f} (noise {rec['G_glass_shot_rms']:.4f})"
+            bound = ""
+            bs = [r["bound"] for r in results if r.get("bound") and r["bound"].get("B") is not None]
+            if bs:
+                brms = lambda key: float(np.sqrt(np.mean([b[key] ** 2 for b in bs])))
+                rec.update(B_rms=brms("B"), B_max=float(max(b["B"] for b in bs)), B_e0_rms=brms("B_e0"),
+                           B_boundary_rms=brms("B_boundary"), B_tail_rms=brms("B_tail"), B_T_rms=brms("B_T"),
+                           B_modes=len(bs), B_sections=bs[0]["sections"], B_jmax=bs[0]["jmax"])
+                bound = (f" | B rms {rec['B_rms']:.4f} (e0 {rec['B_e0_rms']:.4f} boundary {rec['B_boundary_rms']:.4f} "
+                         f"tail {rec['B_tail_rms']:.4f} T {rec['B_T_rms']:.4f}; {rec['B_sections']} sections)")
             summary["launches"].append(rec)
             log(f"  launch w0 {w0*1e6:.2f} um (w0_t {meta['w0_t_m']*1e6:.2f}) waist_z {waist_z}: D0 {meta['D0']:.4f} "
                 f"G rms {rec['G_rms']:.4f} (noise {rec['G_shot_rms']:.4f}) T rms {rec['T_rms']:.4f} (noise {rec['T_shot_rms']:.4f}) "
                 f"-> indicator rms {rec['indicator_rms']:.4f}, at production rays {rec['indicator_prod_rms']:.4f}; "
-                f"O rms {rec['O_rms']:.4f} (noise {rec['O_shot_rms']:.4f}){glass}; {len(results)} modes, {rec['seconds']:.0f} s")
+                f"O rms {rec['O_rms']:.4f} (noise {rec['O_shot_rms']:.4f}){glass}{bound}; {len(results)} modes, {rec['seconds']:.0f} s")
     best = min(summary["launches"], key=lambda r: r["indicator_prod_rms"])
     summary["argmin"] = {"w0_m": best["w0_m"], "w0_t_m": best["w0_t_m"], "waist_z_m": best["waist_z_m"],
                          "indicator_rms": best["indicator_rms"], "indicator_prod_rms": best["indicator_prod_rms"],
                          "certified": False, "status": "indicator argmin; not an error bound"}
+    with_b = [r for r in summary["launches"] if "B_rms" in r]
+    if with_b:
+        best = min(with_b, key=lambda r: r["B_rms"])
+        summary["argmin_bound"] = {
+            "w0_m": best["w0_m"], "w0_t_m": best["w0_t_m"], "waist_z_m": best["waist_z_m"],
+            "B_rms": best["B_rms"], "B_max": best["B_max"], "certified": True,
+            "bound": "||E - E_dep||(L) <= ||e(0)|| + ||boundary part|| + tail + T per mode (bound_modal), relative to ||E_in||",
+            "model": "paraxial Dirichlet field on the bore r < a_w (DIR-ell), constant bend curvature; the diagnosed ray sample "
+                     "is the sample (ray statistics not rescaled); the complex scale C of the fan is the least-squares fit "
+                     "to the point source on the entrance disc"}
     if mask is not None:
         n_map = int(sim.cfg.capillary.source.n_modes)
         if summary["launches"][0]["modes"] != n_map:
@@ -626,6 +743,8 @@ def main(argv=None):
     ap.add_argument("--modes", type=int, default=None); ap.add_argument("--jobs", type=int, default=None)
     ap.add_argument("--glass", action="store_true", help="also the glass interface trace G_glass")
     ap.add_argument("--mask", default=None, help="stage-11 mu-beamlet.jsonl of the configured launch to mask")
+    ap.add_argument("--no-bound", action="store_true", help="skip the modal error bound B")
+    ap.add_argument("--bound-jmax", type=float, default=None, help="Dirichlet basis cutoff j_mn < jmax of the bound")
     args = ap.parse_args(argv)
     from .. import load
     from ..simulation import Simulation
@@ -637,6 +756,10 @@ def main(argv=None):
         if getattr(args, key) is not None:
             opt[key] = getattr(args, key)
     opt["glass"] = opt["glass"] or args.glass
+    if args.no_bound:
+        opt["bound"] = False
+    if args.bound_jmax is not None:
+        opt["bound_jmax"] = float(args.bound_jmax)
     cap = cfg.capillary
     if cap is None:
         raise ValueError("beamlet_defect needs a capillary scene")
@@ -652,6 +775,9 @@ def main(argv=None):
     best = summary["argmin"]
     print(f"argmin indicator: w0 {best['w0_m']*1e6:.2f} um, waist_z {best['waist_z_m']} "
           f"(rms at production rays {best['indicator_prod_rms']:.4f}); {time.time() - t0:.0f} s; rows in {os.path.join(args.out, RESULT_DIR)}")
+    if "argmin_bound" in summary:
+        bb = summary["argmin_bound"]
+        print(f"argmin bound B: w0 {bb['w0_m']*1e6:.2f} um, waist_z {bb['waist_z_m']} (B rms {bb['B_rms']:.4f}, max {bb['B_max']:.4f})")
 
 
 if __name__ == "__main__":
