@@ -123,3 +123,12 @@ def test_mask_of_a_stage17_map(tmp_path):
     eta = 0.1 * np.sqrt(5.25 / 2)
     assert data["dmu"][0, 1] == pytest.approx(2 * eta * (1.0 + 0.5))
     assert data["masked"].tolist() == [[False, True], [True, True]]
+
+
+def test_indicator_noise_rescales_to_the_masked_maps_budget():
+    # a 100-ray measurement with R_shot = 1: eps 1 at a 100-ray map, 0.1 at 10000 rays
+    terms = {"R": 0.0, "R_shot": 1.0, "R_inside": 0.0, "R_inside_shot": 1.0,
+             "G": 0.0, "G_shot": 0.0, "T": 0.0, "T_shot": 0.0}
+    assert D.indicator_at_budget(terms, 0.0, 100, 100, False) == pytest.approx(1.0)
+    assert D.indicator_at_budget(terms, 0.0, 100, 10000, False) == pytest.approx(0.1)
+    assert D.indicator_at_budget(terms, 0.2, 100, 10000, True) == pytest.approx(0.3)

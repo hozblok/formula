@@ -212,3 +212,10 @@ def test_mask_rows_of_a_stage11_map(tmp_path):
     ref = 10                                                         # window centre
     assert out[0]["dmu"] is None and out[0]["masked"]
     assert out[12]["dmu"] == pytest.approx(2.0 * eta * (1.0 / math.sqrt(12.0) + 1.0 / math.sqrt(intensity[ref])))
+
+
+def test_uniform_mask_without_a_positive_reference():
+    # unlit or U-statistic-negative reference cell: every cell masked, no exception
+    for i_ref in (0.0, -1.0):
+        dmu, masked = D.uniform_mask(np.array([i_ref, 1.0]), np.array([True, True]), 0, 0.1, 0.05)
+        assert np.isinf(dmu).all() and masked.all()

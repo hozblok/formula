@@ -449,6 +449,14 @@ def mode_job(job):
             "valid_segments": int(seg.valid.sum()), "widths": out, "seconds": time.time() - t0}
 
 
+def indicator_at_budget(terms, d0, measured_rays, rays, exit_prop):
+    """D0 + R + G + T of one mode with its ray-noise terms rescaled from the measured
+    ray count to a budget of `rays` per mode (noise ~ 1/sqrt(rays))."""
+    scale = math.sqrt(measured_rays / rays)
+    prod = lambda t: math.hypot(terms[t], scale * terms[t + "_shot"])
+    return d0 + prod("R_inside" if exit_prop else "R") + prod("G") + prod("T")
+
+
 def write_map_mask(npz_path, eps, threshold, path):
     """Cell mask of a stage-17 map under the uniform-error assumption; lit = cells with
     rays of the matched ray estimator."""
@@ -499,14 +507,12 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
                "rays_per_mode_production": rays_prod, "widths": []}
     with open(os.path.join(out, "modes.jsonl"), "w", encoding="utf-8") as rows:
         for res in results:
-            scale = math.sqrt(res["rays"] / rays_prod)        # ray noise rescaled to the map's budget
             for key, terms in res["widths"].items():
-                prod = lambda t: math.hypot(terms[t], scale * terms[t + "_shot"])
                 terms["D0"] = d0[key]
                 terms["indicator"] = d0[key] + terms["R"] + terms["G"] + terms["T"]
-                terms["indicator_prod"] = d0[key] + prod("R") + prod("G") + prod("T")
+                terms["indicator_prod"] = indicator_at_budget(terms, d0[key], res["rays"], rays_prod, False)
                 terms["indicator_exit"] = d0[key] + terms["R_inside"] + terms["G"] + terms["T"]
-                terms["indicator_exit_prod"] = d0[key] + prod("R_inside") + prod("G") + prod("T")
+                terms["indicator_exit_prod"] = indicator_at_budget(terms, d0[key], res["rays"], rays_prod, True)
             rows.write(json.dumps(res) + "\n")
     for w in widths:
         key = f"{w*1e6:g}"
@@ -532,14 +538,18 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
     if map_path is not None:
         with np.load(map_path) as data:
             width = float(data["width_m"])
+            map_rays = int(data["emitted_rays_per_mode"]) if "emitted_rays_per_mode" in data else rays_prod
         rec_w = min(summary["widths"], key=lambda r: abs(r["width_m"] - width))
         if not math.isclose(rec_w["width_m"], width, rel_tol=1e-9):
             raise ValueError(f"{map_path}: width {width:g} m is not among the scanned widths")
         exit_prop = bool(b5["exit_propagation"])
-        eps = rec_w["indicator_exit_prod_rms" if exit_prop else "indicator_prod_rms"]
+        key = f"{rec_w['width_m']*1e6:g}"
+        # the map's own ray budget, not the largest configured one
+        eps = float(np.sqrt(np.mean([indicator_at_budget(r["widths"][key], d0[key], r["rays"], map_rays, exit_prop) ** 2
+                                     for r in results])))
         name = "mask-" + os.path.basename(map_path)
         summary["mask"] = {"map": map_path, "file": name, "width_m": width, "exit_propagation": exit_prop, "eps": eps,
-                           "threshold": opt["mask_threshold"],
+                           "rays_per_mode": map_rays, "threshold": opt["mask_threshold"],
                            "assumption": "relative field error eps spread uniformly over the cells with rays; not a bound",
                            **write_map_mask(map_path, eps, opt["mask_threshold"], os.path.join(out, name))}
         log(f"  mask: {summary['mask']['masked_lit']} of {summary['mask']['lit']} cells with rays above |d mu| "

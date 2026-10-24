@@ -477,7 +477,8 @@ class BeamletGrid {
       const double *si = subtract ? si_.at(m).data() : nullptr;
       const std::complex<double> *sw = subtract ? sw_.at(m).data() : nullptr;
       const std::complex<double> g_ref = g.at(size_t(ref));
-      const bool has_ref = g_ref != zero;
+      // subtract: -sw[p] survives an exact null of the summed field at ref
+      const bool has_ref = subtract || g_ref != zero;
       const std::complex<double> ref_c = std::conj(g_ref);
       for (size_t p = 0; p < npix; ++p) {
         const std::complex<double> v = g[p];
@@ -527,7 +528,8 @@ class BeamletGrid {
       const double *si = subtract ? si_.at(m).data() : nullptr;
       const std::complex<double> *sw = subtract ? sw_.at(m).data() : nullptr;
       const std::complex<double> g_ref = g.at(size_t(ref));
-      const bool has_ref = g_ref != zero;
+      // subtract: -sw[p] survives an exact null of the summed field at ref
+      const bool has_ref = subtract || g_ref != zero;
       const std::complex<double> ref_c = std::conj(g_ref);
       for (size_t p = 0; p < npix; ++p) {
         const std::complex<double> v = g[p];

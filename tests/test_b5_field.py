@@ -202,3 +202,36 @@ def test_exit_propagation_reproduces_the_quadratic_field():
     expected = 0.8/(M*(1+c*L))*np.exp(0.73j+0.5j*k*c/(1+c*L)*(xx**2+yy**2))
     np.testing.assert_allclose(result["field"], expected, atol=1e-9, rtol=1e-9)
     assert result["metadata"]["effective_width_m"] == pytest.approx(width*np.sqrt(2))
+
+
+
+def test_cell_order_resolves_the_chirp_of_a_spread_window():
+    """A window propagated far develops the chirp k Im(m) t; the cell rule must resolve its
+    slope at the farthest kept cell, not only the ray tilt and the curvature at the centre
+    (16 nodes gave a relative error of 40 at one effective width)."""
+    from formula.capsysred.stages._b5_field import cell_order, gaussian_cell_average, spread_window
+    k, width, L, cell = 4e10, 1e-8, 0.1, 1e-6
+    m, _ = spread_window(1/(k*width**2), L)
+    weff = 1/np.sqrt(k*m.real)
+    reach = 5*weff+cell/2
+    order = cell_order(k, cell, 0.0, m, weff, reach)
+    assert 16 < order <= 256
+    f = lambda t: np.exp(-0.5*k*m*t*t)
+    nodes, weights = np.polynomial.legendre.leggauss(64)
+    def composite(offset, parts=64):
+        edges = np.linspace(offset-cell/2, offset+cell/2, parts+1)
+        total = sum(0.5*(hi-lo)*np.sum(weights*f(0.5*(hi-lo)*nodes+0.5*(hi+lo)))
+                    for lo, hi in zip(edges[:-1], edges[1:]))
+        return total/cell
+    for offset in (weff, 3*weff, 5*weff):
+        got = gaussian_cell_average(offset, 0.0, k, width, cell, order, m)
+        assert abs(got-composite(offset)) < 1e-12
+    assert abs(gaussian_cell_average(weff, 0.0, k, width, cell, 16, m)-composite(weff)) > 0.1
+    # the same rule inside reconstruct_field: one ray at the origin, cells at +-weff
+    axis = np.array([-weff, 0.0, weff])
+    result = reconstruct_field(np.zeros((1, 2)), np.zeros((1, 2)), 0.0, 1.0, np.eye(2)[None], np.zeros((1, 2, 2)),
+                               0, area_weights=1.0, source_amplitude=1.0, k=k, width=width, x=axis, y=axis,
+                               cell_width=cell, cutoff=5.0, spread=L)
+    assert result["metadata"]["cell_quadrature_order"] == order
+    field = result["field"]
+    assert field[1, 2]/field[1, 1] == pytest.approx(composite(weff)/composite(0.0), rel=1e-9)

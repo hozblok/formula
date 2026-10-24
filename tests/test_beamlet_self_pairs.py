@@ -197,3 +197,49 @@ def test_stage11_subtract_runs(tmp_path):
         for row in sim.results[key]["maps"]["intensity"]:
             assert all(math.isfinite(v) for v in row)
     assert any("U-statistic" in line for line in sim.report)
+
+
+def test_subtract_keeps_the_self_cross_term_at_a_null_reference():
+    # mode 1: one ray twice with opposite amplitude -> the summed field is exactly 0
+    # everywhere, its self-pair diagonal is not: W must carry -sum e_i conj(e_i,ref)
+    # (|mu| cannot show it: a negative-weight component pins the ratio at >= 1).
+    # Native totals = Python dicts, and mode 1 does change W.
+    if not _grid_ok():
+        pytest.skip("BeamletGrid without self pairs in the built .so")
+    import numpy as np
+    lines = _lines(1)
+    scr = ScreenGrid(SimpleNamespace(z=0.06, nx=21, ny=5, center=[0.0, 0.0],
+                                     edge_x=1.2e-5, edge_y=6.0e-6))
+    a_ray = (0.0, 0.0, 0.0, 0.0, 0.06)
+    b_ray = (2.0e-6, 1.0e-6, 5.0e-5, -3.0e-5, 0.0612)
+
+    def totals(use_native, with_null_mode):
+        field = BeamletField(lines, scr, 52, 5.0e-7, 3.0, None,
+                             use_native=use_native, self_pairs="subtract")
+        if with_null_mode:
+            field.new_mode()
+            field.add_ray(_rec(0, scr, *b_ray), [1.0 + 0.5j])
+            field.add_ray(_rec(1, scr, *b_ray), [-1.0 - 0.5j])
+            field.fold_mode(n_rays=2)
+        field.new_mode()
+        for i in range(3):
+            field.add_ray(_rec(i, scr, *a_ray), [1.0 + 0.5j])
+        field.fold_mode(n_rays=3)
+        npix = scr.nx * scr.ny
+        if use_native:
+            w_b, i_b = field.native.totals()
+            return np.frombuffer(w_b, np.complex128), np.frombuffer(i_b, np.float64)
+        w, i = np.zeros(npix, complex), np.zeros(npix)
+        for pix, v in field.W.items():
+            w[pix] = v
+        for pix, v in field.I.items():
+            i[pix] = v
+        return w, i
+
+    w_nat, i_nat = totals(True, True)
+    w_py, i_py = totals(False, True)
+    w_two, _ = totals(False, False)
+    scale = abs(w_py).max()
+    assert abs(w_two - w_py).max() > 1e-3 * scale      # the null mode is not inert
+    assert abs(w_nat - w_py).max() <= 1e-12 * scale
+    assert abs(i_nat - i_py).max() <= 1e-12 * abs(i_py).max()
