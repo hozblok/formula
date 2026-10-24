@@ -260,10 +260,16 @@ class BeamletField:
                         if ref_c is not None:
                             sw[pix] = sw.get(pix, 0j) + val * ref_c
 
+    def _check_pairs(self, n_rays):
+        if self.subtract and int(n_rays) < 2:
+            raise ValueError("beamlet self_pairs: subtract pairs distinct rays — needs at least "
+                             f"two rays per mode, got {int(n_rays)}")
+
     def fold_mode(self, n_rays=0):
         """Oracle path (tests): fold into the retained native rows/totals,
         or into the Python dicts without the native grid. n_rays: the mode's
         quadrature rays, the U-statistic scale n/(n-1) under subtract."""
+        self._check_pairs(n_rays)
         if self.native is not None:
             # scan, totals AND the delete-one rows all stay in C++
             self.native.fold(self.wfs, self.ref, self.subtract, int(n_rays))
@@ -298,6 +304,7 @@ class BeamletField:
         i_ref) exactly as fold builds the rows; nothing is retained."""
         if self.native is None:
             raise RuntimeError("fold_export needs the native BeamletGrid")
+        self._check_pairs(n_rays)
         return self.native.fold_export(self.wfs, self.ref, self.subtract,
                                        int(n_rays))
 
