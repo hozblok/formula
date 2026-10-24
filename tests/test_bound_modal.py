@@ -171,3 +171,62 @@ def test_square_projection_splits_the_field_into_the_box_and_a_remainder():
     assert abs(c[2, 4] - 2.0) < 0.1 and abs(c[11, 0] + 1j) < 0.1      # Monte-Carlo quadrature: ~1/sqrt(P)
     assert np.allclose(E - resid, np.einsum("pm,mp->p", np.sin(m[:, None] * math.pi * (xf[None, :] + AW) / (2 * AW)).T @ c,
                                             np.sin(m[:, None] * math.pi * (yf[None, :] + AW) / (2 * AW))) / AW)
+
+
+def _straight_bound(chan, mb, zs, e_init, g_ring, L):
+    """B of a straight bore from the entrance defect e_init (polar grid) and the method's ring
+    trace: the components of bound_modal.bores_bound for one bore."""
+    disc = chan.disc
+    wq = (disc.wr * disc.r)[:, None] * (2.0 * math.pi / disc.nphi)
+    e0 = math.sqrt(float(np.sum(wq * np.abs(e_init) ** 2)))
+    c0 = disc.to_modes(e_init)
+    r0 = math.sqrt(float(np.sum(wq * np.abs(e_init - disc.to_grid(c0)) ** 2)))
+    ghat = B.ring_hat(disc, g_ring)
+    bnd_c = mb.boundary_part(zs, ghat, L)
+    prop, _ = chan.propagate(c0, L)
+    t1, t2 = mb.tails(zs, ghat, B.extra_hat(disc, g_ring))
+    itp = mb.interp_error(zs, ghat)
+    exact = mb.norm(prop + bnd_c) + r0 + itp + t1 + t2
+    tri = e0 + mb.norm(bnd_c) + itp + t1 + t2
+    return min(exact, tri), prop + bnd_c, c0
+
+
+@pytest.mark.parametrize("wrong", ["none", "waist", "offset", "scale"])
+def test_bound_covers_the_error_of_a_wrong_method_field(wrong):
+    """Ladder step 1 in 3D: E := the Dirichlet evolution of a Gaussian beam A, the method field
+    := a free beam that is A itself (wall leakage only) or a wrong one (waist 3 um, centre
+    16 um, amplitude x1.3).  B must cover ||E(L) - method(L)|| within the Disc and stay within
+    x1.6 of it (x2.5 for the leakage alone, where the mode tail is comparable); a wrong input
+    raises both."""
+    chan = FBChannel(np.zeros(2), None, None, Disc(AW, 80.0), K)
+    disc, mb = chan.disc, B.ModalBound(chan)
+    L = 0.05
+    zs = np.linspace(0.0, L, 201)
+    truth = _beam(4.0e-6, 18.0e-6, 0.0)
+    truth.z1[0] = L
+    method = {"none": _beam(4.0e-6, 18.0e-6, 0.0), "waist": _beam(3.0e-6, 18.0e-6, 0.0),
+              "offset": _beam(4.0e-6, 16.0e-6, 0.0), "scale": _beam(4.0e-6, 18.0e-6, 0.0)}[wrong]
+    method.z1[0] = L
+    if wrong == "scale":
+        method.a[0] = 1.3
+    px, py, ph = B.frame_disc(chan, 0.0)
+    a0 = _frame_values(chan, truth, 0.0, px, py, ph)
+    m0 = _frame_values(chan, method, 0.0, px, py, ph)
+    g = np.zeros((len(zs), disc.nphi), complex)
+    for j, z in enumerate(zs):
+        rx, ry, rph = B.frame_ring(chan, z)
+        g[j] = _frame_values(chan, method, z, rx, ry, rph)            # the method's wall trace
+    bound, eL_modal, _ = _straight_bound(chan, mb, zs, a0 - m0, g, L)
+    # the actual error within the Disc: E(L) = Dirichlet evolution of A(0), method(L) = free beam
+    eA, _ = chan.propagate(disc.to_modes(a0), L)
+    px, py, ph = B.frame_disc(chan, L)
+    cm_L = disc.to_modes(_frame_values(chan, method, L, px, py, ph))
+    err = mb.norm(eA - cm_L)
+    scale = mb.norm(disc.to_modes(a0))
+    assert bound >= err * (1.0 - 1e-6)
+    assert bound <= (2.5 if wrong == "none" else 1.6) * err          # leakage only: the mode tail is comparable
+    assert mb.norm(eL_modal - (eA - cm_L)) < 1e-3 * scale             # the exact modal part is e(L) itself
+    if wrong == "none":
+        assert err < 0.05 * scale                                        # only the wall leakage of A
+    else:
+        assert err > 0.1 * scale and bound > 0.1 * scale                 # the wrong input is seen
