@@ -195,3 +195,19 @@ def test_modal_bound_of_one_window_is_finite_and_exact_for_an_absent_trace():
     assert bnd["B"] == pytest.approx(min(bnd["B_exact"] + bnd["B_r0"], bnd["B_e0"]) + bnd["B_tail"], rel=1e-9)
     assert bnd["B"] <= bnd["B_tri"] + 1e-12
     assert bnd["sections"] >= 20 and bnd["modes"] > 0
+
+
+def test_modal_bound_of_one_window_in_a_square_bore():
+    """The same single window in a square bore of half-side a_w: the sine basis path."""
+    sim = _one_ray_scene()
+    bores = [{"center": [0.0, 0.0], "radius": 5e-6, "sides": 4}]
+    origin = [0.0, 0.0, -0.5]
+    rows = [(3.5e-6, 0.0, 3.5e-6 / 0.7, 0.0, 0.7, [], [])]
+    seg = D.build_segments(rows, origin, 0.2, bores, 0.0, K, (2 * sim.delta_f, 2 * sim.beta_f))
+    job = {"k": K, "a_w": 5e-6, "z0_cap": 0.0, "z_exit": 0.2, "bound_jmax": 30.0, "bound_phase_step": 0.7, "cutoff": 4.0,
+           "fresnel": (2 * sim.delta_f, 2 * sim.beta_f)}
+    bnd = D.modal_bound(seg, bores, job, origin, 0.5e-6, 0.0)
+    assert bnd["basis"] == "square sines" and math.isfinite(bnd["B"]) and bnd["B"] > 0.0
+    assert bnd["B_boundary"] > 0.0 and bnd["B"] <= bnd["B_tri"] + 1e-12
+    hexa = D.modal_bound(seg, [dict(bores[0], sides=6)], job, origin, 0.5e-6, 0.0)
+    assert hexa["B"] is None
