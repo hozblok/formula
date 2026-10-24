@@ -45,6 +45,20 @@ def _interp_error(zs, s_at, norm):
     return float(np.sum(h ** 3 / 8.0 * np.maximum(d2[:-1], d2[1:])))
 
 
+def trace_resolution(k, h, thetas, widths, phase_max=0.7, passage_min=4.0):
+    """Whether the sections of spacing h resolve the method field's wall trace, from the beams
+    themselves: the fastest beam phase k theta^2 h / 2 per section and the shortest envelope
+    passage w / theta in sections.  The interpolation term and the sampled tails are estimates
+    only when both hold; the result is published next to B."""
+    th = np.asarray(thetas, float)
+    w = np.asarray(widths, float)
+    ok = np.isfinite(th) & np.isfinite(w) & (th > 0)
+    phase = float(np.max(0.5 * k * th[ok] ** 2 * h)) if ok.any() else 0.0
+    passage = float(np.min(w[ok] / th[ok]) / h) if ok.any() else math.inf
+    return {"phase_per_section": phase, "passage_sections": passage, "sections_h": float(h),
+            "resolved": bool(phase <= phase_max and passage >= passage_min)}
+
+
 def disc_for(a_w: float, k: float, L: float, n_sections: int, phase_step: float = 0.7) -> Disc:
     """The Dirichlet basis whose fastest mode phase kappa^2 L / 2k advances at most
     `phase_step` rad per section: jmax = a_w sqrt(2k phase_step n_sections / L)."""
@@ -298,7 +312,10 @@ def rescale(result, c_mag):
     parts = result["parts"]
     num = parts["num"]
     C = c_mag * (num / abs(num) if num != 0 else 1.0) if c_mag > 0 else 1.0 + 0j   # a vanishing fan: e(0) = E_in
-    return {**result, **_assemble(parts, C)}
+    out = {**result, **_assemble(parts, C)}
+    if c_mag <= 0:
+        out["no_signal"] = True                      # no fan reached the entrance: B = 1 is not a selection
+    return out
 
 
 def common_scale(results):
@@ -489,9 +506,9 @@ class SquareBound:
         t2_sq = float(np.sum((der[tail] / alpha[tail] ** 2) ** 2))
         # normal index beyond the sampling band (m > nq for the x faces, n > nq for the y faces):
         # |s_mn| <= (1/2k) m pi/(2 aw^2) X_n with X_n = |G+x_n| + |G-x_n|; (m pi/2aw^2)/alpha_mn
-        # = (4 k aw m/pi)/(m^2+n^2), sum_{m>K} m^2/(m^2+n^2)^2 <= 1/K, sum_{m>K} m^2/(m^2+n^2)^4 <= 1/(5 K^5)
+        # = (4 k m/pi)/(m^2+n^2), sum_{m>K} m^2/(m^2+n^2)^2 <= 1/K, sum_{m>K} m^2/(m^2+n^2)^4 <= 1/(5 K^5)
         aw, K = self.sq.aw, nq
-        c1, c2 = 2.0 * aw / math.pi, 2.0 * self.k * (2.0 * aw / math.pi) ** 3
+        c1, c2 = 2.0 / math.pi, 16.0 * self.k * aw * aw / math.pi ** 3        # (1/2k)(m pi/2aw^2)/alpha, /alpha^2
         for fa, fb in ((0, 2), (1, 3)):
             endf = np.abs(G[0, fa]) + np.abs(G[0, fb]) + np.abs(G[-1, fa]) + np.abs(G[-1, fb])
             derf = (np.abs(G1[0, fa]) + np.abs(G1[0, fb]) + np.abs(G1[-1, fa]) + np.abs(G1[-1, fb])

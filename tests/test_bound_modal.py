@@ -306,3 +306,31 @@ def test_common_scale_survives_a_vanishing_fan():
     out = B.common_scale([res])[0]
     assert out["C_fit"][0] == 1.0 and out["B_e0"] == pytest.approx(1.0) and math.isfinite(out["B"])
     assert "parts" not in out and out["basis"] if "basis" in out else True
+
+
+def test_square_tail_constants_carry_physical_units():
+    """The normal-index remainder in physical units: the one-harmonic counterexample scaled to
+    a_w = 0.2 um and the 8 keV k (L = 8 k a_w^2 / pi keeps the phases -1) still gives B >= 2."""
+    aw = 0.2e-6
+    sq = B.Square(aw, 8, nq=16)
+    L = 8.0 * K * aw * aw / math.pi
+    f = lambda x, y: np.sinh(9 * math.pi * x / (2 * aw)) / math.sinh(9 * math.pi / 2) * np.sin(9 * math.pi * (y + aw) / (2 * aw))
+    sample_disc = lambda b, radii, phis, stretch, cx, cy: f(radii[:, None] * stretch[None, :] * np.cos(phis)[None, :],
+                                                           radii[:, None] * stretch[None, :] * np.sin(phis)[None, :]) + 0j
+    sample_outline = lambda b, zr, sq_, cx, cy: f(sq_.face_x, sq_.face_y) + 0j
+    out = B.squares_bound([sq], [(0.0, 0.0)], K, L, sample_disc, sample_outline, lambda px, py: f(px, py) + 0j,
+                          phase_step=0.7, nr=60, nphi=512)
+    assert out["B_e0"] < 1e-6 and out["B"] >= 2.0 * (1.0 - 1e-6) and out["B"] < 3.0     # nq = 16: a coarse remainder
+
+
+def test_trace_resolution_flags_aliased_sections():
+    """Slow beams are resolved; a plane-wave component whose phase advances 4 pi per section is not."""
+    h = 4.4e-4
+    ok = B.trace_resolution(K, h, [2.0e-4, 1.0e-4], [1.0e-6, 2.0e-6])
+    assert ok["resolved"] and ok["phase_per_section"] == pytest.approx(0.5 * K * 4e-8 * h)
+    aw, p = 1.0e-6, 12
+    L = 8.0 * K * aw * aw / math.pi
+    theta = p * math.pi / (aw * K)
+    bad = B.trace_resolution(K, L / 144, [theta], [aw])
+    assert not bad["resolved"] and bad["phase_per_section"] == pytest.approx(4.0 * math.pi, rel=1e-6)
+    assert B.trace_resolution(K, h, [], [])["resolved"] and B.trace_resolution(K, h, [0.0], [1e-6])["resolved"]
