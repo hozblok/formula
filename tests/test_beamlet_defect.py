@@ -152,6 +152,11 @@ def test_polygon_outline_stretch():
     rect = D._shape({"radius": 1.0, "sides": 4, "rotation_deg": 0, "apothems": [1.0, 2.0, 1.0, 2.0]})
     assert np.allclose(D._stretch(rect, np.array([0.0, math.pi / 2, math.pi, math.atan2(2.0, 1.0)])),
                        [1.0, 2.0, 1.0, math.sqrt(5.0)])
+    # the Dirichlet outline a_w = radius + offset moves every face by the offset, not by a scale
+    off = D._shape({"radius": 1.0, "sides": 4, "rotation_deg": 0, "apothems": [1.0, 2.0, 1.0, 2.0]}, a_w=1.5)
+    assert np.allclose(1.5 * D._stretch(off, np.array([0.0, math.pi / 2, math.pi])), [1.5, 2.5, 1.5])
+    assert np.allclose(1.5 * D._stretch(off, np.array([math.atan2(2.5, 1.5)])), [math.hypot(1.5, 2.5)])
+    assert np.allclose(D._normals(off, np.array([0.0, math.pi / 2]))[0], [1.0, 0.0])
 
 
 def test_outside_tails_of_a_final_beam_match_direct_integration():
