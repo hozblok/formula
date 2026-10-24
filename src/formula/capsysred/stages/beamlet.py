@@ -318,10 +318,10 @@ class BeamletField:
     def finalize(self, nx: int, ny: int):
         """Row-major [iy][ix] maps: mu, mu_err (delete-one-mode jackknife),
         dubious, intensity, density. I itself is the mu denominator (under
-        subtract the U-statistic I, which can vanish or go negative at
-        sparse pixels: such pixels stay unestimated); the trust flags are
+        subtract the U-statistic I can go negative at sparse pixels: such
+        pixels keep mu = 0 and are flagged dubious); the trust flags are
         sigma > 1, |mu| pinned at 1 or 0 with sigma below loo_eps, fewer
-        than 2 usable leave-one-out modes, or an unlit reference."""
+        than 2 usable leave-one-out modes, or a reference with I <= 0."""
         if self.native is not None:
             return self._finalize_native(nx, ny)
         n_modes = len(self.Ws)
@@ -334,14 +334,17 @@ class BeamletField:
             intensity[iy][ix] = value
         density = self._density_rows(nx, ny)
         Ws, Is, i_refs, eps = self.Ws, self.Is, self.i_refs, self.loo_eps
-        if not i_ref > 0.0:   # unlit reference: no pixel is estimable
+        if not i_ref > 0.0:   # unlit or U-negative reference: no lit pixel is estimable
             for pixel, i_pix in I.items():
-                if i_pix > 0.0:
+                if i_pix != 0.0:
                     iy, ix = divmod(pixel, nx)
                     dubious[iy][ix] = 1.0
         else:
             for pixel, i_pix in I.items():
                 if i_pix <= 0.0:
+                    if i_pix < 0.0:          # U-negative: lit, not estimable
+                        iy, ix = divmod(pixel, nx)
+                        dubious[iy][ix] = 1.0
                     continue
                 w = W.get(pixel, 0j)
                 iy, ix = divmod(pixel, nx)

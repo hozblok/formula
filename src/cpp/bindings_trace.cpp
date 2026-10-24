@@ -565,14 +565,15 @@ class BeamletGrid {
     std::vector<double> loo;
     loo.reserve(nf);
     if (!(i_ref > 0.0)) {
-      // unlit reference: no pixel is estimable
+      // unlit or U-negative reference: no lit pixel is estimable
       for (size_t p = 0; p < npix; ++p) {
-        dub[p] = I_[p] > 0.0 ? 1 : 0;
+        dub[p] = I_[p] != 0.0 ? 1 : 0;
       }
     } else {
       for (size_t p = 0; p < npix; ++p) {
         const double i_pix = I_[p];
         if (i_pix <= 0.0) {
+          dub[p] = i_pix < 0.0 ? 1 : 0;   // U-negative: lit, not estimable
           continue;
         }
         jackknife_pixel(
@@ -851,12 +852,13 @@ py::tuple jackknife_tile(py::buffer w_tot, py::buffer i_tot, double i_ref,
   loo.reserve(nf);
   if (!(i_ref > 0.0)) {
     for (size_t p = 0; p < npix; ++p) {
-      dub[p] = I[p] > 0.0 ? 1 : 0;
+      dub[p] = I[p] != 0.0 ? 1 : 0;
     }
   } else {
     for (size_t p = 0; p < npix; ++p) {
       const double i_pix = I[p];
       if (i_pix <= 0.0) {
+        dub[p] = i_pix < 0.0 ? 1 : 0;   // U-negative: lit, not estimable
         continue;
       }
       jackknife_pixel(
