@@ -591,10 +591,11 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print, mask=None):
                 f"O rms {rec['O_rms']:.4f} (noise {rec['O_shot_rms']:.4f}){glass}; {len(results)} modes, {rec['seconds']:.0f} s")
     best = min(summary["launches"], key=lambda r: r["indicator_prod_rms"])
     summary["argmin"] = {"w0_m": best["w0_m"], "w0_t_m": best["w0_t_m"], "waist_z_m": best["waist_z_m"],
-                         "indicator_rms": best["indicator_rms"], "indicator_prod_rms": best["indicator_prod_rms"]}
+                         "indicator_rms": best["indicator_rms"], "indicator_prod_rms": best["indicator_prod_rms"],
+                         "certified": False, "status": "indicator argmin; not an error bound"}
     if mask is not None:
         eps = summary["launches"][0]["indicator_prod_rms"]
-        summary["mask"] = {"map": mask, "eps": eps, "threshold": opt["mask_threshold"],
+        summary["mask"] = {"map": mask, "eps": eps, "threshold": opt["mask_threshold"], "certified": False,
                            "assumption": "relative field error eps spread uniformly over the lit cells; not a bound",
                            "screens": write_mask(sim.cfg, mask, eps, opt["mask_threshold"], os.path.join(out, "mask.jsonl"))}
         for tag, rec in summary["mask"]["screens"].items():
