@@ -90,3 +90,46 @@ def test_zero_trace_leaves_the_initial_norm():
     assert mb.norm(bnd) < 1e-6 * mb.norm(c0)
     free, _ = chan0.propagate(c0, L)
     assert abs(mb.norm(free) - mb.norm(c0)) < 1e-9 * mb.norm(c0)
+
+
+def test_square_modal_evolution_reproduces_a_gaussian_beam():
+    """Square bore |x|, |y| < a_w: the same Gaussian beam as e (wall value 0.1 of the peak on
+    the +x face), its entrance modes and face traces feed the sine-mode evolution, which must
+    return the beam at L (straight bore: each mode exact; the face integrals are midpoint
+    sums on the outline nodes, h = a_w/240)."""
+    sq = B.Square(AW, 60)
+    sb = B.SquareBound(sq, K)
+    seg = _beam(4.0e-6, 18.0e-6, 0.0)
+    L = 0.05
+    seg.z1[0] = L
+    zs = np.linspace(0.0, L, 201)
+    gx, gy = sq.grid()
+    vals = lambda z, px, py: D.beam_values(seg, np.array([0]), z, px.reshape(1, -1), py.reshape(1, -1), K, 0.0)[0].reshape(px.shape)
+    c0 = sq.to_modes(vals(0.0, gx, gy))
+    g = np.array([-vals(z, sq.face_x, sq.face_y) for z in zs])            # e = -g on the wall
+    G = sb.face_coef(g)
+    assert G.shape == (len(zs), 4, sq.nq)
+    bnd = sb.boundary_part(zs, G, L)
+    free = c0 * np.exp(-1j * sb.alpha * L)
+    cL_true = sq.to_modes(vals(L, gx, gy))
+    n_true = sb.norm(cL_true)
+    err = sb.norm(free + bnd - cL_true)
+    assert err <= 1e-3 * n_true
+    assert err < 0.3 * sb.norm(free - cL_true)
+    t1, t2 = sb.tails(zs, G)
+    assert 0.0 <= t1 + t2 < 0.1 * n_true
+    # the outline order and the arc index agree: node j is met first along its own ray
+    px, py = sq.lab(0.0, 0.0, sq.face_x, sq.face_y)
+    assert np.array_equal(sq.arc_index(0.0, 0.0, 0.5 * px, 0.5 * py), np.arange(4 * sq.nq))
+
+
+def test_square_face_coefficients_are_the_sine_transform():
+    sq = B.Square(AW, 6, nq=16)
+    sb = B.SquareBound(sq, K)
+    g = np.random.default_rng(1).normal(size=4 * sq.nq) + 0j
+    G = sb.face_coef(g)
+    n = np.arange(1, sq.nq + 1)
+    # face +x: nodes y = s; face +y: nodes x = -s (reversed), face -x: y = -s, face -y: x = s
+    for f, coord in enumerate((sq.s, -sq.s, -sq.s, sq.s)):
+        S = np.sin(n[:, None] * math.pi * (coord[None, :] + AW) / (2.0 * AW))
+        assert np.allclose(G[f], (S @ g[f * sq.nq:(f + 1) * sq.nq]) * sq.h)
