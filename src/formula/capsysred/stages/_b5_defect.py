@@ -457,6 +457,15 @@ def indicator_at_budget(terms, d0, measured_rays, rays, exit_prop):
     return d0 + prod("R_inside" if exit_prop else "R") + prod("G") + prod("T")
 
 
+def map_eps(results, key, d0, rays, modes, exit_prop):
+    """RMS indicator over the first `modes` diagnosed modes at a ray budget of `rays`
+    per mode: the eps of a map built from that mode prefix and budget."""
+    if modes > len(results):
+        raise ValueError(f"map holds {modes} modes, the diagnostics cover {len(results)}")
+    return float(np.sqrt(np.mean([indicator_at_budget(r["widths"][key], d0, r["rays"], rays, exit_prop) ** 2
+                                  for r in results[:modes]])))
+
+
 def write_map_mask(npz_path, eps, threshold, path):
     """Cell mask of a stage-17 map under the uniform-error assumption; lit = cells with
     rays of the matched ray estimator."""
@@ -476,6 +485,10 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
     cap = cfg.capillary
     k = float(sim.lines[0].k)
     b5 = cfg.validate_b5_estimator()
+    if b5["branch"] != "maslov":
+        raise ValueError("stage 17 defect diagnostics follow the Maslov branch (prefactor zero on an "
+                         f"exact caustic); b5_estimator.branch {b5['branch']!r} maps have no matching "
+                         "diagnostics yet — scan with branch: maslov")
     screen = [cap.screen, *cap.screens][b5["screen_index"]]
     index = rays_v3.load_index(archive)
     modes = index.modes("capillary")
@@ -539,17 +552,21 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
         with np.load(map_path) as data:
             width = float(data["width_m"])
             map_rays = int(data["emitted_rays_per_mode"]) if "emitted_rays_per_mode" in data else rays_prod
+            map_modes = int(data["n_modes"]) if "n_modes" in data else len(results)
         rec_w = min(summary["widths"], key=lambda r: abs(r["width_m"] - width))
         if not math.isclose(rec_w["width_m"], width, rel_tol=1e-9):
             raise ValueError(f"{map_path}: width {width:g} m is not among the scanned widths")
         exit_prop = bool(b5["exit_propagation"])
         key = f"{rec_w['width_m']*1e6:g}"
-        # the map's own ray budget, not the largest configured one
-        eps = float(np.sqrt(np.mean([indicator_at_budget(r["widths"][key], d0[key], r["rays"], map_rays, exit_prop) ** 2
-                                     for r in results])))
+        # the map's own mode prefix and ray budget, not the whole scan / largest budget
+        try:
+            eps = map_eps(results, key, d0[key], map_rays, map_modes, exit_prop)
+        except ValueError as exc:
+            raise ValueError(f"{map_path}: {exc}") from None
         name = "mask-" + os.path.basename(map_path)
         summary["mask"] = {"map": map_path, "file": name, "width_m": width, "exit_propagation": exit_prop, "eps": eps,
-                           "rays_per_mode": map_rays, "threshold": opt["mask_threshold"], "certified": False,
+                           "rays_per_mode": map_rays, "modes": map_modes, "threshold": opt["mask_threshold"],
+                           "certified": False,
                            "assumption": "relative field error eps spread uniformly over the cells with rays; not a bound",
                            **write_map_mask(map_path, eps, opt["mask_threshold"], os.path.join(out, name))}
         log(f"  mask: {summary['mask']['masked_lit']} of {summary['mask']['lit']} cells with rays above |d mu| "
