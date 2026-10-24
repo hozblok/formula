@@ -793,7 +793,7 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print, mask=None):
         summary["argmin_bound"] = {
             "w0_m": best["w0_m"], "w0_t_m": best["w0_t_m"], "waist_z_m": best["waist_z_m"],
             "B_rms": best["B_rms"], "B_max": best["B_max"], "certified": True,
-            "bound": "||E - E_dep||(L) <= ||e(0)|| + ||boundary part|| + tail + T per mode (bound_modal), relative to ||E_in||",
+            "bound": "||E - E_dep||(L) <= min(||exact modal part of e(L)|| + ||e(0) beyond the modes||, ||e(0)|| + ||boundary part||) + tail + T per mode (bound_modal), relative to ||E_in||",
             "model": "paraxial Dirichlet field on the bore r < a_w (DIR-ell), constant bend curvature; the diagnosed ray sample "
                      "is the sample (ray statistics not rescaled); the complex scale C of the fan is the least-squares fit "
                      "to the point source on the entrance disc"}
