@@ -384,6 +384,27 @@ def _outline_sum(seg, idx, z, cx, cy, sq, k, z_src, window):
     return out
 
 
+def _tensor_sum(seg, idx, z, xs, ys, k, z_src):
+    """Sum of separable beams (q_xy = 0, flat axis-aligned walls) on the lab tensor grid xs x ys
+    at z: beam_values factorised, one matrix product per block; [nx, ny]."""
+    out = np.zeros((xs.size, ys.size), complex)
+    for lo in range(0, idx.size, 4000):
+        sel = idx[lo:lo + 4000]
+        dz = z - seg.z0[sel]
+        ux, uy = seg.ux[sel], seg.uy[sel]
+        s = dz * np.sqrt(1.0 + ux * ux + uy * uy)
+        qxx, qyy = seg.qxx[sel] + s, seg.qyy[sel] + s
+        amp = seg.a[sel] * drift_amp(seg.qxx[sel], seg.qxy[sel], seg.qyy[sel], s)
+        gxx, gyy = np.conj(1.0 / qxx), np.conj(1.0 / qyy)
+        pre = np.conj(amp) * seg.fres[sel] * np.exp(1j * k * (seg.opl[sel] + s - (z - z_src)))
+        dxm = xs[None, :] - (seg.x0[sel] + ux * dz)[:, None]
+        dym = ys[None, :] - (seg.y0[sel] + uy * dz)[:, None]
+        F = pre[:, None] * np.exp(1j * k * ux[:, None] * dxm + 0.5j * k * gxx[:, None] * dxm ** 2)
+        G = np.exp(1j * k * uy[:, None] * dym + 0.5j * k * gyy[:, None] * dym ** 2)
+        out += F.T @ G
+    return out
+
+
 def _halves(seg, idx, z, cx, cy, radii, phis, k, z_src, window, stretch, glass=None):
     """Beam sums of the even and odd ray halves: |a + b|^2 is the full sum, |a - b|^2 its
     ray-quadrature noise."""
@@ -544,12 +565,19 @@ def square_bound(seg, bores, shapes, job, origin, t_full, e_in_dep=None):
         z = z0 + zr
         return _outline_sum(seg, active(b, z, cx, cy), z, cx, cy, sq, k, z_src, job["window"])
 
+    def sample_grid(b, xf, yf, cx, cy):
+        # exact projection on the tensor grid when the beams are separable (axis-aligned square)
+        idx = active(b, z0, cx, cy)
+        if abs(math.sin(sqs[b].rot)) > 1e-12 or not np.allclose(seg.qxy[idx], 0.0):
+            return None
+        return _tensor_sum(seg, idx, z0, cx + xf, cy + yf, k, z_src)
+
     z_in = z0 - z_src
     lam = 2.0 * math.pi / k
     e_in = lambda px, py: (np.exp(1j * k * ((px - origin[0]) ** 2 + (py - origin[1]) ** 2) / (2.0 * z_in))
                            / (1j * lam * z_in))
     return bound_modal.squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in,
-                                     job["bound_phase_step"], t_full, e_in_dep=e_in_dep)
+                                     job["bound_phase_step"], t_full, e_in_dep=e_in_dep, sample_grid=sample_grid)
 
 
 # ------------------------------------------------------------------ per mode
@@ -595,7 +623,7 @@ def mode_job(job):
         out["G_glass"] = math.sqrt(float(np.sum(np.maximum(gg_full - gg_shot, 0.0))) * dz / glass_area) / rms_field
         out["G_glass_shot"] = math.sqrt(float(np.sum(gg_shot)) * dz / glass_area) / rms_field
     if job["bound"]:
-        out["bound"] = modal_bound(seg, bores, job, origin, t_full, norm)
+        out["bound"] = modal_bound(seg, bores, job, origin, t_full)      # provisional per-mode scale; the launch rescales
     out["seconds"] = time.time() - t0
     return out
 
@@ -760,6 +788,11 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print, mask=None):
                         results.append(res)
             else:
                 results = [mode_job(j) for j in jobs]
+            # one fan scale for the launch's modes; the parts (arrays) stay out of the rows
+            rescaled = bound_modal.common_scale([r.get("bound") for r in results])
+            for r, b in zip(results, rescaled):
+                if b is not None:
+                    r["bound"] = b
             if first_results is None:
                 first_results = (results, meta)
             for res in results:
@@ -786,6 +819,9 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print, mask=None):
                 brms = lambda key: float(np.sqrt(np.mean([b[key] ** 2 for b in bs])))
                 rec.update(B_rms=brms("B"), B_max=float(max(b["B"] for b in bs)), B_e0_rms=brms("B_e0"),
                            B_boundary_rms=brms("B_boundary"), B_tail_rms=brms("B_tail"), B_T_rms=brms("B_T"),
+                           B_tri_rms=brms("B_tri"), B_exact_rms=brms("B_exact"), B_r0_rms=brms("B_r0"),
+                           B_interp_rms=brms("B_interp"), scale_defect_max=float(max(abs(b["scale_defect"]) for b in bs)),
+                           C_common=bs[0].get("C_common"),
                            B_modes=len(bs), B_sections=bs[0]["sections"], B_jmax=bs[0]["jmax"])
                 bound = (f" | B rms {rec['B_rms']:.4f} (e0 {rec['B_e0_rms']:.4f} boundary {rec['B_boundary_rms']:.4f} "
                          f"tail {rec['B_tail_rms']:.4f} T {rec['B_T_rms']:.4f}; {rec['B_sections']} sections)")
@@ -824,7 +860,7 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print, mask=None):
         else:
             bound = {"k": float(sim.lines[0].k), "z_exit": float(sim.cfg.capillary.z1),
                      "area": bore_area(sim.cfg.raw["capillary"]["bores"], meta0["a_w_m"]),
-                     "modes": [{"B": r["bound"]["B"], "E_in_dep": r["E_in_dep"], "O_abs2": r["O_abs2"], "O_area": r["O_area"]}
+                     "modes": [{"B": r["bound"]["B"], "E_in_dep": r["bound"]["E_dep"], "O_abs2": r["O_abs2"], "O_area": r["O_area"]}
                                for r in results0]}
         summary["mask"] = {"map": mask, "eps": eps, "threshold": opt["mask_threshold"], "certified": False,
                            "assumption": "relative field error eps spread uniformly over the lit cells; not a bound",
