@@ -927,8 +927,10 @@ class Simulation:
                   + ("" if self.cfg.beamlet_waist_z is None else
                      f", waist at z = {mm(self.cfg.beamlet_waist_z)}")
                   + f"; mean spot width on screen "
-                  f"= {m_to_um(maps['w_mean']):.2f} µm; Γ-tensor deposit; honest |μ| "
-                  "(no self-pair subtraction)"]
+                  f"= {m_to_um(maps['w_mean']):.2f} µm; Γ-tensor deposit; "
+                  + ("U-statistic |μ| (ray self-pairs subtracted, n/(n-1))"
+                     if self.cfg.beamlet_self_pairs == "subtract" else
+                     "honest |μ| (no self-pair subtraction)")]
         if note:
             report.append(note)
         report += list(extra)

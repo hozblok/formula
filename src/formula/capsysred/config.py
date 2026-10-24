@@ -79,8 +79,10 @@ DEFAULTS = {
     # source->screen flight, or an explicit number. waist_z [m]: the launch
     # beam's free-space waist lies waist_z - z_source along the ray past the
     # source (the plane z = waist_z when walls before it are flat), null = at
-    # the source.
-    "beamlet": {"w0": 5.0e-7, "w0_t": None, "window_sigmas": 3.0},
+    # the source. self_pairs: "keep" (honest |E|^2) or "subtract" (ray
+    # self-pairs off, U-statistic n/(n-1)).
+    "beamlet": {"w0": 5.0e-7, "w0_t": None, "window_sigmas": 3.0,
+                "self_pairs": "keep"},
     # stage 14: exact disk-backed delete-one-mode jackknife taxonomy.
     "stage14": {"flag_thresholds": {
         "ic_n_sigma": 3.0, "ref_ic_n_sigma": 3.0, "w_n_sigma": 3.0,
@@ -513,6 +515,7 @@ class Config:
         self.beamlet_w0_t = float(w0t) if isinstance(w0t, (int, float)) else w0t
         self.beamlet_ns = float(cfg["beamlet"]["window_sigmas"])
         self.beamlet_waist_z = cfg["beamlet"].get("waist_z")
+        self.beamlet_self_pairs = str(cfg["beamlet"].get("self_pairs", "keep"))
         stage14 = cfg.get("stage14")
         if not isinstance(stage14, dict):
             raise ValueError("stage14 must be a mapping")
@@ -573,6 +576,10 @@ class Config:
         if not (wz is None or finite(wz)):
             raise ValueError(f"beamlet waist_z: null or a number, got {wz!r}")
         self.beamlet_waist_z = None if wz is None else float(wz)
+        sp = beamlet.get("self_pairs", "keep")
+        if sp not in ("keep", "subtract"):
+            raise ValueError(f"beamlet self_pairs: \"keep\" or \"subtract\", got {sp!r}")
+        self.beamlet_self_pairs = sp
 
     def validate_wave_estimator(self) -> dict:
         """Stage-16-only checks; returns the `wave_estimator` section merged with WAVE_DEFAULTS."""
