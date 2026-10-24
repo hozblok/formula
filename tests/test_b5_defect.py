@@ -163,18 +163,23 @@ def test_certified_mask_of_a_stage17_map(tmp_path):
     I = np.array([[4.0, 1.0], [0.25, -1.0]])
     rays = np.array([[3, 1], [0, 0]])
     path = tmp_path / "map.npz"
-    np.savez(path, I=I, matched_stage14_rays=rays, ref_index=np.array([0, 0]), x=np.arange(2.0), y=np.arange(2.0))
+    # the certified mask reads the coherent (plugin) intensities, not the U-statistic I
+    np.savez(path, I=I, pluginI=np.abs(I), matched_stage14_rays=rays, ref_index=np.array([0, 0]), x=np.arange(2.0), y=np.arange(2.0))
     bound = {"k": K, "z_exit": 0.2, "area": math.pi * 25e-12,
              "modes": [{"B": 0.1, "E_in_dep": 2.0, "O_abs2": 0.0, "O_area": 1.0}]}
     spec = {"z": 0.2, "nx": 2, "ny": 2, "center": [0.0, 0.0], "edge_x": 2e-6, "edge_y": 2e-6}
     summary = D.write_map_mask(path, 0.1, 0.35, tmp_path / "mask.npz", bound, spec)
     assert summary["certified"] is False and summary["bound"]["certified"] is True
-    assert summary["bound"]["transfer"] == "cell"
+    assert summary["bound"]["transfer"] == "cell" and summary["bound"]["map"] == "pluginI"
+    np.savez(tmp_path / "noplugin.npz", I=I, matched_stage14_rays=rays, ref_index=np.array([0, 0]), x=np.arange(2.0), y=np.arange(2.0))
+    bare = D.write_map_mask(tmp_path / "noplugin.npz", 0.1, 0.35, tmp_path / "mask0.npz", bound, spec)
+    assert bare["bound"]["certified"] is False and "plugin" in bare["bound"]["reason"]
     eta = 0.1 * 2.0 / math.sqrt(1e-12)
     assert summary["bound"]["eta"] == pytest.approx(eta)
     data = np.load(tmp_path / "mask.npz")
     assert data["dmu_bound"][0, 1] == pytest.approx(2 * eta * (1.0 + 0.5))
     assert data["masked_bound"].tolist() == [[True, True], [True, True]]     # eta 2e5 masks every cell
+    assert data["dmu_bound"][1, 1] == pytest.approx(2 * eta * (1.0 + 0.5))   # plugin |I| = 1 there, U-statistic I = -1
     far = D.write_map_mask(path, 0.1, 0.35, tmp_path / "mask2.npz", bound, dict(spec, z=0.3))
     assert far["bound"]["transfer"] == "fresnel"
     assert far["bound"]["eta"] == pytest.approx(K / (2 * math.pi * 0.1) * math.sqrt(math.pi * 25e-12) * 0.1 * 2.0)

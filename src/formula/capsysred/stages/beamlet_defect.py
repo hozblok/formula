@@ -476,7 +476,12 @@ def _channel(bore, a_w, disc, k, fresnel=None):
     return FBChannel(c0, np.array([float(bend["toward"][0]), float(bend["toward"][1])]), float(bend["radius"]), disc, k, gamma)
 
 
-def modal_bound(seg, bores, job, origin, t_full):
+def bore_area(bores, a_w):
+    """Cross-section area of the modal domain per bore: pi a_w^2 (circle), 4 a_w^2 (square)."""
+    return sum(4.0 * a_w * a_w if _shape(b, a_w) is not None else math.pi * a_w * a_w for b in bores)
+
+
+def modal_bound(seg, bores, job, origin, t_full, e_in_dep=None):
     """B of the full-beam field of one mode (bound_modal.bores_bound): per bore the entrance
     defect against the point source, the frame wall trace of the beams at sections resolving
     the fastest mode phase, its boundary part and the mode tails; T from the exit tails.
@@ -486,9 +491,9 @@ def modal_bound(seg, bores, job, origin, t_full):
     z0, L = job["z0_cap"], job["z_exit"] - job["z0_cap"]
     shapes = [_shape(b, a_w) for b in bores]
     if any(sh is not None for sh in shapes):
-        return square_bound(seg, bores, shapes, job, origin, t_full)
+        return square_bound(seg, bores, shapes, job, origin, t_full, e_in_dep)
     disc = _disc(a_w, job["bound_jmax"])
-    chans = [_channel(b, a_w, disc, k, job.get("fresnel")) for b in bores]
+    chans = [_channel(b, a_w, disc, k) for b in bores]          # lossless Dirichlet wall: the bound's model
     stretch = np.ones(disc.nphi)
 
     def sample(b, zr, radii, phis, cx, cy):
@@ -506,10 +511,10 @@ def modal_bound(seg, bores, job, origin, t_full):
         return out
 
     return bound_modal.bores_bound(chans, L, sample, lambda ch: ch.entrance_field(origin[:2], z0 - z_src),
-                                   job["bound_phase_step"], t_full)
+                                   job["bound_phase_step"], t_full, e_in_dep)
 
 
-def square_bound(seg, bores, shapes, job, origin, t_full):
+def square_bound(seg, bores, shapes, job, origin, t_full, e_in_dep=None):
     """B over straight square bores (bound_modal.squares_bound); the trace on the outline
     nodes, the entrance fan on a stretched polar grid of the square."""
     k, a_w, z_src = job["k"], job["a_w"], origin[2]
@@ -543,10 +548,8 @@ def square_bound(seg, bores, shapes, job, origin, t_full):
     lam = 2.0 * math.pi / k
     e_in = lambda px, py: (np.exp(1j * k * ((px - origin[0]) ** 2 + (py - origin[1]) ** 2) / (2.0 * z_in))
                            / (1j * lam * z_in))
-    fres = job.get("fresnel")
-    gamma = None if fres is None else bound_modal.square_damping(sqs[0], k, 0.5 * fres[0], 0.5 * fres[1])
     return bound_modal.squares_bound(sqs, centers, k, L, sample_disc, sample_outline, e_in,
-                                     job["bound_phase_step"], t_full, gamma=gamma)
+                                     job["bound_phase_step"], t_full, e_in_dep=e_in_dep)
 
 
 # ------------------------------------------------------------------ per mode
@@ -592,7 +595,7 @@ def mode_job(job):
         out["G_glass"] = math.sqrt(float(np.sum(np.maximum(gg_full - gg_shot, 0.0))) * dz / glass_area) / rms_field
         out["G_glass_shot"] = math.sqrt(float(np.sum(gg_shot)) * dz / glass_area) / rms_field
     if job["bound"]:
-        out["bound"] = modal_bound(seg, bores, job, origin, t_full)
+        out["bound"] = modal_bound(seg, bores, job, origin, t_full, norm)
     out["seconds"] = time.time() - t0
     return out
 
@@ -657,13 +660,16 @@ def uniform_mask(intensity, lit, ref, eps, threshold):
     return dmu, ~(dmu <= threshold)
 
 
-def bound_eta(bound, spec, z_exit):
+def bound_eta(bound, spec, z_exit, averaged=False):
     """Field-error amplitude eta of a screen from the per-mode bounds B_s (deposit units):
     beyond the exit (z_s > 0) the Fresnel kernel bounds the field uniformly,
     |e(P)| <= k / (2 pi z_s) (sqrt|Omega| B_s ||E_in||_s + sqrt|A_out| ||E_dep||_out,s);
-    on the exit plane only the cell average, |<e>_cell| <= B_s ||E_in||_s / sqrt(A_cell).
-    eta^2 = sum_s eps_s^2 (equal mode weights, as the map's W and I)."""
+    on the exit plane only the cell average, |<e>_cell| <= B_s ||E_in||_s / sqrt(A_cell), so a
+    map of point samples there gets (None, reason).  eta^2 = sum_s eps_s^2 (equal mode
+    weights, as the map's W and I)."""
     z_s = float(spec["z"]) - z_exit
+    if z_s <= 0.0 and not averaged:
+        return None, "exit plane, point-sampled cells: the L2 bound gives no pointwise bound"
     if z_s > 0.0:
         pref = bound["k"] / (2.0 * math.pi * z_s)
         eps = [pref * (math.sqrt(bound["area"]) * m["B"] * m["E_in_dep"] + math.sqrt(m["O_area"]) * math.sqrt(max(m["O_abs2"], 0.0)))
@@ -717,11 +723,16 @@ def write_mask(cfg, rows_path, eps, threshold, path, bound=None):
             extra = [{} for _ in rows]
             if bound is not None:
                 eta, kind = bound_eta(bound, spec, bound["z_exit"])
-                dmu_b, masked_b = bound_mask(I, ref, eta, threshold)
-                extra = [{"dmu_bound": float(d) if np.isfinite(d) else None, "masked_bound": bool(m)}
-                         for d, m in zip(dmu_b, masked_b)]
-                summary[tag]["bound"] = {"eta": eta, "transfer": kind, "masked": int(masked_b.sum()),
-                                         "masked_lit": int((masked_b & lit).sum()), "certified": True}
+                if getattr(cfg, "beamlet_self_pairs", "keep") != "keep":
+                    eta, kind = None, "U-statistic map (self_pairs subtract): the field bound does not transfer"
+                if eta is None:
+                    summary[tag]["bound"] = {"certified": False, "reason": kind}
+                else:
+                    dmu_b, masked_b = bound_mask(I, ref, eta, threshold)
+                    extra = [{"dmu_bound": float(d) if np.isfinite(d) else None, "masked_bound": bool(m)}
+                             for d, m in zip(dmu_b, masked_b)]
+                    summary[tag]["bound"] = {"eta": eta, "transfer": kind, "masked": int(masked_b.sum()),
+                                             "masked_lit": int((masked_b & lit).sum()), "certified": True}
             for r, d, m, x in zip(rows, dmu, masked, extra):
                 out.write(json.dumps({"stage": tag, "pixel": r["pixel"], "x_um": r["x_um"], "y_um": r["y_um"],
                                       "dmu": float(d) if np.isfinite(d) else None, "masked": bool(m), **x}) + "\n")
@@ -804,21 +815,26 @@ def run_defect(sim, archive, out_dir, opt, launches, log=print, mask=None):
                              f"{summary['launches'][0]['modes']}; run the scan without --modes")
         eps = summary["launches"][0]["indicator_prod_rms"]
         results0, meta0 = first_results
-        bound = None
-        if all(r.get("bound") and r["bound"].get("B") is not None for r in results0):
+        bound, why = None, None
+        if not all(r.get("bound") and r["bound"].get("B") is not None for r in results0):
+            why = "no modal bound for this outline"
+        elif opt["rays"] is not None and int(opt["rays"]) != int(meta0["rays_per_mode_production"]):
+            why = (f"sample mismatch: B is for the first {opt['rays']} rays per mode, the map for "
+                   f"{meta0['rays_per_mode_production']}; run the scan without --rays")
+        else:
             bound = {"k": float(sim.lines[0].k), "z_exit": float(sim.cfg.capillary.z1),
-                     "area": len(sim.cfg.capillary.bores) * math.pi * meta0["a_w_m"] ** 2,
+                     "area": bore_area(sim.cfg.raw["capillary"]["bores"], meta0["a_w_m"]),
                      "modes": [{"B": r["bound"]["B"], "E_in_dep": r["E_in_dep"], "O_abs2": r["O_abs2"], "O_area": r["O_area"]}
                                for r in results0]}
         summary["mask"] = {"map": mask, "eps": eps, "threshold": opt["mask_threshold"], "certified": False,
                            "assumption": "relative field error eps spread uniformly over the lit cells; not a bound",
-                           "bound_transfer": None if bound is None else
-                           "certified: Fresnel-kernel field bound beyond the exit, cell-concentration bound on the exit plane",
+                           "bound_transfer": why if bound is None else
+                           "Fresnel-kernel field bound beyond the exit (keep maps of the diagnosed sample); none on the exit plane (point samples)",
                            "screens": write_mask(sim.cfg, mask, eps, opt["mask_threshold"], os.path.join(out, "mask.jsonl"), bound)}
         for tag, rec in summary["mask"]["screens"].items():
             log(f"  mask {tag}: {rec['masked_lit']} of {rec['lit']} lit cells above |d mu| {opt['mask_threshold']} (eps {eps:.4f})"
                 + (f"; certified ({rec['bound']['transfer']}, eta {rec['bound']['eta']:.3g}): {rec['bound']['masked_lit']} of {rec['lit']}"
-                   if "bound" in rec else ""))
+                   if rec.get("bound", {}).get("certified") else ""))
     with open(os.path.join(out, "defect.json"), "w", encoding="utf-8") as fh:
         json.dump(summary, fh, indent=1)
     return summary
