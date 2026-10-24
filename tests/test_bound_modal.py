@@ -334,3 +334,18 @@ def test_trace_resolution_flags_aliased_sections():
     bad = B.trace_resolution(K, L / 144, [theta], [aw])
     assert not bad["resolved"] and bad["phase_per_section"] == pytest.approx(4.0 * math.pi, rel=1e-6)
     assert B.trace_resolution(K, h, [], [])["resolved"] and B.trace_resolution(K, h, [0.0], [1e-6])["resolved"]
+
+
+def test_tail_sums_dominate_the_true_zero_sums_for_every_order():
+    """The excluded Bessel zeros j_mn >= jmax of orders 0, 50 and 150: the closed sums bound the
+    true sum 1/j^2 and 1/j^6 (a_w = 1) and stay within x3 of it; the old per-order asymptotics
+    (n - 1/4) overshot by 10^9 for |m| near the cutoff."""
+    from scipy.special import jn_zeros
+    jmax = 160.0
+    s2, s6 = B.tail_sums(1.0, jmax)
+    for m in (0, 50, 150):
+        z = jn_zeros(m, 400)
+        z = z[z >= jmax]
+        true2, true6 = float(np.sum(1.0 / z ** 2)), float(np.sum(1.0 / z ** 6))
+        assert s2 >= true2 and s6 >= true6
+        assert s2 < 3.0 * true2 and s6 < 3.0 * true6
