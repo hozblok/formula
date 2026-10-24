@@ -349,3 +349,39 @@ def test_tail_sums_dominate_the_true_zero_sums_for_every_order():
         true2, true6 = float(np.sum(1.0 / z ** 2)), float(np.sum(1.0 / z ** 6))
         assert s2 >= true2 and s6 >= true6
         assert s2 < 3.0 * true2 and s6 < 3.0 * true6
+
+
+def test_bent_bore_weights_match_the_straight_filon_and_the_substep_scheme():
+    """The bent-bore boundary part (Chebyshev series of e^X, phi_1, phi_2) equals the straight
+    Filon weights for a vanishing curvature and the exponential-trapezoid sub-step scheme on
+    fine sub-steps (phase 0.005) for R = 2156 m, where the bend itself matters."""
+    disc = Disc(AW, 40.0)
+    rng = np.random.default_rng(3)
+    zs = np.linspace(0.0, 0.02, 41)
+    nm = 2 * disc.M + 1
+    ghat = rng.standard_normal((len(zs), nm)) + 1j * rng.standard_normal((len(zs), nm))
+    ghat *= np.exp(-0.5 * (np.arange(len(zs)) - 20.0) ** 2 / 36.0)[:, None]      # a smooth pulse in z
+    L = zs[-1]
+    straight = B.ModalBound(FBChannel(np.zeros(2), None, None, disc, K))
+    flat = B.ModalBound(FBChannel(np.zeros(2), np.array([1.0, 0.0]), 1e16, disc, K))     # V L ~ 1e-12
+    b_s, b_f = straight.boundary_part(zs, ghat, L), flat.boundary_part(zs, ghat, L)
+    assert straight.norm(b_s) > 0.0
+    assert straight.norm(b_s - b_f) <= 1e-10 * straight.norm(b_s)
+    bent = B.ModalBound(FBChannel(np.zeros(2), np.array([1.0, 0.0]), 2156.25, disc, K))
+    b_b = bent.boundary_part(zs, ghat, L)
+    s = bent.forcing(ghat)
+    h = np.diff(zs)
+    emin, emax = bent.chan._spectral_bounds()
+    c = np.zeros_like(s[0])
+    for j in range(len(h)):
+        n_sub = int(math.ceil(max(abs(emin), abs(emax)) * h[j] / 0.005))
+        d = h[j] / n_sub
+        for q in range(n_sub):
+            s_a = s[j] + (s[j + 1] - s[j]) * (q / n_sub)
+            s_b = s[j] + (s[j + 1] - s[j]) * ((q + 1) / n_sub)
+            c, _ = bent.chan.propagate(c + 0.5 * d * s_a, d)
+            c = c + 0.5 * d * s_b
+    assert bent.norm(b_b - c) <= 1e-4 * bent.norm(b_b)
+    assert bent.norm(b_b - b_s) > 1e-2 * bent.norm(b_s)
+    with pytest.raises(ValueError):
+        B.ModalBound(FBChannel(np.zeros(2), None, None, disc, K, gamma=np.full(disc.kap2.shape, 1.0)))
