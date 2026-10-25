@@ -133,6 +133,8 @@ def test_div_transcendental_gaussian_two_roots_pow_form():
     for x in ("1.9", "1.5", "1.0", "0.4", "0"):
         d_pow = pow_form({"x": x}, derivative="x", format_digits=30)
         d_prd = product({"x": x}, derivative="x", format_digits=30)
+        assert pow_form.get_partial_derivative(["x"], {"x": x}, 30) == d_pow
+        assert product.get_partial_derivative(["x"], {"x": x}, 30) == d_prd
         assert "nan" not in d_pow.lower()
         assert near(Number(d_pow, 32), d_prd, eps="1e-28")
 

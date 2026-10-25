@@ -197,6 +197,13 @@ class Formula {
       const std::map<std::string, std::string> &variables_to_values = {},
       std::streamsize digits = 0,
       std::ios_base::fmtflags format = std::ios_base::fmtflags(0)) const;
+
+  // Mixed partial derivative over {variables} (1..5 names, repeats allowed).
+  std::string get_partial_derivative(
+      const std::vector<std::string> &variables,
+      const std::map<std::string, std::string> &variables_to_values = {},
+      std::streamsize digits = 0,
+      std::ios_base::fmtflags format = std::ios_base::fmtflags(0)) const;
 };
 
 #endif  // CSFORMULA_H

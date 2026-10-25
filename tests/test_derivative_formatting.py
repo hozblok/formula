@@ -12,12 +12,14 @@ from formula import FmtFlags, Solver
 def test_derivative_respects_format_digits():
     s = Solver("1/x", precision=24)
     assert s({"x": "3"}, derivative="x", format_digits=5) == "-0.11111"
+    assert s.get_partial_derivative(["x"], {"x": "3"}, 5) == "-0.11111"
 
 
 def test_derivative_respects_format_flags():
     s = Solver("x^2", precision=24)
     out = s({"x": "10"}, derivative="x", format_digits=5, format_flags=FmtFlags.scientific)
     assert out == "2.00000e+01"
+    assert s.get_partial_derivative(["x"], {"x": "10"}, 5, FmtFlags.scientific) == out
 
 
 def test_derivative_default_digits_match_value_formatting():
@@ -26,9 +28,12 @@ def test_derivative_default_digits_match_value_formatting():
     value = s({"x": "3"}, format_digits=10)
     derivative = Solver("0-1/(x^2)", precision=24)({"x": "3"}, format_digits=10)
     assert s({"x": "3"}, derivative="x", format_digits=10) == derivative
+    assert s.get_partial_derivative(["x"], {"x": "3"}, 10) == derivative
     assert value == "0.3333333333"
 
 
 def test_complex_derivative_uses_value_output_shape():
     # Was "(0,4)"; must match get()'s "re+i*(im)" shape.
-    assert Solver("i*x^2")({"x": "2"}, derivative="x") == "0+i*(4)"
+    s = Solver("i*x^2")
+    assert s({"x": "2"}, derivative="x") == "0+i*(4)"
+    assert s.get_partial_derivative(["x"], {"x": "2"}, s.precision) == "0+i*(4)"

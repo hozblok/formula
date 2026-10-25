@@ -11,8 +11,10 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include "../csconstants.hpp"
+#include "./csjet.hpp"
 
 /**
  * Multiprecision arithmetic.
@@ -147,6 +149,21 @@ class cseval {
           cseval<Real>::functionsTwoArgsDLeft,
       const std::map<std::string, Real (*)(Real, Real)> &mapFunctionDerivRight =
           cseval<Real>::functionsTwoArgsDRight) const;
+
+  // Taylor number of subformula; seeds maps a variable to the bitmask of the
+  // e it carries.
+  csjet<Real> calculate_jet(
+      unsigned order, const std::map<std::string, unsigned> &seeds,
+      const std::map<std::string, Real> &variables_to_values) const;
+
+  // Mixed partial derivative over 1..5 variables (repeats allowed).
+  Real calculate_partial_derivative(
+      const std::vector<std::string> &variables,
+      const std::map<std::string, std::string> &variables_to_values) const;
+
+  // One-argument function {name} applied to a Taylor number.
+  static csjet<Real> apply_function(const std::string &name,
+                                    const csjet<Real> &x);
 
   // Useful constants.
   const static Real ZERO;
@@ -371,6 +388,33 @@ the sqrt derivative");
   static Real _m_one(Real, Real) { return ZERO - ONE; }
   //- auxiliary methods
 
+  //+ higher derivatives of the power:
+  // k-th derivative of u^b in u: b(b-1)...(b-k+1) u^(b-k).
+  static Real _pow_dk(Real a, Real b, unsigned k) {
+    Real f = ONE;
+    for (unsigned j = 0; j < k; ++j) f = f * (b - int(j));
+    // Integer exponent 0 <= b < k.
+    if (f == ZERO) return ZERO;
+    if (a == ZERO && b < int(k)) {
+      throw std::invalid_argument(
+          "Infinite derivative (base 0, exponent below the derivative order) \
+during the computation of the power derivative");
+    }
+    return f * _pow(a, b - int(k));
+  }
+  // k-th derivative of a^v in v: log(a)^k a^v.
+  static Real _pow_ek(Real a, Real b, unsigned k) {
+    if (a == ZERO) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of \
+the power derivative (log(0) of the base)");
+    }
+    Real l = _log(a), f = _pow(a, b);
+    for (unsigned j = 0; j < k; ++j) f = f * l;
+    return f;
+  }
+  //- higher derivatives of the power
+
   // dictionaries contain the appropriate names of operations and static methods
   // for evaluating, e.g.
   // "+" -> _add
@@ -384,6 +428,10 @@ the sqrt derivative");
       functionsTwoArgsDLeft;
   static const std::map<std::string, Real (*)(Real, Real)>
       functionsTwoArgsDRight;
+
+  // f^(k)(a), k = 0..n, of the one-argument functions:
+  static const std::map<std::string, std::vector<Real> (*)(const Real &, unsigned)>
+      functionsOneArgDerivatives;
 };
 
 #endif  // EVAL_MPF_H

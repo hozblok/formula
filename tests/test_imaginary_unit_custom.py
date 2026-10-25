@@ -40,7 +40,9 @@ def test_unit_letter_stays_a_variable_under_other_unit():
 
 
 def test_custom_unit_derivative():
-    assert Solver("j*x^2", imaginary_unit="j")({"x": "2"}, derivative="x") == "0+j*(4)"
+    s = Solver("j*x^2", imaginary_unit="j")
+    assert s({"x": "2"}, derivative="x") == "0+j*(4)"
+    assert s.get_partial_derivative(["x"], {"x": "2"}, s.precision) == "0+j*(4)"
 
 
 def test_pair_with_custom_unit():

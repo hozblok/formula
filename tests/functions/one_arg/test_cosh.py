@@ -1,6 +1,7 @@
 """Tests for cosh() (hyperbolic cosine)."""
 
 from formula import Formula, Solver
+from tests.derivatives import first_derivative
 
 
 def test_cosh_zero():
@@ -14,7 +15,7 @@ def test_cosh_one_inverse():
 
 def test_cosh_derivative_is_sinh():
     # d(cosh x)/dx = sinh x; at x=0 → sinh(0) = 0.
-    assert Solver("cosh(x)").get_derivative("x", {"x": "0"}) == "0"
+    assert first_derivative(Solver("cosh(x)"), "x", {"x": "0"}) == "0"
 
 
 def test_cosh_is_even():
