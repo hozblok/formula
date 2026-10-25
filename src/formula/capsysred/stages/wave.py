@@ -24,6 +24,7 @@ from scipy.special import fresnel
 
 from ... import __version__
 from .. import render, rays_v3
+from ..fresnel import optical_constants
 from ..screen import ScreenGrid
 from ..shared.units import m_to_um
 
@@ -712,10 +713,12 @@ def _run(sim, out_dir, partial, wave, rays_paths, log):
     files, report, results = [], [], {}
     workers = wave["workers"] or -1
     p = cfg.precision
-    lines = [(float(ln.k), float(ln.weight),
-              float(cfg.material.delta(ln.e_kev, precision=p)) if sim.per_line else sim.delta_f,
-              float(cfg.material.beta(ln.e_kev, precision=p)) if sim.per_line else sim.beta_f)
-             for ln in sim.lines if float(ln.weight) > 0.0]
+    lines = []
+    for ln in sim.lines:
+        if float(ln.weight) > 0.0:
+            delta, beta = (optical_constants(cfg.material, ln.e_kev, p)
+                           if sim.per_line else (sim.delta_f, sim.beta_f))
+            lines.append((float(ln.k), float(ln.weight), delta, beta))
     if cfg.free_source is not None and wave["provider"] in ("auto", "free"):
         res = _free_scene(sim, wave, lines, rays_paths)
         results["free"] = res

@@ -1,6 +1,17 @@
-"""Fresnel reflection amplitude with energy-fixed optical constants."""
+"""Optical constants and Fresnel reflection amplitudes."""
+
+from functools import lru_cache
 
 from ..formula import Number
+
+
+@lru_cache(maxsize=256)
+def optical_constants(material, energy, precision: int) -> tuple[float, float]:
+    """Cached float64 (delta, beta) for a material and energy in keV."""
+    return (
+        float(material.delta(energy, precision=precision)),
+        float(material.beta(energy, precision=precision)),
+    )
 
 
 class FresnelAmplitude:
