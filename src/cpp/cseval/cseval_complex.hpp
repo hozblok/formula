@@ -376,7 +376,8 @@ the sqrt derivative");
       throw std::invalid_argument(
           "Division by zero during the computation of the acosh derivative");
     }
-    return ONE / _sqrt(a * a - ONE);
+    // On the branch of acosh: cut (-inf, 1).
+    return ONE / (_sqrt(a - ONE) * _sqrt(a + ONE));
   }
   static Complex _atanh(Complex a) { return atanh(a); }
   static Complex _atanh_d(Complex a, Complex) {

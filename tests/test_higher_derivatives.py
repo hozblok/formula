@@ -334,3 +334,29 @@ def test_tanh_and_tan_derivatives_where_tanh_rounds_to_one(names, x, y):
     assert near(d("exp(2*y)*tanh(x)", names, at), expected)
     # tan(i x) = i tanh(x)
     assert near(d("exp(2*y)*tan(i*x)", names, at), times_i(expected, 1))
+
+
+# Points in all four quadrants, off every branch cut and pole.
+PLANE = [("-2", "1"), ("-2", "-1"), ("-0.5", "0.3"), ("-0.5", "-0.3"),
+         ("0.4", "-1.7"), ("2.5", "-0.6"), ("1.5", "0.8"), ("-1.2", "2.1")]
+BRANCHED = [f"{name}(z)" for name in FUNCTIONS + ["acosh"]] + [
+    "z^2.5", "z^(-1.5)", "z^(0.5+i)", "(2-3*i)^z", "z^z"]
+
+
+@pytest.mark.parametrize("x,c", PLANE)
+@pytest.mark.parametrize("template", BRANCHED)
+def test_complex_derivatives_follow_the_branch_of_the_function(template, x, c):
+    # F(x) = f(x + i c): order 1 against a central difference of the values of f,
+    # orders 1..5 by the Taylor polynomial against f(x + h + i c).
+    expr = template.replace("z", f"(x+i*({c}))")
+    at = {"x": x}
+    h = Decimal("1e-20")
+    upper = value(expr, {"x": str(Decimal(x) + h)})
+    lower = value(expr, {"x": str(Decimal(x) - h)})
+    slope = [(a - b) / (2 * h) for a, b in zip(upper, lower)]
+    assert near(d(expr, "x", at), slope, Decimal("1e-30"))
+    h = Decimal("1e-10")
+    series = value(expr, at)
+    for k in range(1, 6):
+        series = add(series, scale(h**k / factorial(k), d(expr, "x" * k, at)))
+    assert near(series, value(expr, {"x": str(Decimal(x) + h)}), Decimal("1e-50"))
