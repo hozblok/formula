@@ -705,7 +705,7 @@ def run_defect(sim, archive, out_dir, opt, widths, log=print, map_path=None):
         raise ValueError("stage 17 defect diagnostics follow the Maslov branch (prefactor zero on an "
                          f"exact caustic); b5_estimator.branch {b5['branch']!r} maps have no matching "
                          "diagnostics yet — scan with branch: maslov")
-    screen = [cap.screen, *cap.screens][b5["screen_index"]]
+    screen = cap.all_screens[b5["screen_index"]]
     index = rays_v3.load_index(archive)
     modes = index.modes("capillary")
     if opt["modes"] is not None:

@@ -36,7 +36,7 @@ def preflight_b5_inputs(sim, options):
         raise ValueError("stage 17 archive_phase requires a capillary scene")
     if len(sim.lines) != 1:
         raise ValueError("stage 17 archive_phase currently requires a monochromatic spectrum")
-    screens = [cap.screen, *cap.screens]
+    screens = cap.all_screens
     if options["screen_index"] >= len(screens):
         raise ValueError("b5_estimator.screen_index is outside the configured screen list")
     if float(screens[options["screen_index"]].z) < float(cap.z1):
@@ -254,7 +254,7 @@ def run_b5_stage(sim, out_dir, options, *, rays_paths, log=None):
     paths = [os.path.abspath(os.fspath(p)) for p in rays_paths]
     fingerprints = [_archive_contract(sim, path) for path in paths]
     cap = sim.cfg.capillary
-    screen = [cap.screen, *cap.screens][options["screen_index"]]
+    screen = cap.all_screens[options["screen_index"]]
     target_z = float(screen.z)
     k = float(sim.lines[0].k)
     partial = Path(out_dir)/f"{RESULT_DIR}.partial"
