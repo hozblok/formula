@@ -346,8 +346,9 @@ BRANCHED = [f"{name}(z)" for name in FUNCTIONS + ["acosh"]] + [
 @pytest.mark.parametrize("x,c", PLANE)
 @pytest.mark.parametrize("template", BRANCHED)
 def test_complex_derivatives_follow_the_branch_of_the_function(template, x, c):
-    # F(x) = f(x + i c): order 1 against a central difference of the values of f,
-    # orders 1..5 by the Taylor polynomial against f(x + h + i c).
+    # F(x) = f(x + i c): order 1 against a central difference of the values of f;
+    # each order k against the Taylor remainder of the values,
+    # (f(z + h) - sum_{j<k} f^(j) h^j / j!) k! / h^k = f^(k) + O(h).
     expr = template.replace("z", f"(x+i*({c}))")
     at = {"x": x}
     h = Decimal("1e-20")
@@ -356,7 +357,38 @@ def test_complex_derivatives_follow_the_branch_of_the_function(template, x, c):
     slope = [(a - b) / (2 * h) for a, b in zip(upper, lower)]
     assert near(d(expr, "x", at), slope, Decimal("1e-30"))
     h = Decimal("1e-10")
-    series = value(expr, at)
+    shifted = value(expr, {"x": str(Decimal(x) + h)})
+    partial_sum = value(expr, at)
     for k in range(1, 6):
-        series = add(series, scale(h**k / factorial(k), d(expr, "x" * k, at)))
-    assert near(series, value(expr, {"x": str(Decimal(x) + h)}), Decimal("1e-50"))
+        dk = d(expr, "x" * k, at)
+        remainder = [(s - p) * factorial(k) / h**k for s, p in zip(shifted, partial_sum)]
+        assert near(remainder, dk, Decimal("1e-7")), k
+        partial_sum = add(partial_sum, scale(h**k / factorial(k), dk))
+
+
+@pytest.mark.parametrize("expr,x", [
+    ("acosh(x+i*1e-35)", "1"), ("acosh(x+i*1e-35)", "-1"),
+    ("asin(x+i*1e-35)", "1"), ("asin(x+i*1e-35)", "-1"),
+    ("acos(x+i*1e-35)", "1"), ("acos(x+i*1e-35)", "-1"),
+    ("atanh(x+i*1e-35)", "1"), ("atanh(x+i*1e-35)", "-1"),
+    ("asinh(1e-35+i*x)", "1"), ("asinh(1e-35+i*x)", "-1"),
+    ("atan(1e-35+i*x)", "1"), ("atan(1e-35+i*x)", "-1"),
+    ("acosh(x)", "1.00000000000000000000000000000000001"),
+    ("asin(x)", "0.99999999999999999999999999999999999"),
+    ("atanh(x)", "0.99999999999999999999999999999999999"),
+])
+def test_inverse_functions_keep_the_precision_next_to_their_singular_points(expr, x):
+    # 1e-35 from a branch point or pole: 1 -+ a^2 keeps its 1e-70 component.
+    at = {"x": x}
+    for k in range(1, 6):
+        assert near(d(expr, "x" * k, at), d(expr, "x" * k, at, precision=256), Decimal("1e-60")), k
+
+
+@pytest.mark.parametrize("k", [1, 2, 3, 4, 5])
+def test_terms_with_conjugate_poles_cancel(k):
+    # Each term's k-th derivative is ~(k-1)!/(2 x^k) at x = 1e-35 from its pole.
+    at = {"x": "1e-35"}
+    # atan(x+i) + atan(x-i) = atan(x/2) - pi/2 for x > 0.
+    assert near(d("atan(x+i)+atan(x-i)", "x" * k, at), d("atan(x/2)", "x" * k, at))
+    # atanh(1+ix) + atanh(1-ix) = log(4 + x^2)/2 - log(x) for x > 0.
+    assert near(d("atanh(1+i*x)+atanh(1-i*x)", "x" * k, at), d("log(4+x^2)/2-log(x)", "x" * k, at))
