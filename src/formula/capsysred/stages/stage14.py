@@ -30,7 +30,7 @@ from types import SimpleNamespace
 
 from ... import __version__, _formula
 from .. import rays_v3, render
-from .altcoh import FloatLineAmplitudes
+from ..fresnel import FloatLineAmplitudes
 from ..env import Env
 from ._stage14_checkpoints import (RANGE_SLOTS, mode_ranges, range_agg_name,
                                    range_done, range_manifest_name,

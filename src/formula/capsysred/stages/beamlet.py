@@ -40,7 +40,7 @@ from array import array
 from types import SimpleNamespace
 from typing import NamedTuple
 
-from .altcoh import FloatLineAmplitudes
+from ..fresnel import FloatLineAmplitudes
 from ..gamma import EXACT_KINDS, bounce_lenses, inv2, propagate
 from ..native import exact_accumulator, jackknife_tile, make_beamlet_grid
 from .. import rays_v3

@@ -19,7 +19,7 @@ dependency-free.
 import math
 import time
 
-from .altcoh import FloatLineAmplitudes
+from ..fresnel import FloatLineAmplitudes
 from ..shared.progress import Progress
 from ..rays import recorded_plane, rescreen, scene_stream
 from ..screen import ScreenGrid

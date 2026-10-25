@@ -52,7 +52,7 @@ from ..gamma import bounce_lenses, reflect
 from ..rays import recorded_screen_z
 from ..screen import ScreenGrid
 from ..surfaces import CapillaryBundle
-from .altcoh import FloatLineAmplitudes
+from ..fresnel import FloatLineAmplitudes
 from .beamlet import _launch, _reference_pixel, _screen_spec
 from . import bound_modal
 from .wave_fb import Disc, FBChannel, mode_damping
