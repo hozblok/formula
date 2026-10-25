@@ -170,6 +170,14 @@ real or complex.",
           py::arg("variable"),
           py::arg("variables_to_values") = std::map<std::string, std::string>(),
           py::arg("digits") = 0, py::arg("format") = std::ios_base::fmtflags(0))
+      .def("get_partial_derivative", &Formula::get_partial_derivative,
+           "Calculate the value of the mixed partial derivative of the \
+formula over 1..5 variables (repeats allowed), e.g. ['x', 'x', 'y'].",
+           py::arg("variables"),
+           py::arg("variables_to_values") =
+               std::map<std::string, std::string>(),
+           py::arg("digits") = 0,
+           py::arg("format") = std::ios_base::fmtflags(0))
       .def("get_from_float",
            (std::string(Formula::*)(const std::map<std::string, double> &,
                                     std::streamsize, std::ios_base::fmtflags)

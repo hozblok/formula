@@ -155,6 +155,24 @@ std::string Formula::get_derivative(
   }
 }
 
+std::string Formula::get_partial_derivative(
+    const std::vector<std::string> &variables,
+    const std::map<std::string, std::string> &variables_to_values,
+    std::streamsize digits, std::ios_base::fmtflags format) const {
+  auto visitor = GetCalculatedPartialDerivativeStringVisitor();
+  visitor.variables = &variables;
+  visitor.variables_to_values = &variables_to_values;
+  visitor.digits = digits;
+  visitor.format = format;
+  visitor.is_complex = is_complex_;
+  visitor.imaginary_unit = imaginary_unit_;
+  if (is_complex_) {
+    return boost::apply_visitor(visitor, eval_complex_);
+  } else {
+    return boost::apply_visitor(visitor, eval_);
+  }
+}
+
 void Formula::prepare_precision(const unsigned &precision) {
   origin_precision_ = precision;
   unsigned result = round_up_precision(precision);

@@ -30,6 +30,8 @@ def test_python_complex_value_rejected():
 def test_malformed_value_raises_for_derivative():
     with pytest.raises(ValueError, match="Invalid number value"):
         Solver("x^2")({"x": "1/3"}, derivative="x")
+    with pytest.raises(ValueError, match="Invalid number value"):
+        Solver("x^2").get_partial_derivative(["x"], {"x": "1/3"})
 
 
 def test_malformed_value_raises_for_complex_expression():
@@ -37,6 +39,8 @@ def test_malformed_value_raises_for_complex_expression():
         Solver("i*x")({"x": "1/3"})
     with pytest.raises(ValueError, match="Invalid number value"):
         Solver("i*x")({"x": "1/3"}, derivative="x")
+    with pytest.raises(ValueError, match="Invalid number value"):
+        Solver("i*x").get_partial_derivative(["x"], {"x": "1/3"})
 
 
 @pytest.mark.parametrize(

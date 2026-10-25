@@ -148,6 +148,8 @@ def test_derivative_non_iterable_raises_value_error():
 def test_derivative_generator_accepted():
     s = Solver("x^2 + y")
     assert s({"x": 2, "y": 1}, derivative=(v for v in ("x", "y"))) == ["4", "1"]
+    values = {"x": "2", "y": "1"}
+    assert [s.get_partial_derivative([v], values, s.precision) for v in "xy"] == ["4", "1"]
 
 
 def test_derivative_element_error_not_masked_as_iterable_error():
@@ -156,3 +158,5 @@ def test_derivative_element_error_not_masked_as_iterable_error():
     with pytest.raises(TypeError) as ex:
         Solver("x^2")(2, derivative=[None])
     assert "not a string or iterable" not in str(ex.value)
+    with pytest.raises(TypeError):
+        Solver("x^2").get_partial_derivative([None], {"x": "2"})
