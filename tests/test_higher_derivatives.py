@@ -1,6 +1,5 @@
 """Formula.get_partial_derivative of orders 2..5 on real and complex formulas."""
 
-import re
 from decimal import Decimal, localcontext
 from itertools import combinations_with_replacement, permutations
 from math import comb, factorial, perm
@@ -8,6 +7,7 @@ from math import comb, factorial, perm
 import pytest
 
 from formula import Formula
+from tests.decimal_pairs import add, near, parse, rel_near, scale, times_i
 from tests.derivatives import first_derivative
 
 PRECISION = 64
@@ -37,12 +37,6 @@ COMPLEX = [f"{name}(x*y*z+i*x)" for name in FUNCTIONS] + [
     "x/(y+i*z)",
     "exp(i*x*y)*z^2",
 ]
-
-
-def parse(s):
-    """(re, im) of a formatted real or complex result."""
-    m = re.fullmatch(r"(.*)\+i\*\((.*)\)", s)
-    return (Decimal(m[1]), Decimal(m[2])) if m else (Decimal(s), Decimal(0))
 
 
 def partial(expr, names, values=POINT, precision=PRECISION):
@@ -146,7 +140,6 @@ def test_complex_abs_not_implemented():
 # Identities: the derivatives against exact mathematics, not against each other.
 
 AT = {"x": "0.3", "y": "0.7", "z": "1.1", "t": "0.4"}
-EPS = Decimal("1e-50")
 
 
 @pytest.fixture(autouse=True)
@@ -163,25 +156,6 @@ def d(expr, names, values=AT, precision=PRECISION):
 
 def value(expr, values=AT, precision=PRECISION):
     return parse(Formula(expr, precision=precision).get(values))
-
-
-def near(z, w, eps=EPS):
-    return all(abs(a - b) <= eps * max(1, abs(b)) for a, b in zip(z, w))
-
-
-def add(*zs):
-    return tuple(sum(parts) for parts in zip(*zs))
-
-
-def scale(c, z):
-    return tuple(c * part for part in z)
-
-
-def times_i(z, power):
-    """z * i^power."""
-    for _ in range(power % 4):
-        z = (-z[1], z[0])
-    return z
 
 
 @pytest.mark.parametrize("precision,h,eps", [(64, "1e-10", "1e-55"), (256, "1e-40", "1e-230")])
@@ -392,3 +366,29 @@ def test_terms_with_conjugate_poles_cancel(k):
     assert near(d("atan(x+i)+atan(x-i)", "x" * k, at), d("atan(x/2)", "x" * k, at))
     # atanh(1+ix) + atanh(1-ix) = log(4 + x^2)/2 - log(x) for x > 0.
     assert near(d("atanh(1+i*x)+atanh(1-i*x)", "x" * k, at), d("log(4+x^2)/2-log(x)", "x" * k, at))
+
+
+@pytest.mark.parametrize("expr,x,names,closed", [
+    ("1e100*atanh(x)", "1e-100", "xx", "1e100*2*x/(1-x^2)^2"),
+    ("1e100*atanh(x)", "1e-100", "xxxx", "1e100*24*x*(1+x^2)/(1-x^2)^4"),
+    ("1e200*atanh(x+i)", "1e100", "x", "1e200/(1-(x+i)^2)"),
+    ("1e200*atan(1+i*x)", "1e100", "x", "1e200*i/(1+(1+i*x)^2)"),
+])
+def test_atan_atanh_near_zero_and_far_from_the_poles(expr, x, names, closed):
+    at = {"x": x}
+    assert rel_near(d(expr, names, at), value(closed, at))
+
+
+@pytest.mark.parametrize("expr,x", [
+    ("atanh(x)", "1e-100"), ("atan(x)", "1e-100"), ("atan(x)", "1e100"),
+    ("asin(x)", "1e-100"), ("asinh(x)", "1e100"), ("acosh(x)", "1e100"),
+    ("atanh(x+i*1e-100)", "1e-100"), ("atan(x+i*1e-100)", "1e-100"),
+    ("atanh(x+i*1e100)", "1e100"), ("atan(x+i*1e100)", "1e100"),
+    ("atanh(x+i)", "1e100"), ("atan(1+i*x)", "1e100"),
+    ("asin(x+i*1e100)", "1e100"), ("asinh(x+i*1e100)", "1e100"), ("acosh(x+i*1e100)", "1e100"),
+    ("atanh(x+i*1e-35)", "1"), ("atan(1e-35+i*x)", "1"),
+])
+def test_inverse_functions_near_zero_far_away_and_next_to_the_poles(expr, x):
+    at = {"x": x}
+    for k in range(1, 6):
+        assert rel_near(d(expr, "x" * k, at), d(expr, "x" * k, at, precision=256)), k
