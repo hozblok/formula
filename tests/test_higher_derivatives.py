@@ -7,7 +7,7 @@ from math import comb, factorial, perm
 import pytest
 
 from formula import Formula
-from tests.decimal_pairs import add, near, parse, rel_near, scale, times_i
+from tests.decimal_pairs import add, componentwise_near, near, parse, rel_near, scale, times_i
 from tests.derivatives import first_derivative
 
 PRECISION = 64
@@ -392,3 +392,65 @@ def test_inverse_functions_near_zero_far_away_and_next_to_the_poles(expr, x):
     at = {"x": x}
     for k in range(1, 6):
         assert rel_near(d(expr, "x" * k, at), d(expr, "x" * k, at, precision=256)), k
+
+
+@pytest.mark.parametrize("expr,closed", [
+    ("1e100*atan(1+i*x)", "1e100*24*Z*(1-Z*Z)/((1+Z*Z)*(1+Z*Z)*(1+Z*Z)*(1+Z*Z))"),
+    ("1e100*atanh(x+i)", "1e100*24*W*(1+W*W)/((1-W*W)*(1-W*W)*(1-W*W)*(1-W*W))"),
+])
+def test_fourth_derivative_at_its_zero_keeps_the_small_component(expr, closed):
+    # atan''''(1) = atanh''''(i) = 0: the value is the 1e-100 component times 1e100.
+    # Products, not ^: complex ^ goes through exp(n log z).
+    at = {"x": "1e-100"}
+    closed = closed.replace("Z", "(1+i*x)").replace("W", "(x+i)")
+    assert rel_near(d(expr, "xxxx", at), value(closed, at))
+
+
+# z(x) with x = 1e-100 as the small component, in every direction of the shifts.
+COMPONENT_POINTS = ["1+i*x", "x+i", "-1+i*x", "x-i", "2+i*x", "x+2*i", "-2+i*x", "x-2*i",
+                    "0.5+i*x", "x+0.5*i", "1e100+i*x", "x+1e100*i"]
+# Third order: atan''' is stationary at +-1 (atanh''' at +-i), so the small part is
+# 1e-300 next to terms of order 1; see the xfail below.
+EPSILON_CUBED = {"atan(1+i*x)", "atan(-1+i*x)", "atanh(x+i)", "atanh(x-i)"}
+
+
+@pytest.mark.parametrize("point", COMPONENT_POINTS)
+@pytest.mark.parametrize("name", ["asin", "acos", "atan", "asinh", "acosh", "atanh"])
+def test_small_components_survive_far_from_and_next_to_the_singular_points(name, point):
+    expr, at = f"{name}({point})", {"x": "1e-100"}
+    for k in range(1, 6):
+        if expr in EPSILON_CUBED and k == 3:
+            continue
+        got, ref = d(expr, "x" * k, at), d(expr, "x" * k, at, precision=512)
+        assert componentwise_near(got, ref), k
+
+
+@pytest.mark.xfail(strict=True, reason="the 1e-300 part of atan''' at 1 + 1e-100 i needs "
+                   "more than 300 digits next to terms of order 1")
+def test_third_order_component_at_a_stationary_point():
+    # atan(1+ix) + atan(1-ix) = atan(x^2/2) - pi/2: third derivative -5 x^3 at x = 1e-100.
+    at = {"x": "1e-100"}
+    expr = "1e300*(atan(1+i*x)+atan(1-i*x))"
+    assert rel_near(d(expr, "xxx", at), d("1e300*atan(x*x/2)", "xxx", at))
+
+
+@pytest.mark.parametrize("expr,reference", [
+    # atan(1+ix) + atan(1-ix) = atan(x^2/2) - pi/2 for x > 0.
+    ("1e200*(atan(1+i*x)+atan(1-i*x))", "1e200*atan(x*x/2)"),
+    # atanh(x+i) - atanh(x-i) = i atan(x^2/2) - i pi/2 for x > 0.
+    ("1e200*(atanh(x+i)-atanh(x-i))", "1e200*i*atan(x*x/2)"),
+])
+def test_second_order_components_at_the_zeros_of_the_numerators(expr, reference):
+    # At x = 1e-100 the fourth derivatives are the 1e-200 parts next to terms of order 1;
+    # the third (-5 x^3) is the third-order part of the xfail below.
+    at = {"x": "1e-100"}
+    for k in (1, 2, 4, 5):
+        assert rel_near(d(expr, "x" * k, at), d(reference, "x" * k, at)), k
+
+
+@pytest.mark.parametrize("x", ["-0.9", "-0.5", "-0.1", "0.25", "0.7"])
+def test_acosh_on_the_segment_is_i_acos(x):
+    # acosh(x + 0i) = i acos(x) on (-1, 1), the upper side of the cut.
+    at = {"x": x}
+    for k in range(1, 6):
+        assert rel_near(d("acosh(x+0*i)", "x" * k, at), d("i*acos(x)", "x" * k, at)), k

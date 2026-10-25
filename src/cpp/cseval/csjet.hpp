@@ -125,19 +125,6 @@ csjet<T> compose(const csjet<T> &x, const T &f0, const Deriv &deriv) {
 }
 
 //+ f^(k)(a), k = 0..n, of the one-argument functions:
-// Taylor coefficients of a / b up to degree n.
-template <typename T>
-std::vector<T> taylor_div(const std::vector<T> &a, const std::vector<T> &b,
-                          unsigned n) {
-  std::vector<T> c(n + 1, T(0));
-  for (unsigned k = 0; k <= n; ++k) {
-    T s = k < a.size() ? a[k] : T(0);
-    for (unsigned j = 1; j <= k && j < b.size(); ++j) s = s - b[j] * c[k - j];
-    c[k] = s / b[0];
-  }
-  return c;
-}
-
 // Taylor coefficients of s^r up to degree n, w0 = s[0]^r on the caller's
 // branch.
 template <typename T>
@@ -280,20 +267,70 @@ std::vector<T> d_tanh(const T &a, unsigned n) {
   return d_tan_like(tanh(a), T(1) / (c * c), -1, n);
 }
 
-// One of the poles p1, p2 at least twice nearer to a than the other.
+// One of the points p1, p2 at least twice nearer to a than the other.
 template <typename T>
-bool near_one_pole(const T &a, const T &p1, const T &p2) {
+bool near_one_of(const T &a, const T &p1, const T &p2) {
   auto d1 = abs(a - p1), d2 = abs(a - p2);
   return 2 * d1 < d2 || 2 * d2 < d1;
 }
 
-// atan' = 1/((u - i)(u + i)) at u = a + t; complex next to one pole by the
-// simple poles: atan^(k)(a) = (-1)^(k-1) (k-1)!/(2i) ((a - i)^-k - (a + i)^-k).
+// 1 - a^2, a^2 - 1, 1 + a^2: factorized next to their roots, expanded
+// elsewhere.
+template <typename T>
+T one_minus_square(const T &a) {
+  return near_one_of(a, T(1), T(-1)) ? (1 - a) * (1 + a) : 1 - a * a;
+}
+
+template <typename T>
+T square_minus_one(const T &a) {
+  return near_one_of(a, T(1), T(-1)) ? (a - 1) * (a + 1) : a * a - 1;
+}
+
+template <typename T>
+T one_plus_square(const T &a) {
+  if constexpr (is_complex_number<T>) {
+    T i("0.0", "1.0");
+    if (near_one_of(a, i, -i)) return (a - i) * (a + i);
+  }
+  return 1 + a * a;
+}
+
+// acosh'(a) = 1/P, P = sqrt(a - 1) sqrt(a + 1): factorized next to +-1, else
+// P = +-sqrt(a^2 - 1) with Re(P conj a) > 0 (on (-1, 1) the upper side Im P > 0).
+template <typename T>
+T acosh_derivative(const T &a) {
+  if (near_one_of(a, T(1), T(-1))) return T(1) / (sqrt(a - 1) * sqrt(a + 1));
+  T p = sqrt(a * a - 1);
+  if constexpr (is_complex_number<T>) {
+    auto along = p.real() * a.real() + p.imag() * a.imag();
+    if (along < 0 || (along == 0 && p.imag() < 0)) p = -p;
+  }
+  return T(1) / p;
+}
+
+// d[k] = sign^(k-1) (k-1)! m[k] / s^k for k = 1..n <= 5.
+template <typename T>
+std::vector<T> from_numerators(const T &f0, const T (&m)[6], const T &s,
+                               int sign, unsigned n) {
+  std::vector<T> d(n + 1);
+  d[0] = f0;
+  T sk = s, c(1);
+  for (unsigned k = 1; k <= n; ++k) {
+    d[k] = c * m[k] / sk;
+    sk = sk * s;
+    c = c * (sign * int(k));
+  }
+  return d;
+}
+
+// atan^(k) = (-1)^(k-1) (k-1)! M_k / (1 + a^2)^k, M_k factorized at 0, +-1;
+// complex next to one pole by the simple poles (-1)^(k-1) (k-1)!/(2i)
+// ((a - i)^-k - (a + i)^-k).
 template <typename T>
 std::vector<T> d_atan(const T &a, unsigned n) {
   if constexpr (is_complex_number<T>) {
     T i("0.0", "1.0");
-    if (near_one_pole(a, i, -i)) {
+    if (near_one_of(a, i, -i)) {
       T half_over_i("0.0", "-0.5");
       T p = T(1) / (a - i), q = T(1) / (a + i), pk = p, qk = q, c(1);
       std::vector<T> d(n + 1);
@@ -306,19 +343,18 @@ std::vector<T> d_atan(const T &a, unsigned n) {
       }
       return d;
     }
-    std::vector<T> s = {(a - i) * (a + i), 2 * a, T(1)};
-    return from_derivative_series(atan(a), taylor_div({T(1)}, s, n - 1));
-  } else {
-    std::vector<T> s = {1 + a * a, 2 * a, T(1)};
-    return from_derivative_series(atan(a), taylor_div({T(1)}, s, n - 1));
   }
+  T a2 = a * a;
+  T m[6] = {T(0), T(1), 2 * a, 3 * a2 - 1, 4 * a * square_minus_one(a),
+            5 * a2 * a2 - 10 * a2 + 1};
+  return from_numerators(atan(a), m, one_plus_square(a), -1, n);
 }
 
-// atanh' = 1/((1 - u)(1 + u)) at u = a + t; next to one pole by the simple
-// poles: atanh^(k)(a) = (k-1)!/2 ((1 - a)^-k + (-1)^(k-1) (1 + a)^-k).
+// atanh^(k) = (k-1)! N_k / (1 - a^2)^k, N_k factorized at 0, +-i; next to one
+// pole by the simple poles (k-1)!/2 ((1 - a)^-k + (-1)^(k-1) (1 + a)^-k).
 template <typename T>
 std::vector<T> d_atanh(const T &a, unsigned n) {
-  if (near_one_pole(a, T(1), T(-1))) {
+  if (near_one_of(a, T(1), T(-1))) {
     T p = T(1) / (1 - a), q = T(1) / (1 + a), pk = p, qk = q, factorial(1);
     std::vector<T> d(n + 1);
     d[0] = atanh(a);
@@ -330,8 +366,10 @@ std::vector<T> d_atanh(const T &a, unsigned n) {
     }
     return d;
   }
-  std::vector<T> s = {(1 - a) * (1 + a), -2 * a, T(-1)};
-  return from_derivative_series(atanh(a), taylor_div({T(1)}, s, n - 1));
+  T a2 = a * a;
+  T m[6] = {T(0), T(1), 2 * a, 1 + 3 * a2, 4 * a * one_plus_square(a),
+            1 + 10 * a2 + 5 * a2 * a2};
+  return from_numerators(atanh(a), m, one_minus_square(a), 1, n);
 }
 
 // asin' = (1 - u^2)^(-1/2), asinh' = (1 + u^2)^(-1/2), acosh' = (u^2 -
@@ -342,11 +380,11 @@ std::vector<T> d_inverse_sqrt_like(const T &f0, const T &w0,
   return from_derivative_series(f0, taylor_pow(s, T(-1) / 2, w0, n - 1));
 }
 
-// 1 - a^2 as (1 - a)(1 + a).
 template <typename T>
 std::vector<T> d_asin(const T &a, unsigned n) {
-  return d_inverse_sqrt_like(asin(a), T(1) / (sqrt(1 - a) * sqrt(1 + a)),
-                             {(1 - a) * (1 + a), -2 * a, T(-1)}, n);
+  T s0 = one_minus_square(a);
+  return d_inverse_sqrt_like(asin(a), T(1) / sqrt(s0), {s0, -2 * a, T(-1)},
+                             n);
 }
 
 template <typename T>
@@ -357,25 +395,16 @@ std::vector<T> d_acos(const T &a, unsigned n) {
   return d;
 }
 
-// Complex: 1 + a^2 as (1 + ia)(1 - ia).
 template <typename T>
 std::vector<T> d_asinh(const T &a, unsigned n) {
-  if constexpr (is_complex_number<T>) {
-    T ia = T("0.0", "1.0") * a;
-    return d_inverse_sqrt_like(asinh(a), T(1) / (sqrt(1 + ia) * sqrt(1 - ia)),
-                               {(1 + ia) * (1 - ia), 2 * a, T(1)}, n);
-  } else {
-    std::vector<T> s = {1 + a * a, 2 * a, T(1)};
-    return d_inverse_sqrt_like(asinh(a), T(1) / sqrt(s[0]), s, n);
-  }
+  T s0 = one_plus_square(a);
+  return d_inverse_sqrt_like(asinh(a), T(1) / sqrt(s0), {s0, 2 * a, T(1)}, n);
 }
 
-// acosh'(a) = 1/(sqrt(a - 1) sqrt(a + 1)), the branch with cut (-inf, 1);
-// a^2 - 1 as (a - 1)(a + 1).
 template <typename T>
 std::vector<T> d_acosh(const T &a, unsigned n) {
-  return d_inverse_sqrt_like(acosh(a), T(1) / (sqrt(a - 1) * sqrt(a + 1)),
-                             {(a - 1) * (a + 1), 2 * a, T(1)}, n);
+  return d_inverse_sqrt_like(acosh(a), acosh_derivative(a),
+                             {square_minus_one(a), 2 * a, T(1)}, n);
 }
 //- f^(k)(a) of the one-argument functions
 
