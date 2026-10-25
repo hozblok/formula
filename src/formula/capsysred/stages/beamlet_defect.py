@@ -827,7 +827,8 @@ def write_mask(cfg, rows_path, eps, threshold, path, bound=None):
     with ray centres.  The heuristic uniform mask always; with `bound` (k, area, z_exit,
     modes [{B, E_in_dep, O_abs2, O_area}]) also the certified mask of bound_eta."""
     cap = cfg.capillary
-    screens = {"capillary": cap.screen, **{f"capillary-s{i}": s for i, s in enumerate(cap.screens, 1)}}
+    screens = {"capillary" if i == 0 else f"capillary-s{i}": screen
+               for i, screen in enumerate(cap.all_screens)}
     tables = {}
     with open(rows_path, encoding="utf-8") as fh:
         for line in fh:

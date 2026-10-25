@@ -407,7 +407,7 @@ def build_spec(sim, wave, lines):
         bores.append({"center": (float(b["center"][0]), float(b["center"][1])), "radius": float(b["radius"]),
                       "rbend": None if bend is None else float(bend["radius"]),
                       "toward": None if bend is None else (float(bend["toward"][0]), float(bend["toward"][1]))})
-    screens = [cap.screen, *cap.screens]
+    screens = cap.all_screens
     scr = [{"z": float(s.z), "nx": int(s.nx), "ny": int(s.ny), "center": (float(s.center[0]), float(s.center[1])),
             "edge_x": float(s.edge_x), "edge_y": float(s.edge_y),
             "reference": None if s.reference is None else (float(s.reference[0]), float(s.reference[1]))}

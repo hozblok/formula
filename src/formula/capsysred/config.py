@@ -409,6 +409,11 @@ class CapillaryCfg:
                 raise ValueError(f"capillary screens[{i}]: z = {float(s.z)} "
                                  f"is inside the optic (z1 = {float(self.z1)})")
 
+    @property
+    def all_screens(self) -> list[ScreenCfg]:
+        """Main screen followed by extra screens in configured order."""
+        return [self.screen, *self.screens]
+
 
 class Config:
     def __init__(self, raw: dict, yaml_file: str | None = None):

@@ -429,7 +429,7 @@ def _prepare_inputs(sim, paths, signature: dict) -> list[InputPart]:
 def _screen_targets(sim, paths) -> list[ScreenTarget]:
     """Bind main and configured extra screens to independent cache IDs."""
     cap = sim.cfg.capillary
-    configs = [cap.screen, *cap.screens]
+    configs = cap.all_screens
     targets = []
     for index, screen_cfg in enumerate(configs):
         label = "capillary" if index == 0 else f"capillary-s{index}"
@@ -1132,7 +1132,7 @@ def _range_worker(raw_cfg: dict, archive_path: str, contract: dict,
         {"input": {"index_sha256": expected_sha}},
         0, index)
     cap = sim.cfg.capillary
-    configs = [cap.screen, *cap.screens]
+    configs = cap.all_screens
     kms = [float(line.k) for line in sim.lines]
     weights = [float(line.weight) for line in sim.lines]
     builds = []
