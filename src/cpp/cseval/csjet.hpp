@@ -288,17 +288,17 @@ std::vector<T> d_atanh(const T &a, unsigned n) {
 }
 
 // asin' = (1 - u^2)^(-1/2), asinh' = (1 + u^2)^(-1/2), acosh' = (u^2 -
-// 1)^(-1/2) at u = a + t, with the branch 1/sqrt of the first derivative.
+// 1)^(-1/2) at u = a + t, continued from w0 = f'(a) on the branch of f.
 template <typename T>
-std::vector<T> d_inverse_sqrt_like(const T &f0, const std::vector<T> &s,
-                                   unsigned n) {
-  T w0 = T(1) / sqrt(s[0]);
+std::vector<T> d_inverse_sqrt_like(const T &f0, const T &w0,
+                                   const std::vector<T> &s, unsigned n) {
   return from_derivative_series(f0, taylor_pow(s, T(-1) / 2, w0, n - 1));
 }
 
 template <typename T>
 std::vector<T> d_asin(const T &a, unsigned n) {
-  return d_inverse_sqrt_like(asin(a), {1 - a * a, -2 * a, T(-1)}, n);
+  std::vector<T> s = {1 - a * a, -2 * a, T(-1)};
+  return d_inverse_sqrt_like(asin(a), T(1) / sqrt(s[0]), s, n);
 }
 
 template <typename T>
@@ -311,12 +311,15 @@ std::vector<T> d_acos(const T &a, unsigned n) {
 
 template <typename T>
 std::vector<T> d_asinh(const T &a, unsigned n) {
-  return d_inverse_sqrt_like(asinh(a), {1 + a * a, 2 * a, T(1)}, n);
+  std::vector<T> s = {1 + a * a, 2 * a, T(1)};
+  return d_inverse_sqrt_like(asinh(a), T(1) / sqrt(s[0]), s, n);
 }
 
+// acosh'(a) = 1/(sqrt(a - 1) sqrt(a + 1)), the branch with cut (-inf, 1).
 template <typename T>
 std::vector<T> d_acosh(const T &a, unsigned n) {
-  return d_inverse_sqrt_like(acosh(a), {a * a - 1, 2 * a, T(1)}, n);
+  return d_inverse_sqrt_like(acosh(a), T(1) / (sqrt(a - 1) * sqrt(a + 1)),
+                             {a * a - 1, 2 * a, T(1)}, n);
 }
 //- f^(k)(a) of the one-argument functions
 
