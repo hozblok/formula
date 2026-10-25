@@ -19,40 +19,13 @@ estimator lands on the same maps). 1D screens only (ny = 1).
 import cmath
 import math
 import time
-from typing import Sequence
 
 from ...formula import Number
-from ...xray import GlassMaterial
-from ..fresnel import FresnelAmplitude, optical_constants
-from ..spectrum import SpectralLine
+from ..fresnel import FloatLineAmplitudes, FresnelAmplitude
 from ..shared.physics_constants import FRESNEL_PROBE_THETA
 from ..shared.progress import Progress
 from ..rays import recorded_plane, rescreen, scene_stream
 from ..screen import ScreenGrid
-
-
-class FloatLineAmplitudes:
-    """prod_j r(sin θ_j; E_m) per line in float64, constants from the exact
-    material model; cross-checked against the Number Fresnel via check()."""
-
-    def __init__(self, material: GlassMaterial, lines: Sequence[SpectralLine],
-                 precision: int):
-        # (2*delta, 2*beta) per line: the root is sqrt(sin^2 - 2d + 2ib)
-        self.two_delta_beta: list[tuple[float, float]] = []
-        for line in lines:
-            delta, beta = optical_constants(material, line.e_kev, precision)
-            self.two_delta_beta.append((2.0 * delta, 2.0 * beta))
-
-    def __call__(self, sins: Sequence[float]) -> list[complex]:
-        out = []
-        for d2, b2 in self.two_delta_beta:
-            a = 1.0 + 0.0j
-            for s in sins:
-                root = cmath.sqrt(s * s - d2 + 1j * b2)
-                a *= (s - root) / (s + root)
-            out.append(a)
-        return out
-
 
 
 class AltCoherence:
