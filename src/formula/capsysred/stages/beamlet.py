@@ -1089,7 +1089,7 @@ def preflight_stage11(sim, out_dir, jobs: int) -> list[dict]:
         scenes.append(("free", cfg.free_source, [cfg.free_screen]))
     if cfg.capillary is not None:
         cap = cfg.capillary
-        scenes.append(("capillary", cap.source, [cap.screen, *cap.screens]))
+        scenes.append(("capillary", cap.source, cap.all_screens))
     estimates = []
     for scene, src, screens in scenes:
         n_modes, _ = src.budget()

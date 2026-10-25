@@ -611,14 +611,14 @@ def preflight_wave_inputs(sim, wave):
     if cap is not None and wave["provider"] in ("auto", "uisk", "images", "march", "fb"):
         prov = capillary_provider(cap, wave)
         if prov in ("uisk", "images", "march"):
-            for i, scr in enumerate([cap.screen, *cap.screens]):
+            for i, scr in enumerate(cap.all_screens):
                 if float(scr.z) < float(cap.z1):
                     raise ValueError(f"wave_estimator: capillary screen {i} at z = {float(scr.z)} "
                                      f"lies before the exit z1 = {float(cap.z1)}; {prov} screens sit "
                                      "on the exit plane or behind it")
         if wave["far_field"] is not None and (prov not in ("uisk", "images", "march") or len(cap.bores) != 1):
             raise ValueError("wave_estimator: far_field needs provider uisk, images or march and a single bore")
-        scenes.append([cap.screen, *cap.screens])
+        scenes.append(cap.all_screens)
     for screens in scenes:
         for scr in screens:
             g = ScreenGrid(scr)
@@ -798,7 +798,7 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log, dump_dir=None, 
                 f"{spot['center'][1] * 1e6:.3f}) um, tilt ({spot['tilt'][0] * 1e3:.3f}, {spot['tilt'][1] * 1e3:.3f}) mrad")
     else:
         nodes, weights, rule = _rule(wave, "capillary", src, rays_paths)
-    screens = [cap.screen, *cap.screens]
+    screens = cap.all_screens
     labels = ["capillary"] + [f"capillary-s{i}" for i in range(1, len(cap.screens) + 1)]
     z_in = float(cap.z0) - float(src.position[2])
     length = float(cap.z1) - float(cap.z0)

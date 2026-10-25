@@ -27,7 +27,7 @@ def preflight_b9_inputs(sim, options):
         raise ValueError("stage 18 requires a capillary scene")
     if len(sim.lines) != 1:
         raise ValueError("stage 18 requires a monochromatic spectrum")
-    screens = [cap.screen, *cap.screens]
+    screens = cap.all_screens
     if options["screen_index"] >= len(screens):
         raise ValueError("b9_estimator.screen_index is outside configured screens")
     if float(screens[options["screen_index"]].z) <= float(cap.z1):
@@ -470,7 +470,7 @@ def run_b9_stage(sim, out_dir, options, *, rays_paths=None, log=None):
     if count < 1 or min(budgets) < 3 or max(budgets) > min(archive_rays, options["rays_per_mode"]):
         raise ValueError("stage 18 modes/ray budgets do not fit the archive")
     cap = sim.cfg.capillary
-    screen = [cap.screen, *cap.screens][options["screen_index"]]
+    screen = cap.all_screens[options["screen_index"]]
     grid = _map_grid(screen, options["map_stride"])
     base = dict(archive=archive, options=options, budgets=budgets, grid=grid,
         cap=dict(z0=float(cap.z0), z1=float(cap.z1), bores=sim.cfg.raw["capillary"]["bores"]),
