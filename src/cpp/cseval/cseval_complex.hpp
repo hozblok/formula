@@ -263,8 +263,7 @@ the power derivative (log(0) of the base)");
       throw std::invalid_argument(
           "Division by zero during the computation of the arcsin derivative");
     }
-    // 1 - a^2 as (1 - a)(1 + a).
-    return ONE / (_sqrt(ONE - a) * _sqrt(ONE + a));
+    return ONE / _sqrt(one_minus_square(a));
   }
   // "cos"
   static Complex _cos(Complex a) { return cos(a); }
@@ -278,7 +277,7 @@ the power derivative (log(0) of the base)");
           "Division by zero during the computation of \
 the arccos derivative");
     }
-    return ZERO - (ONE / (_sqrt(ONE - a) * _sqrt(ONE + a)));
+    return ZERO - (ONE / _sqrt(one_minus_square(a)));
   }
   // "tan"
   static Complex _tan(Complex a) { return tan(a); }
@@ -294,10 +293,8 @@ the tangent derivative");
   // "atan"
   static Complex _atan(Complex a) { return atan(a); }
   // "atan" for the derivative
-  // 1 + a^2 as (a - i)(a + i).
   static Complex _atan_d(Complex a, Complex) {
-    Complex i("0.0", "1.0");
-    return ONE / ((a - i) * (a + i));
+    return ONE / one_plus_square(a);
   }
   // "exp"
   static Complex _exp(Complex a) { return exp(a); }
@@ -373,9 +370,7 @@ the sqrt derivative");
       throw std::invalid_argument(
           "Division by zero during the computation of the asinh derivative");
     }
-    // 1 + a^2 as (1 + ia)(1 - ia).
-    Complex ia = Complex("0.0", "1.0") * a;
-    return ONE / (_sqrt(ONE + ia) * _sqrt(ONE - ia));
+    return ONE / _sqrt(one_plus_square(a));
   }
   static Complex _acosh(Complex a) { return acosh(a); }
   static Complex _acosh_d(Complex a, Complex) {
@@ -383,8 +378,7 @@ the sqrt derivative");
       throw std::invalid_argument(
           "Division by zero during the computation of the acosh derivative");
     }
-    // On the branch of acosh: cut (-inf, 1).
-    return ONE / (_sqrt(a - ONE) * _sqrt(a + ONE));
+    return acosh_derivative(a);
   }
   static Complex _atanh(Complex a) { return atanh(a); }
   static Complex _atanh_d(Complex a, Complex) {
@@ -392,8 +386,7 @@ the sqrt derivative");
       throw std::invalid_argument(
           "Division by zero during the computation of the atanh derivative");
     }
-    // 1 - a^2 as (1 - a)(1 + a).
-    return ONE / ((ONE - a) * (ONE + a));
+    return ONE / one_minus_square(a);
   }
   //- trigonometric functions, exp, log, sqrt
 

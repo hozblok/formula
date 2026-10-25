@@ -33,3 +33,10 @@ def near(z, w, eps=Decimal("1e-50")):
 def rel_near(z, w, eps=Decimal("1e-55")):
     """Normwise relative: no floor at 1, so tiny values are compared too."""
     return max(abs(a - b) for a, b in zip(z, w)) <= eps * max(abs(v) for v in w)
+
+
+def componentwise_near(z, w, eps=Decimal("1e-55"), zero=Decimal("1e-400")):
+    """Each component relative to itself; components of w below zero * |w| count as 0."""
+    scale = max(abs(v) for v in w)
+    return all(abs(a - b) <= eps * (abs(b) if abs(b) > zero * scale else scale)
+               for a, b in zip(z, w))
