@@ -5,6 +5,7 @@
 #include <string>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 /**
  * Visitor to get string value after calculating the formula.
@@ -99,6 +100,30 @@ struct GetCalculatedDerivativeStringVisitor
     return value.str(digits, format);
   }
   const std::string *variable;
+  const std::map<std::string, std::string> *variables_to_values;
+  std::streamsize digits;
+  std::ios_base::fmtflags format;
+  bool is_complex;
+  char imaginary_unit;
+};
+
+/** Visitor to calculate a mixed partial derivative of order 1..3. Same output
+ * shape as GetCalculatedStringVisitor. */
+struct GetCalculatedPartialDerivativeStringVisitor
+    : public boost::static_visitor<std::string> {
+  template <typename T>
+  std::string operator()(const T &eval) const {
+    auto value =
+        eval->calculate_partial_derivative(*variables, *variables_to_values);
+    if (is_complex) {
+      std::string real_part = value.real().str(digits, format);
+      std::string imag_part = value.imag().str(digits, format);
+      return real_part + "+" + std::string(1, imaginary_unit) + "*(" +
+             imag_part + ")";
+    }
+    return value.str(digits, format);
+  }
+  const std::vector<std::string> *variables;
   const std::map<std::string, std::string> *variables_to_values;
   std::streamsize digits;
   std::ios_base::fmtflags format;

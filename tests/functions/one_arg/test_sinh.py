@@ -1,6 +1,7 @@
 """Tests for sinh() (hyperbolic sine)."""
 
 from formula import Formula, Solver
+from tests.derivatives import first_derivative
 
 
 def test_sinh_zero():
@@ -15,7 +16,7 @@ def test_sinh_one_inverse():
 
 def test_sinh_derivative_is_cosh():
     # d(sinh x)/dx = cosh x; at x=0 → cosh(0) = 1.
-    assert Solver("sinh(x)").get_derivative("x", {"x": "0"}) == "1"
+    assert first_derivative(Solver("sinh(x)"), "x", {"x": "0"}) == "1"
 
 
 def test_sinh_is_odd():
