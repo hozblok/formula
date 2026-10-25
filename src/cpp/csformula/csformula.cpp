@@ -159,7 +159,7 @@ std::string Formula::get_partial_derivative(
     const std::vector<std::string> &variables,
     const std::map<std::string, std::string> &variables_to_values,
     std::streamsize digits, std::ios_base::fmtflags format) const {
-  auto visitor = GetCalculatedPartialDerivativeStringVisitor();
+  auto visitor = GetCalculatedDerivativeStringVisitor();
   visitor.variables = &variables;
   visitor.variables_to_values = &variables_to_values;
   visitor.digits = digits;

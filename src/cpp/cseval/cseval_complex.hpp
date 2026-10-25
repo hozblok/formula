@@ -263,7 +263,8 @@ the power derivative (log(0) of the base)");
       throw std::invalid_argument(
           "Division by zero during the computation of the arcsin derivative");
     }
-    return ONE / _sqrt(ONE - a * a);
+    // 1 - a^2 as (1 - a)(1 + a).
+    return ONE / (_sqrt(ONE - a) * _sqrt(ONE + a));
   }
   // "cos"
   static Complex _cos(Complex a) { return cos(a); }
@@ -277,7 +278,7 @@ the power derivative (log(0) of the base)");
           "Division by zero during the computation of \
 the arccos derivative");
     }
-    return ZERO - (ONE / _sqrt(ONE - a * a));
+    return ZERO - (ONE / (_sqrt(ONE - a) * _sqrt(ONE + a)));
   }
   // "tan"
   static Complex _tan(Complex a) { return tan(a); }
@@ -293,7 +294,11 @@ the tangent derivative");
   // "atan"
   static Complex _atan(Complex a) { return atan(a); }
   // "atan" for the derivative
-  static Complex _atan_d(Complex a, Complex) { return ONE / (ONE + a * a); }
+  // By the simple poles +-i: (1/(a - i) - 1/(a + i)) / (2i).
+  static Complex _atan_d(Complex a, Complex) {
+    Complex i("0.0", "1.0"), half_over_i("0.0", "-0.5");
+    return (ONE / (a - i) - ONE / (a + i)) * half_over_i;
+  }
   // "exp"
   static Complex _exp(Complex a) { return exp(a); }
   // "exp" for the derivative
@@ -368,7 +373,9 @@ the sqrt derivative");
       throw std::invalid_argument(
           "Division by zero during the computation of the asinh derivative");
     }
-    return ONE / _sqrt(ONE + a * a);
+    // 1 + a^2 as (1 + ia)(1 - ia).
+    Complex ia = Complex("0.0", "1.0") * a;
+    return ONE / (_sqrt(ONE + ia) * _sqrt(ONE - ia));
   }
   static Complex _acosh(Complex a) { return acosh(a); }
   static Complex _acosh_d(Complex a, Complex) {
@@ -385,7 +392,8 @@ the sqrt derivative");
       throw std::invalid_argument(
           "Division by zero during the computation of the atanh derivative");
     }
-    return ONE / (ONE - a * a);
+    // By the simple poles +-1.
+    return (ONE / (ONE - a) + ONE / (ONE + a)) / 2;
   }
   //- trigonometric functions, exp, log, sqrt
 

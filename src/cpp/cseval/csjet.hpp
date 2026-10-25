@@ -1,10 +1,16 @@
 #ifndef CSJET_H
 #define CSJET_H
 
+#include <boost/multiprecision/number.hpp>
 #include <cstdint>
 #include <vector>
 
 constexpr unsigned kMaxDerivativeOrder = 5;
+
+template <typename T>
+constexpr bool is_complex_number =
+    boost::multiprecision::number_category<T>::value ==
+    boost::multiprecision::number_kind_complex;
 
 // Truncated Taylor number in nilpotent e1..eN (ek^2 = 0): c[m] is the
 // coefficient at the product of the e with bits in m (c[0] value).
@@ -274,17 +280,42 @@ std::vector<T> d_tanh(const T &a, unsigned n) {
   return d_tan_like(tanh(a), T(1) / (c * c), -1, n);
 }
 
-// atan' = 1/(1 + u^2), atanh' = 1/(1 - u^2) at u = a + t.
+// Real: atan' = 1/(1 + u^2) at u = a + t. Complex, by the simple poles +-i:
+// atan^(k)(a) = (-1)^(k-1) (k-1)! / (2i) * ((a - i)^-k - (a + i)^-k).
 template <typename T>
 std::vector<T> d_atan(const T &a, unsigned n) {
-  std::vector<T> s = {1 + a * a, 2 * a, T(1)};
-  return from_derivative_series(atan(a), taylor_div({T(1)}, s, n - 1));
+  if constexpr (is_complex_number<T>) {
+    T i("0.0", "1.0"), half_over_i("0.0", "-0.5");
+    T p = T(1) / (a - i), q = T(1) / (a + i), pk = p, qk = q, c(1);
+    std::vector<T> d(n + 1);
+    d[0] = atan(a);
+    for (unsigned k = 1; k <= n; ++k) {
+      d[k] = c * ((pk - qk) * half_over_i);
+      pk = pk * p;
+      qk = qk * q;
+      c = c * (-int(k));
+    }
+    return d;
+  } else {
+    std::vector<T> s = {1 + a * a, 2 * a, T(1)};
+    return from_derivative_series(atan(a), taylor_div({T(1)}, s, n - 1));
+  }
 }
 
+// By the simple poles +-1: atanh^(k)(a) = (k-1)!/2 * ((1 - a)^-k +
+// (-1)^(k-1) (1 + a)^-k).
 template <typename T>
 std::vector<T> d_atanh(const T &a, unsigned n) {
-  std::vector<T> s = {1 - a * a, -2 * a, T(-1)};
-  return from_derivative_series(atanh(a), taylor_div({T(1)}, s, n - 1));
+  T p = T(1) / (1 - a), q = T(1) / (1 + a), pk = p, qk = q, factorial(1);
+  std::vector<T> d(n + 1);
+  d[0] = atanh(a);
+  for (unsigned k = 1; k <= n; ++k) {
+    d[k] = factorial * (k % 2 ? pk + qk : pk - qk) / 2;
+    pk = pk * p;
+    qk = qk * q;
+    factorial = factorial * int(k);
+  }
+  return d;
 }
 
 // asin' = (1 - u^2)^(-1/2), asinh' = (1 + u^2)^(-1/2), acosh' = (u^2 -
@@ -295,10 +326,11 @@ std::vector<T> d_inverse_sqrt_like(const T &f0, const T &w0,
   return from_derivative_series(f0, taylor_pow(s, T(-1) / 2, w0, n - 1));
 }
 
+// 1 - a^2 as (1 - a)(1 + a).
 template <typename T>
 std::vector<T> d_asin(const T &a, unsigned n) {
-  std::vector<T> s = {1 - a * a, -2 * a, T(-1)};
-  return d_inverse_sqrt_like(asin(a), T(1) / sqrt(s[0]), s, n);
+  return d_inverse_sqrt_like(asin(a), T(1) / (sqrt(1 - a) * sqrt(1 + a)),
+                             {(1 - a) * (1 + a), -2 * a, T(-1)}, n);
 }
 
 template <typename T>
@@ -309,17 +341,25 @@ std::vector<T> d_acos(const T &a, unsigned n) {
   return d;
 }
 
+// Complex: 1 + a^2 as (1 + ia)(1 - ia).
 template <typename T>
 std::vector<T> d_asinh(const T &a, unsigned n) {
-  std::vector<T> s = {1 + a * a, 2 * a, T(1)};
-  return d_inverse_sqrt_like(asinh(a), T(1) / sqrt(s[0]), s, n);
+  if constexpr (is_complex_number<T>) {
+    T ia = T("0.0", "1.0") * a;
+    return d_inverse_sqrt_like(asinh(a), T(1) / (sqrt(1 + ia) * sqrt(1 - ia)),
+                               {(1 + ia) * (1 - ia), 2 * a, T(1)}, n);
+  } else {
+    std::vector<T> s = {1 + a * a, 2 * a, T(1)};
+    return d_inverse_sqrt_like(asinh(a), T(1) / sqrt(s[0]), s, n);
+  }
 }
 
-// acosh'(a) = 1/(sqrt(a - 1) sqrt(a + 1)), the branch with cut (-inf, 1).
+// acosh'(a) = 1/(sqrt(a - 1) sqrt(a + 1)), the branch with cut (-inf, 1);
+// a^2 - 1 as (a - 1)(a + 1).
 template <typename T>
 std::vector<T> d_acosh(const T &a, unsigned n) {
   return d_inverse_sqrt_like(acosh(a), T(1) / (sqrt(a - 1) * sqrt(a + 1)),
-                             {a * a - 1, 2 * a, T(1)}, n);
+                             {(a - 1) * (a + 1), 2 * a, T(1)}, n);
 }
 //- f^(k)(a) of the one-argument functions
 
