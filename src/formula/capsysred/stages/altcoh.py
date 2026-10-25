@@ -23,7 +23,7 @@ from typing import Sequence
 
 from ...formula import Number
 from ...xray import GlassMaterial
-from ..fresnel import FresnelAmplitude
+from ..fresnel import FresnelAmplitude, optical_constants
 from ..spectrum import SpectralLine
 from ..shared.physics_constants import FRESNEL_PROBE_THETA
 from ..shared.progress import Progress
@@ -38,10 +38,10 @@ class FloatLineAmplitudes:
     def __init__(self, material: GlassMaterial, lines: Sequence[SpectralLine],
                  precision: int):
         # (2*delta, 2*beta) per line: the root is sqrt(sin^2 - 2d + 2ib)
-        self.two_delta_beta: list[tuple[float, float]] = [
-            (2.0 * float(material.delta(l.e_kev, precision=precision)),
-             2.0 * float(material.beta(l.e_kev, precision=precision)))
-            for l in lines]
+        self.two_delta_beta: list[tuple[float, float]] = []
+        for line in lines:
+            delta, beta = optical_constants(material, line.e_kev, precision)
+            self.two_delta_beta.append((2.0 * delta, 2.0 * beta))
 
     def __call__(self, sins: Sequence[float]) -> list[complex]:
         out = []

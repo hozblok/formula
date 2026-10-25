@@ -35,7 +35,7 @@ from .source import aim_disk_direction, slope_direction
 from .spectrum import spectral_lines, wavelength_m
 from .surfaces import CapillaryBundle, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
-from .fresnel import FresnelAmplitude
+from .fresnel import FresnelAmplitude, optical_constants
 from . import rays_v3
 from .rays import (RNG_SCHEME, MultiRaysReader, RaysReader, geometry_core,
                    geometry_metadata, metadata_equal)
@@ -110,8 +110,7 @@ class Simulation:
         self.lam = wavelength_m(cfg.energy_kev)
         p = cfg.precision
         self.theta_c = float(cfg.material.critical_angle(cfg.energy_kev, precision=p))
-        self.delta_f = float(cfg.material.delta(cfg.energy_kev, precision=p))
-        self.beta_f = float(cfg.material.beta(cfg.energy_kev, precision=p))
+        self.delta_f, self.beta_f = optical_constants(cfg.material, cfg.energy_kev, p)
         self.report = []
         self.files = []
         self.results = {}   # stage name -> MC result dict (maps, stats, ...)
