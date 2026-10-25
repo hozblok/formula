@@ -23,6 +23,7 @@ from scipy import fft as sfft
 from scipy.special import fresnel
 
 from ... import __version__
+from ...physical_constants import HC_KEV_ANGSTROM
 from .. import render, rays_v3
 from ..fresnel import optical_constants
 from ..screen import ScreenGrid
@@ -959,7 +960,9 @@ def _emit_far_field(out_dir, far, lines, ff, wave):
     for (k, wl, *_), f in zip(lines, far):
         t, px, py, total, inside = f
         row = far_field_summary(t, px, py, total, inside)
-        row.update(k_per_m=float(k), e_kev=float(12.398419843 / (2.0e10 * np.pi / k)), weight=float(wl))
+        row.update(k_per_m=float(k),
+                   e_kev=float(float(HC_KEV_ANGSTROM) / (2.0e10 * np.pi / k)),
+                   weight=float(wl))
         rows.append(row)
         wx = wl * px if wx is None else wx + wl * px
         wy = wl * py if wy is None else wy + wl * py
