@@ -454,3 +454,14 @@ def test_acosh_on_the_segment_is_i_acos(x):
     at = {"x": x}
     for k in range(1, 6):
         assert rel_near(d("acosh(x+0*i)", "x" * k, at), d("i*acos(x)", "x" * k, at)), k
+
+
+@pytest.mark.parametrize("expr,names,expected", [
+    ("1e50000000*atan(x)", "xxxx", "-24"),
+    ("1e60000000*atan(x)", "xxxxx", "120"),
+    ("1e50000000*atanh(x+i)", "xxxx", "24"),
+])
+def test_atan_atanh_where_the_power_of_the_denominator_overflows(expr, names, expected):
+    # x = 1e10000000: (1 + x^2)^4 = 1e80000000 is beyond the exponent range,
+    # the result k!/x^(k+1) is not.
+    assert rel_near(d(expr, names, {"x": "1e10000000"}), (Decimal(expected), Decimal(0)))

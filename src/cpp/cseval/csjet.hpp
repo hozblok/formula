@@ -308,16 +308,17 @@ T acosh_derivative(const T &a) {
   return T(1) / p;
 }
 
-// d[k] = sign^(k-1) (k-1)! m[k] / s^k for k = 1..n <= 5.
+// d[k] = sign^(k-1) (k-1)! m[k] / s^k for k = 1..n <= 5, dividing by s k
+// times.
 template <typename T>
 std::vector<T> from_numerators(const T &f0, const T (&m)[6], const T &s,
                                int sign, unsigned n) {
   std::vector<T> d(n + 1);
   d[0] = f0;
-  T sk = s, c(1);
+  T c(1);
   for (unsigned k = 1; k <= n; ++k) {
-    d[k] = c * m[k] / sk;
-    sk = sk * s;
+    d[k] = c * m[k];
+    for (unsigned j = 0; j < k; ++j) d[k] = d[k] / s;
     c = c * (sign * int(k));
   }
   return d;
