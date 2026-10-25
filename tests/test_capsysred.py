@@ -3611,7 +3611,7 @@ def _oracle_maps(sim, archive, scene, src_cfg, scr_cfg, optic, extra_screens=())
     jackknife) over the same records: the migration reference."""
     from formula.capsysred.rays import RaysReader
     from formula.capsysred.screen import ScreenGrid
-    from formula.capsysred.stages.altcoh import FloatLineAmplitudes
+    from formula.capsysred.fresnel import FloatLineAmplitudes
     from formula.capsysred.stages.beamlet import (BeamletField, _reference_pixel,
                                                    recorded_plane)
     cfg = sim.cfg
