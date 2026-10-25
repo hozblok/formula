@@ -294,10 +294,10 @@ the tangent derivative");
   // "atan"
   static Complex _atan(Complex a) { return atan(a); }
   // "atan" for the derivative
-  // By the simple poles +-i: (1/(a - i) - 1/(a + i)) / (2i).
+  // 1 + a^2 as (a - i)(a + i).
   static Complex _atan_d(Complex a, Complex) {
-    Complex i("0.0", "1.0"), half_over_i("0.0", "-0.5");
-    return (ONE / (a - i) - ONE / (a + i)) * half_over_i;
+    Complex i("0.0", "1.0");
+    return ONE / ((a - i) * (a + i));
   }
   // "exp"
   static Complex _exp(Complex a) { return exp(a); }
@@ -392,8 +392,8 @@ the sqrt derivative");
       throw std::invalid_argument(
           "Division by zero during the computation of the atanh derivative");
     }
-    // By the simple poles +-1.
-    return (ONE / (ONE - a) + ONE / (ONE + a)) / 2;
+    // 1 - a^2 as (1 - a)(1 + a).
+    return ONE / ((ONE - a) * (ONE + a));
   }
   //- trigonometric functions, exp, log, sqrt
 

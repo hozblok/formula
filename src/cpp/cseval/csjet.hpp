@@ -280,42 +280,58 @@ std::vector<T> d_tanh(const T &a, unsigned n) {
   return d_tan_like(tanh(a), T(1) / (c * c), -1, n);
 }
 
-// Real: atan' = 1/(1 + u^2) at u = a + t. Complex, by the simple poles +-i:
-// atan^(k)(a) = (-1)^(k-1) (k-1)! / (2i) * ((a - i)^-k - (a + i)^-k).
+// One of the poles p1, p2 at least twice nearer to a than the other.
+template <typename T>
+bool near_one_pole(const T &a, const T &p1, const T &p2) {
+  auto d1 = abs(a - p1), d2 = abs(a - p2);
+  return 2 * d1 < d2 || 2 * d2 < d1;
+}
+
+// atan' = 1/((u - i)(u + i)) at u = a + t; complex next to one pole by the
+// simple poles: atan^(k)(a) = (-1)^(k-1) (k-1)!/(2i) ((a - i)^-k - (a + i)^-k).
 template <typename T>
 std::vector<T> d_atan(const T &a, unsigned n) {
   if constexpr (is_complex_number<T>) {
-    T i("0.0", "1.0"), half_over_i("0.0", "-0.5");
-    T p = T(1) / (a - i), q = T(1) / (a + i), pk = p, qk = q, c(1);
-    std::vector<T> d(n + 1);
-    d[0] = atan(a);
-    for (unsigned k = 1; k <= n; ++k) {
-      d[k] = c * ((pk - qk) * half_over_i);
-      pk = pk * p;
-      qk = qk * q;
-      c = c * (-int(k));
+    T i("0.0", "1.0");
+    if (near_one_pole(a, i, -i)) {
+      T half_over_i("0.0", "-0.5");
+      T p = T(1) / (a - i), q = T(1) / (a + i), pk = p, qk = q, c(1);
+      std::vector<T> d(n + 1);
+      d[0] = atan(a);
+      for (unsigned k = 1; k <= n; ++k) {
+        d[k] = c * ((pk - qk) * half_over_i);
+        pk = pk * p;
+        qk = qk * q;
+        c = c * (-int(k));
+      }
+      return d;
     }
-    return d;
+    std::vector<T> s = {(a - i) * (a + i), 2 * a, T(1)};
+    return from_derivative_series(atan(a), taylor_div({T(1)}, s, n - 1));
   } else {
     std::vector<T> s = {1 + a * a, 2 * a, T(1)};
     return from_derivative_series(atan(a), taylor_div({T(1)}, s, n - 1));
   }
 }
 
-// By the simple poles +-1: atanh^(k)(a) = (k-1)!/2 * ((1 - a)^-k +
-// (-1)^(k-1) (1 + a)^-k).
+// atanh' = 1/((1 - u)(1 + u)) at u = a + t; next to one pole by the simple
+// poles: atanh^(k)(a) = (k-1)!/2 ((1 - a)^-k + (-1)^(k-1) (1 + a)^-k).
 template <typename T>
 std::vector<T> d_atanh(const T &a, unsigned n) {
-  T p = T(1) / (1 - a), q = T(1) / (1 + a), pk = p, qk = q, factorial(1);
-  std::vector<T> d(n + 1);
-  d[0] = atanh(a);
-  for (unsigned k = 1; k <= n; ++k) {
-    d[k] = factorial * (k % 2 ? pk + qk : pk - qk) / 2;
-    pk = pk * p;
-    qk = qk * q;
-    factorial = factorial * int(k);
+  if (near_one_pole(a, T(1), T(-1))) {
+    T p = T(1) / (1 - a), q = T(1) / (1 + a), pk = p, qk = q, factorial(1);
+    std::vector<T> d(n + 1);
+    d[0] = atanh(a);
+    for (unsigned k = 1; k <= n; ++k) {
+      d[k] = factorial * (k % 2 ? pk + qk : pk - qk) / 2;
+      pk = pk * p;
+      qk = qk * q;
+      factorial = factorial * int(k);
+    }
+    return d;
   }
-  return d;
+  std::vector<T> s = {(1 - a) * (1 + a), -2 * a, T(-1)};
+  return from_derivative_series(atanh(a), taylor_div({T(1)}, s, n - 1));
 }
 
 // asin' = (1 - u^2)^(-1/2), asinh' = (1 + u^2)^(-1/2), acosh' = (u^2 -
