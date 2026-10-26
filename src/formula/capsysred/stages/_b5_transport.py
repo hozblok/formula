@@ -4,6 +4,10 @@ import math
 
 import numpy as np
 
+from ..walls.wall_cylinder import CylinderWall
+from ..walls.wall_polygon import PolygonWall
+from ..walls.wall_torus import TorusWall
+
 
 def _det2(a):
     return a[..., 0, 0]*a[..., 1, 1]-a[..., 0, 1]*a[..., 1, 0]
@@ -151,13 +155,10 @@ def wall_normal_derivative(points, bore, z0):
         faces = polygon_faces(bore)
         dots = (points[..., :2] - center) @ faces.T
         k = np.argmax(dots - polygon_apothems(bore), axis=-1)
-        n2 = faces[k] * np.take_along_axis(dots, k[..., None], -1)    # |raw| = distance to the hit face
-        raw = np.concatenate([n2, np.zeros_like(n2[..., :1])], axis=-1)
-        hessian = np.zeros((*points.shape[:-1], 3, 3))                 # flat face: constant normal
+        scale = np.take_along_axis(dots, k[..., None], -1)[..., 0]
+        grad, hess = PolygonWall.gradient_hessian(faces[k, 0], faces[k, 1], scale)
     elif bore.get("kind", "cylinder") == "cylinder" and not bore.get("bend"):
-        raw = points-np.r_[center, 0.]
-        raw[..., 2] = 0
-        hessian = np.broadcast_to(np.diag([1., 1., 0.]), (*points.shape[:-1], 3, 3))
+        grad, hess = CylinderWall.gradient_hessian(points[..., 0] - center[0], points[..., 1] - center[1])
     elif bore.get("kind") == "torus" or bore.get("bend"):
         bend = bore["bend"]
         radius = float(bend["radius"])
@@ -171,13 +172,20 @@ def wall_normal_derivative(points, bore, z0):
         dr = (-2*radius*xi+xi*xi+zeta*zeta)/(rho+radius)
         radial = (xi-radius)[..., None]*tangent
         radial[..., 2] = zeta
-        radial /= rho[..., None]
-        rr = radial[..., :, None]*radial[..., None, :]
-        ring_plane = np.outer(tangent, tangent)+np.diag([0., 0., 1.])
-        hessian = rr+(dr/rho)[..., None, None]*(ring_plane-rr)+np.outer(binormal, binormal)
-        raw = dr[..., None]*radial+eta[..., None]*binormal
+        grad, hess = TorusWall.gradient_hessian(
+            radial[..., 0], radial[..., 1], radial[..., 2], eta,
+            binormal[0], binormal[1], rho, dr / rho)
     else:
         raise ValueError("B5 transport supports cylinder, torus and polygon walls only")
+    raw = np.empty_like(points)
+    raw[..., 0], raw[..., 1], raw[..., 2] = grad
+    hxx, hxy, hxz, hyy, hyz, hzz = hess
+    shape = np.broadcast_shapes(*(np.shape(value) for value in hess))
+    hessian = np.empty((*shape, 3, 3))
+    hessian[..., 0, 0], hessian[..., 1, 1], hessian[..., 2, 2] = hxx, hyy, hzz
+    hessian[..., 0, 1] = hessian[..., 1, 0] = hxy
+    hessian[..., 0, 2] = hessian[..., 2, 0] = hxz
+    hessian[..., 1, 2] = hessian[..., 2, 1] = hyz
     length = np.linalg.norm(raw, axis=-1)
     normal = raw/length[..., None]
     projector = eye-normal[..., :, None]*normal[..., None, :]

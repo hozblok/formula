@@ -12,6 +12,11 @@ from ..shared.units import m_to_um
 
 
 class CylinderWall:
+    @staticmethod
+    def gradient_hessian(x, y):
+        """Local gradient and Hessian (xx, xy, xz, yy, yz, zz)."""
+        return (x, y, 0.0), (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
     def __init__(self, center: tuple[Number, Number], radius: Number,
                  eps: float = 1e-30):
         self.kind, self.center, self.radius = "cylinder", center, radius
