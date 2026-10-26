@@ -4,9 +4,9 @@ import math
 
 import numpy as np
 
-from ..walls.wall_cylinder import CylinderWall
-from ..walls.wall_polygon import PolygonWall
-from ..walls.wall_torus import TorusWall
+from ...formula import Number
+from ..config import _bore
+from ..surfaces import _make_wall
 
 
 def _det2(a):
@@ -146,37 +146,31 @@ def bore_area(bore):
     return math.pi * radius * radius
 
 
-def wall_normal_derivative(points, bore, z0):
-    """Outward unit normal and its Cartesian derivative for a circular, torus or polygon bore."""
-    points = np.asarray(points, dtype=float)
-    center = np.asarray(bore["center"], dtype=float)
-    eye = np.eye(3)
-    if is_polygon(bore):
-        faces = polygon_faces(bore)
-        dots = (points[..., :2] - center) @ faces.T
-        k = np.argmax(dots - polygon_apothems(bore), axis=-1)
-        scale = np.take_along_axis(dots, k[..., None], -1)[..., 0]
-        grad, hess = PolygonWall.gradient_hessian(faces[k, 0], faces[k, 1], scale)
-    elif bore.get("kind", "cylinder") == "cylinder" and not bore.get("bend"):
-        grad, hess = CylinderWall.gradient_hessian(points[..., 0] - center[0], points[..., 1] - center[1])
-    elif bore.get("kind") == "torus" or bore.get("bend"):
-        bend = bore["bend"]
-        radius = float(bend["radius"])
-        toward = np.asarray(bend["toward"], dtype=float)
-        toward /= np.linalg.norm(toward)
-        tangent = np.r_[toward, 0.]
-        binormal = np.array([-toward[1], toward[0], 0.])
-        local = points-np.r_[center, float(z0)]
-        xi, eta, zeta = local@tangent, local@binormal, local[..., 2]
-        rho = np.hypot(radius-xi, zeta)
-        dr = (-2*radius*xi+xi*xi+zeta*zeta)/(rho+radius)
-        radial = (xi-radius)[..., None]*tangent
-        radial[..., 2] = zeta
-        grad, hess = TorusWall.gradient_hessian(
-            radial[..., 0], radial[..., 1], radial[..., 2], eta,
-            binormal[0], binormal[1], rho, dr / rho)
-    else:
+def _transport_wall(bore, z0):
+    """Adapt typed configs and legacy float bore dictionaries to wall objects."""
+    if not (is_polygon(bore) or bore.get("bend") or bore.get("kind", "cylinder") == "cylinder"):
         raise ValueError("B5 transport supports cylinder, torus and polygon walls only")
+    precision = getattr(bore["center"][0], "precision", 32)
+    spec = _bore(bore, precision, 0)
+    if is_polygon(bore) and bore.get("rotation") is not None:
+        spec["rotation"] = Number(str(bore["rotation"]), precision)
+    return _make_wall(spec, Number(str(z0), precision))
+
+
+def wall_normal_derivative(points, bore, z0=None):
+    """Normal, Cartesian derivative and distance diagnostic for supported walls.
+    Accept a wall object, or a legacy bore dictionary with z0.
+    """
+    points = np.asarray(points, dtype=float)
+    eye = np.eye(3)
+    wall = _transport_wall(bore, z0) if isinstance(bore, dict) else bore
+    if wall.kind not in ("cylinder", "torus", "polygon"):
+        raise ValueError("B5 transport supports cylinder, torus and polygon walls only")
+    grad, hess = wall.derivatives_at(points[..., 0], points[..., 1], points[..., 2])
+    if wall.kind == "polygon":
+        # Preserve the archived face-distance diagnostic.
+        scale = (points[..., 0] - wall._cxf) * grad[0] + (points[..., 1] - wall._cyf) * grad[1]
+        grad = tuple(scale * value for value in grad)
     raw = np.empty_like(points)
     raw[..., 0], raw[..., 1], raw[..., 2] = grad
     hxx, hxy, hxz, hyy, hyz, hzz = hess
@@ -242,6 +236,7 @@ def transport_mode(mode, cap, target_z, gamma_ref=1.0):
     wall_error = np.zeros(count)
     grazing = np.full(count, np.inf)
     for bore_index, bore in enumerate(cap.bores):
+        wall = None
         for nref in np.unique(refs[bore_ids == bore_index]):
             ids = np.flatnonzero((bore_ids == bore_index) & (refs == nref))
             u = initial[ids].copy()
@@ -266,7 +261,9 @@ def transport_mode(mode, cap, target_z, gamma_ref=1.0):
                 position_error[ids] = np.maximum(position_error[ids], np.linalg.norm(reached-destination, axis=1))
                 r = r+flight[:, None, None]*du
                 if j < nref:
-                    normal, dn, wall_distance = wall_normal_derivative(destination, bore, cap.z0)
+                    if wall is None:
+                        wall = _transport_wall(bore, cap.z0)
+                    normal, dn, wall_distance = wall_normal_derivative(destination, wall)
                     wall_error[ids] = np.maximum(wall_error[ids], np.abs(wall_distance-float(bore["radius"])))
                     grazing[ids] = np.minimum(grazing[ids], np.abs(np.sum(u*normal, axis=1)))
                     mirror = _mirror(normal)

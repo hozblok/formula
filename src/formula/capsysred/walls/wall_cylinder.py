@@ -31,6 +31,10 @@ class CylinderWall:
                         f"-({self._a2 * um * um})")
         self.probe_xy = (1.0, 0.0)
 
+    def derivatives_at(self, x, y, z):
+        """World-metre derivatives; Hessian order: xx, xy, xz, yy, yz, zz."""
+        return self.gradient_hessian(x - self._cxf, y - self._cyf)
+
     def inside(self, xf: float, yf: float, zf: float) -> bool:
         dx, dy = xf - self._cxf, yf - self._cyf
         return dx * dx + dy * dy < self._a2f * (1.0 + _INSIDE_TOL)

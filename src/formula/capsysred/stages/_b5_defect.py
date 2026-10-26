@@ -45,7 +45,7 @@ import time
 import numpy as np
 
 from .. import rays_v3
-from ._b5_transport import count_free_caustics, reflect_variations, wall_normal_derivative
+from ._b5_transport import _transport_wall, count_free_caustics, reflect_variations, wall_normal_derivative
 from . import bound_modal
 from .beamlet import _screen_spec
 from .beamlet_defect import _channel, _disc, _shape, _stretch, bore_area, bound_eta, bound_mask, uniform_mask, wall_distance
@@ -138,6 +138,7 @@ def build_segments(rows, origin, z_rec, bores, z0_cap, k, fresnel):
     count = sum(len(r[6]) + 1 for r in rows)
     seg = Segments(count)
     source = np.asarray(origin, float)
+    walls = {}
     i = 0
     for ray, (x, y, dx, dy, opl, sins, refl) in enumerate(rows):
         dz = math.sqrt(max(1.0 - dx * dx - dy * dy, 0.0))
@@ -170,7 +171,9 @@ def build_segments(rows, origin, z_rec, bores, z0_cap, k, fresnel):
             r = r + flight * du
             path += flight
             if j < n_seg - 1:
-                normal, dn, wall_distance = wall_normal_derivative(pb[None], bores[bore], z0_cap)
+                if bore not in walls:
+                    walls[bore] = _transport_wall(bores[bore], z0_cap)
+                normal, dn, wall_distance = wall_normal_derivative(pb[None], walls[bore])
                 ok &= bool(abs(wall_distance[0] - radii[bore]) < 1e-9)
                 with np.errstate(divide="ignore", invalid="ignore"):
                     u2, r2, du2 = reflect_variations(u[None], r[None], du[None], normal, dn)

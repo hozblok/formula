@@ -75,6 +75,11 @@ class FunnelWall:
                         f"+(y-({center[1] * um})*{G})^2"
                         f"-({r0 * um})^2*{F}^2")
 
+    def derivatives_at(self, x, y, z):
+        """World-metre derivatives; Hessian order: xx, xy, xz, yy, yz, zz."""
+        return self.gradient_hessian(x, y, z - self._z0f, self._cxf, self._cyf,
+                                     self._r0f, self._agf, self._bgf, self._aff, self._bff)
+
     def _gf(self, zrf):
         gg = 1.0 + zrf * (self._agf + zrf * self._bgf)
         ff = 1.0 + zrf * (self._aff + zrf * self._bff)

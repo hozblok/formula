@@ -177,6 +177,8 @@ class TorusWall:
         self._Cf = tuple(float(c) for c in self.C)
         self._nf = (float(self.nhat[0]), float(self.nhat[1]))
         self._Rf, self._af = float(R), float(a)
+        self._cxf, self._cyf, self._z0f = float(center[0]), float(center[1]), float(z0)
+        self._tf = (float(ux), float(uy))
         # float rho-R cancellation noise grows with R: widen the on-wall slack
         self._in2 = (self._af * self._af * (1.0 + _INSIDE_TOL)
                      + 64.0 * 2.2e-16 * self._Rf * self._af)
@@ -187,6 +189,17 @@ class TorusWall:
         self.expr_um = (f"({w2}+({self.K * um * um}))^2"
                         f"-({self.fourR2 * um * um})*({w2}-{s}^2)")
         self.probe_xy = (float(ux), float(uy))
+
+    def derivatives_at(self, x, y, z):
+        """World-metre derivatives using entrance coordinates and stable rho-R."""
+        dx, dy, zr = x - self._cxf, y - self._cyf, z - self._z0f
+        tx, ty = self._tf
+        nx, ny = self._nf
+        xi, eta = dx * tx + dy * ty, dx * nx + dy * ny
+        rho = ((self._Rf - xi) ** 2 + zr * zr) ** 0.5
+        dr = (-2 * self._Rf * xi + xi * xi + zr * zr) / (rho + self._Rf)
+        return self.gradient_hessian((xi - self._Rf) * tx, (xi - self._Rf) * ty,
+                                     zr, eta, nx, ny, rho, dr / rho)
 
     def inside(self, xf, yf, zf):
         wx, wy, wz = xf - self._Cf[0], yf - self._Cf[1], zf - self._Cf[2]
