@@ -1,1 +1,1 @@
-"""Coherence estimators and validation, one module per stage."""
+"""Stage estimators in subpackages, with shared numerical helpers here."""

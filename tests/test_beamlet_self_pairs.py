@@ -12,7 +12,7 @@ from formula.capsysred.native import make_beamlet_grid
 from formula.capsysred.screen import ScreenGrid
 from formula.capsysred.shared.types import RayRecord
 from formula.capsysred.spectrum import spectral_lines
-from formula.capsysred.stages.beamlet import BeamletField, _stage11_contract
+from formula.capsysred.stages.beamlets.beamlet import BeamletField, _stage11_contract
 from formula.formula import Number
 
 from tests.test_capsysred import TINY, _record
