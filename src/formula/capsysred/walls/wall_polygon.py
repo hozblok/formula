@@ -58,6 +58,19 @@ class PolygonWall:
                         f"+(y-({center[1] * um}))*({m0y})-({self.apothem * um})")
         self.probe_xy = self._facesf[0]
 
+    def derivatives_at(self, x, y, z):
+        """Selected face's derivatives in world metres; ties retain the first face."""
+        dx, dy = x - self._cxf, y - self._cyf
+        nx, ny = self._facesf[0]
+        best = nx * dx + ny * dy - self._afs[0]
+        for (mx, my), apothem in zip(self._facesf[1:], self._afs[1:]):
+            value = mx * dx + my * dy - apothem
+            select = value > best
+            keep = 1 - select
+            nx, ny = keep * nx + select * mx, keep * ny + select * my
+            best = keep * best + select * value
+        return self.gradient_hessian(nx, ny)
+
     def inside(self, xf, yf, zf):
         dx, dy = xf - self._cxf, yf - self._cyf
         return all(mx * dx + my * dy < af * (1.0 + _INSIDE_TOL)

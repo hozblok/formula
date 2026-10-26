@@ -32,6 +32,11 @@ class RevolutionWall:
                         f"-(({self.c0 * um * um})+({self.c1 * um})*z+({self.c2})*z^2)")
         self.probe_xy = (1.0, 0.0)
 
+    def derivatives_at(self, x, y, z):
+        """World-metre derivatives; Hessian order: xx, xy, xz, yy, yz, zz."""
+        return self.gradient_hessian(x - self._cxf, y - self._cyf, z,
+                                     self._c1f, self._c2f)
+
     def r2f(self, zf: float) -> float:
         return self._c0f + zf * (self._c1f + zf * self._c2f)
 
