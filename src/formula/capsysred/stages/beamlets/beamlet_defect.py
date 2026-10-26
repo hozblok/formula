@@ -29,7 +29,7 @@ masked.  An assumption, not a bound.  No certified bound is claimed: lifting the
 into a boundary layer gives a residual above the field norm even for the exact Dirichlet
 field at grazing incidence, so the defects are reported as indicators.
 
-Usage: python -m formula.capsysred.stages.beamlet_defect SCENE.yaml ARCHIVE -o OUT
+Usage: python -m formula.capsysred.stages.beamlets.beamlet_defect SCENE.yaml ARCHIVE -o OUT
          [--scan w0_um:waist_z,...] [--rays N] [--sections S] [--modes M] [--jobs J]
          [--glass] [--mask OUT11/mu-beamlet.jsonl]
 Rows: OUT/stage11-defect/modes.jsonl (one per launch and mode), defect.json (summary),
@@ -47,16 +47,27 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from .. import rays_v3
-from ..gamma import bounce_lenses, reflect
-from ..rays import recorded_screen_z
-from ..screen import ScreenGrid
-from ..shared.apertures import entrance_bore_ids
-from ..surfaces import CapillaryBundle
-from ..fresnel import FloatLineAmplitudes
-from .beamlet import _launch, _reference_pixel, _screen_spec
-from . import bound_modal
-from .wave_fb import Disc, FBChannel, mode_damping
+from ... import rays_v3
+from .gamma import bounce_lenses, reflect
+from ...rays import recorded_screen_z
+from ...screen import ScreenGrid
+from ...shared.apertures import entrance_bore_ids
+from ...surfaces import CapillaryBundle
+from ...fresnel import FloatLineAmplitudes
+from .beamlet import _launch, _reference_pixel
+from .._contracts import _screen_spec
+from .._defect_common import (
+    _channel,
+    _disc,
+    _shape,
+    _stretch,
+    bore_area,
+    bound_eta,
+    bound_mask,
+    uniform_mask,
+    wall_distance,
+)
+from .. import bound_modal
 
 RESULT_DIR = "stage11-defect"
 DEFAULTS = {"rays": 50000, "sections": 60, "ring_step": 0.5e-6, "window": 4.0,
@@ -275,34 +286,6 @@ def bore_axis(bore, z):
     return c
 
 
-def _shape(bore, a_w=None):
-    """(sides, rotation, apothem / radius per face) of a polygon bore, None for a circle; with
-    `a_w` the outline offset outward by a_w - radius (each face apothem + offset, over a_w)."""
-    sides = bore.get("sides")
-    if not sides:
-        return None
-    rot = bore.get("rotation")
-    rot = float(rot) if rot is not None else math.radians(float(bore.get("rotation_deg", 0.0)))
-    aps = bore.get("apothems")
-    if aps is None and a_w is None:
-        return int(sides), rot, np.ones(int(sides))
-    a = float(bore["radius"])
-    apothems = np.array([float(v) for v in aps]) if aps is not None else np.full(int(sides), a)
-    ratio = apothems / a if a_w is None else (apothems + (float(a_w) - a)) / float(a_w)
-    return int(sides), rot, ratio
-
-
-def _stretch(shape, phis):
-    """Radius factor of the bore outline at the angles phis: the nearest face plane along the
-    ray from the centre, r = min_k a_k / cos(phi - phi_k) over faces ahead; a circle 1."""
-    if shape is None:
-        return np.ones(phis.size)
-    n, rot, ratio = shape
-    cosr = np.cos(np.asarray(phis)[:, None] - (rot + 2.0 * math.pi * np.arange(n) / n)[None, :])
-    r = np.where(cosr > 1e-12, ratio[None, :] / np.maximum(cosr, 1e-12), np.inf)
-    return r.min(axis=1)
-
-
 def _normals(shape, phis):
     """Outward unit normal of the bore outline at the angles phis: radial for a circle,
     the face met first along the ray from the centre for a polygon; (n_x, n_y)."""
@@ -479,30 +462,6 @@ def exit_tails(seg, bores, a_w, z_exit, k, z_src, ring_step, window, outside=Fal
 
 
 # ------------------------------------------------------------------ modal bound
-_DISCS = {}
-
-
-def _disc(a_w, jmax):
-    key = (round(float(a_w), 15), float(jmax))
-    if key not in _DISCS:
-        _DISCS[key] = Disc(a_w, jmax)
-    return _DISCS[key]
-
-
-def _channel(bore, a_w, disc, k, fresnel=None):
-    """FBChannel of a bore; `fresnel` = (2 delta, 2 beta) adds the DIR-ell per-mode damping of
-    the fb wave (wave_fb.mode_damping), none = lossless Dirichlet."""
-    c0 = np.array([float(bore["center"][0]), float(bore["center"][1])])
-    gamma = None if fresnel is None else mode_damping(disc, k, 0.5 * fresnel[0], 0.5 * fresnel[1])
-    bend = bore.get("bend")
-    if not bend:
-        return FBChannel(c0, None, None, disc, k, gamma)
-    return FBChannel(c0, np.array([float(bend["toward"][0]), float(bend["toward"][1])]), float(bend["radius"]), disc, k, gamma)
-
-
-def bore_area(bores, a_w):
-    """Cross-section area of the modal domain per bore: pi a_w^2 (circle), 4 a_w^2 (square)."""
-    return sum(4.0 * a_w * a_w if _shape(b, a_w) is not None else math.pi * a_w * a_w for b in bores)
 
 
 def modal_bound(seg, bores, job, origin, t_full, e_in_dep=None):
@@ -605,21 +564,6 @@ def trace_sampling(seg, bores, chans, k, h, z0, kappa_cut=None, z_exit=None, nz=
                                         weights=cat(wt), weight_total=float(amp.sum() * len(offs) * nz), share_max=share_max)
 
 
-def wall_distance(shape, a_w, bx, by):
-    """Distance from points (bx, by) in the bore frame to the nearest wall point of the outline
-    (circle of radius a_w, or the polygon of apothem a_w through its faces; 0 outside) and the
-    unit normal towards that point."""
-    if shape is None:
-        r = np.hypot(bx, by)
-        rs = np.where(r > 0, r, 1.0)
-        return np.maximum(a_w - r, 0.0), np.where(r > 0, bx / rs, 1.0), np.where(r > 0, by / rs, 0.0)
-    n, rot, ratio = shape
-    ang = rot + 2.0 * math.pi * np.arange(n) / n
-    gap = a_w * ratio[None, :] - (bx[:, None] * np.cos(ang)[None, :] + by[:, None] * np.sin(ang)[None, :])
-    j = np.argmin(gap, axis=1)
-    return np.maximum(gap[np.arange(bx.size), j], 0.0), np.cos(ang)[j], np.sin(ang)[j]
-
-
 def beam_matrices(seg, idx, z, k):
     """At the plane z, per selected beam: G = -Im Q^-1 and R = Re Q^-1 [n, 2, 2], whether G is
     positive (a decaying beam) and the narrowest 1/e width sqrt(2 / (k lambda_max(G)))."""
@@ -686,7 +630,7 @@ def mode_job(job):
     t0 = time.time()
     archive, parts = job["archive"], job["parts"]
     origin, rows, fates, total = read_mode(archive, parts, job["rays"])
-    from ..simulation import Simulation
+    from ...simulation import Simulation
     sim = Simulation.from_dict(job["raw_cfg"])
     cap = sim.cfg.capillary
     bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
@@ -773,56 +717,6 @@ def index_screen_z(archive):
     if z is None:
         raise ValueError(f"{archive}: archive fingerprint does not specify the recorded screen z")
     return z
-
-
-def uniform_mask(intensity, lit, ref, eps, threshold):
-    """|d mu| <= 2 eta (1/sqrt(I) + 1/sqrt(I_ref)), eta^2 = eps^2 P / A_lit: the relative
-    field error eps spread uniformly over the lit cells; masked = not below threshold."""
-    I = np.asarray(intensity, float)
-    eta = eps * math.sqrt(float(np.sum(np.maximum(I, 0.0))) / max(int(np.sum(lit)), 1))
-    i_ref = float(I.flat[ref])
-    if not i_ref > 0.0:              # unlit or U-statistic-negative reference: nothing estimable
-        dmu = np.full(I.shape, np.inf)
-        return dmu, np.ones(I.shape, bool)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        dmu = 2.0 * eta * (1.0 / np.sqrt(np.where(I > 0, I, np.nan)) + 1.0 / math.sqrt(i_ref))
-    dmu = np.where(I > 0, dmu, np.inf)
-    return dmu, ~(dmu <= threshold)
-
-
-def bound_eta(bound, spec, z_exit, averaged=False):
-    """Field-error amplitude eta of a screen from the per-mode bounds B_s (deposit units):
-    beyond the exit (z_s > 0) the Fresnel kernel bounds the field uniformly,
-    |e(P)| <= k / (2 pi z_s) (sqrt|Omega| B_s ||E_in||_s + sqrt|A_out| ||E_dep||_out,s);
-    on the exit plane only the cell average, |<e>_cell| <= B_s ||E_in||_s / sqrt(A_cell), so a
-    map of point samples there gets (None, reason).  eta^2 = sum_s eps_s^2 (equal mode
-    weights, as the map's W and I)."""
-    z_s = float(spec["z"]) - z_exit
-    if z_s <= 0.0 and not averaged:
-        return None, "exit plane, point-sampled cells: the L2 bound gives no pointwise bound"
-    if z_s > 0.0:
-        pref = bound["k"] / (2.0 * math.pi * z_s)
-        eps = [pref * (math.sqrt(bound["area"]) * m["B"] * m["E_in_dep"] + math.sqrt(m["O_area"]) * math.sqrt(max(m["O_abs2"], 0.0)))
-               for m in bound["modes"]]
-        kind = "fresnel"
-    else:
-        a_cell = float(spec["edge_x"]) / spec["nx"] * float(spec["edge_y"]) / spec["ny"]
-        eps = [m["B"] * m["E_in_dep"] / math.sqrt(a_cell) for m in bound["modes"]]
-        kind = "cell"
-    return math.sqrt(sum(e * e for e in eps)), kind
-
-
-def bound_mask(intensity, ref, eta, threshold):
-    """|d mu| <= 2 eta (1 / sqrt(I) + 1 / sqrt(I_ref)) from a certified field-error amplitude
-    eta; cells with I <= 0 (and every cell when I_ref <= 0) are not estimable: masked."""
-    I = np.asarray(intensity, float)
-    i_ref = float(I.flat[ref])
-    if not i_ref > 0.0:
-        return np.full(I.shape, np.inf), np.ones(I.shape, bool)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        dmu = 2.0 * eta * (1.0 / np.sqrt(np.where(I > 0, I, np.nan)) + 1.0 / math.sqrt(i_ref))
-    dmu = np.where(I > 0, dmu, np.inf)
-    return dmu, ~(dmu <= threshold)
 
 
 def write_mask(cfg, rows_path, eps, threshold, path, bound=None):
@@ -1011,8 +905,8 @@ def main(argv=None):
     ap.add_argument("--bound-share", type=float, default=None,
                     help="largest trace-amplitude share of beams the sections may leave unresolved (certification)")
     args = ap.parse_args(argv)
-    from .. import load
-    from ..simulation import Simulation
+    from ... import load
+    from ...simulation import Simulation
     cfg = load(args.config)
     sim = Simulation(cfg)
     cfg.validate_beamlet()

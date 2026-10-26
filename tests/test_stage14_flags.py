@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-from formula.capsysred.stages.stage14_flags import (
+from formula.capsysred.stages.stage14.stage14_flags import (
     PIXEL_FLAGS,
     FlagThresholds,
     PixelCounters,

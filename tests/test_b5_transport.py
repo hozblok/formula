@@ -227,7 +227,7 @@ def test_polygon_normal_is_the_face_normal_with_zero_derivative():
 @pytest.mark.parametrize("rotation", [0., 37.])
 @pytest.mark.parametrize("offset_factor", [0., -.5, .5, -2., 2.])
 def test_unequal_polygon_apothems_validate_the_actual_hit_face(rotation, offset_factor):
-    from formula.capsysred.stages._b5_defect import build_segments
+    from formula.capsysred.stages.method_safe._b5_defect import build_segments
 
     angle = np.deg2rad(rotation)
     transform = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
@@ -327,7 +327,7 @@ def test_gamma_phase_shift_matches_dense_sampling():
 def test_continuous_phase_matches_maslov_branch_on_curved_walls():
     """Cylinder (up to 3 bounces) and a long torus (up to ~70 bounces and caustics): the
     continuous determinant argument gives the Maslov-branch prefactor for every width."""
-    from formula.capsysred.stages._b5_field import canonical_prefactor
+    from formula.capsysred.stages.method_safe._b5_field import canonical_prefactor
     source = np.array([.08, -.04, -2.])
     cylinder = SimpleNamespace(z0=0., bores=[{"center": [0., 0.], "radius": 1.}])
     torus = SimpleNamespace(z0=0., bores=[{"center": [0., 0.], "radius": 1., "kind": "torus",

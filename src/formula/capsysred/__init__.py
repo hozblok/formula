@@ -8,5 +8,6 @@ trace_v3 records rays; the stages consume the recording:
 
 from .config import Config, load
 from .simulation import KNOWN_STAGES, Simulation
+from .stages.beamlets import gamma
 
 __all__ = ["KNOWN_STAGES", "Config", "Simulation", "load"]
