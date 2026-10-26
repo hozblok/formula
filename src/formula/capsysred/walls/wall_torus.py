@@ -151,6 +151,17 @@ class TorusWall:
     """Torus segment leaving z0 along z and curving toward the unit
     xy-direction `toward` (ring center at z=z0)."""
 
+    @staticmethod
+    def gradient_hessian(qx, qy, qz, s, nx, ny, rho, ratio):
+        """q lies in the ring plane, (nx, ny, 0) is its unit normal; ratio=(rho-R)/rho."""
+        grad = (ratio * qx + s * nx, ratio * qy + s * ny, ratio * qz)
+        mx, my, mz = qx / rho, qy / rho, qz / rho
+        w = 1.0 - ratio
+        hess = (ratio + w * (mx * mx + nx * nx), w * (mx * my + nx * ny),
+                w * mx * mz, ratio + w * (my * my + ny * ny), w * my * mz,
+                ratio + w * mz * mz)
+        return grad, hess
+
     def __init__(self, center, a, R, toward, z0):
         self.kind = "torus"
         p = center[0].precision
