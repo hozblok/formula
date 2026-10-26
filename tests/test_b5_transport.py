@@ -1,8 +1,10 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from scipy.optimize import brentq
 
+from formula.capsysred.shared.types import _WALL_SURFACE_TOL_M
 from formula.capsysred.stages._b5_transport import (
     bore_area, bore_inside, count_free_caustics, det_path_increment, gamma_phase_shift, polygon_faces,
     reflect_variations, transport_mode, wall_normal_derivative,
@@ -220,6 +222,40 @@ def test_polygon_normal_is_the_face_normal_with_zero_derivative():
         np.testing.assert_allclose(length, 1., atol=1e-15)
     stacked = wall_normal_derivative(np.array([[1.5, .25, 1.], [.5, 1.25, 2.]]), {"center": [.5, .25], "radius": 1., "sides": 4}, 0.)
     np.testing.assert_allclose(stacked[0], [[1., 0., 0.], [0., 1., 0.]], atol=1e-15)
+
+
+@pytest.mark.parametrize("rotation", [0., 37.])
+@pytest.mark.parametrize("offset_factor", [0., -.5, .5, -2., 2.])
+def test_unequal_polygon_apothems_validate_the_actual_hit_face(rotation, offset_factor):
+    from formula.capsysred.stages._b5_defect import build_segments
+
+    angle = np.deg2rad(rotation)
+    transform = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
+    center = np.array([.3, -.4])
+    offset = offset_factor * _WALL_SURFACE_TOL_M
+    height = 2. + offset
+    hit = np.r_[center + transform @ np.array([.1 * height, height]), 2 * height - 1]
+    screen = center + transform @ np.array([.3, 2 * height - 3])
+    direction = np.array([.05, -.5, 1.])
+    direction /= np.linalg.norm(direction)
+    outgoing = transform @ direction[:2]
+    bore = {"center": center.tolist(), "radius": 1., "sides": 4, "rotation_deg": rotation,
+            "apothems": [1., 2., 1., 2.]}
+    origin = np.r_[center, -1.]
+    mode = {"origin": origin, "points": screen[None], "directions": outgoing[None],
+            "refl": [[hit.tolist()]]}
+    result = transport_mode(mode, SimpleNamespace(z0=0., bores=[bore]), 5.)
+    expected_valid = abs(offset) < _WALL_SURFACE_TOL_M
+    assert bool(result["valid"][0]) == expected_valid, result["diagnostics"]
+    assert bool(result["continuous_valid"][0]) == expected_valid
+    assert result["diagnostics"]["position_error_max_m"] < 2e-15
+    assert result["diagnostics"]["direction_error_max"] < 2e-15
+    assert result["diagnostics"]["wall_error_max_m"] == pytest.approx(abs(offset), abs=2e-15)
+
+    rows = [(screen[0], screen[1], outgoing[0], outgoing[1], 6 / direction[2],
+             [abs(direction[1])], [hit.tolist()])]
+    segments = build_segments(rows, origin, 5., [bore], 0., 1., (1e-6, 1e-8))
+    assert segments.valid.tolist() == [expected_valid, expected_valid]
 
 
 def test_square_bore_transport_matches_finite_differences_without_caustics():

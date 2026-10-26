@@ -190,16 +190,28 @@ class TorusWall:
                         f"-({self.fourR2 * um * um})*({w2}-{s}^2)")
         self.probe_xy = (float(ux), float(uy))
 
-    def derivatives_at(self, x, y, z):
-        """World-metre derivatives using entrance coordinates and stable rho-R."""
+    def _tube_coordinates_at(self, x, y, z):
+        """Entrance-frame coordinates, ring-plane radius and stable rho-R."""
         dx, dy, zr = x - self._cxf, y - self._cyf, z - self._z0f
         tx, ty = self._tf
         nx, ny = self._nf
         xi, eta = dx * tx + dy * ty, dx * nx + dy * ny
         rho = ((self._Rf - xi) ** 2 + zr * zr) ** 0.5
         dr = (-2 * self._Rf * xi + xi * xi + zr * zr) / (rho + self._Rf)
+        return xi, eta, zr, rho, dr
+
+    def derivatives_at(self, x, y, z):
+        """World-metre derivatives using entrance coordinates and stable rho-R."""
+        xi, eta, zr, rho, dr = self._tube_coordinates_at(x, y, z)
+        tx, ty = self._tf
+        nx, ny = self._nf
         return self.gradient_hessian((xi - self._Rf) * tx, (xi - self._Rf) * ty,
                                      zr, eta, nx, ny, rho, dr / rho)
+
+    def surface_error_at(self, x, y, z):
+        """Nonnegative tube-boundary residual in metres, scalar or batched."""
+        _, eta, _, _, dr = self._tube_coordinates_at(x, y, z)
+        return abs((dr * dr + eta * eta) ** 0.5 - self._af)
 
     def inside(self, xf, yf, zf):
         wx, wy, wz = xf - self._Cf[0], yf - self._Cf[1], zf - self._Cf[2]
