@@ -6,6 +6,10 @@ import numpy as np
 
 from ...formula import Number
 from ..config import _bore
+from ..shared.types import (
+    _FLOAT64_SCALE_FLOOR, _GRAZING_SIN_MIN, _LAGRANGIAN_DEFECT_TOL,
+    _RAY_DIRECTION_TOL, _RAY_POSITION_TOL_M, _WALL_SURFACE_TOL_M,
+)
 from ..surfaces import _make_wall
 
 
@@ -57,7 +61,9 @@ def det_path_increment(A, B, t=1.0):
     a, c = _det2(B), _det2(A)
     b = A[..., 0, 0]*B[..., 1, 1]+B[..., 0, 0]*A[..., 1, 1]-A[..., 0, 1]*B[..., 1, 0]-B[..., 0, 1]*A[..., 1, 0]
     t = np.broadcast_to(np.asarray(t, float), np.shape(c))
-    tol = 64*np.finfo(float).eps*np.maximum.reduce([np.abs(a)*t*t, np.abs(b)*t, np.abs(c), np.full(np.shape(c), 1e-300)])
+    scale = np.maximum.reduce([np.abs(a)*t*t, np.abs(b)*t, np.abs(c),
+                               np.full(np.shape(c), _FLOAT64_SCALE_FLOOR)])
+    tol = 64*np.finfo(float).eps*scale
     quadratic = np.abs(a)*t*t > tol
     linear = ~quadratic & (np.abs(b)*t > tol)
     out = np.zeros(np.shape(c))
@@ -158,7 +164,7 @@ def _transport_wall(bore, z0):
 
 
 def wall_normal_derivative(points, bore, z0=None):
-    """Normal, Cartesian derivative and distance diagnostic for supported walls.
+    """Normal, Cartesian derivative and gradient norm for supported walls.
     Accept a wall object, or a legacy bore dictionary with z0.
     """
     points = np.asarray(points, dtype=float)
@@ -167,10 +173,6 @@ def wall_normal_derivative(points, bore, z0=None):
     if wall.kind not in ("cylinder", "torus", "polygon"):
         raise ValueError("B5 transport supports cylinder, torus and polygon walls only")
     grad, hess = wall.derivatives_at(points[..., 0], points[..., 1], points[..., 2])
-    if wall.kind == "polygon":
-        # Preserve the archived face-distance diagnostic.
-        scale = (points[..., 0] - wall._cxf) * grad[0] + (points[..., 1] - wall._cyf) * grad[1]
-        grad = tuple(scale * value for value in grad)
     raw = np.empty_like(points)
     raw[..., 0], raw[..., 1], raw[..., 2] = grad
     hxx, hxy, hxz, hyy, hyz, hzz = hess
@@ -263,8 +265,9 @@ def transport_mode(mode, cap, target_z, gamma_ref=1.0):
                 if j < nref:
                     if wall is None:
                         wall = _transport_wall(bore, cap.z0)
-                    normal, dn, wall_distance = wall_normal_derivative(destination, wall)
-                    wall_error[ids] = np.maximum(wall_error[ids], np.abs(wall_distance-float(bore["radius"])))
+                    normal, dn, _ = wall_normal_derivative(destination, wall)
+                    error = wall.surface_error_at(destination[:, 0], destination[:, 1], destination[:, 2])
+                    wall_error[ids] = np.maximum(wall_error[ids], error)
                     grazing[ids] = np.minimum(grazing[ids], np.abs(np.sum(u*normal, axis=1)))
                     mirror = _mirror(normal)
                     q_in, p_in = mirror@_fixed_z(r, u), mirror@du[:, :2]
@@ -285,10 +288,17 @@ def transport_mode(mode, cap, target_z, gamma_ref=1.0):
             direction_error[ids] = np.linalg.norm(u[:, :2]-mode["directions"][ids], axis=1)
     product = np.einsum("nji,njk->nik", q_all, p_all)
     defect = np.linalg.norm(product-product.swapaxes(1, 2), axis=(1, 2))
-    defect /= np.maximum(np.linalg.norm(q_all, axis=(1, 2))*np.linalg.norm(p_all, axis=(1, 2)), 1e-300)
+    defect_scale = np.linalg.norm(q_all, axis=(1, 2))*np.linalg.norm(p_all, axis=(1, 2))
+    defect /= np.maximum(defect_scale, _FLOAT64_SCALE_FLOOR)
     finite = np.all(np.isfinite(q_all), axis=(1, 2)) & np.all(np.isfinite(p_all), axis=(1, 2))
-    valid &= finite & (direction_error < 1e-8) & (position_error < 1e-8)
-    valid &= (wall_error < 1e-9) & (grazing > 1e-10) & (defect < 1e-7)
+    valid &= (
+        finite
+        & (direction_error < _RAY_DIRECTION_TOL)
+        & (position_error < _RAY_POSITION_TOL_M)
+        & (wall_error < _WALL_SURFACE_TOL_M)
+        & (grazing > _GRAZING_SIN_MIN)
+        & (defect < _LAGRANGIAN_DEFECT_TOL)
+    )
     continuous_valid = valid & ~phase_hit
     valid &= ~endpoint
     diagnostics = {

@@ -26,6 +26,7 @@ class CylinderWall:
         self._p = center[0].precision
         self._cxf, self._cyf = float(center[0]), float(center[1])
         self._a2f = float(self._a2)
+        self._rf = float(radius)
         um = lift(m_to_um(1), self._p)
         self.expr_um = (f"(x-({center[0] * um}))^2+(y-({center[1] * um}))^2"
                         f"-({self._a2 * um * um})")
@@ -34,6 +35,11 @@ class CylinderWall:
     def derivatives_at(self, x, y, z):
         """World-metre derivatives; Hessian order: xx, xy, xz, yy, yz, zz."""
         return self.gradient_hessian(x - self._cxf, y - self._cyf)
+
+    def surface_error_at(self, x, y, z):
+        """Nonnegative boundary residual in metres, scalar or batched."""
+        dx, dy = x - self._cxf, y - self._cyf
+        return abs((dx * dx + dy * dy) ** 0.5 - self._rf)
 
     def inside(self, xf: float, yf: float, zf: float) -> bool:
         dx, dy = xf - self._cxf, yf - self._cyf
