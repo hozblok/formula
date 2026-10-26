@@ -13,6 +13,11 @@ from ..shared.units import m_to_um
 
 
 class RevolutionWall:
+    @staticmethod
+    def gradient_hessian(x, y, z, c1, c2):
+        """Gradient and Hessian (xx, xy, xz, yy, yz, zz); x, y are local."""
+        return (x, y, -0.5 * c1 - c2 * z), (1.0, 0.0, 0.0, 1.0, 0.0, -c2)
+
     def __init__(self, kind: str, center: tuple[Number, Number], r2: Vec3,
                  eps: float = 1e-30):
         # eps: zero threshold for the quadratic coefficients (degenerate -> linear/no hit)

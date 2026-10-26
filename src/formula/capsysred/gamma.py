@@ -21,6 +21,12 @@ adds no on-axis factor). For the scalar case it reduces to q0/q — the
 import cmath
 import math
 
+from .walls.wall_cylinder import CylinderWall
+from .walls.wall_funnel import FunnelWall
+from .walls.wall_polygon import PolygonWall
+from .walls.wall_revolution import RevolutionWall
+from .walls.wall_torus import TorusWall
+
 
 def inv2(m):
     xx, xy, yy = m
@@ -122,31 +128,18 @@ def _wall_lens(wall, x, y, z, out):
         cx, cy = wall._cxf, wall._cyf
         (mx, my), _ = max(zip(wall._facesf, wall._afs),
                           key=lambda f: f[0][0] * (x - cx) + f[0][1] * (y - cy) - f[1])
-        return (math.atan2(my, mx), 0.0, 0.0, 0.0)
+        grad, _ = PolygonWall.gradient_hessian(mx, my)
+        return (math.atan2(grad[1], grad[0]), 0.0, 0.0, 0.0)
     if kind == "cylinder":
-        grad = (x - wall._cxf, y - wall._cyf, 0.0)
-        hess = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+        grad, hess = CylinderWall.gradient_hessian(x - wall._cxf, y - wall._cyf)
     elif kind == "revolution":
-        grad = (x - wall._cxf, y - wall._cyf,
-                -0.5 * wall._c1f - wall._c2f * z)
-        hess = (1.0, 0.0, 0.0, 1.0, 0.0, -wall._c2f)
+        grad, hess = RevolutionWall.gradient_hessian(
+            x - wall._cxf, y - wall._cyf, z, wall._c1f, wall._c2f)
     elif kind == "funnel":
-        # F/2 = (U^2 + V^2 - r0^2 f^2)/2, (U, V) = (x, y) - center*g(z)
-        zr = z - wall._z0f
-        gg = 1.0 + zr * (wall._agf + zr * wall._bgf)
-        ff = 1.0 + zr * (wall._aff + zr * wall._bff)
-        gp = wall._agf + 2.0 * zr * wall._bgf
-        fp = wall._aff + 2.0 * zr * wall._bff
-        cx, cy, r02 = wall._cxf, wall._cyf, wall._r0f ** 2
-        uu, vv = x - cx * gg, y - cy * gg
-        cn = uu * cx + vv * cy
-        hzz = ((cx * cx + cy * cy) * gp * gp - 2.0 * cn * wall._bgf
-               - r02 * (fp * fp + 2.0 * ff * wall._bff))
-        grad = (uu, vv, -cn * gp - r02 * ff * fp)
-        hess = (1.0, 0.0, -cx * gp, 1.0, -cy * gp, hzz)
+        grad, hess = FunnelWall.gradient_hessian(
+            x, y, z - wall._z0f, wall._cxf, wall._cyf, wall._r0f,
+            wall._agf, wall._bgf, wall._aff, wall._bff)
     elif kind == "torus":
-        # F/2 = ((rho - R)^2 + s^2)/2, s along the ring plane normal n:
-        # Hessian r*I + (1 - r)*(m m^T + n n^T), m = q/rho, r = (rho - R)/rho
         cx3, cy3, cz3 = wall._Cf
         nx, ny = wall._nf
         vx, vy, vz = x - cx3, y - cy3, z - cz3
@@ -154,12 +147,7 @@ def _wall_lens(wall, x, y, z, out):
         qx, qy = vx - s * nx, vy - s * ny
         rho = math.sqrt(qx * qx + qy * qy + vz * vz)
         r = (rho - wall._Rf) / rho
-        grad = (r * qx + s * nx, r * qy + s * ny, r * vz)
-        mx, my, mz = qx / rho, qy / rho, vz / rho
-        w = 1.0 - r
-        hess = (r + w * (mx * mx + nx * nx), w * (mx * my + nx * ny),
-                w * mx * mz, r + w * (my * my + ny * ny), w * my * mz,
-                r + w * mz * mz)
+        grad, hess = TorusWall.gradient_hessian(qx, qy, vz, s, nx, ny, rho, r)
     else:
         return (math.nan, 0.0, 0.0, 0.0)   # implicit/unknown: normal unknown
     return _curved_lens(grad, hess, out)

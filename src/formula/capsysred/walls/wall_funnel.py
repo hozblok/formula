@@ -38,6 +38,21 @@ class FunnelWall:
     """Bore whose axis scales as center*g(z) and radius as r0*f(z), with
     g = 1 + ag*(z-z0) + bg*(z-z0)^2 and f of the same form (SI units)."""
 
+    @staticmethod
+    def gradient_hessian(x, y, z, cx, cy, r0, ag, bg, af, bf):
+        """Derivatives of (|xy - center*g(z)|^2 - r0^2*f(z)^2)/2; z is local."""
+        gg = 1.0 + z * (ag + z * bg)
+        ff = 1.0 + z * (af + z * bf)
+        gp = ag + 2.0 * z * bg
+        fp = af + 2.0 * z * bf
+        r02 = r0 ** 2
+        uu, vv = x - cx * gg, y - cy * gg
+        cn = uu * cx + vv * cy
+        hzz = ((cx * cx + cy * cy) * gp * gp - 2.0 * cn * bg
+               - r02 * (fp * fp + 2.0 * ff * bf))
+        return ((uu, vv, -cn * gp - r02 * ff * fp),
+                (1.0, 0.0, -cx * gp, 1.0, -cy * gp, hzz))
+
     def __init__(self, center, r0, g, f, z0):
         self.kind = "funnel"
         p = center[0].precision

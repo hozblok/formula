@@ -31,6 +31,11 @@ def polygon_vertices(apothems, sides, rotation):
 
 
 class PolygonWall:
+    @staticmethod
+    def gradient_hessian(nx, ny, scale=1.0):
+        """Face gradient and Hessian (xx, xy, xz, yy, yz, zz)."""
+        return (scale * nx, scale * ny, 0.0), (0.0,) * 6
+
     def __init__(self, center, apothems, sides, rotation):
         self.kind, self.center = "polygon", center
         self.apothems = tuple(apothems) if isinstance(apothems, (tuple, list)) else (apothems,) * int(sides)
