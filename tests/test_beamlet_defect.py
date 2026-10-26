@@ -8,8 +8,8 @@ import math
 import numpy as np
 import pytest
 
-from formula.capsysred.gamma import propagate
-from formula.capsysred.stages import beamlet_defect as D
+from formula.capsysred.stages.beamlets.gamma import propagate
+from formula.capsysred.stages.beamlets import beamlet_defect as D
 from formula.capsysred.surfaces import CapillaryBundle
 
 LAM = 12.398419843320026e-10 / 8.048

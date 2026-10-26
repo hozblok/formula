@@ -9,7 +9,7 @@ import pytest
 
 from formula.capsysred import Simulation, rays_v3
 from formula.capsysred.rays import geometry_metadata
-from formula.capsysred.stages import _b5_map as maps
+from formula.capsysred.stages.method_safe import _b5_map as maps
 
 
 def scene_and_archive(tmp_path, z1=.02):
@@ -92,6 +92,23 @@ def test_small_archive_map_and_snapshots_are_published(tmp_path):
     assert np.nanmax(abs(data["mu_plugin"])) <= 1+1e-12
     assert len(result["files"]) == 3
     assert not (output/"stage17.partial").exists()
+
+
+def test_parallel_canonical_map_matches_serial(tmp_path):
+    sim, archive = scene_and_archive(tmp_path)
+    options = sim.cfg.validate_b5_estimator()
+    outputs = []
+    for jobs in (1, 2):
+        output = tmp_path / f"jobs-{jobs}"
+        maps.run_canonical_map(sim, output, dict(options, map_jobs=jobs), rays_paths=[archive])
+        meta = json.loads((output/"stage17/meta.json").read_text())
+        outputs.append([output/"stage17"/row["file"] for row in meta["outputs"]])
+    assert len(outputs[0]) == len(outputs[1])
+    for serial, parallel in zip(*outputs):
+        with np.load(serial) as left, np.load(parallel) as right:
+            assert left.files == right.files
+            for name in left.files:
+                np.testing.assert_array_equal(left[name], right[name])
 
 
 def test_failed_worker_cleans_only_its_staging_directory(tmp_path, monkeypatch):

@@ -5,7 +5,7 @@ import math
 import numpy as np
 import pytest
 
-from formula.capsysred.stages import beamlet_defect as D
+from formula.capsysred.stages.beamlets import beamlet_defect as D
 from formula.capsysred.stages import bound_modal as B
 from formula.capsysred.stages.wave_fb import Disc, FBChannel
 

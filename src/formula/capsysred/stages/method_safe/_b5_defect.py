@@ -29,7 +29,7 @@ argmin_exit is its width.  Reported beside them, not added:
 the config): the indicator eps spread uniformly over the cells with rays gives
 |d mu| <= 2 eta (1/sqrt(I) + 1/sqrt(I_ref)), eta^2 = eps^2 P / A_lit; an assumption, not a bound.
 
-Usage: python -m formula.capsysred.stages._b5_defect SCENE.yaml ARCHIVE -o OUT
+Usage: python -m formula.capsysred.stages.method_safe._b5_defect SCENE.yaml ARCHIVE -o OUT
          [--widths 0.5,1,2 (um)] [--rays N] [--sections S] [--modes M] [--jobs J]
          [--glass] [--map OUT17/.../map-....npz]
 Rows: OUT/stage17-defect/modes.jsonl, defect.json, mask-<map>.npz (with --map).
@@ -44,13 +44,28 @@ import time
 
 import numpy as np
 
-from .. import rays_v3
-from ..shared.apertures import entrance_bore_ids
-from ..shared.types import _RAY_POSITION_TOL_M, _WALL_SURFACE_TOL_M
-from ._b5_transport import _transport_wall, count_free_caustics, reflect_variations, wall_normal_derivative
-from . import bound_modal
-from .beamlet import _screen_spec
-from .beamlet_defect import _channel, _disc, _shape, _stretch, bore_area, bound_eta, bound_mask, uniform_mask, wall_distance
+from ... import rays_v3
+from ...shared.apertures import entrance_bore_ids
+from ...shared.types import _RAY_POSITION_TOL_M, _WALL_SURFACE_TOL_M
+from .._b5_transport import (
+    _transport_wall,
+    count_free_caustics,
+    reflect_variations,
+    wall_normal_derivative,
+)
+from .. import bound_modal
+from .._contracts import _screen_spec
+from .._defect_common import (
+    _channel,
+    _disc,
+    _shape,
+    _stretch,
+    bore_area,
+    bound_eta,
+    bound_mask,
+    uniform_mask,
+    wall_distance,
+)
 
 RESULT_DIR = "stage17-defect"
 DEFAULTS = {"rays": 20000, "sections": 40, "samples": 300, "ring_step": 0.5e-6, "cutoff": 5.0,
@@ -579,7 +594,7 @@ def _duhamel(bnd):
 
 def mode_job(job):
     t0 = time.time()
-    from ..simulation import Simulation
+    from ...simulation import Simulation
     sim = Simulation.from_dict(job["raw_cfg"])
     cap = sim.cfg.capillary
     bores = sim.cfg.raw["capillary"]["bores"]
@@ -859,8 +874,8 @@ def main(argv=None):
     ap.add_argument("--bound-share", type=float, default=None,
                     help="largest trace-amplitude share of windows the sections may leave unresolved (certification)")
     args = ap.parse_args(argv)
-    from .. import load
-    from ..simulation import Simulation
+    from ... import load
+    from ...simulation import Simulation
     cfg = load(args.config)
     sim = Simulation(cfg)
     opt = options(cfg)

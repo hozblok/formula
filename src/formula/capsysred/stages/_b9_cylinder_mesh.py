@@ -18,7 +18,7 @@ from ..shared.nums import lift, vsub, vunit
 from ..surfaces import CapillaryBundle
 from ..trace import trace_ray
 from ._b9_archive import apply_tube_flux, exit_nodes, mesh_from_triangles
-from .stage17 import _fresnel_product
+from ._archive_common import _fresnel_product
 
 
 def _integer(value, name, minimum):

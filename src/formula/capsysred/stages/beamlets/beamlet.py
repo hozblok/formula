@@ -40,14 +40,15 @@ from array import array
 from types import SimpleNamespace
 from typing import NamedTuple
 
-from ..fresnel import FloatLineAmplitudes
-from ..gamma import EXACT_KINDS, bounce_lenses, inv2, propagate
-from ..native import exact_accumulator, jackknife_tile, make_beamlet_grid
-from .. import rays_v3
-from ..shared.progress import Progress
-from ..rays import metadata_equal, recorded_plane, require_full_rows, scene_stream
-from ..screen import ScreenGrid
-from ..shared.utils import zeros
+from .._contracts import _physics_contract, _screen_spec
+from ...fresnel import FloatLineAmplitudes
+from .gamma import EXACT_KINDS, bounce_lenses, inv2, propagate
+from ...native import exact_accumulator, jackknife_tile, make_beamlet_grid
+from ... import rays_v3
+from ...shared.progress import Progress
+from ...rays import metadata_equal, recorded_plane, require_full_rows, scene_stream
+from ...screen import ScreenGrid
+from ...shared.utils import zeros
 
 STAGING_PREFIX = "stage11-staging-"
 TMP_PREFIX = "stage11-tmp-"
@@ -437,15 +438,6 @@ def _mode_tasks(rays, scene):
     return tasks
 
 
-def _screen_spec(scr) -> dict:
-    reference = getattr(scr, "reference", None)
-    return {"z": float(scr.z), "nx": int(scr.nx), "ny": int(scr.ny),
-            "center": [float(scr.center[0]), float(scr.center[1])],
-            "edge_x": float(scr.edge_x), "edge_y": float(scr.edge_y),
-            "reference": None if not reference else
-            [float(reference[0]), float(reference[1])]}
-
-
 def _scene_source(sim, scene):
     cfg = sim.cfg
     return cfg.free_source if scene == "free" else cfg.capillary.source
@@ -454,7 +446,7 @@ def _scene_source(sim, scene):
 def _scene_optic(sim, scene):
     if scene != "capillary":
         return None
-    from ..surfaces import CapillaryBundle
+    from ...surfaces import CapillaryBundle
     cap = sim.cfg.capillary
     return CapillaryBundle(cap.bores, cap.z0, cap.z1)
 
@@ -474,7 +466,6 @@ def _stage11_contract(sim, scene, planes, n_modes) -> dict:
     """Everything the deposit depends on, from the typed config: the worker
     rebuilds it from cfg.raw and must obtain the same dict, else the run
     refuses (a programmatic drift between raw and typed config)."""
-    from .stage14 import _physics_contract
     cfg = sim.cfg
     w0_t, waist_dz = _launch(sim, scene, planes[0]["z"])
     return {"scene": scene, "n_modes": int(n_modes), "planes": planes,
@@ -596,7 +587,7 @@ class _Worker:
     reader and the row store; run() deposits one mode."""
 
     def __init__(self, raw_cfg, contract, z_rec, rows_paths, tmp_dir):
-        from ..simulation import Simulation
+        from ...simulation import Simulation
         sim = Simulation.from_dict(raw_cfg)
         scene, planes = contract["scene"], contract["planes"]
         mine = _stage11_contract(sim, scene, planes, contract["n_modes"])
@@ -793,7 +784,7 @@ def run_beamlet_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     contract = _stage11_contract(sim, scene, planes, n_modes)
     # the workers rebuild the configuration from cfg.raw: refuse here, before
     # any process starts, when the typed config no longer matches it
-    from ..simulation import Simulation
+    from ...simulation import Simulation
     rebuilt = _stage11_contract(Simulation.from_dict(cfg.raw), scene, planes, n_modes)
     if not metadata_equal(rebuilt, contract):
         raise ValueError("stage 11: the typed configuration differs from cfg.raw "

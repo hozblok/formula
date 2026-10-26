@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from formula.capsysred.stages._b5_phase import fit_phase_gradient
+from formula.capsysred.stages.method_safe._b5_phase import fit_phase_gradient
 
 
 def _grid(n=7):

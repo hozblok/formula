@@ -143,7 +143,7 @@ def test_world_derivatives_match_full_formula(kind, point):
     for got, want in zip(actual, expected):
         np.testing.assert_allclose(got, want, rtol=5e-14, atol=3e-15)
 
-    from formula.capsysred.gamma import _curved_lens, _wall_lens
+    from formula.capsysred.stages.beamlets.gamma import _curved_lens, _wall_lens
     outgoing = -np.array(expected[0]) / np.linalg.norm(expected[0]) + np.array([0., 0., .3])
     np.testing.assert_allclose(_wall_lens(wall, *point, outgoing),
                                _curved_lens(*expected, outgoing), rtol=3e-13, atol=3e-14)

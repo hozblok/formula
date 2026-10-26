@@ -10,9 +10,9 @@ import time
 import numpy as np
 
 from .. import rays_v3
-from ._b5_map import (_array_counts, _atomic_npz, _hash, _jackknife, _map_grid,
-                     matched_ray_field, normalized_coherence)
-from .stage17 import _archive_contract, _dump, _fresnel_product
+from ._map_common import (_array_counts, _atomic_npz, _hash, _jackknife, _map_grid,
+                          matched_ray_field, normalized_coherence)
+from ._archive_common import _archive_contract, _dump, _fresnel_product
 
 
 def preflight_b9_output(out_dir):

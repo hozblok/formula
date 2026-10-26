@@ -7,7 +7,7 @@ import yaml
 
 from formula.capsysred import Simulation, rays_v3
 from formula.capsysred.rays import geometry_metadata
-from formula.capsysred.stages import stage17
+from formula.capsysred.stages.method_safe import stage17
 
 
 def make_scene(**bore):

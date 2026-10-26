@@ -28,21 +28,34 @@ import time
 from dataclasses import dataclass
 from types import SimpleNamespace
 
-from ... import __version__, _formula
-from .. import rays_v3, render
-from ..fresnel import FloatLineAmplitudes
-from ..env import Env
-from ._stage14_checkpoints import (RANGE_SLOTS, mode_ranges, range_agg_name,
-                                   range_done, range_manifest_name,
-                                   range_rows_name, read_range_manifest)
-from ..shared.progress import Progress
-from ..rays import RNG_SCHEME, geometry_metadata, metadata_equal, recorded_screen_z
-from ..screen import ScatterRaster, ScreenGrid
-from .stage14_flags import (FlagThresholds, PixelCounters, PixelStatistics,
-                            serialize_pixel, validate_counters, validate_ref,
-                            w_signal_status)
-from ..shared.units import m_to_um
-from ..shared.utils import durable_open
+from .... import __version__, _formula
+from ... import rays_v3, render
+from ...fresnel import FloatLineAmplitudes
+from ...env import Env
+from .._contracts import _physics_contract
+from ._stage14_checkpoints import (
+    RANGE_SLOTS,
+    mode_ranges,
+    range_agg_name,
+    range_done,
+    range_manifest_name,
+    range_rows_name,
+    read_range_manifest,
+)
+from ...shared.progress import Progress
+from ...rays import RNG_SCHEME, geometry_metadata, metadata_equal, recorded_screen_z
+from ...screen import ScatterRaster, ScreenGrid
+from .stage14_flags import (
+    FlagThresholds,
+    PixelCounters,
+    PixelStatistics,
+    serialize_pixel,
+    validate_counters,
+    validate_ref,
+    w_signal_status,
+)
+from ...shared.units import m_to_um
+from ...shared.utils import durable_open
 
 
 STAGE_ID = 14
@@ -245,22 +258,6 @@ def _reference_pixel(screen_cfg, grid: ScreenGrid) -> int:
     if pixel is None:
         raise ValueError("stage 14 reference cannot be mapped to a screen pixel")
     return pixel
-
-
-def _physics_contract(sim) -> dict:
-    return {
-        "energy_kev": str(sim.cfg.energy_kev),
-        "lines": [{"energy_kev": str(line.e_kev), "k": float(line.k),
-                   "weight": float(line.weight)} for line in sim.lines],
-        "material": sim.cfg.material.name,
-        # exact optical-constant strings entering the amplitudes (E0 and per line)
-        "two_delta_beta_e0": [str(sim.fresnel.d2), str(sim.fresnel.b2)],
-        "two_delta_beta_lines": [[dd, bb] for dd, bb in sim.line_amps.two_delta_beta],
-        "per_line_fresnel": bool(sim.per_line),
-        "amplitude_min": float(sim.cfg.amplitude_min),
-        "precision": int(sim.cfg.precision),
-        "deposit": "float-line-amplitudes-phase-exp-v1",
-    }
 
 
 def _analysis_signature(sim, screen_contract: dict) -> dict:
@@ -1107,7 +1104,7 @@ def _range_worker(raw_cfg: dict, archive_path: str, contract: dict,
     ``raw_cfg`` is the parent's merged config dict and ``contract`` the
     parent-fixed input identity — the worker re-reads no mutable config
     and refuses an archive that drifted since input preparation."""
-    from ..simulation import Simulation
+    from ...simulation import Simulation
     sim = Simulation.from_dict(raw_cfg)
     # First check: config indirections (a spectrum table file) re-resolve
     # here, so the reconstructed physics must equal the parent's exactly.

@@ -1114,7 +1114,7 @@ def test_jackknife_direct_drive_pi_flip_decoheres():
 def test_beamlet_direct_drive_single_mode_fully_coherent():
     # one mode -> one coherent field: mu = 1 on every deposited pixel
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
 
@@ -1374,7 +1374,7 @@ def _merid_lens(phi, rp, s, k_m, r):
 def test_gamma_free_drift_reduces_to_scalar_q():
     # no bounces: Q = (q0+L)*I, no coupling, amplitude = q0/q (w0/w, Gouy)
     import cmath
-    from formula.capsysred.gamma import det2, propagate
+    from formula.capsysred.stages.beamlets.gamma import det2, propagate
     k = 2.0 * math.pi / 1.55e-10
     zr = 0.5 * (5e-7) ** 2 * k
     L = 0.14
@@ -1389,7 +1389,7 @@ def test_gamma_meridional_reduces_to_two_scalar_q():
     # phi in {0, pi} bounces keep Gamma diagonal: each axis is its own
     # scalar-q chain
     import cmath
-    from formula.capsysred.gamma import propagate
+    from formula.capsysred.stages.beamlets.gamma import propagate
     k = 2.0 * math.pi / 1.55e-10
     zr = 0.5 * (5e-7) ** 2 * k
     segs = [0.01, 0.006, 0.002]
@@ -1411,7 +1411,7 @@ def test_gamma_meridional_reduces_to_two_scalar_q():
 
 def test_gamma_skew_bounces_couple_planes():
     # a precessing azimuth mixes the axes: off-diagonal Gamma appears
-    from formula.capsysred.gamma import propagate
+    from formula.capsysred.stages.beamlets.gamma import propagate
     k = 2.0 * math.pi / 1.55e-10
     zr = 0.5 * (5e-7) ** 2 * k
     inv_fs = 1.0 / 1.5e-3
@@ -1422,7 +1422,7 @@ def test_gamma_skew_bounces_couple_planes():
 
 def test_gamma_normal_incidence_isotropic():
     # theta = 90 deg: f_t = f_s = R/2, the bounce must not depend on phi
-    from formula.capsysred.gamma import propagate
+    from formula.capsysred.stages.beamlets.gamma import propagate
     k = 2.0 * math.pi / 1.55e-10
     zr = 0.5 * (5e-7) ** 2 * k
     inv_f = 2.0 / 0.01
@@ -1437,7 +1437,7 @@ def test_gamma_normal_incidence_isotropic():
 
 def test_bounce_lenses_cylinder_wall():
     # straight cylinder: f_t flat, 1/f_s = 2 sin/a, phi from the hit azimuth
-    from formula.capsysred.gamma import bounce_lenses
+    from formula.capsysred.stages.beamlets.gamma import bounce_lenses
     sim = Simulation.from_dict(TINY)
     cap = sim.cfg.capillary
     bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
@@ -1452,7 +1452,7 @@ def test_bounce_lenses_cylinder_wall():
 def test_bounce_lenses_funnel_wall():
     # degenerate funnel (g = f = 1) must reproduce the cylinder lens; a
     # parabolic centered funnel adds the r0*f''(z) meridional curvature
-    from formula.capsysred.gamma import bounce_lenses
+    from formula.capsysred.stages.beamlets.gamma import bounce_lenses
     r0, s, z = 6.0e-6, 2.0e-3, 0.01
     flat = _cap_sim([{"center": [0.0, 0.0], "radius": r0,
                       "funnel": {"g": [0.0, 0.0]}}])
@@ -1485,7 +1485,7 @@ def test_bounce_lenses_funnel_wall():
 def test_bounce_lenses_unknown_kind_falls_flat():
     # future wall kinds must degrade to the flat (scalar-q) model, not crash;
     # their normal is unknown (NaN azimuth: no mirror flip)
-    from formula.capsysred.gamma import bounce_lenses
+    from formula.capsysred.stages.beamlets.gamma import bounce_lenses
     wall = type("OddWall", (), {"kind": "odd", "_cxf": 0.0, "_cyf": 0.0})()
     optic = type("Optic", (), {"walls": [wall]})()
     [(phi, *p)] = bounce_lenses(optic, [(1e-6, 0.0, 0.01)], [(0.0, 0.0, 1.0)])
@@ -1503,7 +1503,7 @@ _IMPLICIT_PAIR = [
 def test_bounce_lenses_implicit_multibore_flat():
     # regression: nearest-bore selection read _cxf off ImplicitWall and
     # crashed; implicit bounces come out flat whichever bore is hit
-    from formula.capsysred.gamma import bounce_lenses
+    from formula.capsysred.stages.beamlets.gamma import bounce_lenses
     cap = _cap_sim(_IMPLICIT_PAIR).cfg.capillary
     bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
     pts = [(3.0e-6, 0.0, 0.01), (1.5e-5, 0.0, 0.02)]
@@ -1515,7 +1515,7 @@ def test_bounce_lenses_implicit_multibore_flat():
 def test_bounce_lenses_mixed_kinds_nearest_center():
     # an implicit bore in the bundle: the closed-form neighbour still wins
     # the center-distance pick, the implicit hit falls flat
-    from formula.capsysred.gamma import bounce_lenses
+    from formula.capsysred.stages.beamlets.gamma import bounce_lenses
     a, s = 3.0e-6, 2.0e-3
     cap = _cap_sim([{"center": [0.0, 0.0], "radius": a},
                     _IMPLICIT_PAIR[1]]).cfg.capillary
@@ -1532,7 +1532,7 @@ def test_beamlet_deposit_implicit_multibore():
     # the stage-11 path of the same regression: add_ray over an implicit
     # bundle deposits a flat-bounce beamlet and flags flat_walls
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
     cap = _cap_sim(_IMPLICIT_PAIR).cfg.capillary
@@ -1572,7 +1572,7 @@ def test_beamlet_native_deposit_matches_python():
     # the C++ BeamletGrid mirrors the Python window loop op-for-op: same
     # records, native on/off -> the same maps to float64 roundoff
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.native import make_beamlet_grid
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
@@ -1618,7 +1618,7 @@ def test_beamlet_native_deposit_matches_python():
 
 def _beamlet_field_1d(lines, nx=161, edge=8.0e-6, z=0.1, w0=2.5e-7):
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
     scr = ScreenGrid(SimpleNamespace(z=z, nx=nx, ny=1, center=[0.0, 0.0],
                                      edge_x=edge, edge_y=2.0e-6))
@@ -1687,7 +1687,7 @@ def test_gamma_amp_through_focus_matches_scalar_ratios():
     # per-segment ratios q_start/q_end (branch-safe: q stays in the upper
     # half-plane), Gouy pi-jump included
     import cmath
-    from formula.capsysred.gamma import propagate
+    from formula.capsysred.stages.beamlets.gamma import propagate
     k = 2.0 * math.pi / 1.55e-10
     zr = 0.5 * (2.0e-7) ** 2 * k
     f = 5.0e-3
@@ -1708,7 +1708,7 @@ def test_gamma_marginal_channel_hundred_bounces_stays_physical():
     # s/f_s = 4*cos(theta) is the stability boundary of the periodic lens
     # chain: after 100 meridional bounces Im(G) must stay negative-definite
     # and the amplitude finite — the long-chain regression for reflect/inv2
-    from formula.capsysred.gamma import inv2, propagate
+    from formula.capsysred.stages.beamlets.gamma import inv2, propagate
     k = 2.0 * math.pi / 1.55e-10
     zr = 0.5 * (5.0e-7) ** 2 * k
     a, theta = 6.0e-6, 2.0e-3
@@ -1764,7 +1764,7 @@ def test_beamlet_edge_deposits():
 def test_beamlet_single_pixel_screen():
     # nx = ny = 1: the window clamps to one cell, mu of the lit cell is 1
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
@@ -1785,7 +1785,7 @@ def test_beamlet_single_pixel_screen():
 def test_funnel_linear_taper_equals_revolution_twin():
     # r(z) = r0*(1 + af*z) is exactly r2_poly (r0^2, 2 r0^2 af, r0^2 af^2):
     # two independent _wall_lens branches must produce one lens
-    from formula.capsysred.gamma import bounce_lenses
+    from formula.capsysred.stages.beamlets.gamma import bounce_lenses
     r0, af, s = 5.0e-6, -8.0, 1.5e-3
     fun = _cap_sim([{"center": [0.0, 0.0], "radius": r0,
                      "funnel": {"g": [0.0, 0.0], "f": [af, 0.0]}}])
@@ -1809,7 +1809,7 @@ def test_funnel_bent_axis_matches_torus_arc():
     # a parabolic axis bend c*g(z) with 2*c*bg = 1/R approximates the torus
     # arc: the meridional lens must agree on BOTH walls — focusing on the
     # outer wall of the bend, defocusing on the inner (sign included)
-    from formula.capsysred.gamma import bounce_lenses
+    from formula.capsysred.stages.beamlets.gamma import bounce_lenses
     R, a, c, s, z = 1.0, 5.0e-6, 1.0e-3, 2.0e-3, 0.01
     tor = _cap_sim([{"center": [0.0, 0.0], "radius": a,
                      "bend": {"radius": R, "toward": [1.0, 0.0]}}])
@@ -1841,7 +1841,7 @@ def test_funnel_bent_axis_matches_torus_arc():
 def test_funnel_azimuth_from_local_axis():
     # g(z) shifts the bore axis: phi must follow the LOCAL axis, not the
     # entrance center
-    from formula.capsysred.gamma import bounce_lenses
+    from formula.capsysred.stages.beamlets.gamma import bounce_lenses
     r0, c, z = 2.0e-6, 1.0e-3, 0.01
     fun = _cap_sim([{"center": [c, 0.0], "radius": r0,
                      "funnel": {"g": [0.0, 500.0]}}])
@@ -1855,7 +1855,7 @@ def test_funnel_azimuth_from_local_axis():
 
 def test_funnel_true_cone_has_no_meridional_lens():
     # straight generatrix r = r0*(1 + af*z): f'' = 0 -> 1/f_t = 0 to rounding
-    from formula.capsysred.gamma import bounce_lenses
+    from formula.capsysred.stages.beamlets.gamma import bounce_lenses
     r0, af = 5.0e-6, -6.0
     fun = _cap_sim([{"center": [0.0, 0.0], "radius": r0,
                      "funnel": {"g": [0.0, 0.0], "f": [af, 0.0]}}])
@@ -1868,7 +1868,7 @@ def test_funnel_true_cone_has_no_meridional_lens():
 
 def test_funnel_multibore_picks_nearest_axis():
     # two funnels: the hit near bore 2 must use ITS local axis for phi
-    from formula.capsysred.gamma import bounce_lenses
+    from formula.capsysred.stages.beamlets.gamma import bounce_lenses
     r0, z = 2.0e-6, 0.02
     sim = _cap_sim([{"center": [-4.0e-6, 0.0], "radius": r0,
                      "funnel": {"g": [0.0, 0.0]}},
@@ -1992,7 +1992,7 @@ def test_gamma_anisotropic_launch():
     # isotropic triple == scalar for any psi; an elliptic launch drifts as
     # two independent scalar axes; psi = pi/2 swaps the axes
     import cmath
-    from formula.capsysred.gamma import propagate
+    from formula.capsysred.stages.beamlets.gamma import propagate
     k = 2.0 * math.pi / 1.55e-10
     zrt, zrs = 0.5 * (3.0e-6) ** 2 * k, 0.5 * (5.0e-7) ** 2 * k
     L = 0.1
@@ -2011,7 +2011,7 @@ def test_beamlet_anisotropic_spot_flips_aspect():
     # launch narrow sagittal (y), wide tangential (x): the far field flips
     # the aspect — the spot lands WIDER along y than along x
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
@@ -2037,7 +2037,7 @@ def test_beamlet_anisotropic_spot_flips_aspect():
 def test_beamlet_native_parity_anisotropic():
     # the C++ elliptic launch mirrors the Python one, bounces included
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
     lines = spectral_lines({"mode": "gaussian", "rel_fwhm": 1.0e-3,
@@ -2206,7 +2206,7 @@ def test_beamlet_aniso_free_widths_match_gaussian():
     # quantitative anisotropy: the deposited spot's second moments must land
     # on the per-axis Gaussian widths w(L) of the two launch waists
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
@@ -2242,7 +2242,7 @@ def _point_source_fan(w0_t=None, waist_dz=0.0, use_native=True, kev="8.0",
     # beamlet sum of a point source at the origin on a 41x41 window at
     # z = 0.1 m: a 91x91 slope lattice, step 1e-5 (1 um on the screen)
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
     D = 0.1
@@ -2303,7 +2303,7 @@ def test_beamlet_line_weights_are_wavelength_free():
     # a fan's field scales as lambda; the fold weights w_l (k_l/k_0)^2 undo
     # it, so the configured spectrum is what W and I see
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
     g8, _ = _point_source_fan(kev="8.0")
     g12, _ = _point_source_fan(kev="12.0")
@@ -2322,7 +2322,7 @@ def test_gamma_aniso_amp_squared_is_per_axis_product():
     # psi = 0 keeps the axes independent even through an astigmatic bounce:
     # amp^2 must equal the product of the two scalar per-axis chains
     import cmath
-    from formula.capsysred.gamma import propagate
+    from formula.capsysred.stages.beamlets.gamma import propagate
     k = 2.0 * math.pi / 1.55e-10
     zrt, zrs = 0.5 * (2.0e-6) ** 2 * k, 0.5 * (3.0e-7) ** 2 * k
     segs, ift, ifs = [0.01, 0.02], 1.0 / 0.04, 1.0 / 0.004
@@ -2396,7 +2396,7 @@ def _dense_amp_reference(zr, segs, lenses, n=100000):
     """Brute-force branch tracking: n sub-steps per drift, principal sqrt
     per step — the exact continuous branch up to float rounding."""
     import cmath
-    from formula.capsysred.gamma import det2, reflect
+    from formula.capsysred.stages.beamlets.gamma import det2, reflect
     zrt, zrs, psi = zr
     c, sn = math.cos(psi), math.sin(psi)
     q = (complex(0.0, zrt * c * c + zrs * sn * sn),
@@ -2417,7 +2417,7 @@ def _dense_amp_reference(zr, segs, lenses, n=100000):
 def test_gamma_amp_closed_form_matches_dense_reference():
     # closed-form drift amplitude vs brute-force branch tracking on an
     # astigmatic chain with skew lenses and on a long free drift
-    from formula.capsysred.gamma import propagate
+    from formula.capsysred.stages.beamlets.gamma import propagate
     cases = [
         ((0.2, 0.004, 0.6), [0.05, 0.03, 0.4],
          [_lens(0.3, 1.0 / 0.02, 1.0 / 0.008), _lens(1.2, 0.0, 1.0 / 0.01)]),
@@ -2433,7 +2433,7 @@ def test_gamma_amp_closed_form_matches_dense_reference():
 def test_gamma_amp_tight_focus_keeps_the_branch():
     # seg/z_R ~ 5e4: the old 256-sub-step cap lost exactly pi through the
     # lens focus (the whole beamlet flipped sign); the closed form must not
-    from formula.capsysred.gamma import propagate
+    from formula.capsysred.stages.beamlets.gamma import propagate
     zr, segs = (2.0e-4, 2.0e-4, 0.0), [0.01, 0.5]
     lenses = [_lens(0.7, 1.0 / 0.005, 1.0 / 0.005)]
     _, amp = propagate(zr, segs, lenses)
@@ -2444,7 +2444,7 @@ def test_gamma_amp_tight_focus_keeps_the_branch():
 def test_gamma_amp_segment_split_invariant():
     # zero-curvature bounces split a drift: q and amp must not move, even
     # when the split points straddle a focus
-    from formula.capsysred.gamma import propagate
+    from formula.capsysred.stages.beamlets.gamma import propagate
     zr = (0.3, 0.002, 0.9)
     lens = _lens(0.4, 1.0 / 0.05, 1.0 / 0.006)
     none = (0.0, 0.0, 0.0, 0.0)
@@ -2461,7 +2461,7 @@ def test_bounce_lenses_tapered_bundle_picks_the_true_bore():
     # two bores whose axes shrink as g(z): near the exit the outer bore's
     # wall sits nearer the INNER bore's entrance center — selection must
     # follow the axis at z, not the entrance
-    from formula.capsysred.gamma import bounce_lenses
+    from formula.capsysred.stages.beamlets.gamma import bounce_lenses
     g = [-12.0, 0.0]
     cap = _cap_sim([{"center": [4.0e-5, 0.0], "radius": 2.0e-6,
                      "funnel": {"g": g}},
@@ -2484,7 +2484,7 @@ def test_axis_dist2_measures_distance_to_the_bent_axis():
     # torus: zero on the tube-center circle; offsets along the tube radius
     # and along the bend normal come back squared
     from types import SimpleNamespace
-    from formula.capsysred.gamma import _axis_dist2
+    from formula.capsysred.stages.beamlets.gamma import _axis_dist2
     wall = SimpleNamespace(kind="torus", _Cf=(0.03, 0.0, 0.02),
                            _nf=(0.0, 1.0), _Rf=0.5)
     a, b = math.cos(0.3), math.sin(0.3)
@@ -2504,7 +2504,7 @@ def test_beamlet_jackknife_skips_sole_mode_pixels():
     # mode the delete-that-mode replicate is pure float32 residue and must
     # be skipped — sigma exactly 0 plus the don't-trust flag, not noise
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.native import make_beamlet_grid
     from formula.capsysred.screen import ScreenGrid
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
@@ -2538,7 +2538,7 @@ def test_beamlet_window_is_the_ellipse_bounding_box():
     # full-frame one inside its support, and everything it drops must sit
     # below the ns-sigma envelope cut
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     scr = ScreenGrid(SimpleNamespace(z=0.1, nx=201, ny=101, center=[0.0, 0.0],
@@ -2566,7 +2566,7 @@ def test_beamlet_tail_ray_deposit_stays_finite():
     # to inf and poisons the row with NaN; both paths must agree and stay
     # finite across an e^-30 dynamic range
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.native import make_beamlet_grid
     from formula.capsysred.screen import ScreenGrid
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
@@ -2599,8 +2599,8 @@ def test_beamlet_native_lensed_bounces_match_python():
     # a parabolic funnel (meridional f_t too), skew azimuths couple the
     # planes — the C++ reflect branch had no cross-check before
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
-    from formula.capsysred.gamma import bounce_lenses
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.gamma import bounce_lenses
     from formula.capsysred.native import make_beamlet_grid
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
@@ -2660,7 +2660,7 @@ def test_beamlet_native_multimode_fold_matches_python():
     # three modes through the C++ fold/totals path vs the pure-Python
     # dicts: mu, sigma_jack, dubious, intensity, density must coincide
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.native import make_beamlet_grid
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
@@ -2988,7 +2988,7 @@ def test_stage9_subdivision_root_pair_hex_grazing():
 
 def test_gamma_flat_bounce_mirrors_the_beam():
     # a flat face with normal at 45 deg swaps the ellipse axes: Q -> M Q M
-    from formula.capsysred.gamma import propagate
+    from formula.capsysred.stages.beamlets.gamma import propagate
     k = 2.0 * math.pi / 1.55e-10
     zrt, zrs = 0.5 * (2.0e-6) ** 2 * k, 0.5 * (3.0e-7) ** 2 * k
     q, amp = propagate((zrt, zrs, 0.0), [0.01, 0.02],
@@ -3005,7 +3005,7 @@ def test_gamma_flat_bounce_mirrors_the_beam():
 def test_beamlet_native_matches_python_through_a_mirrored_lens():
     # aniso launch, a curved skew-azimuth bounce: native == Python deposit
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     scr = ScreenGrid(SimpleNamespace(z=0.1, nx=21, ny=21, center=[0.0, 0.0],
@@ -3029,7 +3029,7 @@ def test_beamlet_flags_unshared_and_unlit_reference_pixels():
     # a pixel no mode shares with the reference is mu = 0, sigma = 0:
     # flagged; an unlit reference flags every lit pixel
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     scr = ScreenGrid(SimpleNamespace(z=0.1, nx=41, ny=3, center=[0.0, 0.0],
@@ -3054,7 +3054,7 @@ def test_beamlet_flags_unshared_and_unlit_reference_pixels():
 def test_beamlet_reference_outside_window_raises():
     from types import SimpleNamespace
     from formula.capsysred.screen import ScreenGrid
-    from formula.capsysred.stages.beamlet import _reference_pixel
+    from formula.capsysred.stages.beamlets.beamlet import _reference_pixel
     scr = ScreenGrid(SimpleNamespace(z=0.1, nx=4, ny=4, center=[0.0, 0.0],
                                      edge_x=1.0e-6, edge_y=1.0e-6))
     assert scr.ref_pixel((0.0, 0.0)) == scr.pixel((0.0, 0.0))
@@ -3108,8 +3108,8 @@ def test_beamlet_skew_cylinder_chain_matches_ray_bundle_abcd():
     # lab (x, y, dx/dz, dy/dz) ABCD of the exact trace; the residual is the
     # O(|u_perp|^2) lab-frame paraxial error
     from types import SimpleNamespace
-    from formula.capsysred.gamma import inv2, propagate
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.gamma import inv2, propagate
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
     a, z_end, h = 6.0e-6, 0.026, 1.0e-11
@@ -3160,8 +3160,8 @@ def test_beamlet_native_matches_python_on_skew_curved_chains():
     # every curved kind, skew bounces (twisted P), anisotropic launch and a
     # waist plane past the source: the C++ lens stride and flip == Python
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
-    from formula.capsysred.gamma import bounce_lenses
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.gamma import bounce_lenses
     from formula.capsysred.native import make_beamlet_grid
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
@@ -3251,7 +3251,7 @@ def test_recorded_plane_checks_every_union_part():
     # unions: each part's geometry is checked, and one plane is required
     from types import SimpleNamespace
     from formula.capsysred.rays import geometry_metadata
-    from formula.capsysred.stages.beamlet import recorded_plane
+    from formula.capsysred.stages.beamlets.beamlet import recorded_plane
     sim = Simulation.from_dict(TINY)
     geo = geometry_metadata(sim.cfg)
 
@@ -3299,7 +3299,7 @@ def test_beamlet_coherent_scene_flags_match_native_and_python():
     # one ray per mode, amplitudes differ: |mu| = 1 with no spread -> every
     # lit pixel pinned and flagged on both paths
     from types import SimpleNamespace
-    from formula.capsysred.stages.beamlet import BeamletField
+    from formula.capsysred.stages.beamlets.beamlet import BeamletField
     from formula.capsysred.screen import ScreenGrid
     lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
     scr = ScreenGrid(SimpleNamespace(z=0.1, nx=15, ny=15, center=[0.0, 0.0],
@@ -3612,8 +3612,11 @@ def _oracle_maps(sim, archive, scene, src_cfg, scr_cfg, optic, extra_screens=())
     from formula.capsysred.rays import RaysReader
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.fresnel import FloatLineAmplitudes
-    from formula.capsysred.stages.beamlet import (BeamletField, _reference_pixel,
-                                                   recorded_plane)
+    from formula.capsysred.stages.beamlets.beamlet import (
+        BeamletField,
+        _reference_pixel,
+        recorded_plane,
+    )
     cfg = sim.cfg
     sim.rays = RaysReader(archive)
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
@@ -3753,7 +3756,7 @@ def test_stage11_failure_after_free_scene_publishes_nothing(tmp_path, monkeypatc
 def test_stage11_refuses_leftovers_and_removes_nothing(tmp_path):
     # any backup/staging/tmp remnant stops the stage, even with a complete
     # (possibly mixed) set of final names present
-    from formula.capsysred.stages.beamlet import refuse_stage11_leftovers
+    from formula.capsysred.stages.beamlets.beamlet import refuse_stage11_leftovers
     out = tmp_path / "out"
     out.mkdir()
     (out / "11-capillary-beamlet-mu.svg").write_bytes(b"new-a")
@@ -3793,7 +3796,7 @@ def _publication_fixture(tmp_path):
 def test_stage11_publication_rolls_back_before_the_boundary(tmp_path, fail_at):
     # the 2nd rename (a backup) and the last rename (the final install)
     # fail: the previous set is restored byte for byte, staging removed
-    from formula.capsysred.stages.beamlet import publish_stage11
+    from formula.capsysred.stages.beamlets.beamlet import publish_stage11
     out, staging, names, old, _ = _publication_fixture(tmp_path)
     calls = []
 
@@ -3814,8 +3817,7 @@ def test_stage11_publication_cleanup_failure_keeps_the_new_set(tmp_path, monkeyp
     # after the boundary a failing backup removal is reported, never rolled
     # back: the new set stays complete, the leftover backup is named, and the
     # next start refuses to touch it
-    from formula.capsysred.stages.beamlet import (publish_stage11,
-                                                   refuse_stage11_leftovers)
+    from formula.capsysred.stages.beamlets.beamlet import publish_stage11, refuse_stage11_leftovers
     out, staging, names, _, new = _publication_fixture(tmp_path)
     real_remove = os.remove
 
@@ -3838,7 +3840,7 @@ def test_stage11_publication_cleanup_failure_keeps_the_new_set(tmp_path, monkeyp
 
 
 def test_stage11_publication_succeeds_and_cleans(tmp_path):
-    from formula.capsysred.stages.beamlet import publish_stage11
+    from formula.capsysred.stages.beamlets.beamlet import publish_stage11
     out, staging, names, _, new = _publication_fixture(tmp_path)
     publish_stage11(str(staging), str(out), names)
     assert {p.name: p.read_bytes() for p in out.iterdir()} == new
@@ -3849,7 +3851,7 @@ def test_stage11_part_queue_is_bounded_with_a_slow_merger(tmp_path, monkeypatch)
     # fast workers against a deliberately slowed merger never leave
     # more than 2*jobs .part files per screen in the tmp directory
     import time as _time
-    from formula.capsysred.stages import beamlet
+    from formula.capsysred.stages.beamlets import beamlet
     cfg = dict(TINY)
     cfg["free"] = {"source": dict(FREE_SOURCE, n_modes=12, n_rays=24)}
     cfg["capillary"] = dict(TINY["capillary"], source=dict(CAPILLARY_SOURCE, n_modes=12, n_rays=8))
@@ -3898,7 +3900,7 @@ def test_stage11_export_and_accumulator_memory_do_not_grow_with_modes():
     # fixed size, so the peak working set stops growing after the first modes
     from array import array
     from formula.capsysred.native import exact_accumulator, make_beamlet_grid
-    from formula.capsysred.stages.beamlet import _peak_rss
+    from formula.capsysred.stages.beamlets.beamlet import _peak_rss
     if _peak_rss() == 0:
         pytest.skip("peak working set unavailable on this platform")
     nx = ny = 101
@@ -3991,7 +3993,7 @@ def test_stage11_failed_jsonl_open_leaves_no_staging(tmp_path, monkeypatch):
 def test_stage11_failed_accumulator_allocation_leaves_no_tmp(tmp_path, monkeypatch):
     # an allocation failure right after the tmp directory and the row
     # store were created removes them (and the staging) before the error
-    from formula.capsysred.stages import beamlet
+    from formula.capsysred.stages.beamlets import beamlet
     out = tmp_path / "alloc"
     sim = Simulation.from_dict(TINY)
     _record(sim, str(out))
@@ -4031,7 +4033,7 @@ def test_stage11_report_has_stage_wall_publication_and_boundary_lines(tmp_path, 
 def test_stage11_peak_sampler_discovers_announced_workers(tmp_path):
     # workers announce their pid in the tmp directory; the sampler
     # picks them up on its next tick, not after their first finished mode
-    from formula.capsysred.stages.beamlet import PID_PREFIX, PeakSampler, _working_set
+    from formula.capsysred.stages.beamlets.beamlet import PID_PREFIX, PeakSampler, _working_set
     if _working_set(os.getpid()) == 0:
         pytest.skip("working-set queries unavailable on this platform")
     sampler = PeakSampler()
@@ -4048,7 +4050,7 @@ def test_stage11_tile_buffers_allocated_once_and_tiling_is_invisible(tmp_path, m
     # a nearly full last tile reuses it through prefix views (no second pair),
     # and the tile boundaries do not change mu, sigma, flags or the boundary count
     from array import array
-    from formula.capsysred.stages import beamlet
+    from formula.capsysred.stages.beamlets import beamlet
     n_modes, npix = 40, 2237
     monkeypatch.setattr(beamlet, "_TILE_BYTES", 12 * n_modes * 1119)   # tile 1119, remainder 1118
     rows = tmp_path / "s0.rows"
@@ -4083,7 +4085,7 @@ def test_stage11_repeated_jsonl_write_failure_still_cleans_up(tmp_path, monkeypa
     import errno
     import io
     from formula.capsysred import simulation as simmod
-    from formula.capsysred.stages.beamlet import PeakSampler
+    from formula.capsysred.stages.beamlets.beamlet import PeakSampler
     out = tmp_path / "enospc"
     sim = Simulation.from_dict(TINY)
     _record(sim, str(out))
