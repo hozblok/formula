@@ -105,3 +105,10 @@ _LAGRANGIAN_DEFECT_TOL = 1e-9
 # The existing 1e-300 value is retained to preserve behavior at vanishing scales;
 # it is a numerical guard, separate from geometry acceptance tolerances.
 _FLOAT64_SCALE_FLOOR = 1e-300
+
+# Relative slack for assigning points to entrance apertures (dimensionless).
+# Circular radii are multiplied by 1 + tol; polygon face residuals may be
+# at most tol * max(apothems). Keep the existing transport value of 1e-8.
+# A bore is assigned only when exactly one aperture contains the point;
+# overlaps, including tolerance-band overlaps, remain unassigned.
+_APERTURE_REL_TOL = 1e-8

@@ -18,8 +18,8 @@ from scipy.spatial import cKDTree
 
 from .. import rays_v3
 from ..rays import geometry_core, geometry_metadata, metadata_equal
+from ..shared.apertures import entrance_bore_ids
 from ._b5_phase import fit_phase_gradient
-from ._b5_transport import bore_inside
 
 RESULT_DIR = "stage17"
 
@@ -92,11 +92,11 @@ def entrance_families(mode, cap, target_z):
             continue
         q = source[:2] + (first[:2]-source[:2])*(float(cap.z0)-source[2])/denominator
         entrance[i] = q
-        matches = np.flatnonzero([bore_inside(q, b, tol=1e-7) for b in cap.bores])
-        if len(matches) != 1:
+        bore = int(entrance_bore_ids(q, cap.bores))
+        if bore < 0:
             unassigned += 1
             continue
-        groups[(int(matches[0]), len(mode["sins"][i]))].append(i)
+        groups[(bore, len(mode["sins"][i]))].append(i)
     return {key: np.asarray(ids, dtype=int) for key, ids in groups.items()}, unassigned, entrance
 
 
