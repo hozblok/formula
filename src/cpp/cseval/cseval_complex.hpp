@@ -254,7 +254,10 @@ right path of the derivative");
           "Infinite slope (base 0, exponent < 1) during the computation of \
 the power derivative");
     }
-    return (b * _pow(a, b - ONE));
+    // b - 1 drops digits of b: u^b / u keeps the factor u^b.
+    Complex e = b - ONE;
+    if (e + ONE != b && a != ZERO) return b * _pow(a, b) / a;
+    return (b * _pow(a, e));
   }
   // exponentiation for the computation of the derivative (right path)
   static Complex _pow2(Complex a, Complex b) {
@@ -427,11 +430,16 @@ the sqrt derivative");
           "Infinite derivative (base 0, exponent below the derivative order) \
 during the computation of the power derivative");
     }
-    Complex r = f * _pow(a, b - int(k));
-    // a^(b-k) outside the exponent range: f a^h a^(b-k-h), h ~ (b-k)/2.
-    if (r == ZERO || isinf(r.real()) || isinf(r.imag())) {
-      Complex h(floor(((b - int(k)) / 2).real()));
-      r = f * _pow(a, h) * _pow(a, b - int(k) - h);
+    // b - k drops digits of b: a^b a^(-k) keeps the factor a^b.
+    Complex e = b - int(k), mk = ZERO - int(k) * ONE;
+    bool split = e + int(k) != b && a != ZERO;
+    Complex r = split ? f * _pow(a, b) * _pow(a, mk) : f * _pow(a, e);
+    // a^(b-k) outside the exponent range (0, inf or nan parts): f p p,
+    // p = a^((b-k)/2).
+    if (r == ZERO || isinf(r.real()) || isinf(r.imag()) || isnan(r.real()) ||
+        isnan(r.imag())) {
+      Complex p = split ? _pow(a, b / 2) * _pow(a, mk / 2) : _pow(a, e / 2);
+      r = f * p * p;
     }
     return r;
   }

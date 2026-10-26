@@ -53,10 +53,10 @@ def test_str_collapses_clean_zero_imag():
 
 
 def test_str_preserves_drift_imag():
-    # i^4 = exp(4·log(i)) drifts: imag is ~7.6e-25, not 0. The drift is
-    # real (== Number('1') is False), so __str__ must show it. This is
-    # exactly what we want: __str__ never lies about value.
-    n = Number("i^4")
+    # exp(4·log(i)) drifts: imag is ~6e-33, not 0 (i^4 itself is exact). The
+    # drift is real (== Number('1') is False), so __str__ must show it. This
+    # is exactly what we want: __str__ never lies about value.
+    n = Number("exp(4*log(i))")
     s = str(n)
     assert n != Number("1")
     assert s != "1"
