@@ -51,6 +51,7 @@ from .. import rays_v3
 from ..gamma import bounce_lenses, reflect
 from ..rays import recorded_screen_z
 from ..screen import ScreenGrid
+from ..shared.apertures import entrance_bore_ids
 from ..surfaces import CapillaryBundle
 from ..fresnel import FloatLineAmplitudes
 from .beamlet import _launch, _reference_pixel, _screen_spec
@@ -191,7 +192,9 @@ def build_segments(rows, origin, z_rec, bundle, zr_t, zr_s, waist_dz, fresnel, k
         p0, p1 = points[0], points[1]
         t = (z0_cap - p0[2]) / (p1[2] - p0[2])
         ex, ey = p0[0] + t * (p1[0] - p0[0]), p0[1] + t * (p1[1] - p0[1])
-        bore = int(np.argmin((centers[:, 0] - ex) ** 2 + (centers[:, 1] - ey) ** 2))
+        bore = int(entrance_bore_ids([ex, ey], bundle.bores))
+        if bore < 0:
+            raise ValueError(f"ray {ray}: entrance does not belong to exactly one bore")
         q = (complex(-waist_dz, zr_t), 0j, complex(-waist_dz, zr_s))
         amp, fr, path = 1.0 + 0j, 1.0 + 0j, 0.0
         n_seg = len(points) - 1

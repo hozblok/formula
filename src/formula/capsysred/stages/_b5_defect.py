@@ -45,6 +45,7 @@ import time
 import numpy as np
 
 from .. import rays_v3
+from ..shared.apertures import entrance_bore_ids
 from ..shared.types import _RAY_POSITION_TOL_M, _WALL_SURFACE_TOL_M
 from ._b5_transport import _transport_wall, count_free_caustics, reflect_variations, wall_normal_derivative
 from . import bound_modal
@@ -134,8 +135,6 @@ class Segments:
 def build_segments(rows, origin, z_rec, bores, z0_cap, k, fresnel):
     """Per-segment variational state from the archived path (transport as the map)."""
     d2, b2 = fresnel
-    centers = np.array([[float(b["center"][0]), float(b["center"][1])] for b in bores])
-    radii = np.array([float(b["radius"]) for b in bores])
     count = sum(len(r[6]) + 1 for r in rows)
     seg = Segments(count)
     source = np.asarray(origin, float)
@@ -149,14 +148,13 @@ def build_segments(rows, origin, z_rec, bores, z0_cap, k, fresnel):
         dist = float(np.linalg.norm(u))
         u = u / dist
         ent = source[:2] + u[:2] / u[2] * (z0_cap - source[2])
-        bore = int(np.argmin(np.sum((centers - ent) ** 2, axis=1)))
-        inside = _inside_outline(bores[bore], centers[bore], radii[bore], ent)
+        bore = int(entrance_bore_ids(ent, bores))
         # derivatives with respect to the entrance coordinates q (flux measure dq)
         r = np.eye(3)[:, :2].copy()
         distance = (z0_cap - source[2]) / u[2]
         du = (r - u[:, None] * u[None, :2]) / distance
         amp = math.sqrt((distance / dist) / dz) / dist            # sqrt(uz0 / uz_out) / entrance distance
-        maslov, fr, path, ok = 0, 1.0 + 0j, 0.0, bool(inside)
+        maslov, fr, path, ok = 0, 1.0 + 0j, 0.0, bore >= 0
         n_seg = len(points) - 1
         for j in range(n_seg):
             pa, pb = points[j], points[j + 1]
@@ -171,7 +169,7 @@ def build_segments(rows, origin, z_rec, bores, z0_cap, k, fresnel):
             ok &= bool(np.linalg.norm(reached - pb) < _RAY_POSITION_TOL_M)
             r = r + flight * du
             path += flight
-            if j < n_seg - 1:
+            if j < n_seg - 1 and bore >= 0:
                 if bore not in walls:
                     walls[bore] = _transport_wall(bores[bore], z0_cap)
                 normal, dn, _ = wall_normal_derivative(pb[None], walls[bore])
@@ -185,17 +183,6 @@ def build_segments(rows, origin, z_rec, bores, z0_cap, k, fresnel):
             seg.valid[i] = ok
             i += 1
     return seg
-
-
-def _inside_outline(bore, center, radius, point):
-    """Entrance test of a bore outline: the circle, or a polygon through its face apothems."""
-    shape = _shape(bore)
-    d = np.asarray(point, float) - np.asarray(center, float)
-    if shape is None:
-        return bool(np.linalg.norm(d) <= radius * (1 + 1e-8))
-    n, rot, ratio = shape
-    ang = rot + 2.0 * math.pi * np.arange(n) / n
-    return bool(np.all(d[0] * np.cos(ang) + d[1] * np.sin(ang) <= radius * ratio * (1 + 1e-8)))
 
 
 def _velocity_derivative(u, du):
