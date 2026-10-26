@@ -6,6 +6,9 @@ import numpy as np
 
 from ...formula import Number
 from ..config import _bore
+from ..shared.apertures import (
+    bore_inside, entrance_bore_ids, is_polygon, polygon_apothems, polygon_faces,
+)
 from ..shared.types import (
     _FLOAT64_SCALE_FLOOR, _GRAZING_SIN_MIN, _LAGRANGIAN_DEFECT_TOL,
     _RAY_DIRECTION_TOL, _RAY_POSITION_TOL_M, _WALL_SURFACE_TOL_M,
@@ -106,39 +109,6 @@ def _mirror(normal):
     return np.eye(2)-2.0*n[:, :, None]*n[:, None, :]
 
 
-def is_polygon(bore):
-    """Regular-polygon bore: config dicts carry kind, raw YAML dicts only `sides`."""
-    return bore.get("kind") == "polygon" or bore.get("sides") is not None
-
-
-def polygon_faces(bore):
-    """Outward unit normals (n, 2) of a regular polygon: face k at rotation + 2 pi k / n."""
-    n = int(bore["sides"])
-    rot = (float(bore["rotation"]) if bore.get("rotation") is not None
-           else math.radians(float(bore.get("rotation_deg", 0.0))))
-    phi = rot + 2.0 * np.pi * np.arange(n) / n
-    return np.column_stack([np.cos(phi), np.sin(phi)])
-
-
-def polygon_apothems(bore):
-    """Per-face apothems (n,): `apothems` when given, else the radius on every face."""
-    aps = bore.get("apothems")
-    if aps is None:
-        return np.full(int(bore["sides"]), float(bore["radius"]))
-    return np.array([float(a) for a in aps])
-
-
-def bore_inside(points, bore, tol=1e-8):
-    """Transverse points (..., 2) inside the bore: circle test, or apothem test per face."""
-    points = np.asarray(points, dtype=float)
-    center = np.asarray(bore["center"], dtype=float)
-    radius = float(bore["radius"])
-    if is_polygon(bore):
-        aps = polygon_apothems(bore)
-        return np.max((points - center) @ polygon_faces(bore).T - aps, axis=-1) <= tol * aps.max()
-    return np.linalg.norm(points - center, axis=-1) <= radius * (1 + tol)
-
-
 def bore_area(bore):
     """Cross-section area: pi r^2, or the shoelace sum over the polygon vertices."""
     radius = float(bore["radius"])
@@ -222,8 +192,7 @@ def transport_mode(mode, cap, target_z, gamma_ref=1.0):
     initial = first-source
     initial /= np.linalg.norm(initial, axis=1)[:, None]
     entrance = source[:2]+initial[:, :2]/initial[:, 2, None]*(float(cap.z0)-source[2])
-    within = np.column_stack([bore_inside(entrance, b) for b in cap.bores])
-    bore_ids = np.where(within.sum(axis=1) == 1, within.argmax(axis=1), -1)
+    bore_ids = entrance_bore_ids(entrance, cap.bores)
     q_all = np.full((count, 2, 2), np.nan)
     p_all = np.full_like(q_all, np.nan)
     maslov = np.zeros(count, dtype=np.int64)

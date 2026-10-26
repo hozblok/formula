@@ -25,7 +25,8 @@ def _hash(path):
 def _implementation_hashes():
     base = Path(__file__).parent
     return {name: _hash(base/name) for name in
-            ("_b5_map.py", "_b5_field.py", "_b5_transport.py", "_b5_archive.py", "stage17.py")}
+            ("_b5_map.py", "_b5_field.py", "_b5_transport.py", "_b5_archive.py", "stage17.py",
+             "../shared/apertures.py", "../shared/types.py")}
 
 
 def _map_grid(screen, stride):
