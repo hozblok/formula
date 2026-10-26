@@ -1,13 +1,16 @@
 """Formula.get_partial_derivative of orders 2..5 on real and complex formulas."""
 
 from decimal import MAX_EMAX, MIN_EMIN, Decimal, localcontext
+from fractions import Fraction
 from itertools import combinations_with_replacement, permutations
-from math import comb, factorial, perm
+from math import comb, factorial, perm, prod
 
 import pytest
 
 from formula import Formula
 from tests.decimal_pairs import add, componentwise_near, near, parse, rel_near, scale, times_i
+from tests.derivative_oracles import (CLOSED_FORMS, atan_derivative, atanh_derivative, c_mul,
+                                      c_pow, exact_point, falling, to_decimal)
 from tests.derivatives import first_derivative
 
 PRECISION = 64
@@ -362,7 +365,7 @@ def test_inverse_functions_keep_the_precision_next_to_their_singular_points(expr
 def test_terms_with_conjugate_poles_cancel(k):
     # Each term's k-th derivative is ~(k-1)!/(2 x^k) at x = 1e-35 from its pole.
     at = {"x": "1e-35"}
-    # atan(x+i) + atan(x-i) = atan(x/2) - pi/2 for x > 0.
+    # atan(x+i) + atan(x-i) = pi/2 + atan(x/2) for x > 0.
     assert near(d("atan(x+i)+atan(x-i)", "x" * k, at), d("atan(x/2)", "x" * k, at))
     # atanh(1+ix) + atanh(1-ix) = log(4 + x^2)/2 - log(x) for x > 0.
     assert near(d("atanh(1+i*x)+atanh(1-i*x)", "x" * k, at), d("log(4+x^2)/2-log(x)", "x" * k, at))
@@ -428,16 +431,16 @@ def test_small_components_survive_far_from_and_next_to_the_singular_points(name,
 @pytest.mark.xfail(strict=True, reason="the 1e-300 part of atan''' at 1 + 1e-100 i needs "
                    "more than 300 digits next to terms of order 1")
 def test_third_order_component_at_a_stationary_point():
-    # atan(1+ix) + atan(1-ix) = atan(x^2/2) - pi/2: third derivative -5 x^3 at x = 1e-100.
+    # atan(1+ix) + atan(1-ix) = pi/2 + atan(x^2/2): third derivative -5 x^3 at x = 1e-100.
     at = {"x": "1e-100"}
     expr = "1e300*(atan(1+i*x)+atan(1-i*x))"
     assert rel_near(d(expr, "xxx", at), d("1e300*atan(x*x/2)", "xxx", at))
 
 
 @pytest.mark.parametrize("expr,reference", [
-    # atan(1+ix) + atan(1-ix) = atan(x^2/2) - pi/2 for x > 0.
+    # atan(1+ix) + atan(1-ix) = pi/2 + atan(x^2/2) for x > 0.
     ("1e200*(atan(1+i*x)+atan(1-i*x))", "1e200*atan(x*x/2)"),
-    # atanh(x+i) - atanh(x-i) = i atan(x^2/2) - i pi/2 for x > 0.
+    # atanh(x+i) - atanh(x-i) = i pi/2 + i atan(x^2/2) for x > 0.
     ("1e200*(atanh(x+i)-atanh(x-i))", "1e200*i*atan(x*x/2)"),
 ])
 def test_second_order_components_at_the_zeros_of_the_numerators(expr, reference):
@@ -468,14 +471,36 @@ def test_atan_atanh_where_the_power_of_the_denominator_overflows(expr, names, ex
 
 
 def test_complex_integer_powers_keep_the_small_components():
-    # (x+i)^3 + (x-i)^3 = 2x^3 - 6x: second derivative 12x.
-    at = {"x": "1e-100"}
-    assert rel_near(d("1e100*((x+i)^3+(x-i)^3)", "xx", at), (Decimal(12), Decimal(0)))
-    for expr in ["(x+i)^3", "(x-i)^(-2)", "(2+i*x)^5", "(x+0.5*i)^4"]:
-        assert componentwise_near(value(expr, at), value(expr, at, precision=512)), expr
-        for k in range(1, 6):
-            got, ref = d(expr, "x" * k, at), d(expr, "x" * k, at, precision=512)
-            assert componentwise_near(got, ref), (expr, k)
+    # (x+i)^3 + (x-i)^3 = 2x^3 - 6x, exactly at x = 1e-100.
+    expr, at = "1e100*((x+i)^3+(x-i)^3)", {"x": "1e-100"}
+    x = exact_point(at["x"])
+    exact = [10**100 * (2 * x**3 - 6 * x), 10**100 * (6 * x**2 - 6), 10**100 * 12 * x,
+             Fraction(12 * 10**100), Fraction(0), Fraction(0)]
+    assert componentwise_near(value(expr, at), to_decimal((exact[0], 0)))
+    for k in range(1, 6):
+        assert componentwise_near(d(expr, "x" * k, at), to_decimal((exact[k], 0))), k
+
+
+# z(x) and dz/dx of the bases.
+POWER_BASES = {"(x+i)": ((0, 1), (1, 0)), "(x-i)": ((0, -1), (1, 0)),
+               "(2+i*x)": ((2, 0), (0, 1)), "(x+0.5*i)": ((0, Fraction(1, 2)), (1, 0))}
+
+
+@pytest.mark.parametrize("x", ["0", "1e-100", "-1e-100", "0.3"])
+@pytest.mark.parametrize("n", [-5, -2, -1, 0, 1, 2, 3, 4, 5])
+@pytest.mark.parametrize("base", list(POWER_BASES))
+def test_complex_integer_powers_against_exact_rationals(base, n, x):
+    # D^k z^n = n (n-1) ... (n-k+1) z^(n-k) (dz/dx)^k, 0 for an integer 0 <= n < k.
+    (c, slope) = POWER_BASES[base]
+    X = exact_point(x)
+    z = (Fraction(c[0]) + X * slope[0], Fraction(c[1]) + X * slope[1])
+    expr, at = f"{base}^({n})", {"x": x}
+    assert componentwise_near(value(expr, at), to_decimal(c_pow(z, n)))
+    for k in range(1, 6):
+        exact = c_mul(c_pow(z, n - k), c_pow(slope, k))
+        exact = (falling(n, k) * exact[0], falling(n, k) * exact[1])
+        got = d(expr, "x" * k, at)
+        assert all(v.is_finite() for v in got) and componentwise_near(got, to_decimal(exact)), k
 
 
 @pytest.mark.parametrize("expr,names,at,expected", [
@@ -495,3 +520,203 @@ def test_intermediates_outside_the_exponent_range(expr, names, at, expected):
         assert got == (0, 0)
     else:
         assert rel_near(got, (Decimal(expected), Decimal(0)))
+
+
+# 0.1, 1.3: small exponents, x^(b-k) beyond the exponent range at every order.
+SMALL_EXPONENTS = [
+    # D^k x^b = b (b-1) ... (b-k+1) x^(b-k), corrections of order b relative.
+    ("x^(1e-40000000)", "1e-20000000",
+     ["1e-20000000", "-1", "2e20000000", "-6e40000000", "24e60000000"]),
+    ("x^(1e-60000000)", "1e-40000000", ["1e-20000000", "-1e20000000", "2e60000000"]),
+    ("x^(1e-50000000)", "1e-30000000", ["1e-20000000", "-1e10000000", "2e40000000"]),
+]
+
+
+@pytest.mark.parametrize("expr,x,k,expected", [
+    (expr, x, k, e) for expr, x, values in SMALL_EXPONENTS for k, e in enumerate(values, 1)])
+def test_small_exponent_every_order(expr, x, k, expected):
+    at = {"x": x}
+    assert rel_near(d(expr, "x" * k, at), (Decimal(expected), Decimal(0)))
+    # Complex dispatch; i x adds 1 to the imaginary part of the first derivative.
+    got = d(expr + "+i*x", "x" * k, at)
+    assert componentwise_near(got, (Decimal(expected), Decimal(int(k == 1))))
+
+
+# 0.2, 0.3: f^(k)(u) leaves the exponent range, f^(k)(u) (u')^k does not.
+COMPOSITIONS = [
+    # asinh(x^2), acosh(x^2) ~ log(2 x^2): D^k = 2 (-1)^(k-1) (k-1)! / x^k.
+    *[(f"{f}(x^2)", x, k, 2) for f in ("asinh", "acosh")
+      for x in ("1e20000000", "-1e20000000") for k in (1, 2, 3)],
+    # asinh(c x), acosh(c x) ~ log(2 c x) at x = 1: D^k = (-1)^(k-1) (k-1)!.
+    *[(f"{f}(1e40000000*x)", "1", k, 1) for f in ("asinh", "acosh") for k in range(1, 6)],
+]
+RANGE_LIMIT = ("f^(k)(u) is below the exponent range while f^(k)(u) (u')^k is not; "
+               "the jets would need scaled derivatives")
+
+
+@pytest.mark.parametrize("expr,x,k,c", [
+    pytest.param(*case, marks=pytest.mark.xfail(strict=True, reason=RANGE_LIMIT))
+    if case[2] > 1 else pytest.param(*case) for case in COMPOSITIONS])
+def test_inverse_hyperbolic_compositions_at_huge_arguments(expr, x, k, c):
+    # c (-1)^(k-1) (k-1)! / x^k in Decimal: its exponent is not digits.
+    exact = c * (-1) ** (k - 1) * factorial(k - 1) / Decimal(x) ** k
+    assert rel_near(d(expr, "x" * k, {"x": x}), (exact, Decimal(0)))
+
+
+# 0.4: the third-order part at the stationary points of atan''' and atanh''', exactly.
+STATIONARY = [
+    # (expr, z at x = 1e-100 with E for x, dz/dx, function)
+    ("atan(-1+i*x)", (-1, "E"), (0, 1), atan_derivative),
+    ("atanh(x+i)", ("E", 1), (1, 0), atanh_derivative),
+    ("atanh(x-i)", ("E", -1), (1, 0), atanh_derivative),
+]
+
+
+@pytest.mark.xfail(strict=True, reason="the 1e-300 part of f''' at a stationary point needs "
+                   "more than 300 digits next to terms of order 1")
+@pytest.mark.parametrize("expr,z,slope,function", STATIONARY)
+def test_third_order_component_at_the_other_stationary_points(expr, z, slope, function):
+    eps = exact_point("1e-100")
+    point = tuple(eps if v == "E" else Fraction(v) for v in z)
+    exact = c_mul(function(point, 3), c_pow(slope, 3))
+    assert componentwise_near(d(expr, "xxx", {"x": "1e-100"}), to_decimal(exact))
+
+
+# 1.2: division at extreme magnitudes, real and complex dispatch.
+@pytest.mark.parametrize("x", ["1e40000000", "-1e40000000", "1e-40000000", "-1e-40000000"])
+@pytest.mark.parametrize("expr", ["x/x", "x/x+0*i"])
+def test_x_over_x_has_zero_derivatives_at_extreme_magnitudes(expr, x):
+    # Real (decimal): the terms of the quotient rule are powers of ten and cancel exactly.
+    # Complex (binary): 1e-40000000 is inexact, the zero is the terms' rounding, ~|x|^-k.
+    for k in range(1, 6):
+        got = d(expr, "x" * k, {"x": x})
+        if "i" in expr:
+            assert max(abs(v) for v in got) <= Decimal("1e-55") / abs(Decimal(x)) ** k, k
+        else:
+            assert got == (0, 0), k
+
+
+@pytest.mark.parametrize("expr,names,at,expected", [
+    ("1e40000000*y*(x/x)", "xy", {"x": "1e40000000", "y": "1"}, "0"),
+    ("1e40000000*y*(x/x)", "yx", {"x": "1e40000000", "y": "1"}, "0"),
+    ("x/y", "y", {"x": "-1e40000000", "y": "-1e40000000"}, "1e-40000000"),
+    ("x/y+0*i", "y", {"x": "1e40000000", "y": "-1e40000000"}, "-1e-40000000"),
+    ("(x*z)/y+0*i", "yz", {"x": "1e-40000000", "y": "1e-40000000", "z": "1"}, "-1e40000000"),
+    # 1.4: the even first derivative of asinh, mixed derivatives with a linear factor.
+    ("asinh(x)", "x", {"x": "-1e40000000"}, "1e-40000000"),
+    ("asinh(x)*y", "xy", {"x": "1e40000000", "y": "1"}, "1e-40000000"),
+    ("acosh(x)*y", "xy", {"x": "1e40000000", "y": "1"}, "1e-40000000"),
+    # The complex exponent range is wider than the real one.
+    ("x^(1e-400000000)+i*x", "xxxx", {"x": "1e-200000000"}, "-6e400000000"),
+])
+def test_more_intermediates_outside_the_exponent_range(expr, names, at, expected):
+    got = d(expr, names, at)
+    if expected == "0":
+        assert got == (0, 0)
+    else:
+        assert rel_near(got, (Decimal(expected), Decimal(0)))
+
+
+# 1.5: atan far out, the numerator 5 a^4 included.
+@pytest.mark.parametrize("x,orders", [("1e10000000", [1, 2, 3, 4, 5]), ("1e11000000", [5])])
+@pytest.mark.parametrize("expr", ["atan(x)", "atan(x)+0*i"])
+def test_atan_far_out_against_the_asymptotic_derivatives(expr, x, orders):
+    # atan^(k)(x) = (-1)^(k-1) k! / x^(k+1) (1 + O(x^-2)).
+    for k in orders:
+        exact = (-1) ** (k - 1) * factorial(k) / Decimal(x) ** (k + 1)
+        assert rel_near(d(expr, "x" * k, {"x": x}), (exact, Decimal(0))), k
+
+
+# 4.2: the switch between the factorized and the expanded forms (one point twice as near).
+THIRD = "0." + "3" * 80
+SWITCH_POINTS = [(sign + THIRD, offset) for sign in ("", "-") for offset in ("-1e-20", "0", "1e-20")]
+
+
+def _switch_cases():
+    cases = []
+    for name in ("asin", "acos", "atanh", "acosh"):
+        for a, offset in SWITCH_POINTS:
+            re = str(Decimal(a) + Decimal(offset))
+            if name != "acosh":
+                cases.append((name, f"{name}(x)", re, (exact_point(re), Fraction(0))))
+            cases.append((name, f"{name}(x+0*i)", re, (exact_point(re), Fraction(0))))
+            if offset != "0":
+                cases.append((name, f"{name}(x+i*({offset}))", a,
+                              (exact_point(a), exact_point(offset))))
+    for name in ("atan", "asinh"):
+        for a, offset in SWITCH_POINTS:
+            im = str(Decimal(a) + Decimal(offset))
+            cases.append((name, f"{name}(x+i*({im}))", "0", (Fraction(0), exact_point(im))))
+            if offset != "0":
+                cases.append((name, f"{name}(x+i*({a}))", offset,
+                              (exact_point(offset), exact_point(a))))
+    return cases
+
+
+@pytest.mark.parametrize("name,expr,x,z", _switch_cases())
+def test_inverse_functions_at_the_switch_of_the_forms(name, expr, x, z):
+    # d^k/dx^k f(x + c) = f^(k)(z) against the closed forms.
+    for k in range(1, 6):
+        exact = CLOSED_FORMS[name](z, k)
+        exact = to_decimal(exact) if isinstance(exact[0], Fraction) else exact
+        assert componentwise_near(d(expr, "x" * k, {"x": x}), exact, Decimal("1e-50")), k
+
+
+# 4.3: the small components against exact rationals and closed forms, not 512 digits.
+COMPONENT_GEOMETRY = {  # template: (z at x = 1e-100 with E for x, dz/dx)
+    "1+i*x": ((1, "E"), (0, 1)), "x+i": (("E", 1), (1, 0)), "-1+i*x": ((-1, "E"), (0, 1)),
+    "x-i": (("E", -1), (1, 0)), "2+i*x": ((2, "E"), (0, 1)), "x+2*i": (("E", 2), (1, 0)),
+    "-2+i*x": ((-2, "E"), (0, 1)), "x-2*i": (("E", -2), (1, 0)),
+    "0.5+i*x": ((Fraction(1, 2), "E"), (0, 1)), "x+0.5*i": (("E", Fraction(1, 2)), (1, 0)),
+    "1e100+i*x": ((10**100, "E"), (0, 1)), "x+1e100*i": (("E", 10**100), (1, 0)),
+}
+
+
+@pytest.mark.parametrize("point", COMPONENT_POINTS)
+@pytest.mark.parametrize("name", ["asin", "acos", "atan", "asinh", "acosh", "atanh"])
+def test_small_components_against_closed_forms(name, point):
+    eps = exact_point("1e-100")
+    z, slope = COMPONENT_GEOMETRY[point]
+    z = tuple(eps if v == "E" else Fraction(v) for v in z)
+    expr = f"{name}({point})"
+    for k in range(1, 6):
+        if expr in EPSILON_CUBED and k == 3:
+            continue
+        exact = CLOSED_FORMS[name](z, k)
+        exact = c_mul(to_decimal(exact) if isinstance(exact[0], Fraction) else exact,
+                      to_decimal(c_pow(slope, k)))
+        assert componentwise_near(d(expr, "x" * k, {"x": "1e-100"}), exact), k
+
+
+# 4.4: tanh saturation with mixed y; d/dy exp(2y) = 2 exp(2y).
+@pytest.mark.parametrize("x,y", [("0.3", "0"), ("100", "100"), ("-100", "100"), ("3000", "3000")])
+@pytest.mark.parametrize("names", ["xy", "xxy", "xyy", "xxyy", "xxxy", "xyyy", "xxxxy", "xxyyy"])
+def test_tanh_saturation_with_mixed_y(names, x, y):
+    a, b = names.count("x"), names.count("y")
+    closed = TANH_DERIVATIVES["x" * a].replace("S", "(1/cosh(x)^2)").replace("T", "tanh(x)")
+    at = {"x": x, "y": y}
+    expected = value(f"{2 ** b}*exp(2*y)*({closed})", at)
+    assert near(d("exp(2*y)*tanh(x)", names, at), expected)
+    assert near(d("exp(2*y)*tan(i*x)", names, at), times_i(expected, 1))
+
+
+# The factor u^b of u^(b-k) at a tiny exponent, where b - k rounds to -k.
+PI = Decimal("3.1415926535897932384626433832795028841971693993751058209749445923078164")
+LN2 = Decimal("0.6931471805599453094172321214581765680755001343602552541206800094933936")
+
+
+@pytest.mark.parametrize("k", [1, 2, 3, 4, 5])
+def test_power_derivatives_keep_the_factor_of_a_tiny_exponent(k):
+    # (ix)^b - (-ix)^b = 2i sin(pi b / 2) x^b and (2x)^b - x^b = (2^b - 1) x^b, so
+    # D^k = i pi b B_k x^-k and ln2 b B_k x^-k with B_k = b (b-1) ... (b-k+1), to 1e-97.
+    b = x = Decimal("1e-100")
+    falling_b = prod(b - j for j in range(k))
+    at = {"x": "1e-100"}
+    phase = (Decimal(0), PI * b * falling_b / x**k)
+    assert componentwise_near(d("(i*x)^1e-100-(-i*x)^1e-100", "x" * k, at), phase,
+                              Decimal("1e-50"))
+    # Real: (2x)^b and x^b differ by 7e-101, so the difference spends about 100 digits
+    # (at 64 both round to 1); the complex phase above lives in its own component.
+    modulus = (LN2 * b * falling_b / x**k, Decimal(0))
+    assert rel_near(d("(2*x)^1e-100-x^1e-100", "x" * k, at, precision=256), modulus,
+                    Decimal("1e-50"))
