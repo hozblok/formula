@@ -411,10 +411,12 @@ the sqrt derivative");
 during the computation of the power derivative");
     }
     Real r = f * _pow(a, b - int(k));
-    // a^(b-k) outside the exponent range: f a^h a^(b-k-h), h ~ (b-k)/2.
+    // a^(b-k) outside the exponent range: f p p, p = |a|^((b-k)/2), negated
+    // for a < 0 and odd b - k.
     if (r == ZERO || isinf(r)) {
-      Real h = floor((b - int(k)) / 2);
-      r = f * _pow(a, h) * _pow(a, b - int(k) - h);
+      Real half = (b - int(k)) / 2, p = _pow(fabs(a), half);
+      r = f * p * p;
+      if (a < ZERO && half != floor(half)) r = ZERO - r;
     }
     return r;
   }

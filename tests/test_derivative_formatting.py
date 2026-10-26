@@ -6,7 +6,9 @@ derivatives also leaked boost's "(re,im)" form instead of the
 "re+i*(im)" shape every other output uses.
 """
 
-from formula import FmtFlags, Solver
+import pytest
+
+from formula import FmtFlags, Formula, Solver
 
 
 def test_derivative_respects_format_digits():
@@ -37,3 +39,31 @@ def test_complex_derivative_uses_value_output_shape():
     s = Solver("i*x^2")
     assert s({"x": "2"}, derivative="x") == "0+i*(4)"
     assert s.get_partial_derivative(["x"], {"x": "2"}, s.precision) == "0+i*(4)"
+
+
+FORMATS = [FmtFlags.default, FmtFlags.fixed, FmtFlags.scientific, FmtFlags.showpos]
+FORMAT_IDS = ["default", "fixed", "scientific", "showpos"]
+MIXED = ["alpha"] * 3 + ["beta_2"] * 2
+MIXED_POINT = {"alpha": "1.5", "beta_2": "-2"}
+
+
+@pytest.mark.parametrize("fmt", FORMATS, ids=FORMAT_IDS)
+@pytest.mark.parametrize("digits", [0, 7, 25])
+@pytest.mark.parametrize("precision", [24, 128])
+def test_higher_derivative_formats_like_the_value_of_the_derivative(precision, digits, fmt):
+    # d^5/(d alpha^3 d beta_2^2) of alpha^3 (beta_2^2 / 7) is the constant 6 (2/7), the
+    # reference written in the same order of operations.
+    f = Formula("alpha^3*beta_2^2/7", precision)
+    got = f.get_partial_derivative(MIXED, MIXED_POINT, digits, fmt)
+    assert got == Formula("6*(2/7)", precision).get({}, digits, fmt)
+
+
+@pytest.mark.parametrize("fmt", FORMATS, ids=FORMAT_IDS)
+@pytest.mark.parametrize("digits", [0, 7])
+@pytest.mark.parametrize("expr,reference", [
+    ("i*alpha^3*beta_2^2/7", "(i*6)*(2/7)"),            # real part 0
+    ("alpha^3*beta_2^2/7+i*alpha^2", "6*(2/7)+0*i"),    # imaginary part 0
+])
+def test_complex_higher_derivative_formats_like_its_value(expr, reference, digits, fmt):
+    got = Formula(expr, 24).get_partial_derivative(MIXED, MIXED_POINT, digits, fmt)
+    assert got == Formula(reference, 24).get({}, digits, fmt)

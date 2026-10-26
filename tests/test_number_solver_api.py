@@ -3,7 +3,7 @@
 
 import pytest
 
-from formula import Number, Solver
+from formula import FmtFlags, Formula, Number, Solver
 
 
 # --------------------------------------------------------------------------- #
@@ -160,3 +160,39 @@ def test_derivative_element_error_not_masked_as_iterable_error():
     assert "not a string or iterable" not in str(ex.value)
     with pytest.raises(TypeError):
         Solver("x^2").get_partial_derivative([None], {"x": "2"})
+
+
+# get_partial_derivative next to get_derivative and the Solver call.
+FORMATS = [FmtFlags.default, FmtFlags.fixed, FmtFlags.scientific, FmtFlags.showpos]
+
+
+@pytest.mark.parametrize("expr", ["x^3*sin(x)", "x^3*sin(x)+i*x^2"])
+def test_first_partial_derivative_equals_get_derivative_in_every_format(expr):
+    f, at = Formula(expr, 32), {"x": "0.7"}
+    for digits in (0, 7, 25):
+        for fmt in FORMATS:
+            assert f.get_partial_derivative(["x"], at, digits, fmt) == \
+                f.get_derivative("x", at, digits, fmt)
+
+
+@pytest.mark.parametrize("expr", ["x^4*y", "x^4*y+i*x"])
+def test_solver_partial_derivative_equals_formula(expr):
+    s, f, at = Solver(expr, precision=32), Formula(expr, 32), {"x": "2", "y": "3"}
+    for names in (["x"], ["x", "y"], ["x", "x", "x", "y"], ["x"] * 5):
+        assert s.get_partial_derivative(names, at) == f.get_partial_derivative(names, at)
+
+
+def test_solver_derivative_list_keeps_separate_first_derivatives():
+    s = Solver("x^4")
+    assert s(2, derivative=["x", "x"]) == ["32", "32"]
+    assert s.get_partial_derivative(["x", "x"], {"x": "2"}) == "48"
+
+
+@pytest.mark.parametrize("unit", ["i", "j"])
+def test_precision_round_up_and_custom_unit_on_higher_orders(unit):
+    expr = f"{unit}*x^5+x^3"
+    rounded, exact = Formula(expr, 30, unit), Formula(expr, 32, unit)
+    assert rounded.precision == 32
+    for k in range(2, 6):
+        assert rounded.get_partial_derivative(["x"] * k, {"x": "1.5"}) == \
+            exact.get_partial_derivative(["x"] * k, {"x": "1.5"})
