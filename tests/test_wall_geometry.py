@@ -3,7 +3,9 @@
 import numpy as np
 import pytest
 
-from formula import Formula
+from formula import Formula, Number
+from formula.capsysred.config import _bore
+from formula.capsysred.surfaces import _make_wall
 from formula.capsysred.walls.wall_cylinder import CylinderWall
 from formula.capsysred.walls.wall_funnel import FunnelWall
 from formula.capsysred.walls.wall_polygon import PolygonWall
@@ -87,3 +89,165 @@ def test_torus_normal_derivative_at_large_radius_matches_formula(radius):
     np.testing.assert_allclose(got_n, normal, rtol=5e-14, atol=2e-15)
     np.testing.assert_allclose(got_dn, derivative, rtol=5e-14, atol=2e-10)
     np.testing.assert_allclose(got_length, length, rtol=5e-14, atol=0.)
+
+
+WORLD_BORES = {
+    "cylinder": {"radius": .4},
+    "revolution": {"r2_poly": [.16, .03, -.02]},
+    "funnel": {"radius": .4, "funnel": {"g": [.2, -.08], "f": [-.1, .03]}},
+    "polygon": {"radius": .4, "sides": 6, "rotation_deg": 23.,
+                "apothems": [.4, .48, .43, .5, .39, .46]},
+    "torus": {"radius": .4, "bend": {"radius": 2., "toward": [2., -3.]}},
+}
+WORLD_POINTS = [(.7, -.1, .55), (-.35, .6, .82), (-.4, -.55, -.15)]
+
+
+def _world_wall(kind):
+    raw = dict(WORLD_BORES[kind], center=[.15, -.12])
+    return _make_wall(_bore(raw, 64, 0), Number(".37", 64))
+
+
+def _world_reference(kind, point):
+    values = dict(zip("xyz", map(repr, point)), cx=".15", cy="-.12", z0=".37")
+    if kind == "cylinder":
+        expression = "((x-cx)^2+(y-cy)^2-.4^2)/2"
+    elif kind == "revolution":
+        expression = "((x-cx)^2+(y-cy)^2-(.16+.03*z-.02*z^2))/2"
+    elif kind == "funnel":
+        g = "(1+.2*(z-z0)-.08*(z-z0)^2)"
+        f = "(1-.1*(z-z0)+.03*(z-z0)^2)"
+        expression = f"((x-cx*{g})^2+(y-cy*{g})^2-.4^2*{f}^2)/2"
+    elif kind == "polygon":
+        expression = "cos(23*pi/180+2*pi*face/6)*(x-cx)+sin(23*pi/180+2*pi*face/6)*(y-cy)-a"
+        formula = Formula(expression, precision=64)
+        candidates = [dict(values, face=str(k), a=repr(a))
+                      for k, a in enumerate(WORLD_BORES[kind]["apothems"])]
+        values = max(candidates, key=lambda v: float(Number(formula.evaluate(v), 64)))
+    else:
+        xi = "(2*(x-cx)-3*(y-cy))/sqrt(13)"
+        eta = "(3*(x-cx)+2*(y-cy))/sqrt(13)"
+        expression = f"((sqrt((2-({xi}))^2+(z-z0)^2)-2)^2+({eta})^2-.4^2)/2"
+    formula = Formula(expression, precision=64)
+    grad = [float(formula.get_derivative(axis, values)) for axis in "xyz"]
+    hess = [float(formula.get_partial_derivative(list(axes), values))
+            for axes in ("xx", "xy", "xz", "yy", "yz", "zz")]
+    return grad, hess
+
+
+@pytest.mark.parametrize("kind", WORLD_BORES)
+@pytest.mark.parametrize("point", WORLD_POINTS)
+def test_world_derivatives_match_full_formula(kind, point):
+    wall = _world_wall(kind)
+    actual = wall.derivatives_at(*point)
+    expected = _world_reference(kind, point)
+    for got, want in zip(actual, expected):
+        np.testing.assert_allclose(got, want, rtol=5e-14, atol=3e-15)
+
+    from formula.capsysred.gamma import _curved_lens, _wall_lens
+    outgoing = -np.array(expected[0]) / np.linalg.norm(expected[0]) + np.array([0., 0., .3])
+    np.testing.assert_allclose(_wall_lens(wall, *point, outgoing),
+                               _curved_lens(*expected, outgoing), rtol=3e-13, atol=3e-14)
+    if kind in ("cylinder", "polygon", "torus"):
+        from formula.capsysred.stages._b5_transport import wall_normal_derivative
+        normal = np.array(expected[0]) / np.linalg.norm(expected[0])
+        derivative = (np.eye(3) - np.outer(normal, normal)) @ _full_hessian(expected[1]) / np.linalg.norm(expected[0])
+        got_n, got_dn, _ = wall_normal_derivative(np.array(point), wall)
+        np.testing.assert_allclose(got_n, normal, rtol=3e-13, atol=3e-14)
+        np.testing.assert_allclose(got_dn, derivative, rtol=3e-13, atol=3e-14)
+
+
+@pytest.mark.parametrize("kind", WORLD_BORES)
+def test_world_derivatives_broadcast_coordinates(kind):
+    wall = _world_wall(kind)
+    x, y, z = np.array([[.7, -.35, -.4]]), np.array([[-.1], [.6]]), .82
+    actual = wall.derivatives_at(x, y, z)
+    for i in range(2):
+        for j in range(3):
+            expected = _world_reference(kind, (float(x[0, j]), float(y[i, 0]), z))
+            for got, want in zip(actual, expected):
+                for component, value in enumerate(got):
+                    np.testing.assert_allclose(np.broadcast_to(value, (2, 3))[i, j], want[component],
+                                               rtol=5e-14, atol=3e-15)
+
+
+@pytest.mark.parametrize("face", range(6))
+def test_rotated_shifted_polygon_selects_each_unequal_face(face):
+    wall = _world_wall("polygon")
+    angle = np.deg2rad(23.) + face * 2 * np.pi / 6
+    normal = np.array([np.cos(angle), np.sin(angle)])
+    point = np.r_[np.array([.15, -.12]) + WORLD_BORES["polygon"]["apothems"][face] * normal, .71]
+    grad, hess = wall.derivatives_at(*point)
+    np.testing.assert_allclose(grad, np.r_[normal, 0.], rtol=0., atol=1e-15)
+    np.testing.assert_array_equal(hess, np.zeros(6))
+
+
+def _world_surface_point(kind):
+    angle, z, radius = .63, .71, .4
+    center = np.array([.15, -.12])
+    if kind == "revolution":
+        radius = np.sqrt(.16 + .03 * z - .02 * z * z)
+    elif kind == "funnel":
+        zr = z - .37
+        center *= 1 + .2 * zr - .08 * zr * zr
+        radius *= 1 - .1 * zr + .03 * zr * zr
+    elif kind == "polygon":
+        angle = np.deg2rad(23.)
+    elif kind == "torus":
+        tangent = np.array([2., -3., 0.]) / np.sqrt(13.)
+        binormal = np.array([3., 2., 0.]) / np.sqrt(13.)
+        ring = -tangent * np.cos(.17) + np.array([0., 0., np.sin(.17)])
+        return np.r_[center, .37] + 2 * tangent + (2 + radius * np.cos(angle)) * ring + radius * np.sin(angle) * binormal
+    return np.r_[center + radius * np.array([np.cos(angle), np.sin(angle)]), z]
+
+
+def _full_hessian(compact):
+    xx, xy, xz, yy, yz, zz = compact
+    return np.array([[xx, xy, xz], [xy, yy, yz], [xz, yz, zz]])
+
+
+@pytest.mark.parametrize("kind", WORLD_BORES)
+def test_world_surface_normal_and_curvature_match_stored_formula(kind):
+    wall, point = _world_wall(kind), _world_surface_point(kind)
+    formula = Formula(wall.expr_um, precision=64)
+    values = {axis: str(Number(repr(float(value)), 64) * Number("1000000", 64))
+              for axis, value in zip("xyz", point)}
+    expected_g = np.array([float(formula.get_derivative(axis, values)) for axis in "xyz"])
+    expected_h = np.array([[float(formula.get_partial_derivative([a, b], values)) for b in "xyz"]
+                           for a in "xyz"])
+    grad, hess = wall.derivatives_at(*point)
+    normal = np.array(grad) / np.linalg.norm(grad)
+    expected_n = expected_g / np.linalg.norm(expected_g)
+    projector = np.eye(3) - np.outer(normal, normal)
+    expected_projector = np.eye(3) - np.outer(expected_n, expected_n)
+    curvature = projector @ _full_hessian(hess) @ projector / np.linalg.norm(grad)
+    expected_curvature = expected_projector @ expected_h @ expected_projector / np.linalg.norm(expected_g) * 1e6
+    np.testing.assert_allclose(normal, expected_n, rtol=3e-13, atol=3e-14)
+    np.testing.assert_allclose(curvature, expected_curvature, rtol=3e-12, atol=3e-12)
+
+
+@pytest.mark.parametrize("radius", [2156.25, 1e10])
+@pytest.mark.parametrize("toward", [(1., 0.), (2., -3.)])
+def test_shifted_rotated_torus_world_derivatives_at_large_radius(radius, toward):
+    raw = {"center": [72e-6, -3e-6], "radius": 24e-6,
+           "bend": {"radius": radius, "toward": toward}}
+    wall = _make_wall(_bore(raw, 64, 0), Number(".07", 64))
+    point = (80e-6, 17e-6, .25)
+    xi = "(tx*(x-cx)+ty*(y-cy))/sqrt(tx^2+ty^2)"
+    eta = "(-ty*(x-cx)+tx*(y-cy))/sqrt(tx^2+ty^2)"
+    formula = Formula(f"((sqrt((R-({xi}))^2+(z-z0)^2)-R)^2+({eta})^2)/2", precision=64)
+    values = dict(zip("xyz", map(repr, point)), R=repr(radius), tx=repr(toward[0]), ty=repr(toward[1]),
+                  cx="72e-6", cy="-3e-6", z0=".07")
+    grad = [float(formula.get_derivative(axis, values)) for axis in "xyz"]
+    hess = [float(formula.get_partial_derivative(list(axes), values))
+            for axes in ("xx", "xy", "xz", "yy", "yz", "zz")]
+    actual_g, actual_h = wall.derivatives_at(*point)
+    np.testing.assert_allclose(actual_g, grad, rtol=5e-14, atol=2e-20)
+    np.testing.assert_allclose(actual_h, hess, rtol=5e-14, atol=3e-16)
+
+
+@pytest.mark.parametrize("kind", ["revolution", "funnel"])
+def test_stage17_keeps_unsupported_wall_guard(kind):
+    from formula.capsysred.stages._b5_transport import wall_normal_derivative
+
+    with pytest.raises(ValueError, match="supports cylinder, torus and polygon"):
+        wall_normal_derivative(np.array(WORLD_POINTS[0]), _world_wall(kind))

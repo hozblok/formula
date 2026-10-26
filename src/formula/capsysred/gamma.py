@@ -21,12 +21,6 @@ adds no on-axis factor). For the scalar case it reduces to q0/q — the
 import cmath
 import math
 
-from .walls.wall_cylinder import CylinderWall
-from .walls.wall_funnel import FunnelWall
-from .walls.wall_polygon import PolygonWall
-from .walls.wall_revolution import RevolutionWall
-from .walls.wall_torus import TorusWall
-
 
 def inv2(m):
     xx, xy, yy = m
@@ -123,33 +117,11 @@ def _curved_lens(grad, hess, out):
 
 
 def _wall_lens(wall, x, y, z, out):
-    kind = wall.kind
-    if kind == "polygon":   # exactly flat: the hit face's outward normal
-        cx, cy = wall._cxf, wall._cyf
-        (mx, my), _ = max(zip(wall._facesf, wall._afs),
-                          key=lambda f: f[0][0] * (x - cx) + f[0][1] * (y - cy) - f[1])
-        grad, _ = PolygonWall.gradient_hessian(mx, my)
-        return (math.atan2(grad[1], grad[0]), 0.0, 0.0, 0.0)
-    if kind == "cylinder":
-        grad, hess = CylinderWall.gradient_hessian(x - wall._cxf, y - wall._cyf)
-    elif kind == "revolution":
-        grad, hess = RevolutionWall.gradient_hessian(
-            x - wall._cxf, y - wall._cyf, z, wall._c1f, wall._c2f)
-    elif kind == "funnel":
-        grad, hess = FunnelWall.gradient_hessian(
-            x, y, z - wall._z0f, wall._cxf, wall._cyf, wall._r0f,
-            wall._agf, wall._bgf, wall._aff, wall._bff)
-    elif kind == "torus":
-        cx3, cy3, cz3 = wall._Cf
-        nx, ny = wall._nf
-        vx, vy, vz = x - cx3, y - cy3, z - cz3
-        s = vx * nx + vy * ny
-        qx, qy = vx - s * nx, vy - s * ny
-        rho = math.sqrt(qx * qx + qy * qy + vz * vz)
-        r = (rho - wall._Rf) / rho
-        grad, hess = TorusWall.gradient_hessian(qx, qy, vz, s, nx, ny, rho, r)
-    else:
+    if wall.kind not in EXACT_KINDS:
         return (math.nan, 0.0, 0.0, 0.0)   # implicit/unknown: normal unknown
+    grad, hess = wall.derivatives_at(x, y, z)
+    if wall.kind == "polygon":
+        return (math.atan2(grad[1], grad[0]), 0.0, 0.0, 0.0)
     return _curved_lens(grad, hess, out)
 
 
