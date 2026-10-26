@@ -1,6 +1,6 @@
 """Formula.get_partial_derivative of orders 2..5 on real and complex formulas."""
 
-from decimal import Decimal, localcontext
+from decimal import MAX_EMAX, MIN_EMIN, Decimal, localcontext
 from itertools import combinations_with_replacement, permutations
 from math import comb, factorial, perm
 
@@ -145,7 +145,7 @@ AT = {"x": "0.3", "y": "0.7", "z": "1.1", "t": "0.4"}
 @pytest.fixture(autouse=True)
 def _decimal_precision():
     with localcontext() as ctx:
-        ctx.prec = 600
+        ctx.prec, ctx.Emax, ctx.Emin = 600, MAX_EMAX, MIN_EMIN
         yield
 
 
@@ -465,3 +465,33 @@ def test_atan_atanh_where_the_power_of_the_denominator_overflows(expr, names, ex
     # x = 1e10000000: (1 + x^2)^4 = 1e80000000 is beyond the exponent range,
     # the result k!/x^(k+1) is not.
     assert rel_near(d(expr, names, {"x": "1e10000000"}), (Decimal(expected), Decimal(0)))
+
+
+def test_complex_integer_powers_keep_the_small_components():
+    # (x+i)^3 + (x-i)^3 = 2x^3 - 6x: second derivative 12x.
+    at = {"x": "1e-100"}
+    assert rel_near(d("1e100*((x+i)^3+(x-i)^3)", "xx", at), (Decimal(12), Decimal(0)))
+    for expr in ["(x+i)^3", "(x-i)^(-2)", "(2+i*x)^5", "(x+0.5*i)^4"]:
+        assert componentwise_near(value(expr, at), value(expr, at, precision=512)), expr
+        for k in range(1, 6):
+            got, ref = d(expr, "x" * k, at), d(expr, "x" * k, at, precision=512)
+            assert componentwise_near(got, ref), (expr, k)
+
+
+@pytest.mark.parametrize("expr,names,at,expected", [
+    ("x/x", "x", {"x": "1e-40000000"}, "0"),
+    ("(x*z)/y", "yz", {"x": "1e-40000000", "y": "1e-40000000", "z": "1"}, "-1e40000000"),
+    ("x/y", "y", {"x": "1e40000000", "y": "1e40000000"}, "-1e-40000000"),
+    ("x^(1e-40000000)", "xxxx", {"x": "1e-20000000"}, "-6e40000000"),
+    ("x^(1e-40000000)+i*x", "xxxx", {"x": "1e-20000000"}, "-6e40000000"),
+    ("asinh(x)", "x", {"x": "1e40000000"}, "1e-40000000"),
+    ("acosh(x)", "x", {"x": "1e40000000"}, "1e-40000000"),
+])
+def test_intermediates_outside_the_exponent_range(expr, names, at, expected):
+    # b^2 in the division rule, x^(b-k) in the power rule and a^2 in asinh', acosh'
+    # leave the exponent range (about 1e67108864) while the derivatives do not.
+    got = d(expr, names, at)
+    if expected == "0":
+        assert got == (0, 0)
+    else:
+        assert rel_near(got, (Decimal(expected), Decimal(0)))

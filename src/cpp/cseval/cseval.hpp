@@ -213,7 +213,10 @@ of the derivative");
           "Division by zero during the computation of \
 right path of the derivative");
     }
-    return ZERO - a / (b * b);
+    // b^2 outside the exponent range: a / b / b.
+    Real bb = b * b;
+    if (bb == ZERO || isinf(bb)) return ZERO - a / b / b;
+    return ZERO - a / bb;
   }
   // "*" - multiplication
   static Real _mul(Real a, Real b) { return a * b; }
@@ -363,14 +366,21 @@ the sqrt derivative");
   }
   // "asinh", "acosh", "atanh"
   static Real _asinh(Real a) { return asinh(a); }
-  static Real _asinh_d(Real a, Real) { return ONE / _sqrt(ONE + a * a); }
+  // a^2 beyond the exponent range: 1/|a|.
+  static Real _asinh_d(Real a, Real) {
+    Real aa = a * a;
+    if (isinf(aa)) return ONE / fabs(a);
+    return ONE / _sqrt(ONE + aa);
+  }
   static Real _acosh(Real a) { return acosh(a); }
   static Real _acosh_d(Real a, Real) {
-    if (a * a == ONE) {
+    Real aa = a * a;
+    if (aa == ONE) {
       throw std::invalid_argument(
           "Division by zero during the computation of the acosh derivative");
     }
-    return ONE / _sqrt(a * a - ONE);
+    if (isinf(aa)) return ONE / fabs(a);
+    return ONE / _sqrt(aa - ONE);
   }
   static Real _atanh(Real a) { return atanh(a); }
   static Real _atanh_d(Real a, Real) {
@@ -400,7 +410,13 @@ the sqrt derivative");
           "Infinite derivative (base 0, exponent below the derivative order) \
 during the computation of the power derivative");
     }
-    return f * _pow(a, b - int(k));
+    Real r = f * _pow(a, b - int(k));
+    // a^(b-k) outside the exponent range: f a^h a^(b-k-h), h ~ (b-k)/2.
+    if (r == ZERO || isinf(r)) {
+      Real h = floor((b - int(k)) / 2);
+      r = f * _pow(a, h) * _pow(a, b - int(k) - h);
+    }
+    return r;
   }
   // k-th derivative of a^v in v: log(a)^k a^v.
   static Real _pow_ek(Real a, Real b, unsigned k) {
