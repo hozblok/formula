@@ -45,6 +45,7 @@ import time
 import numpy as np
 
 from .. import rays_v3
+from ..shared.types import _RAY_POSITION_TOL_M, _WALL_SURFACE_TOL_M
 from ._b5_transport import _transport_wall, count_free_caustics, reflect_variations, wall_normal_derivative
 from . import bound_modal
 from .beamlet import _screen_spec
@@ -167,14 +168,14 @@ def build_segments(rows, origin, z_rec, bores, z0_cap, k, fresnel):
             crosses, ambiguous = count_free_caustics(r[:2][None], v[None], np.array([pb[2] - pa[2]]))
             maslov += int(crosses[0]); ok &= not bool(ambiguous[0])
             reached = pa + flight * u
-            ok &= bool(np.linalg.norm(reached - pb) < 1e-8)
+            ok &= bool(np.linalg.norm(reached - pb) < _RAY_POSITION_TOL_M)
             r = r + flight * du
             path += flight
             if j < n_seg - 1:
                 if bore not in walls:
                     walls[bore] = _transport_wall(bores[bore], z0_cap)
-                normal, dn, wall_distance = wall_normal_derivative(pb[None], walls[bore])
-                ok &= bool(abs(wall_distance[0] - radii[bore]) < 1e-9)
+                normal, dn, _ = wall_normal_derivative(pb[None], walls[bore])
+                ok &= bool(walls[bore].surface_error_at(*pb) < _WALL_SURFACE_TOL_M)
                 with np.errstate(divide="ignore", invalid="ignore"):
                     u2, r2, du2 = reflect_variations(u[None], r[None], du[None], normal, dn)
                 u, r, du = u2[0], r2[0], du2[0]

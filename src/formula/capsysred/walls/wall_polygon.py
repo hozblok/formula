@@ -58,8 +58,8 @@ class PolygonWall:
                         f"+(y-({center[1] * um}))*({m0y})-({self.apothem * um})")
         self.probe_xy = self._facesf[0]
 
-    def derivatives_at(self, x, y, z):
-        """Selected face's derivatives in world metres; ties retain the first face."""
+    def _face_at(self, x, y):
+        """Selected face normal and signed boundary residual; ties retain the first."""
         dx, dy = x - self._cxf, y - self._cyf
         nx, ny = self._facesf[0]
         best = nx * dx + ny * dy - self._afs[0]
@@ -69,7 +69,16 @@ class PolygonWall:
             keep = 1 - select
             nx, ny = keep * nx + select * mx, keep * ny + select * my
             best = keep * best + select * value
+        return nx, ny, best
+
+    def derivatives_at(self, x, y, z):
+        """Selected face's derivatives in world metres; ties retain the first face."""
+        nx, ny, _ = self._face_at(x, y)
         return self.gradient_hessian(nx, ny)
+
+    def surface_error_at(self, x, y, z):
+        """Nonnegative maximum-face residual in metres, scalar or batched."""
+        return abs(self._face_at(x, y)[2])
 
     def inside(self, xf, yf, zf):
         dx, dy = xf - self._cxf, yf - self._cyf

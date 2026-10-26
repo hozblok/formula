@@ -243,6 +243,9 @@ def test_shifted_rotated_torus_world_derivatives_at_large_radius(radius, toward)
     actual_g, actual_h = wall.derivatives_at(*point)
     np.testing.assert_allclose(actual_g, grad, rtol=5e-14, atol=2e-20)
     np.testing.assert_allclose(actual_h, hess, rtol=5e-14, atol=3e-16)
+    distance_formula = Formula(f"sqrt((sqrt((R-({xi}))^2+(z-z0)^2)-R)^2+({eta})^2)-a", precision=64)
+    expected_error = abs(float(Number(distance_formula.evaluate(dict(values, a="24e-6")), 64)))
+    np.testing.assert_allclose(wall.surface_error_at(*point), expected_error, rtol=5e-14, atol=2e-20)
 
 
 @pytest.mark.parametrize("kind", ["revolution", "funnel"])
@@ -251,3 +254,50 @@ def test_stage17_keeps_unsupported_wall_guard(kind):
 
     with pytest.raises(ValueError, match="supports cylinder, torus and polygon"):
         wall_normal_derivative(np.array(WORLD_POINTS[0]), _world_wall(kind))
+
+
+@pytest.mark.parametrize("kind", ["cylinder", "polygon", "torus"])
+def test_surface_error_matches_normal_offsets_and_ignores_derivative_scale(kind, monkeypatch):
+    from formula.capsysred.stages._b5_transport import wall_normal_derivative
+
+    wall, point = _world_wall(kind), _world_surface_point(kind)
+    formula = Formula(wall.expr_um, precision=64)
+    values = {axis: str(Number(repr(float(value)), 64) * Number("1000000", 64))
+              for axis, value in zip("xyz", point)}
+    normal = np.array([float(formula.get_derivative(axis, values)) for axis in "xyz"])
+    normal /= np.linalg.norm(normal)
+    offsets = np.array([-1e-5, 0., 1e-5])
+    points = point + offsets[:, None] * normal
+    expected = np.abs(offsets)
+    actual = wall.surface_error_at(*points.T)
+    np.testing.assert_allclose(actual, expected, rtol=0., atol=2e-14)
+    for p, error in zip(points, expected):
+        assert wall.surface_error_at(*p) == pytest.approx(error, abs=2e-14)
+
+    before_n, before_dn, before_norm = wall_normal_derivative(points, wall)
+    original = wall.derivatives_at
+    scale = {"cylinder": 1e-9, "polygon": 7., "torus": 1e9}[kind]
+
+    def scaled_derivatives(*coordinates):
+        grad, hess = original(*coordinates)
+        return tuple(scale * value for value in grad), tuple(scale * value for value in hess)
+
+    monkeypatch.setattr(wall, "derivatives_at", scaled_derivatives)
+    after_n, after_dn, after_norm = wall_normal_derivative(points, wall)
+    np.testing.assert_allclose(after_n, before_n, rtol=3e-14, atol=3e-14)
+    np.testing.assert_allclose(after_dn, before_dn, rtol=3e-14, atol=3e-14)
+    np.testing.assert_allclose(after_norm, scale * before_norm, rtol=3e-14, atol=0.)
+    np.testing.assert_array_equal(wall.surface_error_at(*points.T), actual)
+
+
+@pytest.mark.parametrize("rotation", [0., 37.])
+def test_polygon_surface_error_rejects_face_extensions(rotation):
+    raw = {"center": [.3, -.4], "radius": 1., "sides": 4, "rotation_deg": rotation,
+           "apothems": [1., 2., 1., 2.]}
+    wall = _make_wall(_bore(raw, 64, 0), Number(".37", 64))
+    angle = np.deg2rad(rotation)
+    transform = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
+    local = np.array([[.2, 2.], [.2, 2.00001], [.2, 1.99999], [1., 2.1], [0., 0.]])
+    points = np.asarray(raw["center"]) + local @ transform.T
+    error = wall.surface_error_at(points[:, 0], points[:, 1], .71)
+    np.testing.assert_allclose(error, [0., 1e-5, 1e-5, .1, 1.], rtol=0., atol=2e-15)
