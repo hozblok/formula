@@ -216,7 +216,12 @@ of the derivative");
           "Division by zero during the computation of \
 right path of the derivative");
     }
-    return ZERO - a / (b * b);
+    // b^2 outside the exponent range: a / b / b.
+    Complex bb = b * b;
+    if (bb == ZERO || isinf(bb.real()) || isinf(bb.imag())) {
+      return ZERO - a / b / b;
+    }
+    return ZERO - a / bb;
   }
   // "*" - multiplication
   static Complex _mul(Complex a, Complex b) { return a * b; }
@@ -225,7 +230,21 @@ right path of the derivative");
   // multiplication for the computation of the derivative (right path)
   static Complex _mul2(Complex a, Complex) { return a; }
   // "^" - exponentiation
-  static Complex _pow(Complex a, Complex b) { return pow(a, b); }
+  // Real integer exponents by repeated squaring, others by exp(b log a).
+  static Complex _pow(Complex a, Complex b) {
+    if (b.imag() == 0 && b.real() == floor(b.real()) &&
+        abs(b.real()) <= 2147483647 && !(a == ZERO && b.real() < 0)) {
+      long long n = b.real().template convert_to<long long>();
+      unsigned long long m = n < 0 ? -n : n;
+      Complex r = ONE, s = a;
+      for (; m; m >>= 1) {
+        if (m & 1) r = r * s;
+        if (m > 1) s = s * s;
+      }
+      return n < 0 ? ONE / r : r;
+    }
+    return pow(a, b);
+  }
   // exponentiation for the computation of the derivative (left path)
   static Complex _pow1(Complex a, Complex b) {
     // Same dispatch as the real _pow1, on the real part of the exponent.
@@ -408,7 +427,13 @@ the sqrt derivative");
           "Infinite derivative (base 0, exponent below the derivative order) \
 during the computation of the power derivative");
     }
-    return f * _pow(a, b - int(k));
+    Complex r = f * _pow(a, b - int(k));
+    // a^(b-k) outside the exponent range: f a^h a^(b-k-h), h ~ (b-k)/2.
+    if (r == ZERO || isinf(r.real()) || isinf(r.imag())) {
+      Complex h(floor(((b - int(k)) / 2).real()));
+      r = f * _pow(a, h) * _pow(a, b - int(k) - h);
+    }
+    return r;
   }
   // k-th derivative of a^v in v: log(a)^k a^v.
   static Complex _pow_ek(Complex a, Complex b, unsigned k) {
