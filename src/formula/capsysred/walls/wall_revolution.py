@@ -6,17 +6,34 @@
 ellipsoid, paraboloid in one form; the ray intersection is an exact quadratic.
 The straight cylinder is served by its own wall_cylinder.CylinderWall."""
 
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, TypeVar
+
 from ...formula import Number
 from ..shared.nums import lift, sqrt, vadd, vscale, vunit
 from ..shared.types import _EPS_T, _INSIDE_TOL, Vec3
 from ..shared.units import m_to_um
 
+if TYPE_CHECKING:
+    from ..stages._ray_jets import _Jet
+
+_Coordinate = TypeVar("_Coordinate")
+
 
 class RevolutionWall:
     @staticmethod
+    def _local_gradient(
+        x: _Coordinate, y: _Coordinate, z: _Coordinate,
+        c1: float | Number, c2: float | Number,
+    ) -> tuple[_Coordinate, _Coordinate, _Coordinate]:
+        return x, y, (z * c2 + c1 / 2) * -1
+
+    @staticmethod
     def gradient_hessian(x, y, z, c1, c2):
         """Gradient and Hessian (xx, xy, xz, yy, yz, zz); x, y are local."""
-        return (x, y, -0.5 * c1 - c2 * z), (1.0, 0.0, 0.0, 1.0, 0.0, -c2)
+        return RevolutionWall._local_gradient(x, y, z, c1, c2), (1.0, 0.0, 0.0, 1.0, 0.0, -c2)
 
     def __init__(self, kind: str, center: tuple[Number, Number], r2: Vec3,
                  eps: float = 1e-30):
@@ -31,6 +48,25 @@ class RevolutionWall:
         self.expr_um = (f"(x-({center[0] * um}))^2+(y-({center[1] * um}))^2"
                         f"-(({self.c0 * um * um})+({self.c1 * um})*z+({self.c2})*z^2)")
         self.probe_xy = (1.0, 0.0)
+
+    @property
+    def precision(self) -> int:
+        return self.center[0].precision
+
+    def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
+        """F=((x-cx)^2+(y-cy)^2-r2(z))/2 in world metres; jet points are all-jet."""
+        x, y, z = point
+        dx, dy = x - self.center[0], y - self.center[1]
+        r2 = (z * self.c2 + self.c1) * z + self.c0
+        return (dx * dx + dy * dy - r2) / 2
+
+    def gradient(
+        self, point: Sequence[int | float | Number | _Jet],
+    ) -> tuple[Number | _Jet, Number | _Jet, Number | _Jet]:
+        """Unnormalized gradient at scalar or all-jet world coordinates in metres."""
+        x, y, z = point
+        return self._local_gradient(x - self.center[0], y - self.center[1], z,
+                                    self.c1, self.c2)
 
     def derivatives_at(self, x, y, z):
         """World-metre derivatives; Hessian order: xx, xy, xz, yy, yz, zz."""

@@ -7,12 +7,20 @@
 (p - c)·n_k = a_k; equal apothems give the regular polygon. Hits are plane
 intersections (exact linear)."""
 
+from __future__ import annotations
+
 import math
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ...formula import Number
 from ..shared.nums import lift, solver, vadd, vscale
-from ..shared.types import _EPS_T, _INSIDE_TOL
+from ..shared.types import _EPS_T, _INSIDE_TOL, _WALL_SURFACE_TOL_M
 from ..shared.units import m_to_um
+
+if TYPE_CHECKING:
+    from ..stages._ray_jets import _Jet
 
 
 def polygon_vertices(apothems, sides, rotation):
@@ -28,6 +36,41 @@ def polygon_vertices(apothems, sides, rotation):
         a0, a1 = a[k], a[(k + 1) % n]
         out.append(((a0 * s1 - a1 * s0) / det, (c0 * a1 - c1 * a0) / det))
     return out
+
+
+@dataclass(frozen=True)
+class PolygonFace:
+    """One fixed smooth face; value and gradient describe its supporting plane."""
+
+    wall: PolygonWall
+    index: int
+
+    def __post_init__(self) -> None:
+        if isinstance(self.index, bool) or not isinstance(self.index, int):
+            raise TypeError("polygon face index must be an integer")
+        if not 0 <= self.index < len(self.wall.faces):
+            raise IndexError("polygon face index out of range")
+
+    @property
+    def precision(self) -> int:
+        return self.wall.precision
+
+    def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
+        """Signed plane residual at world coordinates in metres."""
+        x, y, _ = point
+        nx, ny = self.wall.faces[self.index]
+        return ((x - self.wall.center[0]) * nx + (y - self.wall.center[1]) * ny
+                - self.wall.apothems[self.index])
+
+    def gradient(self, point: Sequence[int | float | Number | _Jet]) -> tuple[Number, Number, Number]:
+        """Constant world gradient, retaining the original Number precision."""
+        nx, ny = self.wall.faces[self.index]
+        return nx, ny, self.wall._zero
+
+    def validate(self, point: Sequence[int | float | Number]) -> None:
+        """Require a point on this finite face, separated from polygon edges."""
+        if self.wall.surface_at(point).index != self.index:
+            raise ValueError("hit is not on the selected polygon face")
 
 
 class PolygonWall:
@@ -57,6 +100,25 @@ class PolygonWall:
         self.expr_um = (f"(x-({center[0] * um}))*({m0x})"
                         f"+(y-({center[1] * um}))*({m0y})-({self.apothem * um})")
         self.probe_xy = self._facesf[0]
+
+    @property
+    def precision(self) -> int:
+        return self.center[0].precision
+
+    def face(self, index: int) -> PolygonFace:
+        """Fix one smooth face by its zero-based index."""
+        return PolygonFace(self, index)
+
+    def surface_at(self, point: Sequence[int | float | Number]) -> PolygonFace:
+        """Select one finite face at a nominal world point; reject edge ambiguity."""
+        residuals = [self.face(i).value(point) for i in range(len(self.faces))]
+        index = max(range(len(residuals)), key=residuals.__getitem__)
+        if abs(residuals[index]) >= _WALL_SURFACE_TOL_M:
+            raise ValueError("hit is not on the polygon boundary")
+        if any(value >= -_WALL_SURFACE_TOL_M
+               for i, value in enumerate(residuals) if i != index):
+            raise ValueError("polygon hit is too close to an edge or corner")
+        return self.face(index)
 
     def _face_at(self, x, y):
         """Selected face normal and signed boundary residual; ties retain the first."""
