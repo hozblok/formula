@@ -79,7 +79,7 @@ def _b5_backend():
 def _b9_backend():
     """Load optional dependencies only for an explicitly selected Stage 18."""
     try:
-        from .stages import stage18
+        from .stages.ray_mesh import stage18
     except ModuleNotFoundError as exc:
         if exc.name not in {"numpy", "scipy"}:
             raise

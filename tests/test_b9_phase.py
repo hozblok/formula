@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 from scipy.integrate import quad
 
-from formula.capsysred.stages import _b9_phase
-from formula.capsysred.stages._b9_phase import phase_field
+from formula.capsysred.stages.ray_mesh import _b9_phase
+from formula.capsysred.stages.ray_mesh._b9_phase import phase_field
 
 
 SQUARE = np.array([[[-.7, -.4], [.8, -.4], [.8, .6]],

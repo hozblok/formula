@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from formula.capsysred.stages._b9_archive import mesh_from_triangles, prepare_exit_mesh
-from formula.capsysred.stages._b9_cylinder_mesh import _entrance_mesh, cylinder_exit_mesh
+from formula.capsysred.stages.ray_mesh._b9_archive import mesh_from_triangles, prepare_exit_mesh
+from formula.capsysred.stages.ray_mesh._b9_cylinder_mesh import _entrance_mesh, cylinder_exit_mesh
 
 
 SOURCE = ['-1.9850001681262593E-7', '-7.062065632157497E-7', '-0.675']

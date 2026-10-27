@@ -72,9 +72,29 @@ def make_archive(sim, path):
     rays_v3.write_index(path, entries)
 
 
+def test_parallel_replay_matches_serial(tmp_path):
+    pytest.importorskip("finufft")
+    raw = raw_scene()
+    archive = tmp_path/"archive"
+    make_archive(Simulation.from_dict(raw), archive)
+    outputs = []
+    for jobs in (1, 2):
+        raw["b9_estimator"]["map_jobs"] = jobs
+        output = tmp_path/f"jobs-{jobs}"
+        Simulation.from_dict(raw).replay(str(archive), str(output), stages=[18])
+        outputs.append(output/"stage18")
+    names = sorted(path.name for path in outputs[0].glob("*.npz"))
+    assert names and names == sorted(path.name for path in outputs[1].glob("*.npz"))
+    for name in names:
+        with np.load(outputs[0]/name) as serial, np.load(outputs[1]/name) as parallel:
+            assert serial.files == parallel.files
+            for key in serial.files:
+                np.testing.assert_array_equal(serial[key], parallel[key])
+
+
 @pytest.mark.parametrize("retrace", [False, True])
 def test_replay_new_routes_use_saved_source_origins_and_complex_moments(tmp_path, monkeypatch, retrace):
-    from formula.capsysred.stages import _b9_phase, stage18
+    from formula.capsysred.stages.ray_mesh import _b9_phase, stage18
 
     pytest.importorskip("finufft")
     raw = raw_scene()

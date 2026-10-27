@@ -40,7 +40,7 @@ def scene_options():
 
 
 def test_adaptive_replay_saves_partition_and_uses_regular_backend(tmp_path, monkeypatch):
-    from formula.capsysred.stages import _b9_regular
+    from formula.capsysred.stages.ray_mesh import _b9_regular
 
     pytest.importorskip("finufft")
     sim = Simulation.from_dict(scene_options())
@@ -95,7 +95,7 @@ def test_coverage_gate_retains_diagnostics_and_prevents_a_qualified_map(tmp_path
 
 def test_coverage_gate_is_per_bore_not_an_average():
     from types import SimpleNamespace
-    from formula.capsysred.stages.stage18 import _coverage_check
+    from formula.capsysred.stages.ray_mesh.stage18 import _coverage_check
 
     cap = SimpleNamespace(bores=[dict(radius=1), dict(radius=1)])
     mesh = dict(metadata=dict(accepted_entrance_area_by_bore_m2=[np.pi, .8*np.pi]))
@@ -113,7 +113,7 @@ def test_adaptive_index_rejected_before_output_creation(tmp_path):
 
 
 def test_mixed_quadrature_route_records_actual_policy_and_moments(tmp_path, monkeypatch):
-    from formula.capsysred.stages import _b9_quadrature
+    from formula.capsysred.stages.ray_mesh import _b9_quadrature
 
     raw = raw_scene()
     raw["b9_estimator"].update(max_modes=1, phase_backend="regular_mixed", quadrature_safety=1.5,
