@@ -20,7 +20,7 @@ import tarfile
 import pytest
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 GEOMETRIES = {
     "cylinder": {"center": [0.0, 0.0], "radius": 6e-6},
     "hex": {"center": [0.0, 0.0], "radius": 6e-6, "sides": 6},
@@ -228,7 +228,8 @@ def differential_outputs(tmp_path_factory):
         ["git", "rev-parse", baseline_ref], cwd=ROOT))
     for label, source in (("baseline", baseline / "src"), ("current", ROOT / "src")):
         env = os.environ.copy()
-        env.update(PYTHONPATH=str(source), PYTHONUTF8="1", CAPSYSRED_STAGE14_JOBS="1")
+        env.update(PYTHONPATH=os.pathsep.join((str(source), str(ROOT / "tests"))),
+                   PYTHONUTF8="1", CAPSYSRED_STAGE14_JOBS="1")
         env.pop("CAPSYSRED_PYTHON_TRACE", None)
         run = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--worker",
                               str(scratch / label)], cwd=scratch, env=env,
