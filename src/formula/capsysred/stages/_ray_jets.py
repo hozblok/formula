@@ -7,7 +7,11 @@ Examples::
 
     from formula import Number
     from formula.capsysred.stages._ray_jets import Hit, Surface, transport_ray
+    from formula.capsysred.surfaces import ImplicitWall, Mirror
     from formula.capsysred.walls.wall_cylinder import CylinderWall
+    from formula.capsysred.walls.wall_funnel import FunnelWall
+    from formula.capsysred.walls.wall_polygon import PolygonWall
+    from formula.capsysred.walls.wall_revolution import RevolutionWall
     from formula.capsysred.walls.wall_torus import TorusWall
 
     # Implicit surface: plane x=1.
@@ -31,6 +35,38 @@ Examples::
                               [Hit(torus, [0., 0., 3.])], order=4)
     torus_jet.predict_position([.001, 0.])
 
+    # Surface of revolution: r(z)^2 = 1 + 0.3125*z.
+    revolution = RevolutionWall("revolution", (zero, zero),
+                                (one, Number("0.3125", 64), zero))
+    revolution_jet = transport_ray([.5, 0.], [0., 0., -2.], 0., 5.,
+                                   [Hit(revolution, [1.5, 0., 4.])], order=4)
+    revolution_jet.predict_position([.001, 0.])
+
+    # Funnel: fixed axis, expanding radius 1 + z/16.
+    funnel = FunnelWall((zero, zero), one, (zero, zero),
+                        (Number("0.0625", 64), zero), zero)
+    funnel_jet = transport_ray([.5, 0.], [0., 0., -2.], 0., 4.,
+                               [Hit(funnel, [7/6, 0., 8/3])], order=4)
+    funnel_jet.predict_position([.001, 0.])
+
+    # Square bore; each archived hit fixes one face away from its edges.
+    polygon = PolygonWall((zero, zero), one, 4, zero)
+    polygon_jet = transport_ray([.5, .1], [0., 0., -2.], 0., 5.,
+                                [Hit(polygon, [1., .2, 2.])], order=4)
+    polygon_jet.predict_position([.001, 0.])  # Hit(polygon.face(0), ...) also works.
+
+    # Existing implicit wall: its expression uses micrometres, inputs use metres.
+    implicit = ImplicitWall("x-1000000", (zero, zero), one)
+    implicit_jet = transport_ray([.2, .1], [0., 0., -2.], 0., 10.,
+                                 [Hit(implicit, [1., .5, 8.])], order=4)
+    implicit_jet.predict_position([.001, 0.])
+
+    # Finite mirror x=0, illuminated from x>0; the hit is inside its z span.
+    mirror = Mirror(zero, Number("4", 64))
+    mirror_jet = transport_ray([.2, 0.], [.4, 0., -2.], 0., 4.,
+                               [Hit(mirror, [0., 0., 2.])], order=4)
+    mirror_jet.predict_position([.001, 0.])
+
 Inputs select the local branch; they do not prove that nearby rays hit the same walls.
 No amplitude, Fresnel factor, caustic phase or SAFE a1 is computed here.
 """
@@ -46,8 +82,13 @@ from ...formula import Number
 from ..shared.formulas import cached_formula
 from ..shared.nums import vadd, vdot, vnorm, vscale, vsub, vunit
 from ..shared.types import _GRAZING_SIN_MIN, _RAY_POSITION_TOL_M
+from ..shared.units import m_to_um
 from ..shared.validation import finite_vector
+from ..surfaces import ImplicitWall, Mirror
 from ..walls.wall_cylinder import CylinderWall
+from ..walls.wall_funnel import FunnelWall
+from ..walls.wall_polygon import PolygonFace, PolygonWall
+from ..walls.wall_revolution import RevolutionWall
 from ..walls.wall_torus import TorusWall
 
 
@@ -155,7 +196,8 @@ class Surface:
 class Hit:
     """Selected smooth surface and nominal point from the ordinary ray trace."""
 
-    surface: Surface | CylinderWall | TorusWall
+    surface: (Surface | CylinderWall | TorusWall | RevolutionWall | FunnelWall
+              | PolygonWall | PolygonFace | ImplicitWall | Mirror)
     point: object
 
 
@@ -194,10 +236,39 @@ class RayJet:
         return self._predict((self.path_length,), delta)[0]
 
 
+def _prepare_hit(hit: Hit) -> Hit:
+    """Resolve an archived wall to one smooth surface before seeding derivatives."""
+    point = finite_vector(hit.point, 3, "hit")
+    surface = hit.surface
+    if isinstance(surface, ImplicitWall):
+        surface = Surface(surface.rs.surface.expression, surface.rs.precision, m_to_um(1))
+    elif isinstance(surface, PolygonWall):
+        surface = surface.surface_at(point)
+    return Hit(surface, point)
+
+
+def _check_patch(hit: Hit, point: Sequence[float]) -> None:
+    """Keep the nominal hit inside the selected smooth, finite reflecting patch."""
+    surface = hit.surface
+    if isinstance(surface, PolygonFace):
+        surface.validate(point)
+    elif isinstance(surface, Mirror):
+        if not surface._z0f + _RAY_POSITION_TOL_M < point[2] < surface._z1f - _RAY_POSITION_TOL_M:
+            raise ValueError("mirror hit must lie strictly inside the reflecting span")
+
+
 def _implicit_hit(position, direction, hit):
     alg, surface = position[0].alg, hit.surface
     anchor = finite_vector(hit.point, 3, "hit")
     r0, u0 = tuple(v.value for v in position), tuple(v.value for v in direction)
+    _check_patch(hit, anchor)
+    if isinstance(surface, Mirror) and (r0[0] <= 0 or u0[0] >= 0):
+        raise ValueError("mirror hit must approach from the reflecting side")
+
+    def gradient(point: Sequence[_Jet]) -> tuple[_Jet, ...]:
+        return tuple(v if isinstance(v, _Jet) else alg.constant(v)
+                     for v in surface.gradient(point))
+
     t0 = vdot(vsub(anchor, r0), u0)
     if t0 <= _RAY_POSITION_TOL_M or math.dist(vadd(r0, vscale(u0, t0)), anchor) > _RAY_POSITION_TOL_M:
         raise ValueError("hit must lie forward on the nominal ray beyond the position tolerance")
@@ -207,9 +278,9 @@ def _implicit_hit(position, direction, hit):
     # Polish only the selected root, then lift it in the truncated algebra.
     for _ in range(8):
         point = vadd(base_r, vscale(base_u, time))
-        gradient = surface.gradient(point)
-        normal_length = vnorm(gradient)
-        ft = vdot(gradient, base_u)
+        grad = gradient(point)
+        normal_length = vnorm(grad)
+        ft = vdot(grad, base_u)
         if not math.isfinite(normal_length.value) or normal_length.value <= 0:
             raise ValueError("surface must have a finite nonzero gradient")
         if abs(ft.value / normal_length.value) <= _GRAZING_SIN_MIN:
@@ -222,15 +293,17 @@ def _implicit_hit(position, direction, hit):
             break
     else:
         raise ValueError("nominal intersection did not converge")
+    polished = vadd(base_r, vscale(base_u, time))
+    _check_patch(hit, tuple(v.value for v in polished))
     # Newton doubles the first unresolved degree: 1 -> 2 -> 4 -> 8.
     for _ in range(alg.order.bit_length()):
         point = vadd(position, vscale(direction, time))
-        ft = vdot(surface.gradient(point), direction)
+        ft = vdot(gradient(point), direction)
         time = time - surface.value(point) / ft
     point = vadd(position, vscale(direction, time))
     if math.dist(tuple(v.value for v in point), anchor) > _RAY_POSITION_TOL_M:
         raise ValueError("refined intersection left the archived hit")
-    normal = vunit(surface.gradient(point))
+    normal = vunit(gradient(point))
     projection = 2 * vdot(direction, normal)
     outgoing = vsub(direction, vscale(normal, projection))
     return point, outgoing, time
@@ -250,7 +323,7 @@ def transport_ray(entrance, source, z0, target_z, hits=(), order=3, precision=64
     source = finite_vector(source, 3, "source")
     if not all(math.isfinite(z) for z in (z0, target_z)) or not source[2] < z0 <= target_z:
         raise ValueError("source, entrance and target must be ordered in z")
-    hits = tuple(Hit(hit.surface, finite_vector(hit.point, 3, "hit")) for hit in hits)
+    hits = tuple(_prepare_hit(hit) for hit in hits)
     for hit in hits:
         if round_up_precision(hit.surface.precision) != round_up_precision(precision):
             raise ValueError("surface and transport precision must agree")
