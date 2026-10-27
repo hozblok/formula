@@ -21,7 +21,7 @@ from ..shared.units import m_to_um
 from .wall_torus import _quartic_first
 
 if TYPE_CHECKING:
-    from ..stages._ray_jets import _Jet
+    from ..shared.jets import _Jet
 
 _Coordinate = TypeVar("_Coordinate")
 

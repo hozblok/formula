@@ -18,7 +18,7 @@ from ..shared.types import _EPS_T, _INSIDE_TOL, _TCAP_TOL
 from ..shared.units import m_to_um
 
 if TYPE_CHECKING:
-    from ..stages._ray_jets import _Jet
+    from ..shared.jets import _Jet
 
 # Newton polish stop, in digits: quit once the step falls below
 # 10^-max(24, p//2) of the root. Newton doubles digits per step, so the final
