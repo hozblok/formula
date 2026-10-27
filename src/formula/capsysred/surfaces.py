@@ -21,7 +21,7 @@ from ..formula import Number
 from .shared.coordinates import surface_coordinates
 from .shared.implicit_surface import Surface
 from .shared.nums import lift, vadd, vscale
-from .shared.types import (_EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _TCAP_TOL,
+from .shared.types import (_EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _RAY_POSITION_TOL_M, _TCAP_TOL,
                     HitMethod)
 from .shared.units import m_to_um
 from .walls.wall_cylinder import CylinderWall
@@ -57,6 +57,16 @@ class Mirror:
         """Constant world-coordinate gradient of the reflecting plane."""
         surface_coordinates(point, self.precision)
         return self._normal
+
+    def validate(
+        self, point: Sequence[int | float | Number], *,
+        origin: Sequence[int | float | Number], direction: Sequence[int | float | Number],
+    ) -> None:
+        """Require an interior nominal hit approached from the reflecting side."""
+        if not self._z0f + _RAY_POSITION_TOL_M < float(point[2]) < self._z1f - _RAY_POSITION_TOL_M:
+            raise ValueError("mirror hit must lie strictly inside the reflecting span")
+        if not (float(origin[0]) > 0 and float(direction[0]) < 0):
+            raise ValueError("mirror hit must approach from the reflecting side")
 
     def next_event(self, O, d):
         if float(O[0]) <= 0.0 or float(d[0]) >= 0.0:
