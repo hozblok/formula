@@ -178,6 +178,10 @@ formula over 1..5 variables (repeats allowed), e.g. ['x', 'x', 'y'].",
                std::map<std::string, std::string>(),
            py::arg("digits") = 0,
            py::arg("format") = std::ios_base::fmtflags(0))
+      .def("_evaluate_jet", &Formula::evaluate_jet,
+           "Internal hyper-dual composition: return (coefficients, structural support).",
+           py::arg("order"), py::arg("variables_to_coefficients"),
+           py::arg("supports"))
       .def("get_from_float",
            (std::string(Formula::*)(const std::map<std::string, double> &,
                                     std::streamsize, std::ios_base::fmtflags)
