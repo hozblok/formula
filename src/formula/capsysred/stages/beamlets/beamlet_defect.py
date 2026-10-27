@@ -54,7 +54,7 @@ from ...screen import ScreenGrid
 from ...shared.apertures import entrance_bore_ids
 from ...surfaces import CapillaryBundle
 from ...fresnel import FloatLineAmplitudes
-from .beamlet import _launch, _reference_pixel
+from .field import _launch, _reference_pixel
 from .._contracts import _screen_spec
 from .._defect_common import (
     _channel,

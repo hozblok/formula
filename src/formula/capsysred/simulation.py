@@ -20,16 +20,9 @@ from .. import xray
 from . import render, schematic
 from .stages import analytic
 from .stages.altcoh import run_alt_stage
-from .stages.beamlets.beamlet import (
-    STAGING_PREFIX,
-    PeakSampler,
-    _peak_rss,
-    preflight_stage11,
-    publish_stage11,
-    recorded_plane,
-    refuse_stage11_leftovers,
-    run_beamlet_stage,
-)
+from .stages.beamlets.publication import STAGING_PREFIX, publish_stage11, refuse_stage11_leftovers
+from .stages.beamlets.workers import PeakSampler, _peak_rss, preflight_stage11
+from .stages.beamlets.beamlet import run_beamlet_stage
 from .env import Env
 from .shared.common import log as _log
 from .stages.jackknife import run_jack_stage
@@ -45,7 +38,7 @@ from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude, optical_constants
 from . import rays_v3
 from .rays import (RNG_SCHEME, MultiRaysReader, RaysReader, geometry_core,
-                   geometry_metadata, metadata_equal)
+                   geometry_metadata, metadata_equal, recorded_plane)
 from .shared.types import HitMethod
 from .shared.utils import flat as _flat
 from .shared import format
