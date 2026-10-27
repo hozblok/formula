@@ -163,6 +163,11 @@ class cseval_complex {
       unsigned order, const std::map<std::string, unsigned> &seeds,
       const std::map<std::string, Complex> &variables_to_values) const;
 
+  // Compose the expression with already differentiated variables.
+  csjet<Complex> calculate_jet(
+      unsigned order,
+      const std::map<std::string, csjet<Complex>> &variables_to_jets) const;
+
   // Mixed partial derivative over 1..5 variables (repeats allowed).
   Complex calculate_partial_derivative(
       const std::vector<std::string> &variables,

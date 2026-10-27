@@ -516,11 +516,10 @@ template <typename Complex>
 csjet<Complex> cseval_complex<Complex>::calculate_jet(
     unsigned order, const std::map<std::string, unsigned> &seeds,
     const std::map<std::string, Complex> &variables_to_values) const {
-  if (kind_ == 'n') {
-    return csjet<Complex>(order, value_);
-  } else if (kind_ == 'v') {
-    csjet<Complex> r(order, calculate(variables_to_values));
-    auto it = seeds.find(id_);
+  std::map<std::string, csjet<Complex>> jets;
+  for (const auto &item : variables_to_values) {
+    csjet<Complex> r(order, item.second);
+    auto it = seeds.find(item.first);
     if (it != seeds.cend()) {
       for (unsigned e = 1; e < r.c.size(); e <<= 1) {
         if (it->second & e) {
@@ -529,7 +528,24 @@ csjet<Complex> cseval_complex<Complex>::calculate_jet(
         }
       }
     }
-    return r;
+    jets.emplace(item.first, std::move(r));
+  }
+  return calculate_jet(order, jets);
+}
+
+template <typename Complex>
+csjet<Complex> cseval_complex<Complex>::calculate_jet(
+    unsigned order,
+    const std::map<std::string, csjet<Complex>> &variables_to_jets) const {
+  if (kind_ == 'n') {
+    return csjet<Complex>(order, value_);
+  } else if (kind_ == 'v') {
+    auto it = variables_to_jets.find(id_);
+    if (it == variables_to_jets.cend()) {
+      throw std::invalid_argument(
+          "The required value is not found during the calculation of the expression, variable name: '" + id_ + "'");
+    }
+    return it->second;
   } else if (kind_ == 'f') {
     if (left_eval_ && right_eval_) {
       auto itValue = functionsTwoArgs.find(id_);
@@ -539,9 +555,9 @@ csjet<Complex> cseval_complex<Complex>::calculate_jet(
           itLeft != functionsTwoArgsDLeft.cend() &&
           itRight != functionsTwoArgsDRight.cend()) {
         csjet<Complex> a =
-            left_eval_->calculate_jet(order, seeds, variables_to_values);
+            left_eval_->calculate_jet(order, variables_to_jets);
         csjet<Complex> b =
-            right_eval_->calculate_jet(order, seeds, variables_to_values);
+            right_eval_->calculate_jet(order, variables_to_jets);
         Complex value = itValue->second(a.c[0], b.c[0]);
         // First-order partials, evaluated as in calculate_derivative.
         uint32_t first = 0;
@@ -587,7 +603,7 @@ csjet<Complex> cseval_complex<Complex>::calculate_jet(
       }
     } else if (left_eval_) {
       return apply_function(
-          id_, left_eval_->calculate_jet(order, seeds, variables_to_values));
+          id_, left_eval_->calculate_jet(order, variables_to_jets));
     }
     throw std::invalid_argument(
         (boost::format("The required function is not found \

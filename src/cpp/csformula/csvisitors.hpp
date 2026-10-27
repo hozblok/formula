@@ -111,6 +111,67 @@ struct GetCalculatedDerivativeStringVisitor
   char imaginary_unit;
 };
 
+struct GetCalculatedJetStringVisitor
+    : public boost::static_visitor<
+          std::pair<std::vector<std::string>, uint32_t>> {
+  template <typename T>
+  std::pair<std::vector<std::string>, uint32_t> operator()(
+      const T &eval) const {
+    using Value = decltype(eval->calculate(std::map<std::string, std::string>()));
+    std::map<std::string, csjet<Value>> jets;
+    for (const auto &item : *variables_to_coefficients) {
+      csjet<Value> jet(order, Value(0));
+      jet.support = supports->at(item.first);
+      for (unsigned m = 0; m < jet.c.size(); ++m) {
+        const auto &text = item.second[m];
+        if constexpr (is_complex_number<Value>) {
+          const std::string marker = "+" + std::string(1, imaginary_unit) + "*(";
+          auto split = text.find(marker);
+          if (split != std::string::npos && text.back() == ')') {
+            auto real = text.substr(0, split);
+            auto imag = text.substr(split + marker.size(),
+                                    text.size() - split - marker.size() - 1);
+            validate_variable_value(item.first, real);
+            validate_variable_value(item.first, imag);
+            jet.c[m] = Value(real, imag);
+          } else {
+            validate_variable_value(item.first, text);
+            jet.c[m] = Value(text, "0");
+          }
+        } else {
+          validate_variable_value(item.first, text);
+          jet.c[m] = Value(text);
+        }
+        const auto &value = jet.c[m];
+        if (isinf(value.real()) || isnan(value.real()) ||
+            isinf(value.imag()) || isnan(value.imag())) {
+          throw std::invalid_argument("Jet coefficients must be finite");
+        }
+        if (!jet.has(m) && value != Value(0)) {
+          throw std::invalid_argument("A nonzero jet coefficient needs structural support");
+        }
+      }
+      jets.emplace(item.first, std::move(jet));
+    }
+    auto result = eval->calculate_jet(order, jets);
+    std::vector<std::string> values;
+    values.reserve(result.c.size());
+    for (const auto &value : result.c) {
+      if constexpr (is_complex_number<Value>) {
+        values.push_back(value.real().str() + "+" + imaginary_unit + "*(" +
+                         value.imag().str() + ")");
+      } else {
+        values.push_back(value.str());
+      }
+    }
+    return {std::move(values), result.support};
+  }
+  unsigned order;
+  const std::map<std::string, std::vector<std::string>> *variables_to_coefficients;
+  const std::map<std::string, uint32_t> *supports;
+  char imaginary_unit;
+};
+
 struct CollectVariablesVisitor : public boost::static_visitor<void> {
   template <typename T>
   void operator()(std::unordered_set<std::string> *variables, const T &eval) {
