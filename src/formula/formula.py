@@ -159,7 +159,7 @@ class Number:
 
     DEFAULT_PRECISION = DEFAULT_PRECISION
 
-    _FROZEN_ATTRS = frozenset({"_value", "_precision", "_is_complex"})
+    _FROZEN_ATTRS = frozenset({"_value", "_precision", "_is_complex", "parts", "cmp_key"})
 
     # Plain real literals need no Formula parse; the mp constructor takes them directly.
     _PLAIN_REAL = re.compile(r"^-?[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?$")
@@ -183,6 +183,11 @@ class Number:
         if name in self._FROZEN_ATTRS and hasattr(self, name):
             raise AttributeError(f"{name} is read-only after construction")
         super().__setattr__(name, value)
+
+    def __delattr__(self, name: str) -> None:
+        if name in self._FROZEN_ATTRS:
+            raise AttributeError(f"{name} is read-only after construction")
+        super().__delattr__(name)
 
     def __init__(
         self,
