@@ -720,3 +720,35 @@ def test_power_derivatives_keep_the_factor_of_a_tiny_exponent(k):
     modulus = (LN2 * b * falling_b / x**k, Decimal(0))
     assert rel_near(d("(2*x)^1e-100-x^1e-100", "x" * k, at, precision=256), modulus,
                     Decimal("1e-50"))
+
+
+POWER_RANGE = ("an intermediate of the power derivative (b(b-1)...(b-k+1), its product with u^b, "
+               "u^-k) leaves the exponent range while the derivative does not")
+
+
+def _power_range(ks, failing):
+    return [pytest.param(k, marks=pytest.mark.xfail(strict=True, reason=POWER_RANGE))
+            if k in failing else k for k in ks]
+
+
+@pytest.mark.parametrize("k", _power_range(range(1, 6), {1, 2, 3, 5}))
+def test_tiny_exponent_phase_where_the_factors_leave_the_exponent_range(k):
+    # As above with b = 1e-400000000, x = 1e-200000000 and the factor C = 1e50000000:
+    # b B_k ~ 1e-800000000 and x^-k up to 1e1000000000 leave the exponent range, the
+    # derivatives of each power, their phase parts and D^k = i pi C b B_k x^-k do not.
+    b, x, c = Decimal("1e-400000000"), Decimal("1e-200000000"), Decimal("1e50000000")
+    phase = (Decimal(0), PI * c * b * prod(b - j for j in range(k)) / x**k)
+    expr = "1e50000000*((i*x)^1e-400000000-(-i*x)^1e-400000000)"
+    assert componentwise_near(d(expr, "x" * k, {"x": "1e-200000000"}), phase,
+                              Decimal("1e-50"))
+
+
+@pytest.mark.parametrize("k", _power_range(range(1, 6), {5}))
+def test_huge_exponent_coefficient_beyond_the_exponent_range(k):
+    # (1+ix)^c, c = 1e140000000 i: D^k = c (c-1) ... (c-k+1) (1+ix)^(c-k) i^k
+    # = (-1)^k 1e(140000000 k) U (1 + O(1e-139999984)), U = exp(-1e140000000 atan x);
+    # the coefficient reaches 1e700000000 at k = 5, the derivative 1e600000000.
+    x = "2.302585092994045684e-139999992"
+    u = (-Decimal("1e140000000") * Decimal(x)).exp()
+    exact = ((-1) ** k * Decimal(f"1e{140000000 * k}") * u, Decimal(0))
+    assert rel_near(d("(1+i*x)^(i*1e140000000)", "x" * k, {"x": x}), exact, Decimal("1e-50"))
