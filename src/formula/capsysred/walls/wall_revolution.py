@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, TypeVar
 
 from ...formula import Number
+from ..shared.coordinates import surface_coordinates
 from ..shared.nums import lift, sqrt, vadd, vscale, vunit
 from ..shared.types import _EPS_T, _INSIDE_TOL, Vec3
 from ..shared.units import m_to_um
@@ -54,8 +55,8 @@ class RevolutionWall:
         return self.center[0].precision
 
     def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
-        """F=((x-cx)^2+(y-cy)^2-r2(z))/2 in world metres; jet points are all-jet."""
-        x, y, z = point
+        """F=((x-cx)^2+(y-cy)^2-r2(z))/2 at scalar or mixed jet world coordinates."""
+        x, y, z = surface_coordinates(point, self.precision)
         dx, dy = x - self.center[0], y - self.center[1]
         r2 = (z * self.c2 + self.c1) * z + self.c0
         return (dx * dx + dy * dy - r2) / 2
@@ -63,8 +64,8 @@ class RevolutionWall:
     def gradient(
         self, point: Sequence[int | float | Number | _Jet],
     ) -> tuple[Number | _Jet, Number | _Jet, Number | _Jet]:
-        """Unnormalized gradient at scalar or all-jet world coordinates in metres."""
-        x, y, z = point
+        """Unnormalized gradient at scalar or mixed jet world coordinates in metres."""
+        x, y, z = surface_coordinates(point, self.precision)
         return self._local_gradient(x - self.center[0], y - self.center[1], z,
                                     self.c1, self.c2)
 

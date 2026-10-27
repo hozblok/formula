@@ -18,6 +18,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from ..formula import Number
+from .shared.coordinates import surface_coordinates
 from .shared.implicit_surface import Surface
 from .shared.nums import lift, vadd, vscale
 from .shared.types import (_EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _TCAP_TOL,
@@ -48,12 +49,13 @@ class Mirror:
     def precision(self) -> int:
         return self.z0.precision
 
-    def value(self, point: Sequence[int | float | Number | _Jet]) -> int | float | Number | _Jet:
+    def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
         """F=x for the reflecting plane, in world metres."""
-        return point[0]
+        return surface_coordinates(point, self.precision)[0]
 
     def gradient(self, point: Sequence[int | float | Number | _Jet]) -> tuple[Number, Number, Number]:
         """Constant world-coordinate gradient of the reflecting plane."""
+        surface_coordinates(point, self.precision)
         return self._normal
 
     def next_event(self, O, d):

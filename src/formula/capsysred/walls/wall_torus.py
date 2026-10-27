@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from ...formula import Number
+from ..shared.coordinates import surface_coordinates
 from ..shared.nums import lift, sqrt, vadd, vdot, vnorm, vscale, vsub, vunit
 from ..shared.types import _EPS_T, _INSIDE_TOL, _TCAP_TOL
 from ..shared.units import m_to_um
@@ -212,7 +213,7 @@ class TorusWall:
         self, point: Sequence[int | float | Number | _Jet],
     ) -> tuple[Number | _Jet, Number | _Jet, Number | _Jet, Number | _Jet, Number | _Jet]:
         """Entrance coordinates and stable rho-R, retaining Number parameter precision."""
-        x, y, z = point
+        x, y, z = surface_coordinates(point, self.precision)
         dx, dy, zr = x - self.center[0], y - self.center[1], z - self.C[2]
         tx, ty = self._toward
         nx, ny, _ = self.nhat
@@ -223,15 +224,14 @@ class TorusWall:
         return xi, eta, zr, rho, dr
 
     def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
-        """F=((rho-R)^2+eta^2-a^2)/2 at world coordinates in metres.
-        Jet points supply all three coordinates as jets."""
+        """F=((rho-R)^2+eta^2-a^2)/2 at scalar or mixed jet world coordinates in metres."""
         _, eta, _, _, dr = self._tube_coordinates(point)
         return (dr * dr + eta * eta - self.a * self.a) / 2
 
     def gradient(
         self, point: Sequence[int | float | Number | _Jet],
     ) -> tuple[Number | _Jet, Number | _Jet, Number | _Jet]:
-        """Unnormalized gradient at scalar or all-jet world coordinates; requires rho>0."""
+        """Unnormalized gradient at scalar or mixed jet world coordinates; requires rho>0."""
         xi, eta, zr, rho, dr = self._tube_coordinates(point)
         tx, ty = self._toward
         nx, ny, _ = self.nhat
