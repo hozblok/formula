@@ -9,7 +9,7 @@ from formula.capsysred.shared.apertures import entrance_bore_ids
 from formula.capsysred.shared.types import _APERTURE_REL_TOL
 from formula.capsysred.stages.method_safe import _b5_defect, stage17
 from formula.capsysred.stages.beamlets import beamlet_defect
-from formula.capsysred.stages._b5_transport import transport_mode
+from formula.capsysred.stages.variational_transport import transport_mode
 from formula.capsysred.stages.ray_mesh._b9_archive import exit_nodes
 from formula.capsysred.surfaces import CapillaryBundle
 

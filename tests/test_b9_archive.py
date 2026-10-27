@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from formula.capsysred.stages.ray_mesh._b9_archive import apply_tube_flux, exit_nodes, prepare_exit_mesh, _p1_triangle_power
-from formula.capsysred.stages._b5_transport import count_free_caustics, reflect_variations
+from formula.capsysred.stages.variational_transport import count_free_caustics, reflect_variations
 
 
 def _synthetic_nodes(seed=8, count=300):
