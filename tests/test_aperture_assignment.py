@@ -7,7 +7,7 @@ from formula import Number
 from formula.capsysred.config import _bore
 from formula.capsysred.shared.apertures import entrance_bore_ids
 from formula.capsysred.shared.types import _APERTURE_REL_TOL
-from formula.capsysred.stages.method_safe import defect as _b5_defect, runner as stage17
+from formula.capsysred.stages.method_safe import defect as _b5_defect, phase_audit as stage17
 from formula.capsysred.stages.beamlets import defect as beamlet_defect
 from formula.capsysred.stages.variational_transport import transport_mode
 from formula.capsysred.stages.ray_mesh.archive import exit_nodes

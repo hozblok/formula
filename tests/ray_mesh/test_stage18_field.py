@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from formula.capsysred.stages.ray_mesh.runner import refine_chirped_mesh
+from formula.capsysred.stages.ray_mesh.workers import refine_chirped_mesh
 from formula.capsysred.stages.ray_mesh.contour import fresnel_from_chirped
 
 

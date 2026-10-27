@@ -95,7 +95,7 @@ def test_coverage_gate_retains_diagnostics_and_prevents_a_qualified_map(tmp_path
 
 def test_coverage_gate_is_per_bore_not_an_average():
     from types import SimpleNamespace
-    from formula.capsysred.stages.ray_mesh.runner import _coverage_check
+    from formula.capsysred.stages.ray_mesh.workers import _coverage_check
 
     cap = SimpleNamespace(bores=[dict(radius=1), dict(radius=1)])
     mesh = dict(metadata=dict(accepted_entrance_area_by_bore_m2=[np.pi, .8*np.pi]))

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from formula.capsysred.stages.method_safe.phase import fit_phase_gradient
-from formula.capsysred.stages.method_safe.runner import ray_chart
+from formula.capsysred.stages.method_safe.phase_audit import ray_chart
 
 
 @pytest.mark.parametrize("chart", ["xx", "px", "xp", "pp"])
