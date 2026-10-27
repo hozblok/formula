@@ -342,7 +342,7 @@ class Number:
 
     def __abs__(self) -> "Number":
         if self._is_complex:
-            return Number(abs(self._value))     # kind of |z| comes from the backend
+            return Number(abs(self._value)).real
         return Number._wrap(abs(self._value), self._precision, False)
 
     def __neg__(self) -> "Number":
