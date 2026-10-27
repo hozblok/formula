@@ -94,9 +94,10 @@ def test_real_imag_roundtrip_exact():
 # --------------------------------------------------------------------------- #
 
 def test_eq_with_raw_mp_value_cross_precision():
-    # Used to raise ValueError; now compares by parts like Number-vs-Number.
-    assert Number("1", 24) == Number("1", 64)._value
-    assert Number("2", 24) != Number("1", 64)._value
+    with pytest.raises(ValueError, match="precision mismatch"):
+        _ = Number("1", 24) == Number("1", 64)._value
+    with pytest.raises(ValueError, match="precision mismatch"):
+        _ = Number("2", 24) != Number("1", 64)._value
 
 
 # --------------------------------------------------------------------------- #

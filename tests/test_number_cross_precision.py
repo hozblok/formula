@@ -1,7 +1,6 @@
 """Regression: Number rejects mixing different storage precisions.
 
-Arithmetic and ordering require both operands at the same mp precision.
-Cross-precision equality still compares via parts() and remains allowed.
+Arithmetic and all comparisons require operands at the same mp precision.
 """
 
 import operator
@@ -11,10 +10,30 @@ import pytest
 from formula import Number
 
 
-def test_eq_across_precisions_still_allowed():
-    a = Number("0.5", precision=24)
-    b = Number("0.5", precision=256)
+@pytest.mark.parametrize("op", [operator.eq, operator.ne, operator.lt,
+                                operator.le, operator.gt, operator.ge])
+@pytest.mark.parametrize("expression", ["0.5", "0.5+i"])
+@pytest.mark.parametrize("raw_left, raw_right", [(False, False), (True, False), (False, True)])
+def test_comparisons_reject_different_storage_precision(op, expression, raw_left, raw_right):
+    a = Number(expression, precision=24)
+    b = Number(expression, precision=256)
+    if raw_left:
+        a = a._value
+    if raw_right:
+        b = b._value
+    with pytest.raises(ValueError, match="precision mismatch"):
+        op(a, b)
+
+
+def test_comparisons_accept_equal_storage_precision():
+    a = Number("0.5", precision=30)
+    b = Number("0.5", precision=32)
     assert a == b
+    assert not (a != b)
+    assert a <= b and a >= b
+    assert not (a < b or a > b)
+    assert a == b._value
+    assert a == Number("0.5+0*i", 32)
 
 
 @pytest.mark.parametrize(
