@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from formula.capsysred import rays_v3
-from formula.capsysred.stages import _b5_archive as archive_reader
+from formula.capsysred.stages import archive_samples as archive_reader
 
 
 def _ray(ray, *, dx=1e-8, opl="0.905000000000000050", sins=None, refl=None):

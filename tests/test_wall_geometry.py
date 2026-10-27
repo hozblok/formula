@@ -71,7 +71,7 @@ def test_batched_derivatives_match_scalar_evaluation(kind):
 
 @pytest.mark.parametrize("radius", [1., 2156.25, 1e10])
 def test_torus_normal_derivative_at_large_radius_matches_formula(radius):
-    from formula.capsysred.stages._b5_transport import wall_normal_derivative
+    from formula.capsysred.stages.variational_transport import wall_normal_derivative
 
     bore = {"kind": "torus", "center": [72e-6, -3e-6], "radius": 24e-6,
             "bend": {"radius": radius, "toward": [1., 0.]}}
@@ -148,7 +148,7 @@ def test_world_derivatives_match_full_formula(kind, point):
     np.testing.assert_allclose(_wall_lens(wall, *point, outgoing),
                                _curved_lens(*expected, outgoing), rtol=3e-13, atol=3e-14)
     if kind in ("cylinder", "polygon", "torus"):
-        from formula.capsysred.stages._b5_transport import wall_normal_derivative
+        from formula.capsysred.stages.variational_transport import wall_normal_derivative
         normal = np.array(expected[0]) / np.linalg.norm(expected[0])
         derivative = (np.eye(3) - np.outer(normal, normal)) @ _full_hessian(expected[1]) / np.linalg.norm(expected[0])
         got_n, got_dn, _ = wall_normal_derivative(np.array(point), wall)
@@ -250,7 +250,7 @@ def test_shifted_rotated_torus_world_derivatives_at_large_radius(radius, toward)
 
 @pytest.mark.parametrize("kind", ["revolution", "funnel"])
 def test_stage17_keeps_unsupported_wall_guard(kind):
-    from formula.capsysred.stages._b5_transport import wall_normal_derivative
+    from formula.capsysred.stages.variational_transport import wall_normal_derivative
 
     with pytest.raises(ValueError, match="supports cylinder, torus and polygon"):
         wall_normal_derivative(np.array(WORLD_POINTS[0]), _world_wall(kind))
@@ -258,7 +258,7 @@ def test_stage17_keeps_unsupported_wall_guard(kind):
 
 @pytest.mark.parametrize("kind", ["cylinder", "polygon", "torus"])
 def test_surface_error_matches_normal_offsets_and_ignores_derivative_scale(kind, monkeypatch):
-    from formula.capsysred.stages._b5_transport import wall_normal_derivative
+    from formula.capsysred.stages.variational_transport import wall_normal_derivative
 
     wall, point = _world_wall(kind), _world_surface_point(kind)
     formula = Formula(wall.expr_um, precision=64)

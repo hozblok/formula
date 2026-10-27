@@ -159,7 +159,7 @@ def test_rejects_invalid_grid_and_ray_parameters():
 def test_continuous_branch_is_defined_on_an_exact_caustic():
     """Q = diag(1 - z, 1), P = V = diag(-1, 0): det Q vanishes at z = 1.  The continued root
     equals the Maslov branch on both sides and stays finite and continuous on the caustic."""
-    from formula.capsysred.stages._b5_transport import det_phase_increment
+    from formula.capsysred.stages.variational_transport import det_phase_increment
     gamma = 0.7
     zs = np.array([0.5, 1.0-1e-9, 1.0, 1.0+1e-9, 1.5])
     P = np.repeat(np.diag([-1.0, 0.0])[None], len(zs), 0)

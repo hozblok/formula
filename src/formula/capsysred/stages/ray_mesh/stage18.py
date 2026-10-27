@@ -239,7 +239,7 @@ def _representation_metadata(options):
 
 
 def _mode_job(job):
-    from .._b5_archive import read_sample
+    from ..archive_samples import read_sample
     from ._b9_archive import exit_nodes, prepare_exit_mesh
     from ._b9_contour import fresnel_from_chirped
 

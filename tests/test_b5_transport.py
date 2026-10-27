@@ -5,7 +5,7 @@ import pytest
 from scipy.optimize import brentq
 
 from formula.capsysred.shared.types import _WALL_SURFACE_TOL_M
-from formula.capsysred.stages._b5_transport import (
+from formula.capsysred.stages.variational_transport import (
     bore_area, bore_inside, count_free_caustics, det_path_increment, gamma_phase_shift, polygon_faces,
     reflect_variations, transport_mode, wall_normal_derivative,
 )
