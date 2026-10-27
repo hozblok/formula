@@ -17,7 +17,7 @@ from scipy.spatial import cKDTree
 
 from ... import rays_v3
 from ...shared.apertures import entrance_bore_ids
-from ._b5_phase import fit_phase_gradient
+from .phase import fit_phase_gradient
 from .._archive_common import _archive_contract, _dump, _fresnel_product
 
 RESULT_DIR = "stage17"
@@ -192,7 +192,7 @@ def run_b5_stage(sim, out_dir, options, *, rays_paths, log=None):
     from ..archive_samples import read_sample
 
     if options["provider"] == "archive_canonical":
-        from ._b5_map import run_canonical_map
+        from .map import run_canonical_map
         return run_canonical_map(sim, out_dir, options, rays_paths=rays_paths, log=log)
 
     preflight_b5_inputs(sim, options)
@@ -249,7 +249,7 @@ def run_b5_stage(sim, out_dir, options, *, rays_paths, log=None):
                 "No full C-2 I or mu map is produced, and no comparison with the 5000-mode stage-14 map is claimed.",
             ],
             "implementation_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                                      for p in (Path(__file__), Path(__file__).with_name("_b5_phase.py"),
+                                      for p in (Path(__file__), Path(__file__).with_name("phase.py"),
                                                 Path(__file__).parent.parent / "archive_samples.py",
                                                 Path(__file__).parent.parent / "_archive_common.py")},
         }

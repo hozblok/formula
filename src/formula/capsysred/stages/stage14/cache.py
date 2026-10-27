@@ -24,7 +24,7 @@ from ... import rays_v3
 from ...fresnel import FloatLineAmplitudes
 from ...env import Env
 from .._contracts import _physics_contract
-from ._stage14_checkpoints import (
+from .checkpoints import (
     RANGE_SLOTS,
     mode_ranges,
     range_agg_name,

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from formula.capsysred.stages.ray_mesh._b9_curved_mesh import (
+from formula.capsysred.stages.ray_mesh.curved_mesh import (
     _HOLDOUTS, _curved_check, _receiver_box, curved_exit_mesh, p2_basis, p2_jacobian, pullback_density,
 )
 

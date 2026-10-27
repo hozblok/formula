@@ -13,7 +13,7 @@ import warnings
 import numpy as np
 from scipy.cluster.vq import kmeans2
 
-from ._b9_contour import triangle_fourier
+from .contour import triangle_fourier
 
 
 def _integer(value, name, minimum=1):

@@ -10,7 +10,7 @@ import yaml
 from formula.capsysred import Simulation
 from formula.capsysred.rays import recorded_plane, recorded_screen_z, recorded_screen_z_text
 from formula.capsysred.stages import archive_samples
-from formula.capsysred.stages.beamlets.beamlet_defect import index_screen_z
+from formula.capsysred.stages.beamlets.defect import index_screen_z
 from formula.capsysred.stages.stage14.cache import _recorded_screen_z
 from formula.capsysred.trace_v3 import trace as trace_v3
 

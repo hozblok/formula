@@ -425,7 +425,7 @@ def test_stage14_manifest_size_lie_rebuilds(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("n_modes", [1, 4, 5, 127, 128, 129, 1000, 2000])
 def test_mode_ranges_partition(n_modes):
-    from formula.capsysred.stages.stage14._stage14_checkpoints import RANGE_SLOTS, mode_ranges
+    from formula.capsysred.stages.stage14.checkpoints import RANGE_SLOTS, mode_ranges
     ranges = mode_ranges(n_modes)
     assert len(ranges) == min(RANGE_SLOTS, n_modes)
     assert ranges[0][0] == 0 and ranges[-1][1] == n_modes

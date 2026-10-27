@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-from formula.capsysred.stages.ray_mesh._b9_phase import phase_field
-from formula.capsysred.stages.ray_mesh._b9_regular import regular_phase_field, regular_phase_order_pair
+from formula.capsysred.stages.ray_mesh.phase import phase_field
+from formula.capsysred.stages.ray_mesh.regular import regular_phase_field, regular_phase_order_pair
 
 
 pytest.importorskip("finufft")

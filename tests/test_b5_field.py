@@ -5,7 +5,7 @@ import pytest
 from scipy.integrate import quad
 from scipy.special import erf
 
-from formula.capsysred.stages.method_safe._b5_field import (
+from formula.capsysred.stages.method_safe.field import (
     canonical_prefactor,
     gaussian_cell_average,
     reconstruct_field,
@@ -211,7 +211,7 @@ def test_cell_order_resolves_the_chirp_of_a_spread_window():
     """A window propagated far develops the chirp k Im(m) t; the cell rule must resolve its
     slope at the farthest kept cell, not only the ray tilt and the curvature at the centre
     (16 nodes gave a relative error of 40 at one effective width)."""
-    from formula.capsysred.stages.method_safe._b5_field import (
+    from formula.capsysred.stages.method_safe.field import (
         cell_order,
         gaussian_cell_average,
         spread_window,

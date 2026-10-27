@@ -6,7 +6,7 @@ import pytest
 
 from formula.capsysred import Simulation
 from formula.capsysred.config import Config
-from formula.capsysred.stages.ray_mesh.stage18 import _flat_to_curved
+from formula.capsysred.stages.ray_mesh.runner import _flat_to_curved
 from tests.test_stage18_improvements import raw_scene, make_archive
 
 
@@ -35,8 +35,8 @@ def test_invalid_curved_options(bad):
 
 
 def test_flat_to_curved_preserves_complex_integral_and_orientation():
-    from formula.capsysred.stages.ray_mesh._b9_curved import curved_phase_field
-    from formula.capsysred.stages.ray_mesh._b9_phase import phase_field
+    from formula.capsysred.stages.ray_mesh.curved import curved_phase_field
+    from formula.capsysred.stages.ray_mesh.phase import phase_field
 
     q = np.array([[[0, 0], [1, 0], [0, 1]], [[1, 1], [0, 1], [1, 0.]]])
     transforms = np.array([[[1.2, .3], [.1, .8]], [[.7, -.2], [.3, -1.1]]])
@@ -55,7 +55,7 @@ def test_flat_to_curved_preserves_complex_integral_and_orientation():
 
 
 def test_curved_replay_traces_each_source_and_accumulates_fields(tmp_path, monkeypatch):
-    from formula.capsysred.stages.ray_mesh import _b9_curved
+    from formula.capsysred.stages.ray_mesh import curved as _b9_curved
 
     sim = Simulation.from_dict(curved_scene())
     archive, output = tmp_path/'archive', tmp_path/'result'
@@ -121,7 +121,7 @@ def test_curved_residual_replay_corrects_intensity_and_cross_terms(tmp_path):
 
 def test_mode_failures_are_skipped_and_recorded(tmp_path, monkeypatch):
     pytest.importorskip('finufft')
-    from formula.capsysred.stages.ray_mesh import stage18
+    from formula.capsysred.stages.ray_mesh import runner as stage18
 
     sim = Simulation.from_dict(curved_scene())
     archive, output = tmp_path/'archive', tmp_path/'result'

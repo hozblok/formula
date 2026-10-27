@@ -9,7 +9,7 @@ import pytest
 
 from formula.capsysred import Simulation, rays_v3
 from formula.capsysred.rays import geometry_metadata
-from formula.capsysred.stages.method_safe import _b5_map as maps
+from formula.capsysred.stages.method_safe import map as maps
 
 
 def scene_and_archive(tmp_path, z1=.02):

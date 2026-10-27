@@ -29,7 +29,7 @@ masked.  An assumption, not a bound.  No certified bound is claimed: lifting the
 into a boundary layer gives a residual above the field norm even for the exact Dirichlet
 field at grazing incidence, so the defects are reported as indicators.
 
-Usage: python -m formula.capsysred.stages.beamlets.beamlet_defect SCENE.yaml ARCHIVE -o OUT
+Usage: python -m formula.capsysred.stages.beamlets.defect SCENE.yaml ARCHIVE -o OUT
          [--scan w0_um:waist_z,...] [--rays N] [--sections S] [--modes M] [--jobs J]
          [--glass] [--mask OUT11/mu-beamlet.jsonl]
 Rows: OUT/stage11-defect/modes.jsonl (one per launch and mode), defect.json (summary),

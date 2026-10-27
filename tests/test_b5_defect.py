@@ -6,7 +6,7 @@ import math
 import numpy as np
 import pytest
 
-from formula.capsysred.stages.method_safe import _b5_defect as D
+from formula.capsysred.stages.method_safe import defect as D
 
 LAM = 12.398419843320026e-10 / 8.048
 K = 2.0 * math.pi / LAM

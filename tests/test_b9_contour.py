@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from scipy.integrate import quad
 
-from formula.capsysred.stages.ray_mesh._b9_contour import (
+from formula.capsysred.stages.ray_mesh.contour import (
     contour_fourier, fresnel_from_chirped, prepare_contour, triangle_fourier,
 )
 
