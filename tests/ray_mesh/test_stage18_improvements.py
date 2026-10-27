@@ -94,7 +94,7 @@ def test_parallel_replay_matches_serial(tmp_path):
 
 @pytest.mark.parametrize("retrace", [False, True])
 def test_replay_new_routes_use_saved_source_origins_and_complex_moments(tmp_path, monkeypatch, retrace):
-    from formula.capsysred.stages.ray_mesh import phase as _b9_phase, runner as stage18
+    from formula.capsysred.stages.ray_mesh import phase as _b9_phase, publication, runner as stage18
 
     pytest.importorskip("finufft")
     raw = raw_scene()
@@ -117,6 +117,7 @@ def test_replay_new_routes_use_saved_source_origins_and_complex_moments(tmp_path
 
     monkeypatch.setattr(_b9_phase, "phase_field", audited)
     monkeypatch.setattr(stage18, "_hash", data_hash)
+    monkeypatch.setattr(publication, "_hash", data_hash)
     output = tmp_path/"result"
     sim.replay(str(archive), str(output), stages=[18])
     folder = output/"stage18"

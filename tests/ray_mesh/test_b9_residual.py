@@ -4,7 +4,7 @@ import pytest
 
 from formula.capsysred.config import Config
 from formula.capsysred.stages.ray_mesh.curved import curved_residual_fields
-from formula.capsysred.stages.ray_mesh.runner import _residual_correction
+from formula.capsysred.stages.ray_mesh.workers import _residual_correction
 from tests.ray_mesh.test_b9_curved_mesh import build
 from tests.ray_mesh.test_stage18_curved_integration import curved_scene
 
