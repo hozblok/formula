@@ -151,7 +151,7 @@ def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory):
     screen = ScreenGrid(scr_cfg)
     scat = ScatterRaster(scr_cfg)
     n_modes, n_rays = src_cfg.budget()
-    amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
+    amps_of = FloatLineAmplitudes(cfg.material, sim.lines, sim.numbers)
     jack = JackknifeCoherence(sim.lines, screen.ref_pixel(scr_cfg.reference))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
                                       aim_factory)

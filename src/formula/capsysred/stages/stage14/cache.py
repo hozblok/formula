@@ -398,10 +398,10 @@ def _archive_lines(part: InputPart,
 
 def _amplitudes_factory(sim):
     if sim.per_line or len(sim.lines) == 1:
-        return FloatLineAmplitudes(sim.cfg.material, sim.lines, sim.cfg.precision)
+        return FloatLineAmplitudes(sim.cfg.material, sim.lines, sim.numbers)
     central = FloatLineAmplitudes(
         sim.cfg.material, [SimpleNamespace(e_kev=sim.cfg.energy_kev)],
-        sim.cfg.precision,
+        sim.numbers,
     )
     n = len(sim.lines)
 

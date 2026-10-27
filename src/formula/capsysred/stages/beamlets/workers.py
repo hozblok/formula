@@ -173,7 +173,7 @@ class _Worker:
                              "loading, or the spectrum table drifted)")
         cfg = sim.cfg
         self.optic = _scene_optic(sim, scene)
-        self.amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
+        self.amps_of = FloatLineAmplitudes(cfg.material, sim.lines, sim.numbers)
         self.amplitude_min = contract["amplitude_min"]
         self.z_rec = float(z_rec)
         launch = contract["beamlet"]

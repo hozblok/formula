@@ -23,7 +23,7 @@ from formula.capsysred.fresnel import FresnelAmplitude
 from formula.capsysred.trace import trace_ray
 from formula.capsysred.shared.types import HitMethod
 from formula import xray
-from formula.formula import Number
+from formula.formula import Number, NumberContext
 
 FREE_SOURCE = {
     "shape": "point",
@@ -227,7 +227,8 @@ def test_max_bounces_counts_reflections_only():
 def test_symbolic_templates_match_references():
     p = 30
     mat = xray.FUSED_SILICA
-    fres = FresnelAmplitude(mat, Number("8.0", p))
+    N = NumberContext(p)
+    fres = FresnelAmplitude(mat, N("8.0"), N)
     two = Number("2", p)
 
     def db(e):
@@ -291,7 +292,7 @@ def test_line_amplitudes_energy_dependence():
     e0 = Number("8.0", 30)
     lines = spectral_lines({"mode": "lines", "lines": [
         {"energy_kev": 8.0}, {"energy_kev": 10.0}]}, e0)
-    la = LineAmplitudes(xray.FUSED_SILICA, lines, 30)
+    la = LineAmplitudes(xray.FUSED_SILICA, lines, NumberContext(30))
     amps = la([str(Number("sin(3.4e-3)", 30))])
     assert float(abs(amps[0])) > 2.0 * float(abs(amps[1]))
     # no bounces -> unit amplitude on every line
@@ -3616,7 +3617,7 @@ def _oracle_maps(sim, archive, scene, src_cfg, scr_cfg, optic, extra_screens=())
     from formula.capsysred.rays import recorded_plane
     cfg = sim.cfg
     sim.rays = RaysReader(archive)
-    amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
+    amps_of = FloatLineAmplitudes(cfg.material, sim.lines, sim.numbers)
     z_src = float(src_cfg.position[2])
     w0_t = cfg.beamlet_w0_t
     if w0_t == "auto":
