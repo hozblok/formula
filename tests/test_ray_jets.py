@@ -11,6 +11,7 @@ from formula import Number
 from formula.capsysred.stages.variational_transport import transport_mode
 from formula.capsysred.stages._ray_jets import Hit, Surface, transport_ray
 from formula.capsysred.walls.wall_cylinder import CylinderWall
+from formula.capsysred.walls.wall_torus import TorusWall
 
 
 def _cylinder_surface(provider, precision=64):
@@ -18,6 +19,13 @@ def _cylinder_surface(provider, precision=64):
         return Surface("x^2+y^2-1", precision=precision)
     zero = Number("0", precision)
     return CylinderWall((zero, zero), Number("1", precision))
+
+
+def _torus_surface(provider, precision=64):
+    if provider == "expression":
+        return Surface("(sqrt((x-100)^2+z^2)-100)^2+y^2-1", precision=precision)
+    zero, one = Number("0", precision), Number("1", precision)
+    return TorusWall((zero, zero), one, Number("100", precision), (one, zero), zero)
 
 
 def _path_result(source, q, direction, points, target_z):
@@ -229,31 +237,43 @@ def test_cylinder_replay_matches_first_variations_and_high_order_neighbours(q, r
     _check_neighbours(jet, q, source, _cylinder_path, order)
 
 
-@pytest.mark.parametrize("provider", ["expression", "cylinder"])
-def test_surface_precision_matches_rounded_transport_precision(provider):
+@pytest.mark.parametrize("provider,surface_factory,trace", [
+    ("expression", _cylinder_surface, _cylinder_path),
+    ("cylinder", _cylinder_surface, _cylinder_path),
+    ("torus", _torus_surface, _torus_path),
+])
+def test_surface_precision_matches_rounded_transport_precision(provider, surface_factory, trace):
     source, q = np.array([0.08, -0.04, -2.0]), np.array([0.5, 0.15])
-    reference = _cylinder_path(q, source)
-    surface = _cylinder_surface(provider, precision=50)
+    reference = trace(q, source)
+    surface = surface_factory(provider, precision=50)
     assert surface.precision == (50 if provider == "expression" else 64)
     jet = transport_ray(q, source, 0.0, 12.0,
                         [Hit(surface, point) for point in reference[2]], order=1, precision=50)
     _check_nominal_and_fermat(jet, reference)
 
 
-@pytest.mark.parametrize("provider", ["expression", "cylinder"])
-def test_surface_precision_mismatch_is_rejected(provider):
+@pytest.mark.parametrize("provider,surface_factory,trace", [
+    ("expression", _cylinder_surface, _cylinder_path),
+    ("cylinder", _cylinder_surface, _cylinder_path),
+    ("torus", _torus_surface, _torus_path),
+])
+def test_surface_precision_mismatch_is_rejected(provider, surface_factory, trace):
     source, q = np.array([0.08, -0.04, -2.0]), np.array([0.5, 0.15])
-    reference = _cylinder_path(q, source)
-    surface = _cylinder_surface(provider, precision=96)
+    reference = trace(q, source)
+    surface = surface_factory(provider, precision=96)
     with pytest.raises(ValueError, match="precision"):
         transport_ray(q, source, 0.0, 12.0,
                       [Hit(surface, point) for point in reference[2]], order=1, precision=64)
 
 
-def test_direct_cylinder_rejects_bad_and_duplicate_hits():
+@pytest.mark.parametrize("provider,surface_factory,trace", [
+    ("cylinder", _cylinder_surface, _cylinder_path),
+    ("torus", _torus_surface, _torus_path),
+])
+def test_direct_wall_rejects_bad_and_duplicate_hits(provider, surface_factory, trace):
     source, q = np.array([0.08, -0.04, -2.0]), np.array([0.5, 0.15])
-    reference = _cylinder_path(q, source)
-    surface = _cylinder_surface("cylinder")
+    reference = trace(q, source)
+    surface = surface_factory(provider)
     hit = reference[2][0]
     with pytest.raises(ValueError, match="hit must lie"):
         transport_ray(q, source, 0.0, 12.0, [Hit(surface, hit + [0.0, 0.01, 0.0])], order=1)
@@ -261,13 +281,16 @@ def test_direct_cylinder_rejects_bad_and_duplicate_hits():
         transport_ray(q, source, 0.0, 12.0, [Hit(surface, hit), Hit(surface, hit)], order=1)
 
 
-def test_torus_replay_matches_independent_root_solved_paths():
-    source, q = np.array([0.08, -0.04, -2.0]), np.array([0.6, -0.4])
+@pytest.mark.parametrize("q,reflections", [([0.4, 0.1], 1), ([0.6, -0.4], 2)])
+@pytest.mark.parametrize("order", [3, 4])
+@pytest.mark.parametrize("provider", ["expression", "torus"])
+def test_torus_replay_matches_independent_root_solved_paths(q, reflections, order, provider):
+    source, q = np.array([0.08, -0.04, -2.0]), np.array(q)
     reference = _torus_path(q, source)
-    assert len(reference[2]) >= 2
-    surface = Surface("(sqrt((x-100)^2+z^2)-100)^2+y^2-1")
+    assert len(reference[2]) == reflections
+    surface = _torus_surface(provider)
     jet = transport_ray(q, source, 0.0, 12.0,
-                        hits=[Hit(surface, point) for point in reference[2]], order=3)
+                        hits=[Hit(surface, point) for point in reference[2]], order=order)
     _check_nominal_and_fermat(jet, reference)
     bore = {"center": [0.0, 0.0], "radius": 1.0, "kind": "torus",
             "bend": {"radius": 100.0, "toward": [1.0, 0.0]}}
@@ -277,7 +300,7 @@ def test_torus_replay_matches_independent_root_solved_paths():
     assert old["valid"][0], old["diagnostics"]
     np.testing.assert_allclose(jet.Q, old["Q"][0], rtol=2e-8, atol=1e-8)
     np.testing.assert_allclose(jet.P, old["P"][0], rtol=2e-8, atol=1e-8)
-    _check_neighbours(jet, q, source, _torus_path, 3)
+    _check_neighbours(jet, q, source, _torus_path, order)
 
 
 @pytest.mark.parametrize("order", [3, 4])
