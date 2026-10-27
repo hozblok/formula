@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from formula.capsysred.stages.stage14 import _validate_row
+from formula.capsysred.stages.stage14.cache import _validate_row
 
 _DROP = object()
 

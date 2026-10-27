@@ -9,7 +9,7 @@ import math
 import pytest
 
 from formula.capsysred import Simulation, rays_v3
-from formula.capsysred.stages import stage14
+from formula.capsysred.stages.stage14 import cache as stage14
 from formula.capsysred.screen import ScreenGrid
 
 
