@@ -7,7 +7,7 @@ import pytest
 
 from formula.capsysred import Simulation
 from formula.capsysred.config import Config
-from tests.test_stage18_improvements import raw_scene, make_archive
+from tests.ray_mesh.test_stage18_improvements import raw_scene, make_archive
 
 
 @pytest.mark.parametrize("bad", [

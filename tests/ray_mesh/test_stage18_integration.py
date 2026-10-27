@@ -105,7 +105,7 @@ def test_stage18_cli_dispatches_explicit_stage(tmp_path, monkeypatch):
 def test_stage18_rejects_archive_metadata_changes(tmp_path, monkeypatch, metadata, when):
     from formula.capsysred import rays_v3
     from formula.capsysred.stages.ray_mesh import runner as stage18
-    from tests.test_stage18_improvements import raw_scene, make_archive
+    from tests.ray_mesh.test_stage18_improvements import raw_scene, make_archive
 
     pytest.importorskip("finufft")
     raw = raw_scene()
