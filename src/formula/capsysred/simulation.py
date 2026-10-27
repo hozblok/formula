@@ -15,7 +15,7 @@ import time
 import zlib
 
 from .. import __version__
-from ..formula import Number
+from ..formula import Number, NumberContext
 from .. import xray
 from . import render, schematic
 from .stages import analytic
@@ -102,11 +102,12 @@ def _make_sampler():
 class Simulation:
     def __init__(self, cfg: Config):
         self.cfg = cfg
+        self.numbers = NumberContext(cfg.precision)
         self.lines = spectral_lines(cfg.spectrum, cfg.energy_kev)
-        self.fresnel = FresnelAmplitude(cfg.material, cfg.energy_kev)
+        self.fresnel = FresnelAmplitude(cfg.material, cfg.energy_kev, self.numbers)
         # per_line: energy-dependent r(E_m) per spectral line via the symbolic template
         self.per_line = cfg.per_line_fresnel and len(self.lines) > 1
-        self.line_amps = LineAmplitudes(cfg.material, self.lines, cfg.precision)
+        self.line_amps = LineAmplitudes(cfg.material, self.lines, self.numbers)
         self.lam = wavelength_m(cfg.energy_kev)
         p = cfg.precision
         self.theta_c = float(cfg.material.critical_angle(cfg.energy_kev, precision=p))

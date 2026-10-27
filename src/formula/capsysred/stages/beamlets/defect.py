@@ -684,7 +684,7 @@ def launch_jobs(sim, archive, index, opt, w0, w0_t, waist_z):
     area = sum(math.pi * float(b["radius"]) ** 2 for b in cap.bores)
     a_ent = abs(drift_amp(np.array([complex(-waist_dz, zr_t)]), np.array([0j]), np.array([complex(-waist_dz, zr_s)]), np.array([z_in]))[0])
     norm_per_ray = abs(kernel_integral(k, z_in, q_t, q_s)) * a_ent / math.sqrt(area)
-    fres = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision).two_delta_beta[0]
+    fres = FloatLineAmplitudes(cfg.material, sim.lines, sim.numbers).two_delta_beta[0]
     modes = index.modes("capillary")
     if opt["modes"] is not None:
         modes = modes[:opt["modes"]]
