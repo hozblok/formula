@@ -61,6 +61,7 @@ from .._defect_common import (
     _shape,
     _stretch,
     bore_area,
+    bore_axis,
     bound_eta,
     bound_mask,
     uniform_mask,
@@ -281,16 +282,6 @@ def window_values(seg, idx, z, px, py, k, width, z_src, residual=False, pre=None
 
 
 # ------------------------------------------------------------------ sampling
-def bore_axis(bore, z):
-    c = np.array([float(bore["center"][0]), float(bore["center"][1])])
-    bend = bore.get("bend")
-    if bend:
-        t = np.array([float(bend["toward"][0]), float(bend["toward"][1])])
-        t /= np.linalg.norm(t)
-        c = c + t * z * z / (2.0 * float(bend["radius"]))
-    return c
-
-
 def _polar_sum(seg, idx, z, cx, cy, radii, phis, k, width, z_src, cutoff, residual=False, fresnel=None):
     """Sum of the selected windows on the polar points around (cx, cy), each window only
     within its angular support; returns [n_r, n_phi]; `fresnel`: the glass form with radial
