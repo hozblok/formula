@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, TypeVar
 
 from ...formula import Number
+from ..shared.coordinates import surface_coordinates
 from ..shared.nums import lift, vadd, vscale, vunit
 from ..shared.types import _EPS_T, _INSIDE_TOL, _TCAP_TOL
 from ..shared.units import m_to_um
@@ -105,8 +106,8 @@ class FunnelWall:
         return self.center[0].precision
 
     def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
-        """F=(|xy-center*g(z)|^2-r0^2*f(z)^2)/2; jet points are all-jet."""
-        x, y, z = point
+        """F=(|xy-center*g(z)|^2-r0^2*f(z)^2)/2 at scalar or mixed jet world coordinates."""
+        x, y, z = surface_coordinates(point, self.precision)
         uu, vv, _, ff, _, _ = self._local_terms(
             x, y, z - self.z0, *self.center, self.ag, self.bg, self.af, self.bf)
         return (uu * uu + vv * vv - ff * ff * self.r02) / 2
@@ -114,8 +115,8 @@ class FunnelWall:
     def gradient(
         self, point: Sequence[int | float | Number | _Jet],
     ) -> tuple[Number | _Jet, Number | _Jet, Number | _Jet]:
-        """Unnormalized gradient at scalar or all-jet world coordinates in metres."""
-        x, y, z = point
+        """Unnormalized gradient at scalar or mixed jet world coordinates in metres."""
+        x, y, z = surface_coordinates(point, self.precision)
         terms = self._local_terms(x, y, z - self.z0, *self.center,
                                   self.ag, self.bg, self.af, self.bf)
         return self._local_gradient(*terms, self.r02)
