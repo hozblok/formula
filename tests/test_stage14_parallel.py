@@ -175,7 +175,7 @@ def _boom(*_args, **_kwargs):
 
 def _publish_ranges_then_abort(tmp_path, cfg_path, archive, out: str) -> None:
     """Run a parallel build that dies after the workers publish their ranges."""
-    from formula.capsysred.stages import stage14
+    from formula.capsysred.stages.stage14 import cache as stage14
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(stage14, "_fsum_double_fields", _boom)
         with pytest.raises(RuntimeError, match="stop before assembly"):
@@ -218,7 +218,7 @@ def test_stage14_checkpoint_without_manifest_rebuilt(tmp_path, monkeypatch):
 def test_stage14_finalize_crash_resumes(tmp_path, monkeypatch):
     """A crash between the aggregates/meta writes and publication resumes in
     place: no FileExistsError wedge, ranges are still there and reused."""
-    from formula.capsysred.stages import stage14
+    from formula.capsysred.stages.stage14 import cache as stage14
     cfg_path, archive = _scene(tmp_path)
     monkeypatch.delenv("CAPSYSRED_STAGE14_JOBS", raising=False)
     Simulation.from_yaml(str(cfg_path)).replay(
@@ -244,7 +244,7 @@ def test_stage14_finalize_crash_resumes(tmp_path, monkeypatch):
 def test_stage14_jobs_change_resumes(tmp_path, monkeypatch):
     """jobs=2 checkpoints resumed under jobs=3: the recorded partition wins,
     every range is reused, publication leaves no orphan partial."""
-    from formula.capsysred.stages import stage14
+    from formula.capsysred.stages.stage14 import cache as stage14
     cfg_path, archive = _scene(tmp_path)
     monkeypatch.delenv("CAPSYSRED_STAGE14_JOBS", raising=False)
     Simulation.from_yaml(str(cfg_path)).replay(
@@ -343,8 +343,7 @@ def test_stage14_parallel_matches_serial_many_ranges(tmp_path, monkeypatch):
 
 
 def test_effective_workers_caps():
-    from formula.capsysred.stages.stage14 import (_MAX_NT_WORKERS,
-                                                  _effective_workers)
+    from formula.capsysred.stages.stage14.cache import _MAX_NT_WORKERS, _effective_workers
     assert _effective_workers(2, 128) == 2
     assert _effective_workers(50, 3) == 3
     assert _effective_workers(1, 0) == 1
@@ -363,7 +362,7 @@ def _cache_metas(tmp_path) -> dict[str, dict]:
 def test_stage14_parallel_rows_identical_and_cache_hit(tmp_path, monkeypatch):
     """The doc's byte-identity claim, directly: the parallel rows file hashes
     the same as the serial one; afterwards a replay is a pure cache hit."""
-    from formula.capsysred.stages import stage14
+    from formula.capsysred.stages.stage14 import cache as stage14
     cfg_path, archive = _scene(tmp_path)
     monkeypatch.delenv("CAPSYSRED_STAGE14_JOBS", raising=False)
     Simulation.from_yaml(str(cfg_path)).replay(
@@ -439,9 +438,8 @@ def test_mode_ranges_partition(n_modes):
 
 def test_fold_int_aggregates_manual():
     from array import array
-    from formula.capsysred.stages.stage14 import (STREAM_COUNTERS,
-                                                  _fold_int_aggregates,
-                                                  _seal_int_aggregates)
+    from formula.capsysred.stages.stage14.cache import (
+        STREAM_COUNTERS, _fold_int_aggregates, _seal_int_aggregates)
 
     def item(scale):
         return {
@@ -481,7 +479,7 @@ def test_fold_int_aggregates_manual():
     "aggregates differ in last ulps (documented ordering class; the fix "
     "would be a compensated accumulator inside the C++ Stage14Store)"))
 def test_stage14_union_matches_monolithic_store_bitwise(tmp_path):
-    from formula.capsysred.stages.stage14 import _native_store, _typed_array
+    from formula.capsysred.stages.stage14.cache import _native_store, _typed_array
     contributions = [1.0, 1e-16, 1e-16, -1.0]
 
     def w_re(path, values):
@@ -507,7 +505,7 @@ def test_fsum_double_fields_adversarial(tmp_path):
     """Windowed folding is forbidden: cancellation across ranges must give
     the exact global fsum, with 1e16/1e300 outliers and 1-pixel tiles."""
     import struct
-    from formula.capsysred.stages.stage14 import _fsum_double_fields
+    from formula.capsysred.stages.stage14.cache import _fsum_double_fields
     spread = [1e16] + [1.0] * 126 + [-1e16]      # exact global fsum = 126
     huge = [1e300] + [1.0] * 126 + [-1e300]
     npix = 2
@@ -535,7 +533,7 @@ def test_fsum_double_fields_adversarial(tmp_path):
     "that is not the sum of the remaining mode rows — the fix is an "
     "error-free expansion of the totals with deletion from it"))
 def test_stage14_loo_equals_sum_of_remaining_rows(tmp_path):
-    from formula.capsysred.stages.stage14 import _native_store, _typed_array
+    from formula.capsysred.stages.stage14.cache import _native_store, _typed_array
     # W row of pixel 0 = ray amplitude at 0 times the unit ref ray; powers
     # of two keep every row exact, and 2.0 + 2**-53-scale rows are ties that
     # round to even (2.0), so the dominant-mode total provably absorbs all
@@ -579,7 +577,7 @@ def test_stage14_rejects_main_screen_inside_optic(tmp_path, monkeypatch):
 
 
 def test_stage14_worker_pins_prepared_input(tmp_path):
-    from formula.capsysred.stages import stage14
+    from formula.capsysred.stages.stage14 import cache as stage14
     _, archive = _scene(tmp_path)
     digest = rays_v3.index_digest(str(archive))
     physics = stage14._physics_contract(Simulation.from_dict(_config()))
@@ -670,7 +668,7 @@ def test_stage14_rejects_any_scheme_but_lattice(tmp_path):
 
 
 def test_stage14_rejects_a_file_path(tmp_path):
-    from formula.capsysred.stages import stage14
+    from formula.capsysred.stages.stage14 import cache as stage14
     path = tmp_path / "rays.jsonl.gz"
     path.write_bytes(b"")
     with pytest.raises(ValueError, match="not a v3 rays archive directory"):

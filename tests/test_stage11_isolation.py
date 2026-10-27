@@ -77,7 +77,7 @@ def test_unused_beamlet_values_preserve_trace_and_stage14_contracts(case, tmp_pa
     from formula.capsysred import Simulation
     from formula.capsysred.rays import geometry_metadata
     from formula.capsysred.screen import ScreenGrid
-    from formula.capsysred.stages.stage14 import _analysis_signature, _screen_contract
+    from formula.capsysred.stages.stage14.cache import _analysis_signature, _screen_contract
     from formula.capsysred.trace_v3 import _new_archive
 
     base = Simulation.from_dict(_config("cylinder-mono"))
