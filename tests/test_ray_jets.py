@@ -7,8 +7,17 @@ import numpy as np
 import pytest
 from scipy.optimize import brentq
 
+from formula import Number
 from formula.capsysred.stages.variational_transport import transport_mode
 from formula.capsysred.stages._ray_jets import Hit, Surface, transport_ray
+from formula.capsysred.walls.wall_cylinder import CylinderWall
+
+
+def _cylinder_surface(provider, precision=64):
+    if provider == "expression":
+        return Surface("x^2+y^2-1", precision=precision)
+    zero = Number("0", precision)
+    return CylinderWall((zero, zero), Number("1", precision))
 
 
 def _path_result(source, q, direction, points, target_z):
@@ -201,11 +210,12 @@ def test_input_iterators_are_reusable_across_seed_sets():
 
 @pytest.mark.parametrize("q,reflections", [([0.5, 0.15], 1), ([0.6, -0.4], 2)])
 @pytest.mark.parametrize("order", [3, 4])
-def test_cylinder_replay_matches_first_variations_and_high_order_neighbours(q, reflections, order):
+@pytest.mark.parametrize("provider", ["expression", "cylinder"])
+def test_cylinder_replay_matches_first_variations_and_high_order_neighbours(q, reflections, order, provider):
     source, q = np.array([0.08, -0.04, -2.0]), np.array(q)
     reference = _cylinder_path(q, source)
     assert len(reference[2]) == reflections
-    surface = Surface("x^2+y^2-1")
+    surface = _cylinder_surface(provider)
     jet = transport_ray(q, source, 0.0, 12.0,
                         hits=[Hit(surface, point) for point in reference[2]], order=order)
     _check_nominal_and_fermat(jet, reference)
@@ -217,6 +227,38 @@ def test_cylinder_replay_matches_first_variations_and_high_order_neighbours(q, r
     np.testing.assert_allclose(jet.Q, old["Q"][0], rtol=1e-10, atol=1e-10)
     np.testing.assert_allclose(jet.P, old["P"][0], rtol=1e-10, atol=1e-10)
     _check_neighbours(jet, q, source, _cylinder_path, order)
+
+
+@pytest.mark.parametrize("provider", ["expression", "cylinder"])
+def test_surface_precision_matches_rounded_transport_precision(provider):
+    source, q = np.array([0.08, -0.04, -2.0]), np.array([0.5, 0.15])
+    reference = _cylinder_path(q, source)
+    surface = _cylinder_surface(provider, precision=50)
+    assert surface.precision == (50 if provider == "expression" else 64)
+    jet = transport_ray(q, source, 0.0, 12.0,
+                        [Hit(surface, point) for point in reference[2]], order=1, precision=50)
+    _check_nominal_and_fermat(jet, reference)
+
+
+@pytest.mark.parametrize("provider", ["expression", "cylinder"])
+def test_surface_precision_mismatch_is_rejected(provider):
+    source, q = np.array([0.08, -0.04, -2.0]), np.array([0.5, 0.15])
+    reference = _cylinder_path(q, source)
+    surface = _cylinder_surface(provider, precision=96)
+    with pytest.raises(ValueError, match="precision"):
+        transport_ray(q, source, 0.0, 12.0,
+                      [Hit(surface, point) for point in reference[2]], order=1, precision=64)
+
+
+def test_direct_cylinder_rejects_bad_and_duplicate_hits():
+    source, q = np.array([0.08, -0.04, -2.0]), np.array([0.5, 0.15])
+    reference = _cylinder_path(q, source)
+    surface = _cylinder_surface("cylinder")
+    hit = reference[2][0]
+    with pytest.raises(ValueError, match="hit must lie"):
+        transport_ray(q, source, 0.0, 12.0, [Hit(surface, hit + [0.0, 0.01, 0.0])], order=1)
+    with pytest.raises(ValueError, match="position tolerance"):
+        transport_ray(q, source, 0.0, 12.0, [Hit(surface, hit), Hit(surface, hit)], order=1)
 
 
 def test_torus_replay_matches_independent_root_solved_paths():
@@ -260,8 +302,9 @@ def test_coordinate_scale_preserves_physical_ray_derivatives():
         np.testing.assert_allclose(getattr(jets[0], attribute), getattr(jets[1], attribute), rtol=1e-11, atol=1e-11)
 
 
-def test_tangent_hit_has_no_smooth_ray_jet():
-    surface = Surface("x^2+y^2-1")
+@pytest.mark.parametrize("provider", ["expression", "cylinder"])
+def test_tangent_hit_has_no_smooth_ray_jet(provider):
+    surface = _cylinder_surface(provider)
     with pytest.raises(ValueError):
         transport_ray([1.0, -1.0], [1.0, -2.0, -1.0], 0.0, 2.0,
                       hits=[Hit(surface, [1.0, 0.0, 1.0])])

@@ -32,7 +32,7 @@ def _analytic(kind, point, p):
     if kind == "plane":
         return PolygonWall.gradient_hessian(p["nx"], p["ny"], p["scale"])
     if kind == "cylinder":
-        return CylinderWall.gradient_hessian(x, y)
+        return CylinderWall._local_gradient_hessian(x, y)
     if kind == "revolution":
         return RevolutionWall.gradient_hessian(x, y, z, p["c1"], p["c2"])
     if kind == "funnel":
