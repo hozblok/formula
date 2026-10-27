@@ -79,10 +79,10 @@ import math
 
 from ...backend import round_up_precision
 from ...formula import Number
-from ..shared.formulas import cached_formula
+from ..shared.implicit_surface import Surface
+from ..shared.jets import _Algebra, _Jet
 from ..shared.nums import vadd, vdot, vnorm, vscale, vsub, vunit
 from ..shared.types import _GRAZING_SIN_MIN, _RAY_POSITION_TOL_M
-from ..shared.units import m_to_um
 from ..shared.validation import finite_vector
 from ..surfaces import ImplicitWall, Mirror
 from ..walls.wall_cylinder import CylinderWall
@@ -90,106 +90,6 @@ from ..walls.wall_funnel import FunnelWall
 from ..walls.wall_polygon import PolygonFace, PolygonWall
 from ..walls.wall_revolution import RevolutionWall
 from ..walls.wall_torus import TorusWall
-
-
-class _Algebra:
-    order: int
-    precision: int
-
-    def __init__(self, order: int, precision: int) -> None:
-        self.order, self.precision = order, precision
-
-    def constant(self, value: str | int | float | Number) -> _Jet:
-        return _Jet(self, [str(value)] + ["0"] * ((1 << self.order) - 1), 1)
-
-    def variable(self, value: str | int | float | Number, seeds: Sequence[int], axis: int) -> _Jet:
-        result = self.constant(value)
-        for i, seed in enumerate(seeds):
-            if seed == axis:
-                result.c[1 << i] = "1"
-                result.support |= 1 << (1 << i)
-        return result
-
-    def evaluate(self, expression: str, **values: _Jet | str | int | float | Number) -> _Jet:
-        jets = {key: value if isinstance(value, _Jet) else self.constant(value)
-                for key, value in values.items()}
-        if any(jet.alg is not self for jet in jets.values()):
-            raise ValueError("jets must belong to the same algebra")
-        coefficients, support = cached_formula(expression, self.precision)._evaluate_jet(
-            self.order, {key: jet.c for key, jet in jets.items()},
-            {key: jet.support for key, jet in jets.items()})
-        return _Jet(self, coefficients, support)
-
-
-class _Jet:
-    alg: _Algebra
-    c: list[str]
-    support: int
-
-    def __init__(self, algebra: _Algebra, coefficients: Iterable[str], support: int) -> None:
-        self.alg, self.c, self.support = algebra, list(coefficients), support
-
-    def __add__(self, other: _Jet | str | int | float | Number) -> _Jet:
-        return self.alg.evaluate("a+b", a=self, b=other)
-
-    __radd__ = __add__
-
-    def __sub__(self, other: _Jet | str | int | float | Number) -> _Jet:
-        return self.alg.evaluate("a-b", a=self, b=other)
-
-    def __rsub__(self, other: _Jet | str | int | float | Number) -> _Jet:
-        return self.alg.evaluate("a-b", a=other, b=self)
-
-    def __mul__(self, other: _Jet | str | int | float | Number) -> _Jet:
-        return self.alg.evaluate("a*b", a=self, b=other)
-
-    __rmul__ = __mul__
-
-    def __truediv__(self, other: _Jet | str | int | float | Number) -> _Jet:
-        return self.alg.evaluate("a/b", a=self, b=other)
-
-    def __rtruediv__(self, other: _Jet | str | int | float | Number) -> _Jet:
-        return self.alg.evaluate("a/b", a=other, b=self)
-
-    def sqrt(self) -> _Jet:
-        return self.alg.evaluate("sqrt(a)", a=self)
-
-    @property
-    def value(self) -> float:
-        return float(self.c[0])
-
-
-class Surface:
-    """Smooth implicit surface; coordinate_scale converts metres to expression units."""
-
-    def __init__(self, expression, precision=64, coordinate_scale=1.0):
-        if not math.isfinite(coordinate_scale) or coordinate_scale <= 0:
-            raise ValueError("coordinate_scale must be positive and finite")
-        self.expression, self.precision = expression, precision
-        self.coordinate_scale = coordinate_scale
-        self.formula = cached_formula(expression, precision)
-        if set(self.formula.variables()) - set("xyz"):
-            raise ValueError("surface variables must be x, y, z")
-
-    def value(self, point):
-        alg = point[0].alg
-        return alg.evaluate(self.expression, **dict(zip("xyz", vscale(point, self.coordinate_scale))))
-
-    def gradient(self, point):
-        alg, n = point[0].alg, len(point[0].c)
-        scaled = vscale(point, self.coordinate_scale)
-        gradient = []
-        for axis in range(3):
-            values, supports = {}, {}
-            for j, name in enumerate("xyz"):
-                values[name] = scaled[j].c + ["0"] * n
-                supports[name] = scaled[j].support
-                if axis == j:
-                    values[name][n] = str(self.coordinate_scale)
-                    supports[name] |= 1 << n
-            c, support = self.formula._evaluate_jet(alg.order + 1, values, supports)
-            gradient.append(_Jet(alg, c[n:], (support >> n) | 1))
-        return gradient
 
 
 @dataclass(frozen=True)
@@ -240,9 +140,7 @@ def _prepare_hit(hit: Hit) -> Hit:
     """Resolve an archived wall to one smooth surface before seeding derivatives."""
     point = finite_vector(hit.point, 3, "hit")
     surface = hit.surface
-    if isinstance(surface, ImplicitWall):
-        surface = Surface(surface.rs.surface.expression, surface.rs.precision, m_to_um(1))
-    elif isinstance(surface, PolygonWall):
+    if isinstance(surface, PolygonWall):
         surface = surface.surface_at(point)
     return Hit(surface, point)
 
