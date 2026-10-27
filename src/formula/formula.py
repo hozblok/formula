@@ -2,6 +2,7 @@
 
 import operator
 import re
+from dataclasses import dataclass
 from functools import cached_property
 from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional, Union
@@ -370,3 +371,40 @@ class Number:
     def __gt__(self, __value): return self._cmp(__value, operator.gt)
     def __le__(self, __value): return self._cmp(__value, operator.le)
     def __lt__(self, __value): return self._cmp(__value, operator.lt)
+
+
+@dataclass(frozen=True, slots=True)
+class NumberContext:
+    """Number factory with a fixed storage precision and no global state.
+
+    N = NumberContext(precision=64)
+    x = N("1e-30")
+    z = 2 * x + N.i
+
+    Accepts the same values and expressions as Number. Existing Number and
+    backend values must have matching storage precision; they are not rounded.
+    """
+
+    precision: int = DEFAULT_PRECISION
+
+    def __post_init__(self):
+        if isinstance(self.precision, bool) or not isinstance(self.precision, int):
+            raise TypeError("precision must be an int")
+        if not 0 < self.precision <= MAX_PRECISION:
+            raise ValueError(
+                f"precision must be in [1, {MAX_PRECISION}] (got {self.precision})"
+            )
+        object.__setattr__(self, "precision", round_up_precision(self.precision))
+
+    def __call__(
+        self, expression: Union[Number, str, int, float, *MP_TYPES]
+    ) -> Number:
+        return Number(expression, self.precision)
+
+    @property
+    def i(self) -> Number:
+        return self("i")
+
+    @property
+    def pi(self) -> Number:
+        return self("pi")
