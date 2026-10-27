@@ -7,7 +7,7 @@ import yaml
 
 from formula.capsysred import Simulation, rays_v3
 from formula.capsysred.rays import geometry_metadata
-from formula.capsysred.stages.method_safe import runner as stage17
+from formula.capsysred.stages.method_safe import phase_audit, runner as stage17
 
 
 def make_scene(**bore):
@@ -67,7 +67,7 @@ def test_failure_cleans_owned_staging_tree(tmp_path, monkeypatch):
     archive = make_archive(tmp_path, sim)
     def fail(*args, **kwargs):
         raise RuntimeError("injected fit failure")
-    monkeypatch.setattr(stage17, "audit_mode", fail)
+    monkeypatch.setattr(phase_audit, "audit_mode", fail)
     output = tmp_path/"output"
     with pytest.raises(RuntimeError, match="injected"):
         stage17.run_b5_stage(sim, output, sim.cfg.validate_b5_estimator(), rays_paths=[archive])
@@ -103,10 +103,10 @@ def test_failed_chart_is_reported_without_nan(tmp_path):
     points = np.zeros((72, 2))
     gradients = np.tile([1., 2.], (72, 1))
     phases = np.linspace(0, 2, 72)
-    record, _ = stage17.inspect_patch(points, gradients, phases, np.ones(72),
+    record, _ = phase_audit.inspect_patch(points, gradients, phases, np.ones(72),
                                       np.arange(48), np.arange(48, 72), options)
     assert not record["accepted_phase_test"]
-    stage17._dump(tmp_path/"failed.json", record)
+    phase_audit._dump(tmp_path/"failed.json", record)
     saved = json.loads((tmp_path/"failed.json").read_text())
     assert saved["fit_diagnostics"]["condition"] is None
 
@@ -122,7 +122,7 @@ def test_screen_index_is_checked_before_output(tmp_path):
 def test_fingerprint_change_after_contract_is_rejected(tmp_path, monkeypatch):
     sim = make_scene()
     archive = make_archive(tmp_path, sim)
-    original = stage17._archive_contract
+    original = phase_audit._archive_contract
 
     def changed_after_validation(simulation, path):
         digest = original(simulation, path)
@@ -135,8 +135,8 @@ def test_fingerprint_change_after_contract_is_rejected(tmp_path, monkeypatch):
     def must_not_audit(*args, **kwargs):
         raise AssertionError("changed geometry must not reach the phase audit")
 
-    monkeypatch.setattr(stage17, "_archive_contract", changed_after_validation)
-    monkeypatch.setattr(stage17, "audit_mode", must_not_audit)
+    monkeypatch.setattr(phase_audit, "_archive_contract", changed_after_validation)
+    monkeypatch.setattr(phase_audit, "audit_mode", must_not_audit)
     output = tmp_path / "output"
     with pytest.raises(ValueError, match="fingerprint changed after geometry validation"):
         stage17.run_b5_stage(sim, output, sim.cfg.validate_b5_estimator(), rays_paths=[archive])
@@ -157,7 +157,7 @@ def test_fingerprint_change_during_contract_is_rejected(tmp_path, monkeypatch):
 
     monkeypatch.setattr(rays_v3, "read_fingerprint", changed_during_validation)
     with pytest.raises(ValueError, match="fingerprint changed during geometry validation"):
-        stage17._archive_contract(sim, archive)
+        phase_audit._archive_contract(sim, archive)
 
 
 def test_square_bore_replays_and_assigns_corner_entrances(tmp_path):
@@ -169,10 +169,10 @@ def test_square_bore_replays_and_assigns_corner_entrances(tmp_path):
     assert meta["accepted_phase_patches"] == 2
     corner = {"origin": [0., 0., -.01], "points": np.array([[11.4e-6, 11.4e-6]]),
               "directions": np.array([[0., 0.]]), "refl": [[]], "sins": [[]]}
-    groups, unassigned, entrance = stage17.entrance_families(corner, sim.cfg.capillary, .05)
+    groups, unassigned, entrance = phase_audit.entrance_families(corner, sim.cfg.capillary, .05)
     np.testing.assert_allclose(entrance[0], [1.9e-6, 1.9e-6], rtol=1e-12)
     assert unassigned == 0 and list(groups) == [(0, 0)]
-    _, unassigned_round, _ = stage17.entrance_families(corner, make_scene().cfg.capillary, .05)
+    _, unassigned_round, _ = phase_audit.entrance_families(corner, make_scene().cfg.capillary, .05)
     assert unassigned_round == 1                                     # the same point misses the circle
 
 

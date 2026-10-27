@@ -6,7 +6,7 @@ import pytest
 
 from formula.capsysred import Simulation
 from formula.capsysred.config import Config
-from formula.capsysred.stages.ray_mesh.runner import _flat_to_curved
+from formula.capsysred.stages.ray_mesh.workers import _flat_to_curved
 from tests.ray_mesh.test_stage18_improvements import raw_scene, make_archive
 
 
@@ -121,7 +121,7 @@ def test_curved_residual_replay_corrects_intensity_and_cross_terms(tmp_path):
 
 def test_mode_failures_are_skipped_and_recorded(tmp_path, monkeypatch):
     pytest.importorskip('finufft')
-    from formula.capsysred.stages.ray_mesh import runner as stage18
+    from formula.capsysred.stages.ray_mesh import workers as stage18
 
     sim = Simulation.from_dict(curved_scene())
     archive, output = tmp_path/'archive', tmp_path/'result'

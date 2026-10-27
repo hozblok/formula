@@ -28,7 +28,8 @@ def _implementation_hashes():
     base = Path(__file__).parent.parent
     return {name: _hash(base/name) for name in
             ("method_safe/map.py", "method_safe/field.py", "variational_transport.py",
-             "archive_samples.py", "method_safe/runner.py", "_map_common.py", "_archive_common.py",
+             "archive_samples.py", "method_safe/runner.py", "method_safe/phase_audit.py",
+             "_map_common.py", "_archive_common.py",
              "../shared/apertures.py", "../shared/types.py")}
 
 
