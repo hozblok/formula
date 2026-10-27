@@ -18,6 +18,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from ..formula import Number
+from .shared.implicit_surface import Surface
 from .shared.nums import lift, vadd, vscale
 from .shared.types import (_EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _TCAP_TOL,
                     HitMethod)
@@ -29,7 +30,7 @@ from .walls.wall_revolution import RevolutionWall
 from .walls.wall_torus import TorusWall
 
 if TYPE_CHECKING:
-    from .stages._ray_jets import _Jet
+    from .shared.jets import _Jet
 
 
 class Mirror:
@@ -85,8 +86,23 @@ class ImplicitWall:
         self.rs = RaySurface(expr, p)
         self.method = method
         self._scale = lift(m_to_um(1), p)
+        self._surface = Surface(self.rs.surface, coordinate_scale=self._scale)
         self.expr_um = None            # the engine IS the hit path here
         self.probe_xy = (1.0, 0.0)
+
+    @property
+    def precision(self) -> int:
+        return self._surface.precision
+
+    def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
+        """Evaluate the original micrometre expression at world coordinates in metres."""
+        return self._surface.value(point)
+
+    def gradient(
+        self, point: Sequence[int | float | Number | _Jet],
+    ) -> tuple[Number, ...] | tuple[_Jet, ...]:
+        """Gradient of the original expression with respect to world metres."""
+        return self._surface.gradient(point)
 
     def _f(self, xf, yf, zf) -> float:
         val = self.rs.surface.evaluate(

@@ -16,7 +16,7 @@ from ..shared.types import _EPS_T, _INSIDE_TOL, Vec3
 from ..shared.units import m_to_um
 
 if TYPE_CHECKING:
-    from ..stages._ray_jets import _Jet
+    from ..shared.jets import _Jet
 
 _Coordinate = TypeVar("_Coordinate")
 

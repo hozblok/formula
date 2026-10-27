@@ -246,7 +246,7 @@ def test_surface_precision_matches_rounded_transport_precision(provider, surface
     source, q = np.array([0.08, -0.04, -2.0]), np.array([0.5, 0.15])
     reference = trace(q, source)
     surface = surface_factory(provider, precision=50)
-    assert surface.precision == (50 if provider == "expression" else 64)
+    assert surface.precision == Number("0", 50).precision
     jet = transport_ray(q, source, 0.0, 12.0,
                         [Hit(surface, point) for point in reference[2]], order=1, precision=50)
     _check_nominal_and_fermat(jet, reference)
