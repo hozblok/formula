@@ -3,13 +3,33 @@
 Coordinates are metres. Formula's hyper-dual evaluator carries the mixed derivatives;
 several seed sets recover the complete two-parameter Taylor polynomial of degree 1..4.
 
-Example (after rebuilding the native extension)::
+Examples::
 
-    wall = CylinderWall((Number("0", 64), Number("0", 64)), Number("1", 64))
-    jet = transport_ray([.5, 0.], [0., 0., -2.], 0., 5.,
-                        [Hit(wall, [1., 0., 2.])], order=4)
-    jet.Q                         # ((-3.5, 0.0), (0.0, 0.5))
-    jet.predict_position([.001, 0.])
+    from formula import Number
+    from formula.capsysred.stages._ray_jets import Hit, Surface, transport_ray
+    from formula.capsysred.walls.wall_cylinder import CylinderWall
+    from formula.capsysred.walls.wall_torus import TorusWall
+
+    # Implicit surface: plane x=1.
+    plane = Surface("x-1")
+    plane_jet = transport_ray([.2, .1], [0., 0., -2.], 0., 10.,
+                              [Hit(plane, [1., .5, 8.])], order=4)
+    plane_jet.Q                   # ((-6.0, 0.0), (0.0, 6.0))
+    plane_jet.predict_position([.001, 0.])
+
+    # Straight cylinder of radius 1.
+    zero, one = Number("0", 64), Number("1", 64)
+    cylinder = CylinderWall((zero, zero), one)
+    cylinder_jet = transport_ray([.5, 0.], [0., 0., -2.], 0., 5.,
+                                 [Hit(cylinder, [1., 0., 2.])], order=4)
+    cylinder_jet.Q                # ((-3.5, 0.0), (0.0, 0.5))
+    cylinder_jet.predict_position([.001, 0.])
+
+    # Torus: tube radius 1, bend radius 4, bending toward +x.
+    torus = TorusWall((zero, zero), one, Number("4", 64), (one, zero), zero)
+    torus_jet = transport_ray([0., 0.], [0., 0., -2.], 0., 4.,
+                              [Hit(torus, [0., 0., 3.])], order=4)
+    torus_jet.predict_position([.001, 0.])
 
 Inputs select the local branch; they do not prove that nearby rays hit the same walls.
 No amplitude, Fresnel factor, caustic phase or SAFE a1 is computed here.
@@ -28,6 +48,7 @@ from ..shared.nums import vadd, vdot, vnorm, vscale, vsub, vunit
 from ..shared.types import _GRAZING_SIN_MIN, _RAY_POSITION_TOL_M
 from ..shared.validation import finite_vector
 from ..walls.wall_cylinder import CylinderWall
+from ..walls.wall_torus import TorusWall
 
 
 class _Algebra:
@@ -134,7 +155,7 @@ class Surface:
 class Hit:
     """Selected smooth surface and nominal point from the ordinary ray trace."""
 
-    surface: Surface | CylinderWall
+    surface: Surface | CylinderWall | TorusWall
     point: object
 
 
