@@ -80,7 +80,7 @@ def test_wave_section_is_lazy_and_validated():
 
 def test_stage14_contract_ignores_wave_section():
     from formula.capsysred.rays import geometry_metadata
-    from formula.capsysred.stages.stage14 import _analysis_signature, _screen_contract
+    from formula.capsysred.stages.stage14.cache import _analysis_signature, _screen_contract
     from formula.capsysred.trace_v3 import archive_fingerprint
 
     base = Simulation.from_dict(_square("disk", 3e-7))
