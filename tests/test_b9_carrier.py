@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from formula.capsysred.stages.ray_mesh._b9_carrier import carrier_field
+from formula.capsysred.stages.ray_mesh.carrier import carrier_field
 
 
 SQUARE = np.array([[[-1., -1.], [1., -1.], [1., 1.]],
@@ -58,7 +58,7 @@ def test_batches_add_complex_fields_and_do_not_mutate_exit_data(monkeypatch):
     original = {key: value.copy() for key, value in mesh.items()}
     common = dict(k=23., distance=1.3, x=[-.2, .1], y=[-.07, .05], backend="direct")
     full, stats = carrier_field(mesh, 2, 2, max_triangles_per_batch=100, **common)
-    from formula.capsysred.stages.ray_mesh import _b9_carrier
+    from formula.capsysred.stages.ray_mesh import carrier as _b9_carrier
 
     transform, call_sizes = _b9_carrier.triangle_fourier, []
 

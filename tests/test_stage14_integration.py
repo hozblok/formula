@@ -12,7 +12,7 @@ import pytest
 
 from formula.capsysred import Simulation, rays_v3
 from formula.capsysred.screen import ScreenGrid
-from formula.capsysred.stages.stage14.stage14_flags import FlagThresholds, validate_pixel_row
+from formula.capsysred.stages.stage14.flags import FlagThresholds, validate_pixel_row
 
 
 def _config(n_modes=10, seed=101, *, thresholds=None):

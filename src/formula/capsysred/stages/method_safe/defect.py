@@ -29,7 +29,7 @@ argmin_exit is its width.  Reported beside them, not added:
 the config): the indicator eps spread uniformly over the cells with rays gives
 |d mu| <= 2 eta (1/sqrt(I) + 1/sqrt(I_ref)), eta^2 = eps^2 P / A_lit; an assumption, not a bound.
 
-Usage: python -m formula.capsysred.stages.method_safe._b5_defect SCENE.yaml ARCHIVE -o OUT
+Usage: python -m formula.capsysred.stages.method_safe.defect SCENE.yaml ARCHIVE -o OUT
          [--widths 0.5,1,2 (um)] [--rays N] [--sections S] [--modes M] [--jobs J]
          [--glass] [--map OUT17/.../map-....npz]
 Rows: OUT/stage17-defect/modes.jsonl, defect.json, mask-<map>.npz (with --map).
@@ -673,7 +673,7 @@ def map_eps(results, key, d0, rays, modes, exit_prop):
 
 def write_map_mask(npz_path, eps, threshold, path, bound=None, spec=None):
     """Cell mask of a stage-17 map under the uniform-error assumption; lit = cells with
-    rays of the matched ray estimator.  With `bound` (as beamlet_defect.bound_eta) and the
+    rays of the matched ray estimator.  With `bound` (as beamlets.defect.bound_eta) and the
     screen `spec` also the certified mask: dmu_bound / masked_bound in the npz."""
     with np.load(npz_path) as data:
         I, lit = data["I"], data["matched_stage14_rays"] > 0

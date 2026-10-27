@@ -2,7 +2,7 @@ import copy
 import numpy as np
 import pytest
 
-from formula.capsysred.stages.ray_mesh._b9_amplitude import apply_shared_flux
+from formula.capsysred.stages.ray_mesh.amplitude import apply_shared_flux
 
 
 def example():

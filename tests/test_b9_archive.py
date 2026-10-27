@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from formula.capsysred.stages.ray_mesh._b9_archive import apply_tube_flux, exit_nodes, prepare_exit_mesh, _p1_triangle_power
+from formula.capsysred.stages.ray_mesh.archive import apply_tube_flux, exit_nodes, prepare_exit_mesh, _p1_triangle_power
 from formula.capsysred.stages.variational_transport import count_free_caustics, reflect_variations
 
 
@@ -157,7 +157,7 @@ def test_one_and_two_planar_reflections_match_unfolded_image_source(monkeypatch)
         return dict(entrance=entrance, Q=np.array(qs), P=np.array(ps), maslov=np.array(maslov),
                     valid=np.ones(2, bool), bore=np.zeros(2, int), diagnostics={"fixture": "flat-wall derivative adapter"})
 
-    monkeypatch.setattr("formula.capsysred.stages.ray_mesh._b9_archive.transport_mode", planar_transport)
+    monkeypatch.setattr("formula.capsysred.stages.ray_mesh.archive.transport_mode", planar_transport)
     fresnel = np.array([.8*np.exp(.2j), .6*np.exp(-.4j)])
     result = exit_nodes(mode, cap, mode_z=mode_z, exit_z=exit_z, k=k, fresnel=fresnel)
     unfolded_distances = (exit_z-source[2])/np.array(initial_vectors)[:, 2]

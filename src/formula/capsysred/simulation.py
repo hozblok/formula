@@ -22,7 +22,7 @@ from .stages import analytic
 from .stages.altcoh import run_alt_stage
 from .stages.beamlets.publication import STAGING_PREFIX, publish_stage11, refuse_stage11_leftovers
 from .stages.beamlets.workers import PeakSampler, _peak_rss, preflight_stage11
-from .stages.beamlets.beamlet import run_beamlet_stage
+from .stages.beamlets.runner import run_beamlet_stage
 from .env import Env
 from .shared.common import log as _log
 from .stages.jackknife import run_jack_stage
@@ -66,7 +66,7 @@ def _wave_backend():
 def _b5_backend():
     """Load optional dependencies only for an explicitly selected Stage 17."""
     try:
-        from .stages.method_safe import stage17
+        from .stages.method_safe import runner as stage17
     except ModuleNotFoundError as exc:
         if exc.name not in {"numpy", "scipy"}:
             raise
@@ -79,7 +79,7 @@ def _b5_backend():
 def _b9_backend():
     """Load optional dependencies only for an explicitly selected Stage 18."""
     try:
-        from .stages.ray_mesh import stage18
+        from .stages.ray_mesh import runner as stage18
     except ModuleNotFoundError as exc:
         if exc.name not in {"numpy", "scipy"}:
             raise

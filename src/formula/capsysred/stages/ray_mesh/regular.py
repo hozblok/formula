@@ -12,7 +12,7 @@ import time
 
 import numpy as np
 
-from ._b9_phase import _integer, _mesh, _phase_fit, _real, _real_array
+from .phase import _integer, _mesh, _phase_fit, _real, _real_array
 
 
 def _axis(value, name):

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from formula.capsysred.stages.ray_mesh._b9_adaptive_mesh import (
+from formula.capsysred.stages.ray_mesh.adaptive_mesh import (
     _Partition, _TraceCache, _bore_spec, _check, _det, _disk_partition,
     adaptive_exit_mesh, audit_amplitude_probes,
 )

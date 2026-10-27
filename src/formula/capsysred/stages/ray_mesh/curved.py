@@ -12,8 +12,8 @@ import time
 
 import numpy as np
 
-from ._b9_phase import _integer, _real, _real_array
-from ._b9_regular import _axis
+from .phase import _integer, _real, _real_array
+from .regular import _axis
 
 
 def _curved_mesh(mesh):

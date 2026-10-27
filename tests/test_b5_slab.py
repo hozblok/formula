@@ -4,7 +4,7 @@ import pytest
 
 np = pytest.importorskip("numpy")
 
-from formula.capsysred.stages.method_safe._b5_slab import UnfoldedSlab
+from formula.capsysred.stages.method_safe.slab import UnfoldedSlab
 
 
 def test_straight_slab_single_dirichlet_mode():
