@@ -25,8 +25,9 @@ class FresnelAmplitude:
     precomputed once so the per-bounce cost is pure Number arithmetic.
     """
 
-    def __init__(self, material, energy_kev: Number):
-        self.numbers = N = NumberContext(energy_kev.precision)
+    def __init__(self, material, energy_kev: Number, numbers: NumberContext):
+        self.numbers = N = numbers
+        energy_kev = N(energy_kev)
         self.d2 = 2 * material.delta(energy_kev, precision=N.precision)
         self.b2 = 2 * material.beta(energy_kev, precision=N.precision)
         self.b2i = self.b2 * N.i
@@ -47,11 +48,12 @@ class FloatLineAmplitudes:
     material model; cross-checked against the Number Fresnel via check()."""
 
     def __init__(self, material: GlassMaterial, lines: Sequence[SpectralLine],
-                 precision: int):
+                 numbers: NumberContext):
+        self.numbers = numbers
         # (2*delta, 2*beta) per line: the root is sqrt(sin^2 - 2d + 2ib)
         self.two_delta_beta: list[tuple[float, float]] = []
         for line in lines:
-            delta, beta = optical_constants(material, line.e_kev, precision)
+            delta, beta = optical_constants(material, numbers(line.e_kev), numbers.precision)
             self.two_delta_beta.append((2.0 * delta, 2.0 * beta))
 
     def __call__(self, sins: Sequence[float]) -> list[complex]:

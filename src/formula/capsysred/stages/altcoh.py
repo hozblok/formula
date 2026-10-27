@@ -170,7 +170,7 @@ def run_alt_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory):
     if screen.ny != 1:
         raise ValueError("stage 7 supports 1D screens (ny = 1) only")
     n_modes, n_rays = src_cfg.budget()
-    amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
+    amps_of = FloatLineAmplitudes(cfg.material, sim.lines, sim.numbers)
     alt = AltCoherence(sim.lines, screen, screen.ref_pixel(scr_cfg.reference))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
                                       aim_factory)
@@ -207,7 +207,7 @@ def run_alt_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory):
         alt.fold_mode()
     progress.finish(f"on screen {stats['screen']:,}")
     mid = len(sim.lines) // 2
-    r_num = FresnelAmplitude(cfg.material, sim.lines[mid].e_kev)
+    r_num = FresnelAmplitude(cfg.material, sim.lines[mid].e_kev, sim.numbers)
     s_probe = math.sin(float(FRESNEL_PROBE_THETA))
     check = abs(amps_of([s_probe])[mid]
                 - complex(r_num(Number(repr(s_probe), cfg.precision))))
