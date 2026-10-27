@@ -6,7 +6,7 @@ from time import perf_counter
 
 import numpy as np
 
-from ..trace import trace_ray
+from ...trace import trace_ray
 from ._b9_adaptive_mesh import _BudgetReached, _Partition, _TraceCache, _bore_spec, _det, _disk_partition
 from ._b9_phase import _integer, _real, _real_array
 
