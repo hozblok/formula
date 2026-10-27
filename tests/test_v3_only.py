@@ -13,7 +13,7 @@ import yaml
 from formula.capsysred import Simulation, rays, rays_v3
 from formula.capsysred.rays import (RNG_SCHEME, MultiRaysReader, RaysReader, SceneSeed,
                                     scene_stream, stream_rng)
-from formula.capsysred.stages.beamlets.beamlet import _mode_tasks
+from formula.capsysred.stages.beamlets.workers import _mode_tasks
 from formula.capsysred.trace_v3 import SCENES, archive_fingerprint, main, trace as trace_v3
 
 RAW = {
