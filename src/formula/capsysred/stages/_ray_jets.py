@@ -5,10 +5,10 @@ several seed sets recover the complete two-parameter Taylor polynomial of degree
 
 Example (after rebuilding the native extension)::
 
-    wall = Surface("x-1")
-    jet = transport_ray([.2, .1], [0., 0., -2.], 0., 10.,
-                        [Hit(wall, [1., .5, 8.])], order=4)
-    jet.Q                         # ((-6.0, 0.0), (0.0, 6.0))
+    wall = CylinderWall((Number("0", 64), Number("0", 64)), Number("1", 64))
+    jet = transport_ray([.5, 0.], [0., 0., -2.], 0., 5.,
+                        [Hit(wall, [1., 0., 2.])], order=4)
+    jet.Q                         # ((-3.5, 0.0), (0.0, 0.5))
     jet.predict_position([.001, 0.])
 
 Inputs select the local branch; they do not prove that nearby rays hit the same walls.
@@ -21,11 +21,13 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 import math
 
+from ...backend import round_up_precision
 from ...formula import Number
 from ..shared.formulas import cached_formula
 from ..shared.nums import vadd, vdot, vnorm, vscale, vsub, vunit
 from ..shared.types import _GRAZING_SIN_MIN, _RAY_POSITION_TOL_M
 from ..shared.validation import finite_vector
+from ..walls.wall_cylinder import CylinderWall
 
 
 class _Algebra:
@@ -132,7 +134,7 @@ class Surface:
 class Hit:
     """Selected smooth surface and nominal point from the ordinary ray trace."""
 
-    surface: Surface
+    surface: Surface | CylinderWall
     point: object
 
 
@@ -229,7 +231,7 @@ def transport_ray(entrance, source, z0, target_z, hits=(), order=3, precision=64
         raise ValueError("source, entrance and target must be ordered in z")
     hits = tuple(Hit(hit.surface, finite_vector(hit.point, 3, "hit")) for hit in hits)
     for hit in hits:
-        if hit.surface.precision != precision:
+        if round_up_precision(hit.surface.precision) != round_up_precision(precision):
             raise ValueError("surface and transport precision must agree")
         if not z0 <= hit.point[2] <= target_z:
             raise ValueError("hits must lie between entrance and target")
