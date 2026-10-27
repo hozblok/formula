@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.spatial import ConvexHull, Delaunay, QhullError
 
-from ._b5_transport import transport_mode
+from .._b5_transport import transport_mode
 
 
 def _det(a):

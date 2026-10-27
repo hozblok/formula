@@ -13,12 +13,12 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from ..native import make_tracer
-from ..shared.nums import lift, vsub, vunit
-from ..surfaces import CapillaryBundle
-from ..trace import trace_ray
+from ...native import make_tracer
+from ...shared.nums import lift, vsub, vunit
+from ...surfaces import CapillaryBundle
+from ...trace import trace_ray
 from ._b9_archive import apply_tube_flux, exit_nodes, mesh_from_triangles
-from ._archive_common import _fresnel_product
+from .._archive_common import _fresnel_product
 
 
 def _integer(value, name, minimum):

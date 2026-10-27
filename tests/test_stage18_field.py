@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-from formula.capsysred.stages.stage18 import refine_chirped_mesh
-from formula.capsysred.stages._b9_contour import fresnel_from_chirped
+from formula.capsysred.stages.ray_mesh.stage18 import refine_chirped_mesh
+from formula.capsysred.stages.ray_mesh._b9_contour import fresnel_from_chirped
 
 
 def test_subdivision_preserves_affine_phase_and_complex_amplitude():

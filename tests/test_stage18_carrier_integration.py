@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from formula.capsysred.config import B9_DEFAULTS
-from formula.capsysred.stages._b9_carrier import _mesh, _select_carriers, carrier_field
+from formula.capsysred.stages.ray_mesh._b9_carrier import _mesh, _select_carriers, carrier_field
 
 
 def shared_edge_diagnostics():
@@ -102,7 +102,7 @@ def test_different_local_origins_translation_and_orientation_preserve_complex_su
 def test_optional_carrier_replay_preserves_native_cells_and_source_ensemble(tmp_path, monkeypatch, groups):
     from formula.capsysred import Simulation, rays_v3
     from formula.capsysred.rays import geometry_metadata
-    from formula.capsysred.stages import _b9_carrier, stage18
+    from formula.capsysred.stages.ray_mesh import _b9_carrier, stage18
 
     pytest.importorskip("finufft")
     captured = []

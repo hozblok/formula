@@ -2,10 +2,10 @@
 import numpy as np
 import pytest
 
-from formula.capsysred.stages._b9_curved import (
+from formula.capsysred.stages.ray_mesh._b9_curved import (
     _derivative_bounds, _duffy_power, curved_phase_field, curved_quadrature_orders,
 )
-from formula.capsysred.stages._b9_phase import phase_field
+from formula.capsysred.stages.ray_mesh._b9_phase import phase_field
 
 
 BARY = np.array([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.],
