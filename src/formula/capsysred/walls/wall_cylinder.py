@@ -5,10 +5,18 @@
 """Straight cylinder x'²+y'² = a²; the ray intersection is an exact quadratic
 and the normal is radial with zero z-component."""
 
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
 from ...formula import Number
 from ..shared.nums import lift, sqrt, vadd, vscale, vunit
 from ..shared.types import _EPS_T, _INSIDE_TOL, Vec3
 from ..shared.units import m_to_um
+
+if TYPE_CHECKING:
+    from ..stages._ray_jets import _Jet
 
 
 class CylinderWall:
@@ -31,6 +39,16 @@ class CylinderWall:
         self.expr_um = (f"(x-({center[0] * um}))^2+(y-({center[1] * um}))^2"
                         f"-({self._a2 * um * um})")
         self.probe_xy = (1.0, 0.0)
+
+    def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
+        """F = ((x-cx)^2 + (y-cy)^2 - radius^2)/2 in world metres."""
+        dx, dy, _ = self.gradient(point)
+        return (dx * dx + dy * dy - self._a2) / 2
+
+    def gradient(self, point: Sequence[int | float | Number | _Jet]) -> tuple[Number | _Jet, Number | _Jet, int]:
+        """Unnormalized gradient of F for scalar or jet coordinates."""
+        x, y, _ = point
+        return x - self.center[0], y - self.center[1], 0
 
     def derivatives_at(self, x, y, z):
         """World-metre derivatives; Hessian order: xx, xy, xz, yy, yz, zz."""
