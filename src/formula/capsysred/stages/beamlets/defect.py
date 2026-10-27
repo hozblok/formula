@@ -62,6 +62,7 @@ from .._defect_common import (
     _shape,
     _stretch,
     bore_area,
+    bore_axis,
     bound_eta,
     bound_mask,
     uniform_mask,
@@ -274,16 +275,6 @@ def beam_width(seg, idx, z, k):
     hi = mean + dev
     w = np.where(hi < 0, np.sqrt(-2.0 / (k * np.where(hi < 0, hi, -1.0))), np.inf)
     return w, seg.x0[idx] + seg.ux[idx] * dz, seg.y0[idx] + seg.uy[idx] * dz
-
-
-def bore_axis(bore, z):
-    c = np.array([float(bore["center"][0]), float(bore["center"][1])])
-    bend = bore.get("bend")
-    if bend:
-        t = np.array([float(bend["toward"][0]), float(bend["toward"][1])])
-        t /= np.linalg.norm(t)
-        c = c + t * z * z / (2.0 * float(bend["radius"]))
-    return c
 
 
 def _normals(shape, phis):
