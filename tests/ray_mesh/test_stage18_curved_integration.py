@@ -7,7 +7,7 @@ import pytest
 from formula.capsysred import Simulation
 from formula.capsysred.config import Config
 from formula.capsysred.stages.ray_mesh.runner import _flat_to_curved
-from tests.test_stage18_improvements import raw_scene, make_archive
+from tests.ray_mesh.test_stage18_improvements import raw_scene, make_archive
 
 
 def curved_scene():
