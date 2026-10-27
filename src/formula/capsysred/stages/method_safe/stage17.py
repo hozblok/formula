@@ -189,7 +189,7 @@ def audit_mode(mode, sim, options, target_z, archive_number=0):
 
 
 def run_b5_stage(sim, out_dir, options, *, rays_paths, log=None):
-    from .._b5_archive import read_sample
+    from ..archive_samples import read_sample
 
     if options["provider"] == "archive_canonical":
         from ._b5_map import run_canonical_map
@@ -250,7 +250,7 @@ def run_b5_stage(sim, out_dir, options, *, rays_paths, log=None):
             ],
             "implementation_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                                       for p in (Path(__file__), Path(__file__).with_name("_b5_phase.py"),
-                                                Path(__file__).parent.parent / "_b5_archive.py",
+                                                Path(__file__).parent.parent / "archive_samples.py",
                                                 Path(__file__).parent.parent / "_archive_common.py")},
         }
         _dump(partial/"meta.json", result)

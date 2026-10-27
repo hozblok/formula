@@ -47,7 +47,7 @@ import numpy as np
 from ... import rays_v3
 from ...shared.apertures import entrance_bore_ids
 from ...shared.types import _RAY_POSITION_TOL_M, _WALL_SURFACE_TOL_M
-from .._b5_transport import (
+from ..variational_transport import (
     _transport_wall,
     count_free_caustics,
     reflect_variations,

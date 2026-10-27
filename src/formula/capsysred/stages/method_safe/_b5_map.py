@@ -7,7 +7,7 @@ import shutil
 import time
 from types import SimpleNamespace
 
-from .._b5_transport import bore_area
+from ..variational_transport import bore_area
 
 import numpy as np
 
@@ -27,8 +27,8 @@ from .._map_common import (
 def _implementation_hashes():
     base = Path(__file__).parent.parent
     return {name: _hash(base/name) for name in
-            ("method_safe/_b5_map.py", "method_safe/_b5_field.py", "_b5_transport.py",
-             "_b5_archive.py", "method_safe/stage17.py", "_map_common.py", "_archive_common.py",
+            ("method_safe/_b5_map.py", "method_safe/_b5_field.py", "variational_transport.py",
+             "archive_samples.py", "method_safe/stage17.py", "_map_common.py", "_archive_common.py",
              "../shared/apertures.py", "../shared/types.py")}
 
 
@@ -43,9 +43,9 @@ def debiased_observables(field, self_intensity, self_cross, prefix_n, reference)
 
 
 def _mode_job(job):
-    from .._b5_archive import read_sample
+    from ..archive_samples import read_sample
     from ._b5_field import reconstruct_field
-    from .._b5_transport import count_free_caustics, det_phase_increment, transport_mode
+    from ..variational_transport import count_free_caustics, det_phase_increment, transport_mode
 
     start = time.perf_counter()
     if _implementation_hashes() != job["implementation_hashes"]:
