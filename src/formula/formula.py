@@ -55,7 +55,13 @@ class Solver(Formula):
                     f"Expected a Mapping for 'values' (got "
                     f"{type(values).__name__}); variables to provide: {variables}"
                 )
-        return {k: v if isinstance(v, str) else str(v) for k, v in values.items()}
+        result = {}
+        for name, value in values.items():
+            if isinstance(value, Number) and not value.is_complex:
+                result[name] = value._value.str(0, FmtFlags.default)
+            else:
+                result[name] = value if isinstance(value, str) else str(value)
+        return result
 
     def __call__(
         self,
