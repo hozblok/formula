@@ -56,6 +56,16 @@ def _channel(bore, a_w, disc, k, fresnel=None):
     return FBChannel(c0, np.array([float(bend["toward"][0]), float(bend["toward"][1])]), float(bend["radius"]), disc, k, gamma)
 
 
+def bore_axis(bore, z):
+    c = np.array([float(bore["center"][0]), float(bore["center"][1])])
+    bend = bore.get("bend")
+    if bend:
+        t = np.array([float(bend["toward"][0]), float(bend["toward"][1])])
+        t /= np.linalg.norm(t)
+        c = c + t * z * z / (2.0 * float(bend["radius"]))
+    return c
+
+
 def bore_area(bores, a_w):
     """Cross-section area of the modal domain per bore: pi a_w^2 (circle), 4 a_w^2 (square)."""
     return sum(4.0 * a_w * a_w if _shape(b, a_w) is not None else math.pi * a_w * a_w for b in bores)
