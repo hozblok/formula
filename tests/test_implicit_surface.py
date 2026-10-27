@@ -86,3 +86,11 @@ def test_ray_jets_reexports_the_shared_classes():
     assert _ray_jets.Surface is Surface
     assert _ray_jets._Algebra is _Algebra
     assert _ray_jets._Jet is _Jet
+
+
+@pytest.mark.parametrize("existing_formula", [False, True])
+def test_coordinate_scale_must_match_effective_surface_precision(existing_formula):
+    expression = Formula("x", precision=64) if existing_formula else "x"
+    with pytest.raises(ValueError, match="coordinate_scale precision"):
+        Surface(expression, precision=128 if existing_formula else 64,
+                coordinate_scale=Number("2", 128))

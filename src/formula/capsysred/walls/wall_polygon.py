@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ...formula import Number
+from ..shared.coordinates import surface_coordinates
 from ..shared.nums import lift, solver, vadd, vscale
 from ..shared.types import _EPS_T, _INSIDE_TOL, _WALL_SURFACE_TOL_M
 from ..shared.units import m_to_um
@@ -57,13 +58,14 @@ class PolygonFace:
 
     def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
         """Signed plane residual at world coordinates in metres."""
-        x, y, _ = point
+        x, y, _ = surface_coordinates(point, self.precision)
         nx, ny = self.wall.faces[self.index]
         return ((x - self.wall.center[0]) * nx + (y - self.wall.center[1]) * ny
                 - self.wall.apothems[self.index])
 
     def gradient(self, point: Sequence[int | float | Number | _Jet]) -> tuple[Number, Number, Number]:
         """Constant world gradient, retaining the original Number precision."""
+        surface_coordinates(point, self.precision)
         nx, ny = self.wall.faces[self.index]
         return nx, ny, self.wall._zero
 

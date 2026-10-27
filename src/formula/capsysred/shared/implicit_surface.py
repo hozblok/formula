@@ -5,8 +5,8 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
-from ...backend import round_up_precision
 from ...formula import Formula, Number
+from .coordinates import surface_coordinates
 from .formulas import cached_formula
 from .jets import _Jet
 
@@ -21,6 +21,8 @@ class Surface:
             raise ValueError("coordinate_scale must be positive and finite")
         self.coordinate_scale = coordinate_scale
         self.formula = cached_formula(expression, precision) if isinstance(expression, str) else expression
+        if isinstance(coordinate_scale, Number) and coordinate_scale.precision != self.precision:
+            raise ValueError("surface and coordinate_scale precision must agree")
         if set(self.formula.variables()) - set("xyz"):
             raise ValueError("surface variables must be x, y, z")
 
@@ -36,18 +38,8 @@ class Surface:
     def _coordinates(
         self, point: Sequence[int | float | Number | _Jet],
     ) -> tuple[Number, ...] | tuple[_Jet, ...]:
-        x, y, z = point
-        coordinates = (x, y, z)
-        jets = [v for v in coordinates if isinstance(v, _Jet)]
-        if not jets:
-            return tuple(Number(v, self.precision) * self.coordinate_scale for v in coordinates)
-        alg = jets[0].alg
-        if any(v.alg is not alg for v in jets):
-            raise ValueError("jets must belong to the same algebra")
-        if round_up_precision(alg.precision) != round_up_precision(self.precision):
-            raise ValueError("surface and jet precision must agree")
-        return tuple((v if isinstance(v, _Jet) else alg.constant(v)) * self.coordinate_scale
-                     for v in coordinates)
+        return tuple(v * self.coordinate_scale
+                     for v in surface_coordinates(point, self.precision))
 
     def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
         """Evaluate the expression at a point given in world metres."""

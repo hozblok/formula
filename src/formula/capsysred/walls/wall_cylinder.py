@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, TypeVar
 
 from ...formula import Number
+from ..shared.coordinates import surface_coordinates
 from ..shared.nums import lift, sqrt, vadd, vscale, vunit
 from ..shared.types import _EPS_T, _INSIDE_TOL, Vec3
 from ..shared.units import m_to_um
@@ -56,7 +57,7 @@ class CylinderWall:
 
     def gradient(self, point: Sequence[int | float | Number | _Jet]) -> tuple[Number | _Jet, Number | _Jet, float]:
         """Unnormalized gradient of F at scalar or jet world coordinates in metres."""
-        x, y, _ = point
+        x, y, _ = surface_coordinates(point, self.precision)
         return self._local_gradient_hessian(x - self.center[0], y - self.center[1])[0]
 
     def derivatives_at(self, x, y, z):
