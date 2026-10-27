@@ -2,8 +2,8 @@
 import numpy as np
 import pytest
 
-from formula.capsysred.stages.ray_mesh._b9_phase import phase_field
-from formula.capsysred.stages.ray_mesh._b9_quadrature import (
+from formula.capsysred.stages.ray_mesh.phase import phase_field
+from formula.capsysred.stages.ray_mesh.quadrature import (
     _quadratic_abs_max, mixed_phase_field, phase_quadrature_orders,
 )
 

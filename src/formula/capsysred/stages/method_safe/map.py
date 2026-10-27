@@ -27,8 +27,8 @@ from .._map_common import (
 def _implementation_hashes():
     base = Path(__file__).parent.parent
     return {name: _hash(base/name) for name in
-            ("method_safe/_b5_map.py", "method_safe/_b5_field.py", "variational_transport.py",
-             "archive_samples.py", "method_safe/stage17.py", "_map_common.py", "_archive_common.py",
+            ("method_safe/map.py", "method_safe/field.py", "variational_transport.py",
+             "archive_samples.py", "method_safe/runner.py", "_map_common.py", "_archive_common.py",
              "../shared/apertures.py", "../shared/types.py")}
 
 
@@ -44,7 +44,7 @@ def debiased_observables(field, self_intensity, self_cross, prefix_n, reference)
 
 def _mode_job(job):
     from ..archive_samples import read_sample
-    from ._b5_field import reconstruct_field
+    from .field import reconstruct_field
     from ..variational_transport import count_free_caustics, det_phase_increment, transport_mode
 
     start = time.perf_counter()
@@ -157,7 +157,7 @@ def _snapshot(partial, accumulators, matched_accumulators, grid, count):
 
 
 def run_canonical_map(sim, out_dir, options, *, rays_paths, log=None):
-    from .stage17 import preflight_b5_inputs, preflight_b5_output
+    from .runner import preflight_b5_inputs, preflight_b5_output
 
     preflight_b5_inputs(sim, options)
     preflight_b5_output(out_dir)

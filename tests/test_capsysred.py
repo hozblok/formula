@@ -3993,7 +3993,7 @@ def test_stage11_failed_jsonl_open_leaves_no_staging(tmp_path, monkeypatch):
 def test_stage11_failed_accumulator_allocation_leaves_no_tmp(tmp_path, monkeypatch):
     # an allocation failure right after the tmp directory and the row
     # store were created removes them (and the staging) before the error
-    from formula.capsysred.stages.beamlets import beamlet
+    from formula.capsysred.stages.beamlets import runner as beamlet
     out = tmp_path / "alloc"
     sim = Simulation.from_dict(TINY)
     _record(sim, str(out))

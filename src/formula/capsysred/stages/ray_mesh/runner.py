@@ -114,10 +114,10 @@ def _replace_cylinders(mesh, nodes, replacements, cap):
 
 def _amplitude(mesh, nodes, mode):
     if mode == "tube_flux":
-        from ._b9_archive import apply_tube_flux
+        from .archive import apply_tube_flux
         return apply_tube_flux(mesh, nodes)
     if mode == "shared_flux":
-        from ._b9_amplitude import apply_shared_flux
+        from .amplitude import apply_shared_flux
         return apply_shared_flux(mesh, nodes)
     return mesh
 
@@ -240,8 +240,8 @@ def _representation_metadata(options):
 
 def _mode_job(job):
     from ..archive_samples import read_sample
-    from ._b9_archive import exit_nodes, prepare_exit_mesh
-    from ._b9_contour import fresnel_from_chirped
+    from .archive import exit_nodes, prepare_exit_mesh
+    from .contour import fresnel_from_chirped
 
     started = time.perf_counter()
     samples, archive_meta = read_sample(job["archive"], max_modes=1, mode_start=job["mode"],
@@ -259,7 +259,7 @@ def _mode_job(job):
         fresnel=fresnel, determinant_floor=opts["determinant_floor"])
     replacements = {}
     if opts.get("cylinder_retrace"):
-        from ._b9_cylinder_mesh import cylinder_exit_mesh
+        from .cylinder_mesh import cylinder_exit_mesh
 
         settings = opts["cylinder_retrace"]
         for i in settings["bores"]:
@@ -268,7 +268,7 @@ def _mode_job(job):
                 **{key: value for key, value in settings.items() if key != "bores"},
                 determinant_floor=opts["determinant_floor"], amplitude_mode=opts["amplitude_mode"])
     if opts.get("adaptive_retrace"):
-        from ._b9_adaptive_mesh import adaptive_exit_mesh, audit_amplitude_probes
+        from .adaptive_mesh import adaptive_exit_mesh, audit_amplitude_probes
 
         settings = opts["adaptive_retrace"]
         for i in settings["bores"]:
@@ -285,7 +285,7 @@ def _mode_job(job):
             replacements[i] = replacement, stats
     curved_replacements = {}
     if opts.get("curved_retrace"):
-        from ._b9_curved_mesh import curved_exit_mesh
+        from .curved_mesh import curved_exit_mesh
 
         settings = opts["curved_retrace"]
         for i in settings["bores"]:
@@ -326,7 +326,7 @@ def _mode_job(job):
             groups = opts.get("carrier_groups", 0)
             residual = None
             if opts.get("field_representation") == "curved_tubes":
-                from ._b9_curved import curved_phase_field
+                from .curved import curved_phase_field
 
                 field_start = time.perf_counter()
                 field, diagnostics = curved_phase_field(mesh,
@@ -339,7 +339,7 @@ def _mode_job(job):
                 diagnostics["representation"] = "P2 entrance ray map, action and pullback density; positive Duffy quadrature"
                 diagnostics["timing_scope"] = "phase-order selection, curved source quadrature, Fourier propagation and coherent receiver integration"
                 if mesh.get("residual_batches"):
-                    from ._b9_curved import curved_residual_fields
+                    from .curved import curved_residual_fields
 
                     batch_fields, residual_stats = curved_residual_fields(mesh,
                         k=job["k"], distance=job["target_z"]-cap.z1, x=grid["x"], y=grid["y"],
@@ -355,17 +355,17 @@ def _mode_job(job):
                     diagnostics["residual"] = residual_stats
                     field = field+residual["mean"]
             elif opts.get("field_representation") == "phase_quadrature":
-                from ._b9_phase import phase_field
+                from .phase import phase_field
 
                 field_start = time.perf_counter()
                 propagate, extra = phase_field, dict(backend="finufft", quadrature_order=opts["triangle_quadrature_order"])
                 if opts.get("phase_backend") == "regular":
-                    from ._b9_regular import regular_phase_field
+                    from .regular import regular_phase_field
                     propagate = regular_phase_field
                     extra = dict(receiver_channels_per_batch=opts["receiver_channels_per_batch"],
                                  quadrature_order=opts["triangle_quadrature_order"])
                 elif opts.get("phase_backend") == "regular_mixed":
-                    from ._b9_quadrature import mixed_phase_field
+                    from .quadrature import mixed_phase_field
                     propagate = mixed_phase_field
                     extra = dict(receiver_channels_per_batch=opts["receiver_channels_per_batch"],
                                  min_order=opts["triangle_quadrature_order"], safety=opts["quadrature_safety"],
@@ -380,7 +380,7 @@ def _mode_job(job):
                 diagnostics["representation"] = "polynomial optical phase with positive triangle quadrature"
                 diagnostics["timing_scope"] = "phase reconstruction, triangle quadrature, point Fourier propagation and coherent receiver integration"
             elif groups:
-                from ._b9_carrier import carrier_field
+                from .carrier import carrier_field
 
                 field_start = time.perf_counter()
                 field, diagnostics = carrier_field(mesh, subdivisions, groups,

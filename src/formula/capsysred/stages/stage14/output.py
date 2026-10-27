@@ -13,7 +13,7 @@ from .... import __version__, _formula
 from ... import render
 from ...rays import metadata_equal
 from ...screen import ScreenGrid
-from .stage14_flags import (
+from .flags import (
     FlagThresholds,
     PixelCounters,
     PixelStatistics,

@@ -11,8 +11,8 @@ import time
 
 import numpy as np
 
-from ._b9_phase import _integer, _mesh, _real, _real_array
-from ._b9_regular import regular_phase_field
+from .phase import _integer, _mesh, _real, _real_array
+from .regular import regular_phase_field
 
 
 def _quadratic_abs_max(a, b, c):

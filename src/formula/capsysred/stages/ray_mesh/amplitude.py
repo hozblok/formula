@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ._b9_archive import _p1_triangle_power, _stats
+from .archive import _p1_triangle_power, _stats
 
 
 def apply_shared_flux(mesh, nodes):
