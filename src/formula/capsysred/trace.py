@@ -8,7 +8,7 @@ later — Fresnel amplitudes are computed from the recorded sines.
 
 from collections import namedtuple
 
-from ..formula import Number
+from ..formula import Number, NumberContext
 from .shared.nums import raw, vadd, vdot, vscale, vsub
 from .shared.types import _EPS_T, Vec3
 
@@ -27,9 +27,8 @@ def trace_ray(origin: Vec3, direction: Vec3, optic, screen_z: Number,
     `max_bounces` caps the reflections; passes and the exit are free, and the
     wall hit that would exceed the cap ends the ray there as "lost".
     """
-    p = origin[0].precision
-    two = Number("2", p)
-    opl = Number("0", p)
+    N = NumberContext(origin[0].precision)
+    opl = N(0)
     reflections = []
     O, d = origin, direction
 
@@ -54,17 +53,17 @@ def trace_ray(origin: Vec3, direction: Vec3, optic, screen_z: Number,
                 return TraceResult("lost", P, opl + t, reflections, d)
             opl = opl + t
             dot = vdot(d, normal)
-            d = vsub(d, vscale(normal, two * dot))
+            d = vsub(d, vscale(normal, 2 * dot))
             reflections.append((P, abs(dot)))
             O = P
 
     if float(d[2]) <= 0.0:
         return TraceResult("lost", O, opl, reflections, d)
     t = (screen_z - O[2]) / d[2]
-    zero = Number("0", p)
+    zero = N(0)
     if raw(t) < raw(zero):
         # Treat backward steps within the tolerance as arrival, keeping O and opl.
-        if raw(t) < raw(Number(-_EPS_T, p)):
+        if raw(t) < raw(N(-_EPS_T)):
             return TraceResult("lost", O, opl, reflections, d)
         t = zero
     P = vadd(O, vscale(d, t))
