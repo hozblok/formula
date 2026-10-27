@@ -69,7 +69,11 @@ class PolygonFace:
         nx, ny = self.wall.faces[self.index]
         return nx, ny, self.wall._zero
 
-    def validate(self, point: Sequence[int | float | Number]) -> None:
+    def validate(
+        self, point: Sequence[int | float | Number], *,
+        origin: Sequence[int | float | Number] | None = None,
+        direction: Sequence[int | float | Number] | None = None,
+    ) -> None:
         """Require a point on this finite face, separated from polygon edges."""
         if self.wall.surface_at(point).index != self.index:
             raise ValueError("hit is not on the selected polygon face")

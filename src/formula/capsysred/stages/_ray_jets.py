@@ -145,23 +145,20 @@ def _prepare_hit(hit: Hit) -> Hit:
     return Hit(surface, point)
 
 
-def _check_patch(hit: Hit, point: Sequence[float]) -> None:
-    """Keep the nominal hit inside the selected smooth, finite reflecting patch."""
-    surface = hit.surface
-    if isinstance(surface, PolygonFace):
-        surface.validate(point)
-    elif isinstance(surface, Mirror):
-        if not surface._z0f + _RAY_POSITION_TOL_M < point[2] < surface._z1f - _RAY_POSITION_TOL_M:
-            raise ValueError("mirror hit must lie strictly inside the reflecting span")
+def _validate_hit(
+    hit: Hit, point: Sequence[float], origin: Sequence[float], direction: Sequence[float],
+) -> None:
+    """Apply optional surface restrictions to the nominal incoming ray and hit."""
+    validate = getattr(hit.surface, "validate", None)
+    if validate is not None:
+        validate(point, origin=origin, direction=direction)
 
 
 def _implicit_hit(position, direction, hit):
     alg, surface = position[0].alg, hit.surface
     anchor = finite_vector(hit.point, 3, "hit")
     r0, u0 = tuple(v.value for v in position), tuple(v.value for v in direction)
-    _check_patch(hit, anchor)
-    if isinstance(surface, Mirror) and (r0[0] <= 0 or u0[0] >= 0):
-        raise ValueError("mirror hit must approach from the reflecting side")
+    _validate_hit(hit, anchor, r0, u0)
 
     def gradient(point: Sequence[_Jet]) -> tuple[_Jet, ...]:
         return tuple(v if isinstance(v, _Jet) else alg.constant(v)
@@ -192,7 +189,7 @@ def _implicit_hit(position, direction, hit):
     else:
         raise ValueError("nominal intersection did not converge")
     polished = vadd(base_r, vscale(base_u, time))
-    _check_patch(hit, tuple(v.value for v in polished))
+    _validate_hit(hit, tuple(v.value for v in polished), r0, u0)
     # Newton doubles the first unresolved degree: 1 -> 2 -> 4 -> 8.
     for _ in range(alg.order.bit_length()):
         point = vadd(position, vscale(direction, time))
