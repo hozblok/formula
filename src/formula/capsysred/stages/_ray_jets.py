@@ -21,6 +21,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 import math
 
+from ...formula import Number
 from ..shared.formulas import cached_formula
 from ..shared.nums import vadd, vdot, vnorm, vscale, vsub, vunit
 from ..shared.types import _GRAZING_SIN_MIN, _RAY_POSITION_TOL_M
@@ -34,10 +35,10 @@ class _Algebra:
     def __init__(self, order: int, precision: int) -> None:
         self.order, self.precision = order, precision
 
-    def constant(self, value: str | int | float) -> _Jet:
+    def constant(self, value: str | int | float | Number) -> _Jet:
         return _Jet(self, [str(value)] + ["0"] * ((1 << self.order) - 1), 1)
 
-    def variable(self, value: str | int | float, seeds: Sequence[int], axis: int) -> _Jet:
+    def variable(self, value: str | int | float | Number, seeds: Sequence[int], axis: int) -> _Jet:
         result = self.constant(value)
         for i, seed in enumerate(seeds):
             if seed == axis:
@@ -45,7 +46,7 @@ class _Algebra:
                 result.support |= 1 << (1 << i)
         return result
 
-    def evaluate(self, expression: str, **values: _Jet | str | int | float) -> _Jet:
+    def evaluate(self, expression: str, **values: _Jet | str | int | float | Number) -> _Jet:
         jets = {key: value if isinstance(value, _Jet) else self.constant(value)
                 for key, value in values.items()}
         if any(jet.alg is not self for jet in jets.values()):
@@ -64,24 +65,27 @@ class _Jet:
     def __init__(self, algebra: _Algebra, coefficients: Iterable[str], support: int) -> None:
         self.alg, self.c, self.support = algebra, list(coefficients), support
 
-    def __add__(self, other: _Jet | str | int | float) -> _Jet:
+    def __add__(self, other: _Jet | str | int | float | Number) -> _Jet:
         return self.alg.evaluate("a+b", a=self, b=other)
 
     __radd__ = __add__
 
-    def __sub__(self, other: _Jet | str | int | float) -> _Jet:
+    def __sub__(self, other: _Jet | str | int | float | Number) -> _Jet:
         return self.alg.evaluate("a-b", a=self, b=other)
 
-    def __rsub__(self, other: _Jet | str | int | float) -> _Jet:
+    def __rsub__(self, other: _Jet | str | int | float | Number) -> _Jet:
         return self.alg.evaluate("a-b", a=other, b=self)
 
-    def __mul__(self, other: _Jet | str | int | float) -> _Jet:
+    def __mul__(self, other: _Jet | str | int | float | Number) -> _Jet:
         return self.alg.evaluate("a*b", a=self, b=other)
 
     __rmul__ = __mul__
 
-    def __truediv__(self, other: _Jet | str | int | float) -> _Jet:
+    def __truediv__(self, other: _Jet | str | int | float | Number) -> _Jet:
         return self.alg.evaluate("a/b", a=self, b=other)
+
+    def __rtruediv__(self, other: _Jet | str | int | float | Number) -> _Jet:
+        return self.alg.evaluate("a/b", a=other, b=self)
 
     def sqrt(self) -> _Jet:
         return self.alg.evaluate("sqrt(a)", a=self)
