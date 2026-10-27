@@ -301,11 +301,7 @@ class Number:
         return op(self.cmp_key, b.cmp_key)
 
     def __eq__(self, __value: object) -> bool:
-        if isinstance(__value, (Number, *MP_TYPES)):
-            # Like Number-vs-Number, a raw mp value keeps its own precision.
-            other = __value if isinstance(__value, Number) else Number(__value)
-            return self.parts == other.parts
-        if not isinstance(__value, (str, int, float)):
+        if not isinstance(__value, (Number, *MP_TYPES, str, int, float)):
             return NotImplemented
         return self.parts == self._coerce(__value).parts
 

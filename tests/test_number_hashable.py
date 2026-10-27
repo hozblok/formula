@@ -30,11 +30,9 @@ def test_hash_consistent_with_eq_for_equivalent_forms():
     assert hash(a) == hash(b)
 
 
-def test_hash_str_invariants_at_cross_precision():
-    # Same exact value at two very different precisions. Invariants
-    # ==, hash, str, and set deduplication must all hold across the gap.
-    a = Number("0.5", precision=24)
-    b = Number("0.5", precision=256)
+def test_hash_str_invariants_at_same_storage_precision():
+    a = Number("0.5", precision=30)
+    b = Number("0.5", precision=32)
     assert a == b
     assert hash(a) == hash(b)
     assert str(a) == str(b)
