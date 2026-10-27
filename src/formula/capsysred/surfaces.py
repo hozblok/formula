@@ -11,7 +11,11 @@ bit-equivalent to the engine:
 every run cross-checks the first hit via expr_um (`engine_hit_t`).
 """
 
+from __future__ import annotations
+
 import math
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from ..formula import Number
 from .shared.nums import lift, vadd, vscale
@@ -24,6 +28,9 @@ from .walls.wall_polygon import PolygonWall, polygon_vertices
 from .walls.wall_revolution import RevolutionWall
 from .walls.wall_torus import TorusWall
 
+if TYPE_CHECKING:
+    from .stages._ray_jets import _Jet
+
 
 class Mirror:
     """Glass half-space x<0 with the reflecting face x=0 over z in [z0, z1]."""
@@ -35,6 +42,18 @@ class Mirror:
         self._normal = (Number("1", p), Number("0", p), Number("0", p))
 
     expr_um = "x"  # surface F=0 for engine cross-checks (scale-free)
+
+    @property
+    def precision(self) -> int:
+        return self.z0.precision
+
+    def value(self, point: Sequence[int | float | Number | _Jet]) -> int | float | Number | _Jet:
+        """F=x for the reflecting plane, in world metres."""
+        return point[0]
+
+    def gradient(self, point: Sequence[int | float | Number | _Jet]) -> tuple[Number, Number, Number]:
+        """Constant world-coordinate gradient of the reflecting plane."""
+        return self._normal
 
     def next_event(self, O, d):
         if float(O[0]) <= 0.0 or float(d[0]) >= 0.0:

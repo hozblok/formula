@@ -1,0 +1,83 @@
+"""Surface-of-revolution formulas on Number and higher-order ray jets."""
+
+from decimal import Decimal
+
+import pytest
+
+from formula import Formula, Number
+from formula.capsysred.shared.nums import vunit
+from formula.capsysred.stages._ray_jets import _Algebra
+from formula.capsysred.walls.wall_revolution import RevolutionWall
+
+
+_PARAMS = {"cx": "1.25", "cy": "-0.5", "c0": "0.16", "c1": "0.03", "c2": "-0.02"}
+_EXPRESSION = "((x-cx)^2+(y-cy)^2-c0-c1*z-c2*z^2)/2"
+
+
+def _wall(parameters):
+    p = {name: Number(value, 96) for name, value in parameters.items()}
+    return RevolutionWall("revolution", (p["cx"], p["cy"]), (p["c0"], p["c1"], p["c2"]))
+
+
+@pytest.mark.parametrize("number_inputs", [False, True])
+def test_revolution_shifted_scalar_geometry(number_inputs):
+    wall = _wall(_PARAMS)
+    formula = Formula(_EXPRESSION, precision=96)
+    assert wall.precision == Number("0", 96).precision
+    for point in [(1.25, -0.5, 0.0), (1.65, -0.5, 0.0), (1.7, 0.2, 0.7)]:
+        coordinates = tuple(Number(str(v), 96) for v in point) if number_inputs else point
+        values = dict(_PARAMS, **dict(zip("xyz", map(str, point))))
+        assert float(wall.value(coordinates)) == pytest.approx(float(formula.get(values)), abs=1e-15)
+        gradient = tuple(map(float, wall.gradient(coordinates)))
+        assert gradient == pytest.approx(wall.derivatives_at(*point)[0])
+        assert gradient == pytest.approx([float(formula.get_derivative(axis, values)) for axis in "xyz"])
+
+
+@pytest.mark.parametrize("jet_inputs", [False, True])
+def test_revolution_retains_parameter_precision(jet_inputs):
+    parameters = {"cx": "1.250000000000000000000000000001",
+                  "cy": "-0.500000000000000000000000000002",
+                  "c0": "0.160000000000000000000000000003",
+                  "c1": "0.030000000000000000000000000004",
+                  "c2": "-0.020000000000000000000000000005"}
+    wall, alg = _wall(parameters), _Algebra(4, 96)
+    coordinates = ("1.7", "0.2", "0.7")
+    point = tuple(Number(v, 96) for v in coordinates)
+    if jet_inputs:
+        point = tuple(alg.constant(v) for v in point)
+    formula = Formula(_EXPRESSION, precision=96)
+    values = dict(parameters, **dict(zip("xyz", coordinates)))
+    expected = [formula.get(values)] + [formula.get_derivative(axis, values) for axis in "xyz"]
+    for result, target in zip((wall.value(point), *wall.gradient(point)), expected, strict=True):
+        text = result.c[0] if jet_inputs else str(result)
+        assert abs(Decimal(text) - Decimal(target)) < Decimal("1e-85")
+
+
+def _assert_mixed_derivatives(jet, expression, names):
+    formula = Formula(expression, precision=96)
+    values = {"u": "0.3", "v": "0.7"}
+    for mask, coefficient in enumerate(jet.c):
+        variables = [name for bit, name in enumerate(names) if mask & (1 << bit)]
+        expected = (formula.get_partial_derivative(variables, values)
+                    if variables else formula.get(values))
+        assert abs(Decimal(coefficient) - Decimal(expected)) < Decimal("1e-80")
+
+
+@pytest.mark.parametrize("order", [3, 4])
+def test_revolution_composed_derivatives_and_normal(order):
+    alg = _Algebra(order, 96)
+    seeds = (0, 1, 0, 1)[:order]
+    names = tuple("uv"[axis] for axis in seeds)
+    u, v = alg.variable("0.3", seeds, 0), alg.variable("0.7", seeds, 1)
+    point = tuple(alg.evaluate(expression, u=u, v=v)
+                  for expression in ("1+u^2+u*v", "v^2-u+2", "2+u+v^2"))
+    wall = _wall(_PARAMS)
+    dx, dy, z = "(u^2+u*v-0.25)", "(v^2-u+2.5)", "(2+u+v^2)"
+    value, gradient = wall.value(point), wall.gradient(point)
+    _assert_mixed_derivatives(value, f"({dx}^2+{dy}^2-0.16-0.03*{z}+0.02*{z}^2)/2", names)
+    assert abs(Decimal(value.c[-1])) > Decimal("1e-4")
+    gz = f"(0.02*{z}-0.015)"
+    length = f"sqrt({dx}^2+{dy}^2+{gz}^2)"
+    for component, normal, expression in zip(gradient, vunit(gradient), (dx, dy, gz), strict=True):
+        _assert_mixed_derivatives(component, expression, names)
+        _assert_mixed_derivatives(normal, f"{expression}/{length}", names)
