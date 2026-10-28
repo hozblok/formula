@@ -4,6 +4,7 @@
 import pytest
 
 from formula import FmtFlags, Formula, Number, Solver
+from formula.backend import MP_TYPES
 
 
 # --------------------------------------------------------------------------- #
@@ -104,12 +105,12 @@ def test_eq_with_raw_mp_value_cross_precision():
 # Solver.number
 # --------------------------------------------------------------------------- #
 
-def test_solver_number_returns_number_at_solver_precision():
+def test_solver_number_returns_a_backend_value_at_solver_precision():
     s = Solver("x*acos(0)", precision=48)
     n = s.number(2)
-    assert isinstance(n, Number)
+    assert isinstance(n, MP_TYPES)
     assert n.precision == s.precision
-    assert n == Number("pi", s.precision)
+    assert Number(n) == Number("pi", s.precision)  # equal at the display precision
 
 
 def test_solver_number_no_variables():
@@ -130,7 +131,7 @@ def test_solver_preserves_real_number_guard_digits(precision, mapping):
     assert str(x) == "1"
     assert expected._value != Number(0, precision)._value
     s = Solver("x-1", precision)
-    assert s.number(values)._value == expected._value
+    assert s.number(values) == expected._value
     assert s(values) == str(expected)
     assert s.pair(values) == expected.parts
     assert Solver("x^2/2-x", precision)(values, derivative="x") == str(expected)
@@ -138,7 +139,7 @@ def test_solver_preserves_real_number_guard_digits(precision, mapping):
 
 def test_solver_identity_preserves_all_stored_digits():
     x = Number("1/7", 64)
-    assert Solver("x", 64).number(x)._value == x._value
+    assert Solver("x", 64).number(x) == x._value
 
 
 def test_solver_number_complex_result():

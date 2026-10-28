@@ -7,7 +7,7 @@ string, do arithmetic / comparison, hash, repr, and format via .str().
 
 import pytest
 
-from formula import _formula
+from formula import NumberContext, _formula
 
 # Hardcoded, not read from the extension, so the test catches an accidental
 # change to the bound set.
@@ -98,7 +98,7 @@ def test_repr_roundtrips(p):
 @pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
 def test_precision_and_kind_on_class_and_value(p):
     # Storage precision travels inside the value and survives every operation.
-    x = cls(p)("1.5")
+    x = NumberContext(p)("1.5")
     assert cls(p).precision == x.precision == p
     assert cls(p).is_complex is False and x.is_complex is False
     for y in (x + x, x * x, 2 * x, 0.5 * x, -x, abs(x), x.sqrt()):
@@ -107,7 +107,7 @@ def test_precision_and_kind_on_class_and_value(p):
 
 @pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
 def test_precision_and_kind_are_read_only(p):
-    x = cls(p)("1.5")
+    x = NumberContext(p)("1.5")
     for name in ("precision", "is_complex"):
         with pytest.raises(AttributeError):
             setattr(x, name, 7)

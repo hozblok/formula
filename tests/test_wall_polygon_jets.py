@@ -6,6 +6,7 @@ import math
 import pytest
 
 from formula import Formula, Number
+from formula.backend import MP_TYPES
 from formula.capsysred.shared.types import _WALL_SURFACE_TOL_M
 from formula.capsysred.stages._ray_jets import _Algebra
 from formula.capsysred.walls.wall_polygon import PolygonFace, PolygonWall
@@ -81,7 +82,7 @@ def test_face_parameters_keep_precision_beyond_float(jet_inputs):
     value = face.value(point)
     result = value.c[0] if jet_inputs else str(value)
     assert abs(Decimal(result) - Decimal("3e-30")) < Decimal("1e-85")
-    assert all(isinstance(value, Number) and value.precision == face.precision
+    assert all(isinstance(value, (Number, *MP_TYPES)) and value.precision == face.precision
                for value in face.gradient(point))
 
 
@@ -105,4 +106,4 @@ def test_linear_face_composes_higher_derivatives_without_changing_faces(order):
                     if variables else formula.get(values))
         assert abs(Decimal(coefficient) - Decimal(expected)) < Decimal("1e-80")
     assert abs(Decimal(result.c[-1])) > Decimal("1")
-    assert tuple(map(str, face.gradient(point))) == ("0.6", "0.8", "0")
+    assert tuple(str(Number(v, 96)) for v in face.gradient(point)) == ("0.6", "0.8", "0")
