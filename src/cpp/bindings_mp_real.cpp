@@ -20,6 +20,11 @@ static void register_one_mp_real(py::module_ &m) {
   const std::string class_name = "mp_real_" + std::to_string(P);
   py::class_<R>(m, class_name.c_str())
       .def(py::init<const std::string &>())
+      // Storage precision and kind, on the class and on every value.
+      .def_property_readonly_static("precision",
+                                    [](const py::object &) { return P; })
+      .def_property_readonly_static("is_complex",
+                                    [](const py::object &) { return false; })
       .def(py::self + py::self)
       .def(py::self - py::self)
       .def(py::self * py::self)
