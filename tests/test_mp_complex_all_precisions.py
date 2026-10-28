@@ -2,13 +2,13 @@
 
 Mirrors mp_real_<P>, but over boost cpp_complex<P>: construct from a string
 ("(re,im)" or "re") or from a (real, imag) pair, do arithmetic / equality,
-hash, repr, decompose via real()/imag(), and format via .str(). Complex is
+hash, repr, decompose via .real/.imag, and format via .str(). Complex is
 unordered, so there are no <, <=, >, >= operators.
 """
 
 import pytest
 
-from formula import _formula
+from formula import NumberContext, _formula
 
 # Hardcoded, not read from the extension, so the test catches an accidental
 # change to the bound set.
@@ -58,13 +58,13 @@ def test_pair_constructor(p):
 @pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
 def test_real_imag(p):
     z = cls(p)("1.5", "2.5")
-    assert z.real(10) == "1.5"
-    assert z.imag(10) == "2.5"
+    assert z.real.str(10) == "1.5"
+    assert z.imag.str(10) == "2.5"
 
 
 def test_higher_precision_retains_more_digits():
     long = "1." + "1234567890" * 5
-    assert len(cls(64)(long).real(0)) > len(cls(16)(long).real(0))
+    assert len(cls(64)(long).real.str(0)) > len(cls(16)(long).real.str(0))
 
 
 @pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
@@ -112,16 +112,17 @@ def test_repr_roundtrips(p):
 @pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
 def test_precision_and_kind_on_class_and_value(p):
     # Storage precision travels inside the value and survives every operation.
-    z = cls(p)("1.5", "-2")
+    z = NumberContext(p)("1.5-2*i")
     assert cls(p).precision == z.precision == p
     assert cls(p).is_complex is True and z.is_complex is True
-    for w in (z + z, z * z, 2 * z, 0.5 * z, -z, abs(z)):
+    for w in (z + z, z * z, 2 * z, 0.5 * z, -z):
         assert w.precision == p and w.is_complex is True
+    assert abs(z).precision == p and abs(z).is_complex is False
 
 
 @pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
 def test_precision_and_kind_are_read_only(p):
-    z = cls(p)("1.5", "-2")
+    z = NumberContext(p)("1.5-2*i")
     for name in ("precision", "is_complex"):
         with pytest.raises(AttributeError):
             setattr(z, name, 7)
