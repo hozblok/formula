@@ -22,6 +22,11 @@ static void register_one_mp_complex(py::module_ &m) {
       .def(py::init<const std::string &>())
       .def(py::init<const std::string &, const std::string &>(),
            py::arg("real"), py::arg("imag"))
+      // Storage precision and kind, on the class and on every value.
+      .def_property_readonly_static("precision",
+                                    [](const py::object &) { return P; })
+      .def_property_readonly_static("is_complex",
+                                    [](const py::object &) { return true; })
       .def(py::self + py::self)
       .def(py::self - py::self)
       .def(py::self * py::self)
