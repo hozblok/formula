@@ -9,6 +9,7 @@
 
 #include <cseval/cseval.hpp>
 
+#include "multiply_python_int.hpp"
 #include "strip_neg_zero.hpp"
 
 namespace py = pybind11;
@@ -22,6 +23,12 @@ static void register_one_mp_real(py::module_ &m) {
       .def(py::self + py::self)
       .def(py::self - py::self)
       .def(py::self * py::self)
+      .def("__mul__", &multiply_python_int<R>, py::is_operator(),
+           py::arg("other").noconvert())
+      .def("__rmul__", &multiply_python_int<R>, py::is_operator(),
+           py::arg("other").noconvert())
+      .def(py::self * double(), py::arg("other").noconvert())
+      .def(double() * py::self, py::arg("other").noconvert())
       .def(py::self / py::self)
       .def(-py::self)
       .def(py::self == py::self)
