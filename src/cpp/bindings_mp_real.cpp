@@ -41,9 +41,12 @@ static void register_one_mp_real(py::module_ &m) {
       return other_operand(other, class_name);
     };
   };
+  // Comparisons take int but not float: a float reads as its decimal repr in
+  // arithmetic, while its hash is that of the binary value.
   auto ordering = [class_name](auto op) {
     return [op, class_name](const R &a, py::object other) {
       if (py::isinstance<R>(other)) return py::cast(op(a, other.cast<R>()));
+      if (PyFloat_Check(other.ptr())) return other_operand(other, class_name);
       if (auto text = scalar_text(other)) return py::cast(op(a, R(*text)));
       if (py::isinstance<C>(other))
         throw py::type_error("complex numbers are not orderable");
@@ -60,6 +63,8 @@ static void register_one_mp_real(py::module_ &m) {
         // promotion R -> C rounds and would make equality non-transitive.
         C b = other.cast<C>();
         same = b.imag() == 0 && a == R(b.real().str());
+      } else if (PyFloat_Check(other.ptr())) {
+        return other_operand(other, class_name);
       } else if (auto text = scalar_text(other)) {
         same = a == R(*text);
       } else {
@@ -109,8 +114,8 @@ static void register_one_mp_real(py::module_ &m) {
            [](const R &x) {
              return std::complex<double>(x.template convert_to<double>(), 0.0);
            })
-      .def("__hash__",
-           [](const R &x) { return std::hash<std::string>{}(x.str()); })
+      // Python's numeric hash of the stored value: equal to hash(int), hash(Decimal).
+      .def("__hash__", [](const R &x) { return decimal_hash(x.str()); })
       .def("__str__", [](const R &x) { return strip_neg_zero(x.str()); })
       .def("__repr__",
            [class_name](const R &x) {

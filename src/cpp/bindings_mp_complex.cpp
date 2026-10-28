@@ -45,6 +45,8 @@ static void register_one_mp_complex(py::module_ &m) {
         bool same = a.imag() == 0 && R(a.real().str()) == other.cast<R>();
         return py::cast(same != negate);
       }
+      // No float: its hash is that of the binary value, not of the repr.
+      if (PyFloat_Check(other.ptr())) return other_operand(other, class_name);
       if (auto b = operand(other)) return py::cast((a == *b) != negate);
       return other_operand(other, class_name);
     };
@@ -94,8 +96,12 @@ static void register_one_mp_complex(py::module_ &m) {
              return std::complex<double>(x.real().template convert_to<double>(),
                                          x.imag().template convert_to<double>());
            })
+      // CPython's complex hash over the components as mp_real, as in equality.
       .def("__hash__",
-           [](const C &x) { return std::hash<std::string>{}(x.str()); })
+           [](const C &x) {
+             return complex_hash(decimal_hash(R(x.real().str()).str()),
+                                 decimal_hash(R(x.imag().str()).str()));
+           })
       .def("__str__", [](const C &x) { return strip_neg_zero(x.str()); })
       .def("__repr__",
            [class_name](const C &x) {
