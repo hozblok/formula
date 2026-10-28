@@ -1,4 +1,4 @@
-"""Python floats retain their binary value in native multiplication."""
+"""Python floats act as their decimal repr in native multiplication."""
 
 from decimal import Decimal
 
@@ -20,13 +20,12 @@ def test_float_multiply(cls, scalar):
 
 
 @pytest.mark.parametrize("is_complex", [False, True])
-def test_float_multiply_preserves_binary_value(is_complex):
+def test_float_multiply_uses_the_decimal_repr(is_complex):
     cls = mp_class(64, is_complex)
     one = cls("1")
-    expected = cls(str(Decimal.from_float(0.1)))
-    assert one * 0.1 == expected
-    assert 0.1 * one == expected
-    assert expected != cls("0.1")
+    binary = cls(str(Decimal.from_float(0.1)))
+    assert one * 0.1 == cls("0.1") == 0.1 * one
+    assert one * 0.1 != binary
 
 
 @pytest.mark.parametrize("expression", ["1/3", "1+2*i"])

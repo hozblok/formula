@@ -1,15 +1,18 @@
 // mp_complex_<P> bindings, one py::class_ per AllowedPrecisions. Split into its
 // own translation unit to keep per-compile memory bounded.
+#include <pybind11/complex.h>
 #include <pybind11/operators.h>
 #include <pybind11/pybind11.h>
 
+#include <complex>
 #include <functional>
 #include <string>
 #include <utility>
 
+#include <cseval/cseval.hpp>
 #include <cseval/cseval_complex.hpp>
 
-#include "multiply_python_int.hpp"
+#include "mp_scalar.hpp"
 #include "strip_neg_zero.hpp"
 
 namespace py = pybind11;
@@ -17,7 +20,40 @@ namespace py = pybind11;
 template <unsigned P>
 static void register_one_mp_complex(py::module_ &m) {
   using C = mp_complex<P>;
+  using R = mp_real<P>;
   const std::string class_name = "mp_complex_" + std::to_string(P);
+  // Operands: C; R of the same P (promoted through its decimal text); int and
+  // float as text.
+  auto operand = [](py::object other) -> std::optional<C> {
+    if (py::isinstance<C>(other)) return other.cast<C>();
+    if (py::isinstance<R>(other)) return C(other.cast<R>().str());
+    if (auto text = scalar_text(other)) return C(*text);
+    return std::nullopt;
+  };
+  auto binary = [class_name, operand](auto op, bool reflected) {
+    return [op, reflected, class_name, operand](const C &a, py::object other) {
+      if (auto b = operand(other))
+        return py::cast(reflected ? op(*b, a) : op(a, *b));
+      return other_operand(other, class_name);
+    };
+  };
+  auto equality = [class_name, operand](bool negate) {
+    return [negate, class_name, operand](const C &a, py::object other) {
+      // Against R in R, through the exact max_digits10 text of the real
+      // part: the promotion R -> C rounds and would break transitivity.
+      if (py::isinstance<R>(other)) {
+        bool same = a.imag() == 0 && R(a.real().str()) == other.cast<R>();
+        return py::cast(same != negate);
+      }
+      if (auto b = operand(other)) return py::cast((a == *b) != negate);
+      return other_operand(other, class_name);
+    };
+  };
+  auto plus = [](const C &x, const C &y) { return x + y; };
+  auto minus = [](const C &x, const C &y) { return x - y; };
+  auto times = [](const C &x, const C &y) { return x * y; };
+  auto over = [](const C &x, const C &y) { return x / y; };
+  auto power = [](const C &x, const C &y) { return pow(x, y); };
   py::class_<C>(m, class_name.c_str())
       .def(py::init<const std::string &>())
       .def(py::init<const std::string &, const std::string &>(),
@@ -27,46 +63,44 @@ static void register_one_mp_complex(py::module_ &m) {
                                     [](const py::object &) { return P; })
       .def_property_readonly_static("is_complex",
                                     [](const py::object &) { return true; })
-      .def(py::self + py::self)
-      .def(py::self - py::self)
-      .def(py::self * py::self)
-      .def("__mul__", &multiply_python_int<C>, py::is_operator(),
-           py::arg("other").noconvert())
-      .def("__rmul__", &multiply_python_int<C>, py::is_operator(),
-           py::arg("other").noconvert())
-      .def(py::self * double(), py::arg("other").noconvert())
-      .def(double() * py::self, py::arg("other").noconvert())
-      .def(py::self / py::self)
+      .def("__add__", binary(plus, false))
+      .def("__radd__", binary(plus, false))
+      .def("__sub__", binary(minus, false))
+      .def("__rsub__", binary(minus, true))
+      .def("__mul__", binary(times, false))
+      .def("__rmul__", binary(times, false))
+      .def("__truediv__", binary(over, false))
+      .def("__rtruediv__", binary(over, true))
+      .def("__pow__", binary(power, false))
+      .def("__rpow__", binary(power, true))
       .def(-py::self)
-      .def(py::self == py::self)
-      .def(py::self != py::self)
-      .def(
-          "__pow__", [](const C &a, const C &b) { return pow(a, b); },
-          py::is_operator())
-      // abs() of a complex is its real magnitude, wrapped back into mp_complex.
-      .def("__abs__", [](const C &x) { return C(abs(x)); })
+      .def("__eq__", equality(false))
+      .def("__ne__", equality(true))
+      .def("__bool__", [](const C &x) { return !(x == 0); })
+      // |z| as mp_real, through its decimal text.
+      .def("__abs__", [](const C &x) { return R(abs(x).str()); })
+      // x ** 0.5, the former Number path; sqrt(x) differs in the last bits.
+      .def("sqrt", [](const C &x) { return pow(x, C("0.5")); })
+      .def_property_readonly("real", [](const C &x) { return R(x.real().str()); })
+      .def_property_readonly("imag", [](const C &x) { return R(x.imag().str()); })
+      .def("__float__",
+           [](const C &x) {
+             if (x.imag() != 0)
+               throw py::type_error("cannot convert a complex value to float");
+             return x.real().template convert_to<double>();
+           })
+      .def("__complex__",
+           [](const C &x) {
+             return std::complex<double>(x.real().template convert_to<double>(),
+                                         x.imag().template convert_to<double>());
+           })
       .def("__hash__",
            [](const C &x) { return std::hash<std::string>{}(x.str()); })
+      .def("__str__", [](const C &x) { return strip_neg_zero(x.str()); })
       .def("__repr__",
            [class_name](const C &x) {
              return class_name + "('" + x.str() + "')";
            })
-      .def(
-          "real",
-          [](const C &x, std::streamsize digits,
-             std::ios_base::fmtflags format) {
-            return strip_neg_zero(x.real().str(digits, format));
-          },
-          "Real part formatted as a string.", py::arg("digits") = 0,
-          py::arg("format") = std::ios_base::fmtflags(0))
-      .def(
-          "imag",
-          [](const C &x, std::streamsize digits,
-             std::ios_base::fmtflags format) {
-            return strip_neg_zero(x.imag().str(digits, format));
-          },
-          "Imaginary part formatted as a string.", py::arg("digits") = 0,
-          py::arg("format") = std::ios_base::fmtflags(0))
       .def(
           "str",
           [](const C &x, std::streamsize digits,
