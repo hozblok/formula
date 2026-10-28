@@ -44,3 +44,18 @@ inline pybind11::object other_operand(pybind11::handle other,
                                name);
   return pybind11::reinterpret_borrow<pybind11::object>(Py_NotImplemented);
 }
+
+// Python's numeric hash of an exact decimal text, through decimal.Decimal.
+inline Py_hash_t decimal_hash(const std::string &text) {
+  static pybind11::object *Decimal = new pybind11::object(
+      pybind11::module_::import("decimal").attr("Decimal"));
+  return pybind11::hash((*Decimal)(text));
+}
+
+// CPython's complex hash: re + 1000003 im, wrapped, -1 mapped to -2.
+inline Py_hash_t complex_hash(Py_hash_t re, Py_hash_t im) {
+  Py_uhash_t h = static_cast<Py_uhash_t>(re) +
+                 static_cast<Py_uhash_t>(1000003) * static_cast<Py_uhash_t>(im);
+  Py_hash_t result = static_cast<Py_hash_t>(h);
+  return result == -1 ? -2 : result;
+}

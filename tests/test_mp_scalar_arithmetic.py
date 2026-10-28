@@ -65,8 +65,23 @@ def test_real_and_complex_promote(p):
 @pytest.mark.parametrize("p", PRECISIONS)
 def test_ordering_against_scalars(p):
     x = NumberContext(p)("1.5")
-    assert x < 2 and 1 < x and x <= 1.5 and x >= 1.5 and x > 1.25 and 3 > x
-    assert x == 1.5 and 1.5 == x and x != 1 and sorted([x, 1, 2.0]) == [1, x, 2.0]
+    assert x < 2 and 1 < x and x <= 2 and x >= 1 and x > 1 and 3 > x
+    assert x != 1 and 1 != x and NumberContext(p)(2) == 2 and sorted([x, 1, 2]) == [1, x, 2]
+
+
+@pytest.mark.parametrize("p", PRECISIONS)
+def test_float_compares_as_nothing_but_multiplies(p):
+    # A float is its repr in arithmetic but hashes as a binary value, so
+    # comparisons leave it to Python: == is False, ordering a TypeError.
+    N = NumberContext(p)
+    x, z = N("2.5"), N("2.5+0*i")
+    assert x * 2.5 == N("6.25") and 2.5 * z == N("6.25+0*i")
+    for v in (x, z):
+        assert not (v == 2.5) and not (2.5 == v) and v != 2.5 and 2.5 != v
+    with pytest.raises(TypeError):
+        x < 2.5
+    with pytest.raises(TypeError):
+        2.5 >= x
 
 
 @pytest.mark.parametrize("other", ["1.5", None, [1.5], object()])
@@ -125,7 +140,7 @@ def test_real_imag_abs_sqrt(p):
     assert z.real.precision == p and abs(z) == R("5") and not abs(z).is_complex
     assert N("1.5").real == N("1.5") and N("1.5").imag == 0
     assert z.sqrt() == z ** N("0.5")
-    assert abs(N("-4+0*i").sqrt() - N("2*i")) < 10 ** -(p - 2)
+    assert abs(N("-4+0*i").sqrt() - N("2*i")) < N(f"1e-{p - 2}")
     assert N("2.25").sqrt() == N("1.5")
 
 
@@ -155,3 +170,21 @@ def test_real_complex_equality_is_transitive(p):
     assert a != b and b == c and c == b
     assert a != c and c != a
     assert C("1", "1e-300") != b and b != C("1", "1e-300")
+
+
+@pytest.mark.parametrize("p", PRECISIONS)
+def test_hash_agrees_with_equality_against_python_numbers(p):
+    # Equal values hash alike: ints, dyadic floats, Decimal, both kinds.
+    from decimal import Decimal
+    from fractions import Fraction
+    N = NumberContext(p)
+    one, big = N(1), N(10 ** 30)
+    assert hash(one) == hash(1) == hash(N("1+0*i")) and hash(big) == hash(10 ** 30)
+    assert {one: "found"}.get(1) == "found" and len({one, 1, N("1.0"), N("1+0*i")}) == 1
+    assert hash(N("2.5")) == hash(Fraction(5, 2)) == hash(N("2.5+0*i"))
+    assert hash(N("-0")) == hash(0) and hash(N("1e-50")) == hash(Decimal("1e-50"))
+    assert hash(N("1+2*i")) == hash(1 + 2j) and hash(N("1/3")) == hash(N("1/3"))
+    third, binary_third = N("1/3"), N("1/3+0*i")
+    assert len({third, third + 0, third * 1}) == 1
+    # The binary 1/3 is another value: unequal, so its hash is free to differ.
+    assert third != binary_third or hash(third) == hash(binary_third)
