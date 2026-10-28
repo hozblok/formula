@@ -93,3 +93,24 @@ def test_hash_agrees_with_eq(p):
 @pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
 def test_repr_roundtrips(p):
     assert repr(cls(p)("3.5")) == f"mp_real_{p}('3.5')"
+
+
+@pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
+def test_precision_and_kind_on_class_and_value(p):
+    # Storage precision travels inside the value and survives every operation.
+    x = cls(p)("1.5")
+    assert cls(p).precision == x.precision == p
+    assert cls(p).is_complex is False and x.is_complex is False
+    for y in (x + x, x * x, 2 * x, 0.5 * x, -x, abs(x), x.sqrt()):
+        assert y.precision == p and y.is_complex is False
+
+
+@pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
+def test_precision_and_kind_are_read_only(p):
+    x = cls(p)("1.5")
+    for name in ("precision", "is_complex"):
+        with pytest.raises(AttributeError):
+            setattr(x, name, 7)
+        with pytest.raises(AttributeError):
+            delattr(x, name)
+    assert x.precision == p

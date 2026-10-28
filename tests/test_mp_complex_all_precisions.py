@@ -107,3 +107,24 @@ def test_hash_agrees_with_eq(p):
 def test_repr_roundtrips(p):
     assert repr(cls(p)("(3.5,1.5)")) == f"mp_complex_{p}('(3.5,1.5)')"
     assert repr(cls(p)("3.5")) == f"mp_complex_{p}('3.5')"
+
+
+@pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
+def test_precision_and_kind_on_class_and_value(p):
+    # Storage precision travels inside the value and survives every operation.
+    z = cls(p)("1.5", "-2")
+    assert cls(p).precision == z.precision == p
+    assert cls(p).is_complex is True and z.is_complex is True
+    for w in (z + z, z * z, 2 * z, 0.5 * z, -z, abs(z)):
+        assert w.precision == p and w.is_complex is True
+
+
+@pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
+def test_precision_and_kind_are_read_only(p):
+    z = cls(p)("1.5", "-2")
+    for name in ("precision", "is_complex"):
+        with pytest.raises(AttributeError):
+            setattr(z, name, 7)
+        with pytest.raises(AttributeError):
+            delattr(z, name)
+    assert z.precision == p
