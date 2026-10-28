@@ -75,6 +75,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 import math
 
 from ...backend import round_up_precision
@@ -176,9 +177,11 @@ def _implicit_hit(position, direction, hit):
         grad = gradient(point)
         normal_length = vnorm(grad)
         ft = vdot(grad, base_u)
-        if not math.isfinite(normal_length.value) or normal_length.value <= 0:
+        magnitude = Decimal(normal_length.c[0])
+        if not magnitude.is_finite() or magnitude <= 0:
             raise ValueError("surface must have a finite nonzero gradient")
-        if abs(ft.value / normal_length.value) <= _GRAZING_SIN_MIN:
+        incidence = Decimal((ft / normal_length).c[0])
+        if incidence.copy_abs() <= Decimal(str(_GRAZING_SIN_MIN)):
             raise ValueError("grazing hit has no regular implicit derivative")
         correction = surface.value(point) / ft
         if abs(correction.value) > _RAY_POSITION_TOL_M:
