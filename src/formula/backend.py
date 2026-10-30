@@ -32,6 +32,9 @@ MAX_PRECISION = _formula.MAX_PRECISION
 # precision >= the request, i.e. what a value is stored at (0 if over the max).
 round_up_precision = _formula.round_up_precision
 
+# A literal at this storage precision: mp_real_<P>, or mp_complex_<P> for "(re,im)".
+mp_number = _formula.mp_number
+
 MP_TYPES = REAL_TYPES + COMPLEX_TYPES
 
 def mp_precision(value) -> int:
