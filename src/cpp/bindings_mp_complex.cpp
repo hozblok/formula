@@ -62,8 +62,10 @@ static void register_one_mp_complex(py::module_ &m) {
   auto power = [](const C &x, const C &y) { return pow(x, y); };
   py::class_<C>(m, class_name.c_str())
       .def(py::init([](const std::string &text) {
-             auto parts = complex_literal(text);
-             return C(parts.first, parts.second);
+             if (auto parts = complex_literal(text))
+               return C(parts->first, parts->second);
+             ч(text);
+             return C(text, "0");
            }),
            "A real literal or the pair \"(re,im)\" of two.")
       .def(py::init([](const std::string &real, const std::string &imag) {
@@ -136,7 +138,35 @@ static void register_all_mp_complex(py::module_ &m,
   (register_one_mp_complex<Ps>(m), ...);
 }
 
-// mp_complex_16 … mp_complex_8192.
+// mp_real_<P>(text), or mp_complex_<P> for a "(re,im)" text.
+template <unsigned P>
+static py::object make_number(const std::string &text) {
+  if (auto parts = complex_literal(text))
+    return py::cast(mp_complex<P>(parts->first, parts->second));
+  require_literal(text);
+  return py::cast(mp_real<P>(text));
+}
+
+template <unsigned... Ps>
+static py::object mp_number(unsigned precision, const std::string &text,
+                            std::integer_sequence<unsigned, Ps...>) {
+  py::object out;
+  if (!(((precision == Ps) ? (out = make_number<Ps>(text), true) : false) ||
+        ...))
+    throw py::value_error("unsupported precision: " +
+                          std::to_string(precision));
+  return out;
+}
+
+// mp_complex_16 … mp_complex_8192, and the literal factory over both kinds.
 void register_mp_complex(py::module_ &m) {
   register_all_mp_complex(m, AllowedPrecisionsSeq{});
+  m.def(
+      "mp_number",
+      [](unsigned precision, const std::string &text) {
+        return mp_number(precision, text, AllowedPrecisionsSeq{});
+      },
+      "The literal at this storage precision: mp_real_<P>, or mp_complex_<P> "
+      "for a \"(re,im)\" text.",
+      py::arg("precision"), py::arg("text"));
 }

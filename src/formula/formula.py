@@ -10,8 +10,8 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 # pylint: disable=no-name-in-module, import-error
 from ._formula import FmtFlags, Formula
 from .constants import DEFAULT_CASE_INSENSITIVE, DEFAULT_IMAGINARY_UNIT, DEFAULT_PRECISION
-from .backend import (COMPLEX_TYPES, MAX_PRECISION, MP_TYPES, REAL_TYPES, mp_class, mp_precision,
-                      round_up_precision)
+from .backend import (COMPLEX_TYPES, MAX_PRECISION, MP_TYPES, REAL_TYPES, mp_class, mp_number,
+                      mp_precision, round_up_precision)
 
 class Solver(Formula):
     """Solver for calculating string formulas.
@@ -388,8 +388,8 @@ class NumberContext:
     x = N("1e-30")
     z = 2 * x + N.i
 
-    Plain literals go straight to the backend constructor, any other text is a
-    Formula expression. Existing backend values and Numbers must have this
+    Literals only: a real one or the backend's own "(re,im)" text; an
+    expression belongs to Solver. Existing backend values must have this
     storage precision; they are not rounded.
     """
 
@@ -404,24 +404,18 @@ class NumberContext:
             )
         object.__setattr__(self, "precision", round_up_precision(self.precision))
 
-    def __call__(self, expression: Union[Number, str, int, float, *MP_TYPES]):
-        if isinstance(expression, Number):
-            expression = expression._value
-        if isinstance(expression, MP_TYPES):
-            if expression.precision != self.precision:
+    def __call__(self, value: Union[str, int, float, *MP_TYPES]):
+        if isinstance(value, MP_TYPES):
+            if value.precision != self.precision:
                 raise ValueError(
-                    f"precision mismatch: {expression.precision} != {self.precision}"
+                    f"precision mismatch: {value.precision} != {self.precision}"
                 )
-            return expression
-        if isinstance(expression, bool) or not isinstance(expression, (str, int, float)):
+            return value
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
             raise TypeError(
-                f"expression must be Number, str, int, float, or mp_*; "
-                f"got {type(expression).__name__}"
+                f"value must be str, int, float, or mp_*; got {type(value).__name__}"
             )
-        text = str(expression)
-        if Number._PLAIN_REAL.match(text):
-            return mp_class(self.precision)(text)
-        return Solver(text, precision=self.precision).evaluate()
+        return mp_number(self.precision, str(value))
 
     @property
     def i(self):

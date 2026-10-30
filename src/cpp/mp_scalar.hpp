@@ -99,20 +99,18 @@ inline void require_literal(const std::string &text) {
     throw pybind11::value_error("not a numeric literal: '" + text + "'");
 }
 
-// "(re,im)" split at its comma, or a real literal with a zero imaginary part.
-inline std::pair<std::string, std::string> complex_literal(
+// The two literals of a "(re,im)" text; nothing for any other text.
+inline std::optional<std::pair<std::string, std::string>> complex_literal(
     const std::string &text) {
   const std::size_t comma = text.find(',');
-  if (text.size() > 2 && text.front() == '(' && text.back() == ')' &&
-      comma != std::string::npos) {
-    std::string re = text.substr(1, comma - 1),
-                im = text.substr(comma + 1, text.size() - comma - 2);
-    require_literal(re);
-    require_literal(im);
-    return {re, im};
-  }
-  require_literal(text);
-  return {text, "0"};
+  if (text.size() < 3 || text.front() != '(' || text.back() != ')' ||
+      comma == std::string::npos)
+    return std::nullopt;
+  std::string re = text.substr(1, comma - 1),
+              im = text.substr(comma + 1, text.size() - comma - 2);
+  require_literal(re);
+  require_literal(im);
+  return std::make_pair(re, im);
 }
 
 // Python's hash of the value: an integer within 2**53 as Python hashes that
