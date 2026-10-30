@@ -114,13 +114,11 @@ inline std::optional<std::pair<std::string, std::string>> complex_literal(
 }
 
 // Python's hash of the value: an integer within 2**53 as Python hashes that
-// int (the int itself, -1 mapped to -2), anything else by its canonical text.
+// int (its own modular hash, so 32-bit builds agree), else by canonical text.
 template <class Real>
 inline Py_hash_t real_hash(const Real &x) {
   const long long limit = 1LL << 53;
-  if (x == floor(x) && x >= -limit && x <= limit) {
-    const long long n = x.template convert_to<long long>();
-    return n == -1 ? -2 : static_cast<Py_hash_t>(n);
-  }
+  if (x == floor(x) && x >= -limit && x <= limit)
+    return pybind11::hash(pybind11::int_(x.template convert_to<long long>()));
   return static_cast<Py_hash_t>(std::hash<std::string>{}(x.str()));
 }
