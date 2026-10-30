@@ -1,9 +1,11 @@
-// Python operands of the mp bindings: int and float as decimal text, other
-// mp precisions refused, anything else left to Python's NotImplemented fallback.
+// Python operands of the mp bindings: int and float as decimal text in
+// arithmetic, ints within 2**53 in comparisons, other mp precisions refused,
+// anything else left to Python's NotImplemented fallback.
 #pragma once
 
 #include <pybind11/pybind11.h>
 
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -45,17 +47,37 @@ inline pybind11::object other_operand(pybind11::handle other,
   return pybind11::reinterpret_borrow<pybind11::object>(Py_NotImplemented);
 }
 
-// Python's numeric hash of an exact decimal text, through decimal.Decimal.
-inline Py_hash_t decimal_hash(const std::string &text) {
-  static pybind11::object *Decimal = new pybind11::object(
-      pybind11::module_::import("decimal").attr("Decimal"));
-  return pybind11::hash((*Decimal)(text));
+// Python int that every mp type holds exactly: |n| <= 2**53. Other Python
+// numbers do not compare: TypeError, never a silent False.
+inline std::optional<long long> small_int(pybind11::handle h,
+                                          const std::string &self_name) {
+  if (PyBool_Check(h.ptr()))
+    throw pybind11::type_error("bool is not a valid numeric operand");
+  if (PyLong_Check(h.ptr())) {
+    int overflow = 0;
+    const long long n = PyLong_AsLongLongAndOverflow(h.ptr(), &overflow);
+    if (PyErr_Occurred()) throw pybind11::error_already_set();
+    const long long limit = 1LL << 53;
+    if (!overflow && -limit <= n && n <= limit) return n;
+    throw pybind11::type_error("an int beyond 2**53 compares with " +
+                               self_name + " only as " + self_name +
+                               "(str(n))");
+  }
+  if (PyFloat_Check(h.ptr()) || PyComplex_Check(h.ptr()))
+    throw pybind11::type_error("float and complex do not compare with " +
+                               self_name + "; compare with " + self_name +
+                               "(repr(x))");
+  return std::nullopt;
 }
 
-// CPython's complex hash: re + 1000003 im, wrapped, -1 mapped to -2.
-inline Py_hash_t complex_hash(Py_hash_t re, Py_hash_t im) {
-  Py_uhash_t h = static_cast<Py_uhash_t>(re) +
-                 static_cast<Py_uhash_t>(1000003) * static_cast<Py_uhash_t>(im);
-  Py_hash_t result = static_cast<Py_hash_t>(h);
-  return result == -1 ? -2 : result;
+// Python's hash of the value: an integer within 2**53 as Python hashes that
+// int (the int itself, -1 mapped to -2), anything else by its canonical text.
+template <class Real>
+inline Py_hash_t real_hash(const Real &x) {
+  const long long limit = 1LL << 53;
+  if (x == floor(x) && x >= -limit && x <= limit) {
+    const long long n = x.template convert_to<long long>();
+    return n == -1 ? -2 : static_cast<Py_hash_t>(n);
+  }
+  return static_cast<Py_hash_t>(std::hash<std::string>{}(x.str()));
 }
