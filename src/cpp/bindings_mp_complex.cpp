@@ -64,7 +64,7 @@ static void register_one_mp_complex(py::module_ &m) {
       .def(py::init([](const std::string &text) {
              if (auto parts = complex_literal(text))
                return C(parts->first, parts->second);
-             ч(text);
+             require_literal(text);
              return C(text, "0");
            }),
            "A real literal or the pair \"(re,im)\" of two.")
