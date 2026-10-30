@@ -74,7 +74,11 @@ static void register_one_mp_real(py::module_ &m) {
   auto over = [](const auto &x, const auto &y) { return x / y; };
   auto power = [](const auto &x, const auto &y) { return pow(x, y); };
   py::class_<R>(m, class_name.c_str())
-      .def(py::init<const std::string &>())
+      .def(py::init([](const std::string &text) {
+             require_literal(text);
+             return R(text);
+           }),
+           "A real literal: [+-] digits [. digits] [e [+-] digits].")
       // Storage precision and kind, on the class and on every value.
       .def_property_readonly_static("precision",
                                     [](const py::object &) { return P; })

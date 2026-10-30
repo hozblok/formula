@@ -5,9 +5,11 @@
 
 #include <pybind11/pybind11.h>
 
+#include <cctype>
 #include <functional>
 #include <optional>
 #include <string>
+#include <utility>
 
 // int exactly; float as repr (shortest round-trip decimal); bool refused.
 inline std::optional<std::string> scalar_text(pybind11::handle h) {
@@ -68,6 +70,49 @@ inline std::optional<long long> small_int(pybind11::handle h,
                                self_name + "; compare with " + self_name +
                                "(repr(x))");
   return std::nullopt;
+}
+
+inline bool numeric_literal(const std::string &text) {
+  bool digit = false, point = false, exponent = false;
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    const char c = text[i];
+    if (std::isdigit(static_cast<unsigned char>(c))) {
+      digit = true;
+    } else if (c == '+' || c == '-') {
+      if (i != 0 && text[i - 1] != 'e' && text[i - 1] != 'E') return false;
+    } else if (c == '.') {
+      if (point || exponent) return false;
+      point = true;
+    } else if (c == 'e' || c == 'E') {
+      if (exponent || !digit) return false;
+      exponent = true;
+      digit = false;
+    } else {
+      return false;
+    }
+  }
+  return digit;
+}
+
+inline void require_literal(const std::string &text) {
+  if (!numeric_literal(text))
+    throw pybind11::value_error("not a numeric literal: '" + text + "'");
+}
+
+// "(re,im)" split at its comma, or a real literal with a zero imaginary part.
+inline std::pair<std::string, std::string> complex_literal(
+    const std::string &text) {
+  const std::size_t comma = text.find(',');
+  if (text.size() > 2 && text.front() == '(' && text.back() == ')' &&
+      comma != std::string::npos) {
+    std::string re = text.substr(1, comma - 1),
+                im = text.substr(comma + 1, text.size() - comma - 2);
+    require_literal(re);
+    require_literal(im);
+    return {re, im};
+  }
+  require_literal(text);
+  return {text, "0"};
 }
 
 // Python's hash of the value: an integer within 2**53 as Python hashes that
