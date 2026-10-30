@@ -37,18 +37,22 @@ static void register_one_mp_complex(py::module_ &m) {
       return other_operand(other, class_name);
     };
   };
-  auto equality = [class_name, operand](bool negate) {
-    return [negate, class_name, operand](const C &a, py::object other) {
-      // Against R in R, through the exact max_digits10 text of the real
-      // part: the promotion R -> C rounds and would break transitivity.
-      if (py::isinstance<R>(other)) {
-        bool same = a.imag() == 0 && R(a.real().str()) == other.cast<R>();
-        return py::cast(same != negate);
+  // Equality: C natively and ints within 2**53 exactly. R raises: no
+  // conversion between the decimal and the binary type keeps every value.
+  // Other Python numbers raise.
+  auto equality = [class_name](bool negate) {
+    return [negate, class_name](const C &a, py::object other) {
+      bool same;
+      if (py::isinstance<C>(other)) {
+        same = a == other.cast<C>();
+      } else if (py::isinstance<R>(other)) {
+        throw py::type_error("real and complex values do not compare");
+      } else if (auto n = small_int(other, class_name)) {
+        same = a == C(*n);
+      } else {
+        return other_operand(other, class_name);
       }
-      // No float: its hash is that of the binary value, not of the repr.
-      if (PyFloat_Check(other.ptr())) return other_operand(other, class_name);
-      if (auto b = operand(other)) return py::cast((a == *b) != negate);
-      return other_operand(other, class_name);
+      return py::cast(same != negate);
     };
   };
   auto plus = [](const C &x, const C &y) { return x + y; };
@@ -96,11 +100,11 @@ static void register_one_mp_complex(py::module_ &m) {
              return std::complex<double>(x.real().template convert_to<double>(),
                                          x.imag().template convert_to<double>());
            })
-      // CPython's complex hash over the components as mp_real, as in equality.
+      // An integer within 2**53 hashes as that int, as in equality.
       .def("__hash__",
            [](const C &x) {
-             return complex_hash(decimal_hash(R(x.real().str()).str()),
-                                 decimal_hash(R(x.imag().str()).str()));
+             if (x.imag() == 0) return real_hash(x.real());
+             return static_cast<Py_hash_t>(std::hash<std::string>{}(x.str()));
            })
       .def("__str__", [](const C &x) { return strip_neg_zero(x.str()); })
       .def("__repr__",
