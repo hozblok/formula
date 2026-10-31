@@ -26,6 +26,17 @@ static std::string complex_text(
          strip_neg_zero(x.imag().str(digits, format)) + ")";
 }
 
+// The decimal mp_real of a binary component; a finite non-zero value beyond
+// the decimal exponent range raises instead of turning into 0 or inf.
+template <unsigned P, class Component>
+static mp_real<P> to_real(const Component &v) {
+  mp_real<P> r(v.str());
+  if (isfinite(v) && v != 0 && (r == 0 || isinf(r)))
+    throw py::value_error(v.str() + " is outside the mp_real_" +
+                          std::to_string(P) + " exponent range");
+  return r;
+}
+
 template <unsigned P>
 static void register_one_mp_complex(py::module_ &m) {
   using C = mp_complex<P>;
@@ -33,16 +44,15 @@ static void register_one_mp_complex(py::module_ &m) {
   const std::string class_name = "mp_complex_" + std::to_string(P);
   // Operands: C; R of the same P (promoted through its decimal text); int and
   // float as text.
-  auto operand = [](py::object other) -> std::optional<C> {
-    if (py::isinstance<C>(other)) return other.cast<C>();
-    if (py::isinstance<R>(other)) return C(other.cast<R>().str());
-    if (auto text = scalar_text(other)) return C(*text);
-    return std::nullopt;
-  };
-  auto binary = [class_name, operand](auto op, bool reflected) {
-    return [op, reflected, class_name, operand](const C &a, py::object other) {
-      if (auto b = operand(other))
-        return py::cast(reflected ? op(*b, a) : op(a, *b));
+  auto binary = [class_name](auto op, bool reflected) {
+    return [op, reflected, class_name](const C &a, py::object other) {
+      auto apply = [&](const C &b) {
+        return py::cast(reflected ? op(b, a) : op(a, b));
+      };
+      if (py::isinstance<C>(other)) return apply(other.cast<const C &>());
+      if (py::isinstance<R>(other))
+        return apply(C(other.cast<const R &>().str()));
+      if (auto text = scalar_text(other)) return apply(C(*text));
       return other_operand(other, class_name);
     };
   };
@@ -53,7 +63,7 @@ static void register_one_mp_complex(py::module_ &m) {
     return [negate, class_name](const C &a, py::object other) {
       bool same;
       if (py::isinstance<C>(other)) {
-        same = a == other.cast<C>();
+        same = a == other.cast<const C &>();
       } else if (py::isinstance<R>(other)) {
         throw py::type_error("real and complex values do not compare");
       } else if (auto n = small_int(other, class_name)) {
@@ -103,11 +113,13 @@ static void register_one_mp_complex(py::module_ &m) {
       .def("__ne__", equality(true))
       .def("__bool__", [](const C &x) { return !(x == 0); })
       // |z| as mp_real, through its decimal text.
-      .def("__abs__", [](const C &x) { return R(abs(x).str()); })
+      .def("__abs__", [](const C &x) { return to_real<P>(abs(x)); })
       // x ** 0.5, the former Number path; sqrt(x) differs in the last bits.
       .def("sqrt", [](const C &x) { return pow(x, C("0.5")); })
-      .def_property_readonly("real", [](const C &x) { return R(x.real().str()); })
-      .def_property_readonly("imag", [](const C &x) { return R(x.imag().str()); })
+      .def_property_readonly("real",
+                             [](const C &x) { return to_real<P>(x.real()); })
+      .def_property_readonly("imag",
+                             [](const C &x) { return to_real<P>(x.imag()); })
       .def("__float__",
            [](const C &x) {
              if (x.imag() != 0)

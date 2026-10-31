@@ -27,11 +27,12 @@ static void register_one_mp_real(py::module_ &m) {
   auto binary = [class_name](auto op, bool reflected) {
     return [op, reflected, class_name](const R &a, py::object other) {
       if (py::isinstance<R>(other)) {
-        R b = other.cast<R>();
+        const R &b = other.cast<const R &>();
         return py::cast(reflected ? op(b, a) : op(a, b));
       }
       if (py::isinstance<C>(other)) {
-        C b = other.cast<C>(), ca(a.str());
+        const C &b = other.cast<const C &>();
+        const C ca(a.str());
         return py::cast(reflected ? op(b, ca) : op(ca, b));
       }
       if (auto text = scalar_text(other)) {
@@ -46,7 +47,8 @@ static void register_one_mp_real(py::module_ &m) {
   // conversion compares them faithfully. Other Python numbers raise.
   auto ordering = [class_name](auto native) {
     return [native, class_name](const R &a, py::object other) {
-      if (py::isinstance<R>(other)) return py::cast(native(a, other.cast<R>()));
+      if (py::isinstance<R>(other))
+        return py::cast(native(a, other.cast<const R &>()));
       if (py::isinstance<C>(other))
         throw py::type_error("real and complex values do not compare");
       if (auto n = small_int(other, class_name)) return py::cast(native(a, R(*n)));
@@ -57,7 +59,7 @@ static void register_one_mp_real(py::module_ &m) {
     return [negate, class_name](const R &a, py::object other) {
       bool same;
       if (py::isinstance<R>(other)) {
-        same = a == other.cast<R>();
+        same = a == other.cast<const R &>();
       } else if (py::isinstance<C>(other)) {
         throw py::type_error("real and complex values do not compare");
       } else if (auto n = small_int(other, class_name)) {
