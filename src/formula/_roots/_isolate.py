@@ -4,7 +4,6 @@ Shared by the sturm and chebyshev backends: build the Sturm chain, count/isolate
 roots by sign variations, and bisect a square-free polynomial to precision.
 """
 
-from ..formula import Number
 from . import _poly
 from .utils import sign
 
@@ -36,7 +35,7 @@ def isolate(chain, a, b, max_depth=200):
         if count == 1 or depth >= max_depth:
             roots.append((lo, hi))
             continue
-        mid = (lo + hi) * Number("0.5", lo.precision)
+        mid = (lo + hi) * 0.5
         vmid = variations(chain, mid)
         stack.append((lo, mid, vlo, vmid, depth + 1))
         stack.append((mid, hi, vmid, vhi, depth + 1))
@@ -62,14 +61,13 @@ def isolate_roots(q, chain, lo, hi, xacc, tol):
 
 def bisect(q, lo, hi, xacc):
     """Bisect a square-free polynomial q on a single-root bracket [lo, hi]."""
-    half = Number("0.5", lo.precision)
     flo = _poly.peval(q, lo)
     if sign(flo) == 0:
         return lo
     if sign(_poly.peval(q, hi)) == 0:
         return hi
     for _ in range(10 * lo.precision):
-        mid = (lo + hi) * half
+        mid = (lo + hi) * 0.5
         if hi - lo < xacc:
             return mid
         fmid = _poly.peval(q, mid)
@@ -79,4 +77,4 @@ def bisect(q, lo, hi, xacc):
             hi = mid
         else:
             lo, flo = mid, fmid
-    return (lo + hi) * half
+    return (lo + hi) * 0.5
