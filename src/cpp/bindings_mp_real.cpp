@@ -73,7 +73,7 @@ static void register_one_mp_real(py::module_ &m) {
   auto times = [](const auto &x, const auto &y) { return x * y; };
   auto over = [](const auto &x, const auto &y) { return x / y; };
   auto power = [](const auto &x, const auto &y) { return pow(x, y); };
-  py::class_<R>(m, class_name.c_str())
+  py::class_<R>(m, class_name.c_str(), py::is_final())
       .def(py::init([](const std::string &text) {
              require_literal(text);
              return R(text);
