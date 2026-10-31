@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from ...formula import Number
 from ..shared.coordinates import surface_coordinates
-from ..shared.nums import lift, sqrt, vadd, vdot, vnorm, vscale, vsub, vunit
+from ..shared.nums import lift, vadd, vdot, vnorm, vscale, vsub, vunit
 from ..shared.types import _EPS_T, _INSIDE_TOL, _TCAP_TOL
 from ..shared.units import m_to_um
 
@@ -181,7 +181,7 @@ class TorusWall:
         p = center[0].precision
         self._one = Number("1", p)
         self._zero = Number("0", p)
-        norm = sqrt(toward[0] * toward[0] + toward[1] * toward[1])
+        norm = (toward[0] * toward[0] + toward[1] * toward[1]).sqrt()
         ux, uy = toward[0] / norm, toward[1] / norm
         self._toward = (ux, uy)
         self.C = (center[0] + R * ux, center[1] + R * uy, z0)
@@ -219,7 +219,7 @@ class TorusWall:
         nx, ny, _ = self.nhat
         xi, eta = dx * tx + dy * ty, dx * nx + dy * ny
         radial = xi - self.R
-        rho = sqrt(radial * radial + zr * zr)
+        rho = (radial * radial + zr * zr).sqrt()
         dr = (xi * (xi - 2 * self.R) + zr * zr) / (rho + self.R)
         return xi, eta, zr, rho, dr
 

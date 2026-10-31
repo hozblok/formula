@@ -2784,14 +2784,14 @@ def test_torus_graze_pair_survives_seed_floor():
     # bent bore (R = 0.5, a = 6e-6): the exact quartic has the crossing
     # pair at t ~ 2.4495e-3 (dense exact-sign scan); at delta = 1e-20*a
     # hit() still returns it, one step below it tunnels.
-    from formula.capsysred.shared.nums import lift, sqrt as nsqrt
+    from formula.capsysred.shared.nums import lift
     from formula.capsysred.walls.wall_torus import TorusWall
     N = lambda v: lift(str(v), 32)
     a, R = N("6e-6"), N("0.5")
     wall = TorusWall((N(0), N(0)), a, R, (N(1), N(0)), N(0))
     delta = N("2.371e-21") * a
     dz = (R - a - delta) / R
-    dx = nsqrt(N(1) - dz * dz)
+    dx = (N(1) - dz * dz).sqrt()
     O, d = (N(0), N(0), N(0)), (dx, N(0), dz)
     for cap in ("0.1", "4e-3"):
         hit = wall.hit(O, d, N(cap))
