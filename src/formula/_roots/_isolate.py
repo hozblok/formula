@@ -4,15 +4,16 @@ Shared by the sturm and chebyshev backends: build the Sturm chain, count/isolate
 roots by sign variations, and bisect a square-free polynomial to precision.
 """
 
+from ..formula import NumberContext
 from . import _poly
 from .utils import sign
 
 
-def sturm_chain(p, tol):
+def sturm_chain(p, tol, N: NumberContext):
     """Sturm chain p0=p, p1=p', p_{k+1}=-rem(p_{k-1}, p_k)."""
-    chain = [p, _poly.pderiv(p)]
+    chain = [p, _poly.pderiv(p, N)]
     while _poly.deg(chain[-1], tol) > 0:
-        _, r = _poly.pdivmod(chain[-2], chain[-1], tol)
+        _, r = _poly.pdivmod(chain[-2], chain[-1], tol, N)
         chain.append([-c for c in r])
     return chain
 
