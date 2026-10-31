@@ -38,13 +38,7 @@ def finite_sign(value):
     return sign(value)
 
 
-def rtsafe(
-    func: _RootFunc,
-    a: Number,
-    b: Number,
-    xacc: Number,
-    maxit: int = 200,
-) -> Number:
+def rtsafe(func: _RootFunc, a, b, xacc, maxit: int = 200):
     """Refine one root of g in a sign-change bracket [a, b].
 
     Safeguarded Newton: Newton when the iterate stays bracketed, bisection
@@ -62,16 +56,14 @@ def rtsafe(
             stop when |step| < xacc.
     maxit — iteration cap if xacc is not reached.
     """
-    prec = a.precision
-    zero, half = Number("0", prec), Number("0.5", prec)
     lo, hi = (a, b) if sign(func.g(a)) < 0 else (b, a)
-    t, step = (a + b) * half, abs(b - a)
+    t, step = (a + b) * 0.5, abs(b - a)
     g, gp = func.g(t), func.gprime(t)
     for _ in range(maxit):
-        secure = (gp == zero
-                  or ((t - hi) * gp - g) * ((t - lo) * gp - g) > zero
+        secure = (gp == 0
+                  or ((t - hi) * gp - g) * ((t - lo) * gp - g) > 0
                   or abs(g + g) > abs(step * gp))
-        step = (hi - lo) * half if secure else g / gp
+        step = (hi - lo) * 0.5 if secure else g / gp
         t = lo + step if secure else t - step
         if abs(step) < xacc:
             return t
