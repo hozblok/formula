@@ -45,7 +45,7 @@ def pderiv(p: Poly) -> Poly:
     prec = p[0].precision
     if len(p) == 1:
         return [_zero(prec)]
-    return [p[k] * Number(k, prec) for k in range(1, len(p))]
+    return [p[k] * k for k in range(1, len(p))]
 
 
 def pmul(a: Poly, b: Poly) -> Poly:
@@ -104,16 +104,15 @@ def square_free(p: Poly, tol: Number) -> Poly:
 
 def interpolate(xs: List[Number], ys: List[Number], tol: Number, max_degree: int) -> Poly:
     """Newton divided differences -> monomial coefficients; detects true degree."""
-    prec = ys[0].precision
     c = list(ys)
     n = len(xs)
     for j in range(1, n):
         for i in range(n - 1, j - 1, -1):
             c[i] = (c[i] - c[i - 1]) / (xs[i] - xs[i - j])
-    scale = _zero(prec)
+    scale = 0
     for ck in c:
         scale = max(scale, abs(ck))
-    cutoff = scale * tol if scale > _zero(prec) else tol
+    cutoff = scale * tol if scale > 0 else tol
     degree = 0
     for k in range(n - 1, -1, -1):
         if abs(c[k]) > cutoff:
@@ -124,6 +123,6 @@ def interpolate(xs: List[Number], ys: List[Number], tol: Number, max_degree: int
         raise ValueError("polynomial degree exceeds max_degree; not a low-degree polynomial")
     poly = [c[degree]]
     for k in range(degree - 1, -1, -1):
-        poly = pmul(poly, [-xs[k], Number(1, prec)])
+        poly = pmul(poly, [-xs[k], 1])
         poly[0] = poly[0] + c[k]
     return poly

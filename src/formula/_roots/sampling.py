@@ -15,14 +15,14 @@ def find_all(
 ) -> List[Number]:
     """All sign-change roots of g on [t_min, t_max], refined to precision."""
     xacc = Number(f"1e-{max(precision - 2, 1)}", precision)
-    step = (t_max - t_min) / Number(samples, precision)
+    step = (t_max - t_min) / samples
     roots: List[Number] = []
     t_prev = t_min
     s_prev = finite_sign(func.g(t_prev))
     if s_prev == 0:
         roots.append(t_prev)
     for i in range(1, samples + 1):
-        t_cur = t_min + step * Number(i, precision)
+        t_cur = t_min + step * i
         s_cur = finite_sign(func.g(t_cur))
         if s_cur == 0:
             roots.append(t_cur)

@@ -18,10 +18,9 @@ def _gauss_samples(func, mid, span, m, prec):
     """Chebyshev-Gauss nodes x_j and g values f_j on the mapped interval."""
     pi = Number("4*atan(1)", prec)
     cos_solver = Solver("cos(a)", prec)
-    half = Number("0.5", prec)
     xs, fs = [], []
     for j in range(m):
-        theta = pi * (Number(j, prec) + half) / Number(m, prec)
+        theta = pi * (j + 0.5) / m
         x = cos_solver.number({"a": str(theta)})
         xs.append(x)
         fs.append(func.g(mid + span * x).real)
@@ -32,26 +31,25 @@ def _cheb_fit(func, mid, span, m, prec):
     """Chebyshev-Gauss coefficients a_k of g on the mapped interval (O(m^2))."""
     xs, fs = _gauss_samples(func, mid, span, m, prec)
     two = Number(2, prec)
-    coeffs = [Number(0, prec) for _ in range(m)]
+    coeffs = [0] * m
     for x, f in zip(xs, fs):
-        t0, t1 = Number(1, prec), x  # T_0(x), T_1(x)
+        t0, t1 = 1, x  # T_0(x), T_1(x)
         coeffs[0] = coeffs[0] + f
         for k in range(1, m):
             coeffs[k] = coeffs[k] + f * t1
             t0, t1 = t1, two * x * t1 - t0
-    inv = two / Number(m, prec)
+    inv = two / m  # mp division; 2 / m in Python is a float
     return [c * inv for c in coeffs]
 
 
 def _tail_small(coeffs, tol) -> bool:
     """True when the high-order Chebyshev coefficients have decayed below tol."""
-    prec = coeffs[0].precision
-    scale = Number(0, prec)
+    scale = 0
     for c in coeffs:
         scale = max(scale, abs(c))
-    if scale == Number(0, prec):
+    if scale == 0:
         return True
-    tail = Number(0, prec)
+    tail = 0
     for c in coeffs[-max(3, len(coeffs) // 8):]:
         tail = max(tail, abs(c))
     return tail < scale * tol
@@ -70,10 +68,9 @@ def _converged_fit(func, transform, prec, tol, start_degree):
 
 def _cheb_to_monomial(coeffs, prec):
     """Sum_k coeffs[k]*T_k(x) - coeffs[0]/2 as monomial coefficients."""
-    half = Number("0.5", prec)
     t_prev = [Number(1, prec)]                    # T_0
     t_cur = [Number(0, prec), Number(1, prec)]    # T_1
-    poly = [coeffs[0] * half]                      # a0*T_0 - a0/2 = a0/2
+    poly = [coeffs[0] * 0.5]                       # a0*T_0 - a0/2 = a0/2
     if len(coeffs) > 1:
         poly = _padd(poly, [c * coeffs[1] for c in t_cur])
     for k in range(2, len(coeffs)):
@@ -98,15 +95,14 @@ def _psub(a, b):
 
 def _pmul_x2(p):
     prec = p[0].precision
-    return [Number(0, prec)] + [c * Number(2, prec) for c in p]
+    return [Number(0, prec)] + [c * 2 for c in p]
 
 
 def _newton(func, t: Number, xacc: Number, maxit: int = 100) -> Number:
     """Polish a simple root of g starting from a good guess."""
-    zero = Number(0, t.precision)
     for _ in range(maxit):
         gp = func.gprime(t)
-        if gp == zero:
+        if gp == 0:
             return t
         step = func.g(t) / gp
         t = t - step
@@ -137,8 +133,7 @@ def find_all(
         raise NotImplementedError("chebyshev backend handles real surfaces only")
     tol = Number(f"1e-{max(precision // 3, 4)}", precision)
     xacc = Number(f"1e-{max(precision - 2, 1)}", precision)
-    half = Number("0.5", precision)
-    mid, span = (t_min + t_max) * half, (t_max - t_min) * half
+    mid, span = (t_min + t_max) * 0.5, (t_max - t_min) * 0.5
     coeffs = _converged_fit(func, (mid, span), precision, tol, cheb_degree)
     q = _poly.square_free(_poly.trim(_cheb_to_monomial(coeffs, precision), tol), tol)
     if _poly.deg(q, tol) == 0:

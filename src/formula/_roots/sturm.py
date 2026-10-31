@@ -17,9 +17,9 @@ from ..formula import Number
 from . import _isolate, _poly
 
 
-def _nodes(t_min: Number, t_max: Number, count: int, prec: int) -> List[Number]:
-    step = (t_max - t_min) / Number(count - 1, prec)
-    return [t_min + step * Number(i, prec) for i in range(count)]
+def _nodes(t_min, t_max, count: int):
+    step = (t_max - t_min) / (count - 1)
+    return [t_min + step * i for i in range(count)]
 
 
 def _poly_from_samples(func, us, ts, complex_surface, tol, max_degree):
@@ -45,14 +45,13 @@ def find_all(
     tol = Number(f"1e-{max(precision // 2, 4)}", precision)
     xacc = Number(f"1e-{max(precision - 2, 1)}", precision)
     complex_surface = func.g(t_min).is_complex
-    half = Number("0.5", precision)
     one = Number(1, precision)
-    mid, span = (t_min + t_max) * half, (t_max - t_min) * half
+    mid, span = (t_min + t_max) * 0.5, (t_max - t_min) * 0.5
     # bisection runs in u; dividing by span keeps the t-units accuracy at xacc
     xacc = xacc / max(span, one)
     # max_degree+2 nodes: one guard node above the cap so an over-degree surface
     # is detected and rejected rather than silently under-fit.
-    us = _nodes(-one, one, max_degree + 2, precision)
+    us = _nodes(-one, one, max_degree + 2)
     p = _poly_from_samples(func, us, [mid + span * u for u in us],
                            complex_surface, tol, max_degree)
     if _poly.deg(p, tol) == 0:
