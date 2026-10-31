@@ -17,18 +17,18 @@ from ..formula import Number
 from .utils import merge_close_roots, rtsafe, sign
 
 
-def _estimate_m2(func, t_min: Number, t_max: Number, prec: int, samples: int) -> Number:
+def _estimate_m2(func, t_min, t_max, samples: int):
     """Inflated estimate of max|g''| via the Lipschitz constant of g' on a grid."""
-    step = (t_max - t_min) / Number(samples, prec)
+    step = (t_max - t_min) / samples
     gp_prev = func.gprime(t_min)
-    m2 = Number("0", prec)
+    m2 = 0
     t = t_min
     for _ in range(samples):
         t = t + step
         gp = func.gprime(t)
         m2 = max(m2, abs(gp - gp_prev) / step)
         gp_prev = gp
-    return m2 * Number("2", prec)
+    return m2 * 2
 
 
 def _candidates(func, t_min, t_max, m2, region_tol):
@@ -95,7 +95,7 @@ def find_all(
     xacc = Number(f"1e-{max(precision - 2, 1)}", precision)
     gtol = Number(f"1e-{max(precision // 3, 4)}", precision)
     region_tol = opts.get("region_tol") or (t_max - t_min) * Number("1e-6", precision)
-    m2 = _estimate_m2(func, t_min, t_max, precision, m2_samples)
+    m2 = _estimate_m2(func, t_min, t_max, m2_samples)
     regions = _merge(_candidates(func, t_min, t_max, m2, region_tol), region_tol)
     roots = [r for r in (_refine(func, a, b, xacc, gtol) for a, b in regions) if r is not None]
     return merge_close_roots(roots, xacc)
