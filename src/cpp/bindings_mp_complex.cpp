@@ -17,6 +17,15 @@
 
 namespace py = pybind11;
 
+// The pair "(re,im)" even for a zero imaginary part, unlike Boost's str().
+template <class C>
+static std::string complex_text(
+    const C &x, std::streamsize digits = 0,
+    std::ios_base::fmtflags format = std::ios_base::fmtflags(0)) {
+  return "(" + strip_neg_zero(x.real().str(digits, format)) + "," +
+         strip_neg_zero(x.imag().str(digits, format)) + ")";
+}
+
 template <unsigned P>
 static void register_one_mp_complex(py::module_ &m) {
   using C = mp_complex<P>;
@@ -116,19 +125,19 @@ static void register_one_mp_complex(py::module_ &m) {
              if (x.imag() == 0) return real_hash(x.real());
              return static_cast<Py_hash_t>(std::hash<std::string>{}(x.str()));
            })
-      .def("__str__", [](const C &x) { return strip_neg_zero(x.str()); })
+      .def("__str__", [](const C &x) { return complex_text(x); })
       .def("__repr__",
            [class_name](const C &x) {
-             return class_name + "('" + x.str() + "')";
+             return class_name + "('" + complex_text(x) + "')";
            })
       .def(
           "str",
           [](const C &x, std::streamsize digits,
              std::ios_base::fmtflags format) {
-            return strip_neg_zero(x.str(digits, format));
+            return complex_text(x, digits, format);
           },
-          "Returns the number formatted as a string. Non-zero imaginary part "
-          "renders as (real,imag); a zero one renders as just real.",
+          "Returns the number formatted as the pair (real,imag), also for a "
+          "zero imaginary part, so the text restores a complex value.",
           py::arg("digits") = 0, py::arg("format") = std::ios_base::fmtflags(0));
 }
 
