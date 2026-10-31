@@ -15,22 +15,25 @@ class _RootFunc(Protocol):
         """g'(t) = grad F . d, the derivative of g along the ray."""
 
 
-def sign(x: Number) -> int:
+def sign(x) -> int:
     """-1, 0 or +1."""
-    zero = Number("0", x.precision)
-    if x > zero:
+    if x > 0:
         return 1
-    if x < zero:
+    if x < 0:
         return -1
     return 0
 
 
-def finite_sign(value: Number):
+def real_text(value, precision: int) -> str:
+    """Real part of a Number or backend value, formatted at precision."""
+    return getattr(value, "_value", value).real.str(precision)
+
+
+def finite_sign(value):
     """sign(value), or None where value is non-finite (inf/nan)."""
     if value.is_complex:
         raise NotImplementedError("real surfaces only; use sturm/chebyshev for complex")
-    real = value.parts[0]
-    if "inf" in real or "nan" in real:
+    if str(value) in ("inf", "-inf", "nan"):
         return None
     return sign(value)
 
