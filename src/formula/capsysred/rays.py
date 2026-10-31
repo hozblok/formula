@@ -23,6 +23,7 @@ import random
 
 from ..formula import Number
 from . import rays_v3
+from .shared.nums import raw
 from .shared.types import RayRecord
 
 
@@ -219,6 +220,12 @@ class MultiRaysReader:
         pass
 
 
+def archive_text(x) -> str:
+    """The stored digits without the guard digits: the text every archive carries."""
+    value = raw(x)
+    return value.str(value.precision)
+
+
 def row_of(scene: str, rec: RayRecord, lean: bool) -> dict:
     """The row of one record: key order is part of the file contract."""
     row = {"stage": scene, "mode": rec.mode, "ray": rec.ray,
@@ -227,8 +234,8 @@ def row_of(scene: str, rec: RayRecord, lean: bool) -> dict:
         row["opl"] = float(rec.opl)
         row["sins"] = [float(s) for s in rec.sins]
     else:
-        row["opl"] = str(rec.opl)
-        row["sins"] = [str(s) for s in rec.sins]
+        row["opl"] = archive_text(rec.opl)
+        row["sins"] = [archive_text(s) for s in rec.sins]
     if rec.fate == "screen":
         row["x"], row["y"] = float(rec.point[0]), float(rec.point[1])
         row["dx"] = float(rec.direction[0])
