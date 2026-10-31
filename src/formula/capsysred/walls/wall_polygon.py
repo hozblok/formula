@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ...formula import Number
+from ...formula import Number, NumberContext
 from ..shared.coordinates import surface_coordinates
 from ..shared.nums import lift, solver, vadd, vscale
 from ..shared.types import _EPS_T, _INSIDE_TOL, _WALL_SURFACE_TOL_M
@@ -91,6 +91,8 @@ class PolygonWall:
         self.apothem = self.apothems[0]                   # face 0: expr_um and older consumers
         p = center[0].precision
         self._zero = Number("0", p)
+        # Face-selection tolerance in the residuals' own kind: a backend value, not a float.
+        self._surface_tol = NumberContext(p)(_WALL_SURFACE_TOL_M)
         n = int(sides)
         cos_s, sin_s = solver("cos(x)", p), solver("sin(x)", p)
         two_pi = Number("pi", p) * Number("2", p)
@@ -119,9 +121,9 @@ class PolygonWall:
         """Select one finite face at a nominal world point; reject edge ambiguity."""
         residuals = [self.face(i).value(point) for i in range(len(self.faces))]
         index = max(range(len(residuals)), key=residuals.__getitem__)
-        if abs(residuals[index]) >= _WALL_SURFACE_TOL_M:
+        if abs(residuals[index]) >= self._surface_tol:
             raise ValueError("hit is not on the polygon boundary")
-        if any(value >= -_WALL_SURFACE_TOL_M
+        if any(value >= -self._surface_tol
                for i, value in enumerate(residuals) if i != index):
             raise ValueError("polygon hit is too close to an edge or corner")
         return self.face(index)

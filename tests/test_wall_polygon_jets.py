@@ -5,7 +5,7 @@ import math
 
 import pytest
 
-from formula import Formula, Number
+from formula import Formula, Number, NumberContext
 from formula.backend import MP_TYPES
 from formula.capsysred.shared.types import _WALL_SURFACE_TOL_M
 from formula.capsysred.stages._ray_jets import _Algebra
@@ -107,3 +107,14 @@ def test_linear_face_composes_higher_derivatives_without_changing_faces(order):
         assert abs(Decimal(coefficient) - Decimal(expected)) < Decimal("1e-80")
     assert abs(Decimal(result.c[-1])) > Decimal("1")
     assert tuple(str(Number(v, 96)) for v in face.gradient(point)) == ("0.6", "0.8", "0")
+
+
+def test_surface_tolerance_is_a_backend_value_of_the_wall_precision():
+    # Residuals compare with a tolerance of their own kind, never with a float.
+    wall = _square()
+    N = NumberContext(wall.precision)
+    assert isinstance(wall._surface_tol, MP_TYPES) and wall._surface_tol.precision == N.precision
+    assert wall.surface_at((N(0), N(1), N(0))).index == 1
+    assert wall.surface_at((N(1), N(1) - 2 * wall._surface_tol, N(0))).index == 0
+    with pytest.raises(ValueError, match="too close to an edge"):
+        wall.surface_at((N(1), N(1), N(0)))
