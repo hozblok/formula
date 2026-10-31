@@ -4,8 +4,9 @@ import cmath
 from functools import lru_cache
 from typing import Sequence
 
-from ..formula import Number, NumberContext
+from ..formula import NumberContext
 from ..xray import GlassMaterial
+from .shared.nums import raw
 from .spectrum import SpectralLine
 
 
@@ -22,21 +23,22 @@ class FresnelAmplitude:
     """Complex r(sin theta), s-pol, with 2*delta and 2*beta fixed at the energy.
 
     Same formula as xray.reflect_amplitude (cross-checked per run); constants are
-    precomputed once so the per-bounce cost is pure Number arithmetic.
+    precomputed once so the per-bounce cost is pure mp arithmetic.
     """
 
-    def __init__(self, material, energy_kev: Number, numbers: NumberContext):
+    def __init__(self, material, energy_kev, numbers: NumberContext):
         self.numbers = N = numbers
-        energy_kev = N(energy_kev)
-        self.d2 = 2 * material.delta(energy_kev, precision=N.precision)
-        self.b2 = 2 * material.beta(energy_kev, precision=N.precision)
+        energy_kev = N(raw(energy_kev))
+        # mp constant on the left: 2 * x and x * 2 differ in the guard digits
+        self.d2 = N(2) * material.delta(energy_kev, precision=N.precision)
+        self.b2 = N(2) * material.beta(energy_kev, precision=N.precision)
         self.b2i = self.b2 * N.i
 
-    def __call__(self, sin_theta: Number) -> Number:
+    def __call__(self, sin_theta):
         root = (sin_theta * sin_theta - self.d2 + self.b2i).sqrt()
         return (sin_theta - root) / (sin_theta + root)
 
-    def product(self, sins: list[Number]) -> Number:
+    def product(self, sins):
         amp = self.numbers(1)
         for s in sins:
             amp = amp * self(s)
@@ -45,7 +47,7 @@ class FresnelAmplitude:
 
 class FloatLineAmplitudes:
     """prod_j r(sin θ_j; E_m) per line in float64, constants from the exact
-    material model; cross-checked against the Number Fresnel via check()."""
+    material model; cross-checked against the mp Fresnel via check()."""
 
     def __init__(self, material: GlassMaterial, lines: Sequence[SpectralLine],
                  numbers: NumberContext):
@@ -53,7 +55,8 @@ class FloatLineAmplitudes:
         # (2*delta, 2*beta) per line: the root is sqrt(sin^2 - 2d + 2ib)
         self.two_delta_beta: list[tuple[float, float]] = []
         for line in lines:
-            delta, beta = optical_constants(material, numbers(line.e_kev), numbers.precision)
+            delta, beta = optical_constants(material, numbers(raw(line.e_kev)),
+                                            numbers.precision)
             self.two_delta_beta.append((2.0 * delta, 2.0 * beta))
 
     def __call__(self, sins: Sequence[float]) -> list[complex]:
