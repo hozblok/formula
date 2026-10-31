@@ -1,16 +1,14 @@
-"""Integer powers of mp_complex go through the general pow (log/exp): a rounding
-error against repeated multiplication, and nan for a representable tiny base.
-Strict xfails; they turn green once an integral-exponent path exists."""
+"""Integer powers of mp_complex take the integral pow (repeated squaring):
+exact against repeated products, and the base itself for a tiny base, where
+the general exp/log pow returned nan."""
 
 import pytest
 
 from formula import NumberContext
 
 PRECISIONS = (16, 64, 256)
-REASON = "complex ** int goes through log/exp, not an integral pow"
 
 
-@pytest.mark.xfail(strict=True, reason=REASON)
 @pytest.mark.parametrize("p", PRECISIONS)
 @pytest.mark.parametrize("exponent", [1, 2, -1])
 def test_integer_powers_of_i_equal_repeated_products(p, exponent):
@@ -19,7 +17,6 @@ def test_integer_powers_of_i_equal_repeated_products(p, exponent):
     assert i ** exponent == expected
 
 
-@pytest.mark.xfail(strict=True, reason=REASON)
 @pytest.mark.parametrize("p", PRECISIONS)
 @pytest.mark.parametrize("exponent", [3, -2])
 def test_integer_powers_equal_repeated_products(p, exponent):
@@ -28,13 +25,29 @@ def test_integer_powers_equal_repeated_products(p, exponent):
     assert w ** exponent == expected
 
 
-@pytest.mark.xfail(strict=True, reason=REASON + "; log/exp gives nan for a tiny base")
 def test_first_power_of_a_tiny_base_is_the_base():
     tiny = NumberContext(64)("(1e-400000000,1e-400000000)")
     assert tiny ** 1 == tiny
 
 
 @pytest.mark.parametrize("p", PRECISIONS)
-def test_zeroth_power_is_already_exact(p):
+def test_zeroth_power_is_one(p):
     N = NumberContext(p)
     assert N("(0,1)") ** 0 == 1 and N("(1.5,-2)") ** 0 == 1
+
+
+@pytest.mark.parametrize("p", PRECISIONS)
+def test_integral_backend_exponents_take_the_same_path(p):
+    # The rule is the exponent's value, not its Python type.
+    N = NumberContext(p)
+    w = N("(1.5,-2)")
+    assert w ** N("(3,0)") == w ** N("3") == w ** 3 == w * w * w
+    assert w ** N("(-2,0)") == w ** -2 == 1 / (w * w)
+
+
+def test_other_exponents_take_the_general_pow():
+    # Beyond 2**62 the exponent stays on the general path; bool is no exponent at all.
+    N = NumberContext(64)
+    assert N("(1,0)") ** (2 ** 70) == 1
+    with pytest.raises(TypeError):
+        N("(0,1)") ** True
