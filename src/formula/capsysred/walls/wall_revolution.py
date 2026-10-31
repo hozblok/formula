@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 from ...formula import Number
 from ..shared.coordinates import surface_coordinates
-from ..shared.nums import lift, sqrt, vadd, vscale, vunit
+from ..shared.nums import lift, vadd, vscale, vunit
 from ..shared.types import _EPS_T, _INSIDE_TOL, Vec3
 from ..shared.units import m_to_um
 
@@ -96,7 +96,7 @@ class RevolutionWall:
             disc = B * B - 4 * A * C
             if float(disc) < 0.0:
                 return None
-            root = sqrt(disc)
+            root = disc.sqrt()
             ts = ((self._zero - B - root) / (2 * A),
                   (self._zero - B + root) / (2 * A))
         t = min((tt for tt in ts if float(tt) > _EPS_T), key=float, default=None)
