@@ -114,3 +114,15 @@ def test_precision_and_kind_are_read_only(p):
         with pytest.raises(AttributeError):
             delattr(x, name)
     assert x.precision == p
+
+
+@pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
+def test_constructor_takes_literals_only(p):
+    # Boost would read "1/3" as 1 and "3+4*i" as 3; the binding refuses them.
+    for text in ("1", "-7", "+1", "1.", ".5", "0.125", "1e-06", "-1E+16", "1.5e300", "1.e5"):
+        assert cls(p)(text) == cls(p)(text)
+    for text in ("1/3", "3+4*i", "1-2", "1+1", "--1", "+-1", "1-", "1.2.3", "1..2", "e5", ".", "1e",
+                 "1e+", "12e", "1e5e5", "1e-3-1e-4", "1,2", "(1,2)", " 1", "1 ", "", "pi", "nan", "inf"):
+        with pytest.raises(ValueError, match="not a numeric literal"):
+            cls(p)(text)
+

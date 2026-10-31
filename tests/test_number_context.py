@@ -4,8 +4,13 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from formula import MAX_PRECISION, Number, NumberContext, mp_class
-from formula.backend import MP_TYPES, round_up_precision
+from formula import MAX_PRECISION, Number, NumberContext, Solver, mp_class
+from formula.backend import MP_TYPES, mp_number, round_up_precision
+
+
+def E(context, text):
+    """Expression text evaluated at the context's precision."""
+    return Solver(text, context.precision).evaluate()
 
 
 @pytest.mark.parametrize("precision", [1, 24, 64, 100, MAX_PRECISION])
@@ -15,21 +20,38 @@ def test_storage_precision_is_rounded_once(precision):
     assert N("0.125").precision == N.precision
 
 
-@pytest.mark.parametrize("value", [0, -7, 0.125, "1e-80", "1/3", "3+4*i"])
-def test_factory_matches_the_number_constructor(value):
+@pytest.mark.parametrize("value, expression", [
+    (0, "0"), (-7, "-7"), (0.125, "0.125"), ("1e-80", "1e-80"), ("(3,4)", "3+4*i"),
+])
+def test_literals_match_the_number_constructor(value, expression):
     N = NumberContext(64)
     actual = N(value)
-    expected = Number(value, 64)
+    expected = Number(expression, 64)
     assert isinstance(actual, MP_TYPES)
     assert actual == expected._value
     assert actual.is_complex == expected.is_complex
 
 
+@pytest.mark.parametrize("text", ["1/3", "3+4*i", "pi", "(1+i)/7", "abc", ""])
+def test_expressions_are_not_literals(text):
+    # Only literals: anything else is a Solver expression, never a silent parse.
+    with pytest.raises(ValueError, match="not a numeric literal"):
+        NumberContext(64)(text)
+
+
+@pytest.mark.parametrize("text, is_complex", [("1.5", False), ("(1.5,0)", True), ("-1e-80", False)])
+def test_the_backend_factory_picks_the_kind_from_the_text(text, is_complex):
+    value = mp_number(64, text)
+    assert type(value) is mp_class(64, is_complex)
+    with pytest.raises(ValueError, match="unsupported precision"):
+        mp_number(65, text)
+
+
 def test_contexts_do_not_change_each_other_or_the_default():
     low = NumberContext(24)
-    x = low("1/7")
+    x = E(low, "1/7")
     high = NumberContext(256)
-    y = high("1/7")
+    y = E(high, "1/7")
     assert (2 * x + low(1)).precision == low.precision
     assert (2 * y + high(1)).precision == high.precision
     assert NumberContext().precision == Number.DEFAULT_PRECISION
@@ -44,20 +66,22 @@ def test_equal_storage_precisions_are_compatible():
     assert a(b(2)).precision == 64
 
 
-@pytest.mark.parametrize("raw", [False, True])
 @pytest.mark.parametrize("expression", ["1/7", "(1+i)/7"])
-def test_wrapping_keeps_the_backend_value(raw, expression):
+def test_a_backend_value_passes_through_unchanged(expression):
     N = NumberContext(64)
-    original = Number(expression, 64)
-    wrapped = N(original._value if raw else original)
-    assert wrapped is original._value
+    value = E(N, expression)
+    assert N(value) is value
 
 
-@pytest.mark.parametrize("raw", [False, True])
-def test_wrapping_rejects_different_storage_precision(raw):
-    value = mp_class(256)("0.125") if raw else Number("0.125", 256)
+def test_a_backend_value_of_another_storage_precision_is_rejected():
     with pytest.raises(ValueError, match="precision mismatch"):
-        NumberContext(64)(value)
+        NumberContext(64)(mp_class(256)("0.125"))
+
+
+def test_a_number_is_not_an_input():
+    # The factory takes text, int, float and backend values; unwrap a Number first.
+    with pytest.raises(TypeError, match="value must be"):
+        NumberContext(64)(Number("0.125", 64))
 
 
 def test_constants_follow_the_context():
@@ -65,7 +89,7 @@ def test_constants_follow_the_context():
         N = NumberContext(precision)
         assert N.i.precision == N.pi.precision == precision
         assert N.i.is_complex and not N.pi.is_complex
-        assert N.i * N.i == N(-1)
+        assert N.i * N.i == -1
         assert N.pi == Number("pi", precision)._value
 
 
@@ -94,3 +118,15 @@ def test_invalid_precision_type(precision):
 def test_invalid_values_are_rejected(value):
     with pytest.raises(TypeError):
         NumberContext(64)(value)
+
+
+@pytest.mark.parametrize("precision", [16, 64, 256])
+@pytest.mark.parametrize("expression", ["1/3", "-1e-80", "1+2*i", "1/3-2*i", "1e-100000000*i",
+                                        "1+0*i", "1e-100000000+0*i"])
+def test_str_of_a_value_round_trips_through_the_factory(precision, expression):
+    # str() is the backend text, all stored digits: a real literal or "(re,im)".
+    N = NumberContext(precision)
+    value = E(N, expression)
+    again = N(str(value))
+    assert again == value and type(again) is type(value)
+    assert N("(1,2)") == E(N, "1+2*i") and N("(1.5,-2e-3)") == E(N, "1.5-2e-3*i")
