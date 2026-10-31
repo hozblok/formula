@@ -15,6 +15,9 @@ from formula.capsysred import Simulation, rays_v3
 from formula.capsysred.screen import ScreenGrid
 from formula.capsysred.source import Source
 from formula.capsysred.trace_v3 import AIM_DRAWS, SCENES, trace as trace_v3, verify
+from formula import Number, Solver
+from formula.capsysred.rays import archive_text, row_of
+from formula.capsysred.shared.types import RayRecord
 
 
 def _raw(n_modes=6, n_rays=60, seed=77, shape="disk"):
@@ -283,3 +286,15 @@ def test_trace_v3_all_scenes_equals_parallel_and_completed_archive(tmp_path):
     before = open(rays_v3.index_path(only_cap), "rb").read()
     trace_v3(cfg, only_cap, jobs=1, level=6, log=lambda m: None)   # both scenes: no-op
     assert open(rays_v3.index_path(only_cap), "rb").read() == before
+
+
+def test_archive_text_is_the_stored_digits_without_guard_digits():
+    # One text for a Number and for its backend value: the digits every archive carries.
+    for p in (64, 96):
+        n, v = Number("1/3", p), Solver("1/3", p).evaluate()
+        assert archive_text(n) == archive_text(v) == str(n)
+        assert len(archive_text(v)) == v.precision + 2 < len(str(v))
+    v, w = Solver("1/3", 64).evaluate(), Number("1/7", 64)
+    rec = RayRecord(0, 0, "lost", None, None, None, v, (v, w), None)
+    row = row_of("capillary", rec, lean=False)
+    assert row["opl"] == archive_text(v) and row["sins"] == [archive_text(v), str(w)]

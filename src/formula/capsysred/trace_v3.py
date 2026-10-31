@@ -96,8 +96,8 @@ def _trace_section(archive, scene, mode, r0, r1, origin_str, lean, level):
     rng = rays.stream_rng(cfg.seed, SCENES[scene]["tag"], mode)
     origin = Source(src, rng).mode_origin()
     if origin_str is None:
-        origin_str = [str(c) for c in origin]
-    elif [str(c) for c in origin] != list(origin_str):
+        origin_str = [rays.archive_text(c) for c in origin]
+    elif [rays.archive_text(c) for c in origin] != list(origin_str):
         raise ValueError(f"{scene} mode {mode}: lattice origin differs from the header")
     extra = {"rng": {"scheme": rays.RNG_SCHEME, "seed": cfg.seed, "aim_draws": draws}}
     draw = rng.random
