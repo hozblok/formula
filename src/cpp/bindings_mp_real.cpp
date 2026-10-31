@@ -91,7 +91,7 @@ static void register_one_mp_real(py::module_ &m) {
       .def("__sub__", binary(minus, false))
       .def("__rsub__", binary(minus, true))
       .def("__mul__", binary(times, false))
-      .def("__rmul__", binary(times, false))
+      .def("__rmul__", binary(times, true))
       .def("__truediv__", binary(over, false))
       .def("__rtruediv__", binary(over, true))
       .def("__pow__", binary(power, false))

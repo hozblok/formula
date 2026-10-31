@@ -6,7 +6,7 @@ cached bounce-count template (variables s1..s_nb, dd, bb).
 """
 
 from ..formula import NumberContext
-from .shared.nums import solver
+from .shared.nums import raw, solver
 
 
 def fresnel_expr(s: str = "s", dd: str = "dd", bb: str = "bb") -> str:
@@ -30,11 +30,11 @@ class LineAmplitudes:
     """Per-spectral-line amplitude products prod_j r(s_j; E_m) for one ray."""
 
     def __init__(self, material, lines, numbers: NumberContext):
-        self.numbers = numbers
+        self.numbers = N = numbers
         # (2*delta, 2*beta) per line as full-precision strings for the template
         self.two_delta_beta = [
-            (str(2 * material.delta(numbers(l.e_kev), precision=numbers.precision)),
-             str(2 * material.beta(numbers(l.e_kev), precision=numbers.precision)))
+            (str(2 * material.delta(N(raw(l.e_kev)), precision=N.precision)),
+             str(2 * material.beta(N(raw(l.e_kev)), precision=N.precision)))
             for l in lines]
 
     def __call__(self, sins):
