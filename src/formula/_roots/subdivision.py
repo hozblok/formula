@@ -11,7 +11,7 @@ over the search interval (sampled from g', inflated). Practically reliable, not
 a formal proof — the guarantee is only as good as the M2 bound.
 """
 
-from typing import List, Optional
+from typing import List
 
 from ..formula import Number
 from .utils import merge_close_roots, rtsafe, sign
@@ -33,13 +33,12 @@ def _estimate_m2(func, t_min: Number, t_max: Number, prec: int, samples: int) ->
 
 def _candidates(func, t_min, t_max, m2, region_tol):
     """Sub-intervals (width < region_tol) the exclusion test cannot rule out."""
-    half = Number("0.5", t_min.precision)
     stack = [(t_min, t_max)]
     out = []
     while stack:
         a, b = stack.pop()
-        m, h = (a + b) * half, (b - a) * half
-        if abs(func.g(m)) > abs(func.gprime(m)) * h + m2 * h * h * half:
+        m, h = (a + b) * 0.5, (b - a) * 0.5
+        if abs(func.g(m)) > abs(func.gprime(m)) * h + m2 * h * h * 0.5:
             continue
         if b - a < region_tol:
             out.append((a, b))
@@ -62,10 +61,9 @@ def _merge(regions, region_tol):
 
 def _bisect_gprime(func, a, b, xacc):
     """Locate g'=0 in [a, b] (a turning point) by bisection."""
-    half = Number("0.5", a.precision)
     sa = sign(func.gprime(a))
     for _ in range(10 * a.precision):
-        m = (a + b) * half
+        m = (a + b) * 0.5
         if b - a < xacc:
             return m
         if sign(func.gprime(m)) == 0:
@@ -74,17 +72,17 @@ def _bisect_gprime(func, a, b, xacc):
             b = m
         else:
             a = m
-    return (a + b) * half
+    return (a + b) * 0.5
 
 
-def _refine(func, a, b, xacc, gtol) -> Optional[Number]:
+def _refine(func, a, b, xacc, gtol):
     """Resolve one candidate region to a root, or None if it is a near-miss."""
     if sign(func.g(a)) * sign(func.g(b)) < 0:
         return rtsafe(func, a, b, xacc)  # simple root
     if sign(func.gprime(a)) * sign(func.gprime(b)) < 0:  # tangency: g'=0
         t = _bisect_gprime(func, a, b, xacc)
         return t if abs(func.g(t)) < gtol else None
-    m = (a + b) * Number("0.5", a.precision)
+    m = (a + b) * 0.5
     return m if abs(func.g(m)) < gtol else None
 
 
