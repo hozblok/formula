@@ -13,7 +13,7 @@ badly scaled polynomials (a micrometre torus quartic spans ~16 orders in raw t).
 
 from typing import List
 
-from ..formula import Number
+from ..formula import Number, NumberContext
 from . import _isolate, _poly
 
 
@@ -22,18 +22,18 @@ def _nodes(t_min, t_max, count: int):
     return [t_min + step * i for i in range(count)]
 
 
-def _poly_from_samples(func, us, ts, complex_surface, tol, max_degree):
+def _poly_from_samples(func, us, ts, complex_surface, tol, max_degree, N: NumberContext):
     """Interpolate g over nodes us (g evaluated at the mapped ts) to a polynomial."""
     reals, imags = [], []
     for t in ts:
         g = func.g(t)
         reals.append(g.real)
         imags.append(g.imag)
-    pr = _poly.interpolate(us, reals, tol, max_degree)
+    pr = _poly.interpolate(us, reals, tol, max_degree, N)
     if not complex_surface:
         return pr
-    pi = _poly.interpolate(us, imags, tol, max_degree)
-    return _poly.pgcd(pr, pi, tol)  # common roots of Re g and Im g
+    pi = _poly.interpolate(us, imags, tol, max_degree, N)
+    return _poly.pgcd(pr, pi, tol, N)  # common roots of Re g and Im g
 
 
 def find_all(
@@ -45,7 +45,8 @@ def find_all(
     tol = Number(f"1e-{max(precision // 2, 4)}", precision)
     xacc = Number(f"1e-{max(precision - 2, 1)}", precision)
     complex_surface = func.g(t_min).is_complex
-    one = Number(1, precision)
+    N = NumberContext(precision)
+    one = N(1)
     mid, span = (t_min + t_max) * 0.5, (t_max - t_min) * 0.5
     # bisection runs in u; dividing by span keeps the t-units accuracy at xacc
     xacc = xacc / max(span, one)
@@ -53,12 +54,12 @@ def find_all(
     # is detected and rejected rather than silently under-fit.
     us = _nodes(-one, one, max_degree + 2)
     p = _poly_from_samples(func, us, [mid + span * u for u in us],
-                           complex_surface, tol, max_degree)
+                           complex_surface, tol, max_degree, N)
     if _poly.deg(p, tol) == 0:
         return []
-    q = _poly.square_free(p, tol)
+    q = _poly.square_free(p, tol, N)
     if _poly.deg(q, tol) == 0:
         return []
-    chain = _isolate.sturm_chain(q, tol)
+    chain = _isolate.sturm_chain(q, tol, N)
     roots = _isolate.isolate_roots(q, chain, -one, one, xacc, tol)
     return sorted(mid + span * u for u in roots)

@@ -8,16 +8,16 @@ including the even-multiplicity ones sampling misses.
 
 from typing import List
 
-from ..formula import Number, Solver
+from ..formula import Number, NumberContext, Solver
 from . import _isolate, _poly
 
 _MAX_DEGREE = 256
 
 
-def _gauss_samples(func, mid, span, m, prec):
+def _gauss_samples(func, mid, span, m, N: NumberContext):
     """Chebyshev-Gauss nodes x_j and g values f_j on the mapped interval."""
-    pi = Number("4*atan(1)", prec)
-    cos_solver = Solver("cos(a)", prec)
+    pi = Number("4*atan(1)", N.precision)
+    cos_solver = Solver("cos(a)", N.precision)
     xs, fs = [], []
     for j in range(m):
         theta = pi * (j + 0.5) / m
@@ -27,10 +27,10 @@ def _gauss_samples(func, mid, span, m, prec):
     return xs, fs
 
 
-def _cheb_fit(func, mid, span, m, prec):
+def _cheb_fit(func, mid, span, m, N: NumberContext):
     """Chebyshev-Gauss coefficients a_k of g on the mapped interval (O(m^2))."""
-    xs, fs = _gauss_samples(func, mid, span, m, prec)
-    two = Number(2, prec)
+    xs, fs = _gauss_samples(func, mid, span, m, N)
+    two = N(2)
     coeffs = [0] * m
     for x, f in zip(xs, fs):
         t0, t1 = 1, x  # T_0(x), T_1(x)
@@ -55,26 +55,26 @@ def _tail_small(coeffs, tol) -> bool:
     return tail < scale * tol
 
 
-def _converged_fit(func, transform, prec, tol, start_degree):
+def _converged_fit(func, transform, N: NumberContext, tol, start_degree):
     """Self-validate: grow the degree until the spectral tail converges."""
     mid, span = transform
     degree = start_degree
-    coeffs = _cheb_fit(func, mid, span, degree, prec)
+    coeffs = _cheb_fit(func, mid, span, degree, N)
     while degree < _MAX_DEGREE and not _tail_small(coeffs, tol):
         degree = min(degree * 2, _MAX_DEGREE)
-        coeffs = _cheb_fit(func, mid, span, degree, prec)
+        coeffs = _cheb_fit(func, mid, span, degree, N)
     return coeffs
 
 
-def _cheb_to_monomial(coeffs, prec):
+def _cheb_to_monomial(coeffs, N: NumberContext):
     """Sum_k coeffs[k]*T_k(x) - coeffs[0]/2 as monomial coefficients."""
-    t_prev = [Number(1, prec)]                    # T_0
-    t_cur = [Number(0, prec), Number(1, prec)]    # T_1
+    t_prev = [N(1)]                                # T_0
+    t_cur = [N(0), N(1)]                           # T_1
     poly = [coeffs[0] * 0.5]                       # a0*T_0 - a0/2 = a0/2
     if len(coeffs) > 1:
         poly = _padd(poly, [c * coeffs[1] for c in t_cur])
     for k in range(2, len(coeffs)):
-        t_next = _psub(_pmul_x2(t_cur), t_prev)    # T_{k+1}=2x T_k - T_{k-1}
+        t_next = _psub(_pmul_x2(t_cur, N), t_prev)  # T_{k+1}=2x T_k - T_{k-1}
         poly = _padd(poly, [c * coeffs[k] for c in t_next])
         t_prev, t_cur = t_cur, t_next
     return poly
@@ -93,9 +93,8 @@ def _psub(a, b):
     return _padd(a, [-bi for bi in b])
 
 
-def _pmul_x2(p):
-    prec = p[0].precision
-    return [Number(0, prec)] + [c * 2 for c in p]
+def _pmul_x2(p, N: NumberContext):
+    return [N(0)] + [c * 2 for c in p]
 
 
 def _newton(func, t: Number, xacc: Number, maxit: int = 100) -> Number:
@@ -111,11 +110,11 @@ def _newton(func, t: Number, xacc: Number, maxit: int = 100) -> Number:
     return t
 
 
-def _proxy_roots(func, q, transform, tol, xacc):
+def _proxy_roots(func, q, transform, tol, xacc, N: NumberContext):
     """Isolate roots of the monomial proxy q on [-1,1], map to t, polish simple ones."""
     mid, span = transform
-    chain = _isolate.sturm_chain(q, tol)
-    one = Number(1, mid.precision)
+    chain = _isolate.sturm_chain(q, tol, N)
+    one = N(1)
     roots = []
     for x in _isolate.isolate_roots(q, chain, -one, one, xacc, tol):
         t_root = mid + span * x
@@ -133,10 +132,11 @@ def find_all(
         raise NotImplementedError("chebyshev backend handles real surfaces only")
     tol = Number(f"1e-{max(precision // 3, 4)}", precision)
     xacc = Number(f"1e-{max(precision - 2, 1)}", precision)
+    N = NumberContext(precision)
     mid, span = (t_min + t_max) * 0.5, (t_max - t_min) * 0.5
-    coeffs = _converged_fit(func, (mid, span), precision, tol, cheb_degree)
-    q = _poly.square_free(_poly.trim(_cheb_to_monomial(coeffs, precision), tol), tol)
+    coeffs = _converged_fit(func, (mid, span), N, tol, cheb_degree)
+    q = _poly.square_free(_poly.trim(_cheb_to_monomial(coeffs, N), tol), tol, N)
     if _poly.deg(q, tol) == 0:
         return []
-    roots = _proxy_roots(func, q, (mid, span), tol, xacc)
+    roots = _proxy_roots(func, q, (mid, span), tol, xacc, N)
     return sorted(r for r in roots if t_min - xacc <= r <= t_max + xacc)
