@@ -1,17 +1,15 @@
 """Shared helpers for root-finding backends."""
 
-from typing import Iterable, List, Protocol
-
-from ..formula import Number
+from typing import Protocol
 
 
 class _RootFunc(Protocol):
     """A surface restricted to one ray; what every backend consumes."""
 
-    def g(self, t: Number) -> Number:
+    def g(self, t):
         """g(t) = F(O + t*d), the surface value at ray parameter t."""
 
-    def gprime(self, t: Number) -> Number:
+    def gprime(self, t):
         """g'(t) = grad F . d, the derivative of g along the ray."""
 
 
@@ -72,7 +70,7 @@ def rtsafe(func: _RootFunc, a, b, xacc, maxit: int = 200):
     return t
 
 
-def merge_close_roots(roots: Iterable[Number], xacc: Number) -> List[Number]:
+def merge_close_roots(roots, xacc) -> list:
     """One t per cluster after numerical root finding.
 
     roots — candidate ray parameters t with g(t)≈0; may repeat the same root.

@@ -9,6 +9,7 @@ from collections import namedtuple
 from typing import List, Optional, Sequence, Tuple
 
 from ._roots import get_backend
+from ._roots.utils import real_text
 from .formula import Number, Solver
 
 _AXES = ("x", "y", "z")
@@ -30,9 +31,8 @@ def _normalize(components: Sequence[Number], zero_msg="direction must be a non-z
     """Unit-normalize Number components; raises on an empty or zero vector."""
     if not components:
         raise ValueError(zero_msg)
-    zero = Number(0, components[0].precision)
-    norm = abs(sum((c * c for c in components), zero)) ** 0.5
-    if norm == zero:
+    norm = abs(sum((c * c for c in components), 0)) ** 0.5
+    if norm == 0:
         raise ValueError(zero_msg)
     return tuple(c / norm for c in components)
 
@@ -48,13 +48,13 @@ def _with_endpoint_roots(func, roots, t0, t1, precision):
     tol = Number(f"1e-{max(precision // 2, 6)}", precision)
     out = list(roots)
     for t in (t0, t1):
-        mag = abs(func.g(t)).parts[0]  # modulus as a real string (|re,im|)
+        mag = real_text(abs(func.g(t)), precision)  # modulus as a real string
         if "inf" in mag or "nan" in mag:
             continue
         g = Number(mag, precision)
         if g > gtol or any(abs(t - r) <= tol for r in out):
             continue
-        gpmag = abs(func.gprime(t)).parts[0]
+        gpmag = real_text(abs(func.gprime(t)), precision)
         if "inf" in gpmag or "nan" in gpmag:
             out.append(t)
             continue
@@ -148,13 +148,11 @@ class RaySurfaceFunction:
         """
         normal = self.normal_at(t)
         incident = tuple(self.direction[a] for a in _AXES)
-        zero = Number(0, self.precision)
-        dot = sum((incident[k] * normal[k] for k in range(3)), zero)
-        reflected = tuple(
-            incident[k] - Number(2, self.precision) * dot * normal[k] for k in range(3)
-        )
+        dot = sum((incident[k] * normal[k] for k in range(3)), 0)
+        two = Number(2, self.precision)
+        reflected = tuple(incident[k] - two * dot * normal[k] for k in range(3))
         # |d.n| can round above 1 at near-normal incidence; clamp before asin.
-        sine = min(abs(dot), Number(1, self.precision))
+        sine = min(abs(dot), 1)
         grazing = Number(f"asin({sine})", self.precision)
         return self.point_at(t), reflected, grazing
 
@@ -245,7 +243,7 @@ class RaySurface:
         direction = tuple(Number(c, p) for c in direction)
 
         eps = (Number(t_min, p) if t_min is not None
-               else Number(t_max, p) * Number("1e-9", p))
+               else Number(t_max, p) * 1e-9)
         bound = RaySurface(exit_surface, p) if exit_surface is not None else None
         screen = RaySurface(screen_surface, p) if screen_surface is not None else None
 
