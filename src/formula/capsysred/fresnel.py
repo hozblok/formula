@@ -29,9 +29,8 @@ class FresnelAmplitude:
     def __init__(self, material, energy_kev, numbers: NumberContext):
         self.numbers = N = numbers
         energy_kev = N(raw(energy_kev))
-        # mp constant on the left: 2 * x and x * 2 differ in the guard digits
-        self.d2 = N(2) * material.delta(energy_kev, precision=N.precision)
-        self.b2 = N(2) * material.beta(energy_kev, precision=N.precision)
+        self.d2 = 2 * material.delta(energy_kev, precision=N.precision)
+        self.b2 = 2 * material.beta(energy_kev, precision=N.precision)
         self.b2i = self.b2 * N.i
 
     def __call__(self, sin_theta):
