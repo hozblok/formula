@@ -60,7 +60,7 @@ static void register_one_mp_complex(py::module_ &m) {
   auto times = [](const C &x, const C &y) { return x * y; };
   auto over = [](const C &x, const C &y) { return x / y; };
   auto power = [](const C &x, const C &y) { return pow(x, y); };
-  py::class_<C>(m, class_name.c_str())
+  py::class_<C>(m, class_name.c_str(), py::is_final())
       .def(py::init([](const std::string &text) {
              if (auto parts = complex_literal(text))
                return C(parts->first, parts->second);
