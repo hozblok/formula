@@ -3,6 +3,7 @@
 import pytest
 
 from formula import Formula, Solver
+from tests.derivatives import first_derivative
 
 
 def test_acosh_one_is_zero():
@@ -12,12 +13,12 @@ def test_acosh_one_is_zero():
 def test_acosh_derivative_at_one_diverges():
     # d(acosh x)/dx = 1/sqrt(x^2 - 1); diverges at x=1.
     with pytest.raises(ValueError, match="acosh"):
-        Solver("acosh(x)").get_derivative("x", {"x": "1"})
+        first_derivative(Solver("acosh(x)"), "x", {"x": "1"})
 
 
 def test_acosh_derivative_at_regular_point():
     # d(acosh x)/dx = 1/sqrt(x^2 - 1); at x=2 -> 1/sqrt(3) ≈ 0.5773502692.
-    result = Solver("acosh(x)").get_derivative("x", {"x": "2"})
+    result = first_derivative(Solver("acosh(x)"), "x", {"x": "2"})
     assert abs(float(result) - 1 / 3 ** 0.5) < 1e-9
 
 

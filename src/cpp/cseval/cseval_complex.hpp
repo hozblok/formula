@@ -11,8 +11,10 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include "../csconstants.hpp"
+#include "./csjet.hpp"
 
 /**
  * Multiprecision arithmetic with complex numbers.
@@ -155,6 +157,26 @@ class cseval_complex {
       const std::map<std::string, Complex (*)(Complex, Complex)>
           &mapFunctionDerivRight = functionsTwoArgsDRight) const;
 
+  // Taylor number of subformula; seeds maps a variable to the bitmask of the
+  // e it carries.
+  csjet<Complex> calculate_jet(
+      unsigned order, const std::map<std::string, unsigned> &seeds,
+      const std::map<std::string, Complex> &variables_to_values) const;
+
+  // Compose the expression with already differentiated variables.
+  csjet<Complex> calculate_jet(
+      unsigned order,
+      const std::map<std::string, csjet<Complex>> &variables_to_jets) const;
+
+  // Mixed partial derivative over 1..5 variables (repeats allowed).
+  Complex calculate_partial_derivative(
+      const std::vector<std::string> &variables,
+      const std::map<std::string, std::string> &variables_to_values) const;
+
+  // One-argument function {name} applied to a Taylor number.
+  static csjet<Complex> apply_function(const std::string &name,
+                                       const csjet<Complex> &x);
+
   // Useful constants.
   const static Complex ZERO;
   const static Complex ONE;
@@ -199,7 +221,12 @@ of the derivative");
           "Division by zero during the computation of \
 right path of the derivative");
     }
-    return ZERO - a / (b * b);
+    // b^2 outside the exponent range: a / b / b.
+    Complex bb = b * b;
+    if (bb == ZERO || isinf(bb.real()) || isinf(bb.imag())) {
+      return ZERO - a / b / b;
+    }
+    return ZERO - a / bb;
   }
   // "*" - multiplication
   static Complex _mul(Complex a, Complex b) { return a * b; }
@@ -208,9 +235,35 @@ right path of the derivative");
   // multiplication for the computation of the derivative (right path)
   static Complex _mul2(Complex a, Complex) { return a; }
   // "^" - exponentiation
-  static Complex _pow(Complex a, Complex b) { return pow(a, b); }
+  // Real integer exponents by repeated squaring, others by exp(b log a).
+  static Complex _pow(Complex a, Complex b) {
+    if (b.imag() == 0 && b.real() == floor(b.real()) &&
+        abs(b.real()) <= 2147483647 && !(a == ZERO && b.real() < 0)) {
+      long long n = b.real().template convert_to<long long>();
+      unsigned long long m = n < 0 ? -n : n;
+      Complex r = ONE, s = a;
+      for (; m; m >>= 1) {
+        if (m & 1) r = r * s;
+        if (m > 1) s = s * s;
+      }
+      return n < 0 ? ONE / r : r;
+    }
+    return pow(a, b);
+  }
   // exponentiation for the computation of the derivative (left path)
-  static Complex _pow1(Complex a, Complex b) { return (b * _pow(a, b - ONE)); }
+  static Complex _pow1(Complex a, Complex b) {
+    // Same dispatch as the real _pow1, on the real part of the exponent.
+    if (b == ZERO) return ZERO;
+    if (a == ZERO && b.real() < 1) {
+      throw std::invalid_argument(
+          "Infinite slope (base 0, exponent < 1) during the computation of \
+the power derivative");
+    }
+    // b - 1 drops digits of b: u^b / u keeps the factor u^b.
+    Complex e = b - ONE;
+    if (e + ONE != b && a != ZERO) return b * _pow(a, b) / a;
+    return (b * _pow(a, e));
+  }
   // exponentiation for the computation of the derivative (right path)
   static Complex _pow2(Complex a, Complex b) {
     if (a == ZERO) {
@@ -237,7 +290,7 @@ the power derivative (log(0) of the base)");
       throw std::invalid_argument(
           "Division by zero during the computation of the arcsin derivative");
     }
-    return ONE / _sqrt(ONE - a * a);
+    return ONE / _sqrt(one_minus_square(a));
   }
   // "cos"
   static Complex _cos(Complex a) { return cos(a); }
@@ -251,7 +304,7 @@ the power derivative (log(0) of the base)");
           "Division by zero during the computation of \
 the arccos derivative");
     }
-    return ZERO - (ONE / _sqrt(ONE - a * a));
+    return ZERO - (ONE / _sqrt(one_minus_square(a)));
   }
   // "tan"
   static Complex _tan(Complex a) { return tan(a); }
@@ -267,7 +320,9 @@ the tangent derivative");
   // "atan"
   static Complex _atan(Complex a) { return atan(a); }
   // "atan" for the derivative
-  static Complex _atan_d(Complex a, Complex) { return ONE / (ONE + a * a); }
+  static Complex _atan_d(Complex a, Complex) {
+    return ONE / one_plus_square(a);
+  }
   // "exp"
   static Complex _exp(Complex a) { return exp(a); }
   // "exp" for the derivative
@@ -342,7 +397,7 @@ the sqrt derivative");
       throw std::invalid_argument(
           "Division by zero during the computation of the asinh derivative");
     }
-    return ONE / _sqrt(ONE + a * a);
+    return ONE / _sqrt(one_plus_square(a));
   }
   static Complex _acosh(Complex a) { return acosh(a); }
   static Complex _acosh_d(Complex a, Complex) {
@@ -350,7 +405,7 @@ the sqrt derivative");
       throw std::invalid_argument(
           "Division by zero during the computation of the acosh derivative");
     }
-    return ONE / _sqrt(a * a - ONE);
+    return acosh_derivative(a);
   }
   static Complex _atanh(Complex a) { return atanh(a); }
   static Complex _atanh_d(Complex a, Complex) {
@@ -358,7 +413,7 @@ the sqrt derivative");
       throw std::invalid_argument(
           "Division by zero during the computation of the atanh derivative");
     }
-    return ONE / (ONE - a * a);
+    return ONE / one_minus_square(a);
   }
   //- trigonometric functions, exp, log, sqrt
 
@@ -367,6 +422,44 @@ the sqrt derivative");
   static Complex _one(Complex, Complex) { return ONE; }
   static Complex _m_one(Complex, Complex) { return ZERO - ONE; }
   //- auxiliary methods
+
+  //+ higher derivatives of the power:
+  // k-th derivative of u^b in u: b(b-1)...(b-k+1) u^(b-k).
+  static Complex _pow_dk(Complex a, Complex b, unsigned k) {
+    Complex f = ONE;
+    for (unsigned j = 0; j < k; ++j) f = f * (b - int(j));
+    // Integer exponent 0 <= b < k.
+    if (f == ZERO) return ZERO;
+    if (a == ZERO && b.real() < int(k)) {
+      throw std::invalid_argument(
+          "Infinite derivative (base 0, exponent below the derivative order) \
+during the computation of the power derivative");
+    }
+    // b - k drops digits of b: a^b a^(-k) keeps the factor a^b.
+    Complex e = b - int(k), mk = ZERO - int(k) * ONE;
+    bool split = e + int(k) != b && a != ZERO;
+    Complex r = split ? f * _pow(a, b) * _pow(a, mk) : f * _pow(a, e);
+    // a^(b-k) outside the exponent range (0, inf or nan parts): f p p,
+    // p = a^((b-k)/2).
+    if (r == ZERO || isinf(r.real()) || isinf(r.imag()) || isnan(r.real()) ||
+        isnan(r.imag())) {
+      Complex p = split ? _pow(a, b / 2) * _pow(a, mk / 2) : _pow(a, e / 2);
+      r = f * p * p;
+    }
+    return r;
+  }
+  // k-th derivative of a^v in v: log(a)^k a^v.
+  static Complex _pow_ek(Complex a, Complex b, unsigned k) {
+    if (a == ZERO) {
+      throw std::invalid_argument(
+          "Division by zero during the computation of \
+the power derivative (log(0) of the base)");
+    }
+    Complex l = _log(a), f = _pow(a, b);
+    for (unsigned j = 0; j < k; ++j) f = f * l;
+    return f;
+  }
+  //- higher derivatives of the power
 
   // dictionaries contain the appropriate names of operations and static methods
   // for evaluating, e.g.
@@ -382,6 +475,10 @@ the sqrt derivative");
       functionsTwoArgsDLeft;
   static const std::map<std::string, Complex (*)(Complex, Complex)>
       functionsTwoArgsDRight;
+
+  // f^(k)(a), k = 0..n, of the one-argument functions:
+  static const std::map<std::string, std::vector<Complex> (*)(const Complex &, unsigned)>
+      functionsOneArgDerivatives;
 };
 
 #endif  // EVAL_COMPLEX_MPF_H

@@ -9,9 +9,9 @@ import yaml
 
 from formula.capsysred import Simulation
 from formula.capsysred.rays import recorded_plane, recorded_screen_z, recorded_screen_z_text
-from formula.capsysred.stages import _b5_archive
-from formula.capsysred.stages.beamlet_defect import index_screen_z
-from formula.capsysred.stages.stage14 import _recorded_screen_z
+from formula.capsysred.stages import archive_samples
+from formula.capsysred.stages.beamlets.defect import index_screen_z
+from formula.capsysred.stages.stage14.cache import _recorded_screen_z
 from formula.capsysred.trace_v3 import trace as trace_v3
 
 
@@ -66,6 +66,6 @@ def test_stages_read_an_expression_z_end_to_end(tmp_path):
     s14.replay(archive, str(tmp_path / "s14"), stages=[14])
     assert s14.results["stage14:capillary"]["stats"]["emitted"] == 120
     assert index_screen_z(archive) == 0.051
-    _, meta = _b5_archive.read_sample(archive, max_modes=1, max_rays_per_mode=5,
-                                      target_z=0.058, k=4e10)
+    _, meta = archive_samples.read_sample(archive, max_modes=1, max_rays_per_mode=5,
+                                         target_z=0.058, k=4e10)
     assert meta["recorded_z"] == 0.051

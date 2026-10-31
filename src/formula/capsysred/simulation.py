@@ -15,14 +15,14 @@ import time
 import zlib
 
 from .. import __version__
-from ..formula import Number
+from ..formula import Number, NumberContext
 from .. import xray
 from . import render, schematic
 from .stages import analytic
 from .stages.altcoh import run_alt_stage
-from .stages.beamlet import (STAGING_PREFIX, PeakSampler, _peak_rss,
-                             preflight_stage11, publish_stage11, recorded_plane,
-                             refuse_stage11_leftovers, run_beamlet_stage)
+from .stages.beamlets.publication import STAGING_PREFIX, publish_stage11, refuse_stage11_leftovers
+from .stages.beamlets.workers import PeakSampler, _peak_rss, preflight_stage11
+from .stages.beamlets.runner import run_beamlet_stage
 from .env import Env
 from .shared.common import log as _log
 from .stages.jackknife import run_jack_stage
@@ -35,10 +35,10 @@ from .source import aim_disk_direction, slope_direction
 from .spectrum import spectral_lines, wavelength_m
 from .surfaces import CapillaryBundle, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
-from .fresnel import FresnelAmplitude
+from .fresnel import FresnelAmplitude, optical_constants
 from . import rays_v3
 from .rays import (RNG_SCHEME, MultiRaysReader, RaysReader, geometry_core,
-                   geometry_metadata, metadata_equal)
+                   geometry_metadata, metadata_equal, recorded_plane)
 from .shared.types import HitMethod
 from .shared.utils import flat as _flat
 from .shared import format
@@ -66,7 +66,7 @@ def _wave_backend():
 def _b5_backend():
     """Load optional dependencies only for an explicitly selected Stage 17."""
     try:
-        from .stages import stage17
+        from .stages.method_safe import runner as stage17
     except ModuleNotFoundError as exc:
         if exc.name not in {"numpy", "scipy"}:
             raise
@@ -79,7 +79,7 @@ def _b5_backend():
 def _b9_backend():
     """Load optional dependencies only for an explicitly selected Stage 18."""
     try:
-        from .stages import stage18
+        from .stages.ray_mesh import runner as stage18
     except ModuleNotFoundError as exc:
         if exc.name not in {"numpy", "scipy"}:
             raise
@@ -102,16 +102,16 @@ def _make_sampler():
 class Simulation:
     def __init__(self, cfg: Config):
         self.cfg = cfg
+        self.numbers = NumberContext(cfg.precision)
         self.lines = spectral_lines(cfg.spectrum, cfg.energy_kev)
-        self.fresnel = FresnelAmplitude(cfg.material, cfg.energy_kev)
+        self.fresnel = FresnelAmplitude(cfg.material, cfg.energy_kev, self.numbers)
         # per_line: energy-dependent r(E_m) per spectral line via the symbolic template
         self.per_line = cfg.per_line_fresnel and len(self.lines) > 1
-        self.line_amps = LineAmplitudes(cfg.material, self.lines, cfg.precision)
+        self.line_amps = LineAmplitudes(cfg.material, self.lines, self.numbers)
         self.lam = wavelength_m(cfg.energy_kev)
         p = cfg.precision
         self.theta_c = float(cfg.material.critical_angle(cfg.energy_kev, precision=p))
-        self.delta_f = float(cfg.material.delta(cfg.energy_kev, precision=p))
-        self.beta_f = float(cfg.material.beta(cfg.energy_kev, precision=p))
+        self.delta_f, self.beta_f = optical_constants(cfg.material, cfg.energy_kev, p)
         self.report = []
         self.files = []
         self.results = {}   # stage name -> MC result dict (maps, stats, ...)
@@ -927,8 +927,10 @@ class Simulation:
                   + ("" if self.cfg.beamlet_waist_z is None else
                      f", waist at z = {mm(self.cfg.beamlet_waist_z)}")
                   + f"; mean spot width on screen "
-                  f"= {m_to_um(maps['w_mean']):.2f} µm; Γ-tensor deposit; honest |μ| "
-                  "(no self-pair subtraction)"]
+                  f"= {m_to_um(maps['w_mean']):.2f} µm; Γ-tensor deposit; "
+                  + ("U-statistic |μ| (ray self-pairs subtracted, n/(n-1))"
+                     if self.cfg.beamlet_self_pairs == "subtract" else
+                     "honest |μ| (no self-pair subtraction)")]
         if note:
             report.append(note)
         report += list(extra)

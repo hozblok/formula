@@ -11,11 +11,17 @@ bit-equivalent to the engine:
 every run cross-checks the first hit via expr_um (`engine_hit_t`).
 """
 
+from __future__ import annotations
+
 import math
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from ..formula import Number
+from .shared.coordinates import surface_coordinates
+from .shared.implicit_surface import Surface
 from .shared.nums import lift, vadd, vscale
-from .shared.types import (_EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _TCAP_TOL,
+from .shared.types import (_EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _RAY_POSITION_TOL_M, _TCAP_TOL,
                     HitMethod)
 from .shared.units import m_to_um
 from .walls.wall_cylinder import CylinderWall
@@ -23,6 +29,9 @@ from .walls.wall_funnel import FunnelWall
 from .walls.wall_polygon import PolygonWall, polygon_vertices
 from .walls.wall_revolution import RevolutionWall
 from .walls.wall_torus import TorusWall
+
+if TYPE_CHECKING:
+    from .shared.jets import _Jet
 
 
 class Mirror:
@@ -35,6 +44,29 @@ class Mirror:
         self._normal = (Number("1", p), Number("0", p), Number("0", p))
 
     expr_um = "x"  # surface F=0 for engine cross-checks (scale-free)
+
+    @property
+    def precision(self) -> int:
+        return self.z0.precision
+
+    def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
+        """F=x for the reflecting plane, in world metres."""
+        return surface_coordinates(point, self.precision)[0]
+
+    def gradient(self, point: Sequence[int | float | Number | _Jet]) -> tuple[Number, Number, Number]:
+        """Constant world-coordinate gradient of the reflecting plane."""
+        surface_coordinates(point, self.precision)
+        return self._normal
+
+    def validate(
+        self, point: Sequence[int | float | Number], *,
+        origin: Sequence[int | float | Number], direction: Sequence[int | float | Number],
+    ) -> None:
+        """Require an interior nominal hit approached from the reflecting side."""
+        if not self._z0f + _RAY_POSITION_TOL_M < float(point[2]) < self._z1f - _RAY_POSITION_TOL_M:
+            raise ValueError("mirror hit must lie strictly inside the reflecting span")
+        if not (float(origin[0]) > 0 and float(direction[0]) < 0):
+            raise ValueError("mirror hit must approach from the reflecting side")
 
     def next_event(self, O, d):
         if float(O[0]) <= 0.0 or float(d[0]) >= 0.0:
@@ -66,8 +98,23 @@ class ImplicitWall:
         self.rs = RaySurface(expr, p)
         self.method = method
         self._scale = lift(m_to_um(1), p)
+        self._surface = Surface(self.rs.surface, coordinate_scale=self._scale)
         self.expr_um = None            # the engine IS the hit path here
         self.probe_xy = (1.0, 0.0)
+
+    @property
+    def precision(self) -> int:
+        return self._surface.precision
+
+    def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
+        """Evaluate the original micrometre expression at world coordinates in metres."""
+        return self._surface.value(point)
+
+    def gradient(
+        self, point: Sequence[int | float | Number | _Jet],
+    ) -> tuple[Number, ...] | tuple[_Jet, ...]:
+        """Gradient of the original expression with respect to world metres."""
+        return self._surface.gradient(point)
 
     def _f(self, xf, yf, zf) -> float:
         val = self.rs.surface.evaluate(

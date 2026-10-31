@@ -2,14 +2,16 @@
 
 import operator
 import re
-from functools import cached_property
+from dataclasses import dataclass
+from functools import cache, cached_property
 from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional, Union
 
 # pylint: disable=no-name-in-module, import-error
 from ._formula import FmtFlags, Formula
 from .constants import DEFAULT_CASE_INSENSITIVE, DEFAULT_IMAGINARY_UNIT, DEFAULT_PRECISION
-from .backend import COMPLEX_TYPES, MAX_PRECISION, MP_TYPES, mp_class, mp_precision, round_up_precision
+from .backend import (COMPLEX_TYPES, MAX_PRECISION, MP_TYPES, REAL_TYPES, mp_class, mp_number,
+                      mp_precision, round_up_precision)
 
 class Solver(Formula):
     """Solver for calculating string formulas.
@@ -54,7 +56,15 @@ class Solver(Formula):
                     f"Expected a Mapping for 'values' (got "
                     f"{type(values).__name__}); variables to provide: {variables}"
                 )
-        return {k: v if isinstance(v, str) else str(v) for k, v in values.items()}
+        result = {}
+        for name, value in values.items():
+            if isinstance(value, Number):
+                value = value._value
+            if isinstance(value, REAL_TYPES):
+                result[name] = value.str(0, FmtFlags.default)
+            else:
+                result[name] = value if isinstance(value, str) else str(value)
+        return result
 
     def __call__(
         self,
@@ -131,14 +141,12 @@ class Solver(Formula):
         variables_to_values = self._coerce_variables_to_values(values)
         return self.get_pair(variables_to_values, format_digits, format_flags)
 
-    def number(
-        self, values: Optional[Union[Dict[str, Any], Any]] = None
-    ) -> "Number":
-        """Evaluate to a Number at this solver's precision (no string round-trip).
+    def number(self, values: Optional[Union[Dict[str, Any], Any]] = None):
+        """Evaluate to an mp_real/mp_complex value at this solver's precision.
 
-        Same `values` semantics as __call__.
+        Same `values` semantics as __call__; no string round-trip.
         """
-        return Number(self.evaluate(self._coerce_variables_to_values(values)))
+        return self.evaluate(self._coerce_variables_to_values(values))
 
 
 class Number:
@@ -152,7 +160,7 @@ class Number:
 
     DEFAULT_PRECISION = DEFAULT_PRECISION
 
-    _FROZEN_ATTRS = frozenset({"_value", "_precision", "_is_complex"})
+    _FROZEN_ATTRS = frozenset({"_value", "_precision", "_is_complex", "parts", "cmp_key"})
 
     # Plain real literals need no Formula parse; the mp constructor takes them directly.
     _PLAIN_REAL = re.compile(r"^-?[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?$")
@@ -176,6 +184,11 @@ class Number:
         if name in self._FROZEN_ATTRS and hasattr(self, name):
             raise AttributeError(f"{name} is read-only after construction")
         super().__setattr__(name, value)
+
+    def __delattr__(self, name: str) -> None:
+        if name in self._FROZEN_ATTRS:
+            raise AttributeError(f"{name} is read-only after construction")
+        super().__delattr__(name)
 
     def __init__(
         self,
@@ -244,22 +257,18 @@ class Number:
         fmt = FmtFlags.default
         p = self._precision
         if self._is_complex:
-            return self._value.real(p, fmt), self._value.imag(p, fmt)
+            return self._value.real.str(p, fmt), self._value.imag.str(p, fmt)
         return self._value.str(p, fmt), "0"
 
     @property
     def real(self) -> "Number":
         """Real part as a real Number at this precision."""
-        if self.is_complex:
-            return Number(self._value.real(0, FmtFlags.default), self.precision)
-        return Number(self._value)
+        return Number._wrap(self._value.real, self._precision, False)
 
     @property
     def imag(self) -> "Number":
         """Imaginary part as a real Number at this precision."""
-        if self.is_complex:
-            return Number(self._value.imag(0, FmtFlags.default), self.precision)
-        return Number(0, self.precision)
+        return Number._wrap(self._value.imag, self._precision, False)
 
     def _coerce(self, value) -> "Number":
         """Rhs at self.precision; raises ValueError on storage-precision mismatch."""
@@ -294,11 +303,7 @@ class Number:
         return op(self.cmp_key, b.cmp_key)
 
     def __eq__(self, __value: object) -> bool:
-        if isinstance(__value, (Number, *MP_TYPES)):
-            # Like Number-vs-Number, a raw mp value keeps its own precision.
-            other = __value if isinstance(__value, Number) else Number(__value)
-            return self.parts == other.parts
-        if not isinstance(__value, (str, int, float)):
+        if not isinstance(__value, (Number, *MP_TYPES, str, int, float)):
             return NotImplemented
         return self.parts == self._coerce(__value).parts
 
@@ -338,8 +343,6 @@ class Number:
         return Number._wrap(self._value.sqrt(), self._precision, False)
 
     def __abs__(self) -> "Number":
-        if self._is_complex:
-            return Number(abs(self._value))     # kind of |z| comes from the backend
         return Number._wrap(abs(self._value), self._precision, False)
 
     def __neg__(self) -> "Number":
@@ -370,3 +373,54 @@ class Number:
     def __gt__(self, __value): return self._cmp(__value, operator.gt)
     def __le__(self, __value): return self._cmp(__value, operator.le)
     def __lt__(self, __value): return self._cmp(__value, operator.lt)
+
+
+@cache
+def _constant(precision: int, name: str):
+    return Solver(name, precision=precision).evaluate()
+
+
+@dataclass(frozen=True, slots=True)
+class NumberContext:
+    """mp_real/mp_complex factory with a fixed storage precision and no global state.
+
+    N = NumberContext(precision=64)
+    x = N("1e-30")
+    z = 2 * x + N.i
+
+    Literals only: a real one or the backend's own "(re,im)" text; an
+    expression belongs to Solver. Existing backend values must have this
+    storage precision; they are not rounded.
+    """
+
+    precision: int = DEFAULT_PRECISION
+
+    def __post_init__(self):
+        if isinstance(self.precision, bool) or not isinstance(self.precision, int):
+            raise TypeError("precision must be an int")
+        if not 0 < self.precision <= MAX_PRECISION:
+            raise ValueError(
+                f"precision must be in [1, {MAX_PRECISION}] (got {self.precision})"
+            )
+        object.__setattr__(self, "precision", round_up_precision(self.precision))
+
+    def __call__(self, value: Union[str, int, float, *MP_TYPES]):
+        if isinstance(value, MP_TYPES):
+            if value.precision != self.precision:
+                raise ValueError(
+                    f"precision mismatch: {value.precision} != {self.precision}"
+                )
+            return value
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            raise TypeError(
+                f"value must be str, int, float, or mp_*; got {type(value).__name__}"
+            )
+        return mp_number(self.precision, str(value))
+
+    @property
+    def i(self):
+        return _constant(self.precision, "i")
+
+    @property
+    def pi(self):
+        return _constant(self.precision, "pi")

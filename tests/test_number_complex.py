@@ -30,8 +30,8 @@ def test_i_squared_equals_minus_one():
     assert Number("i*i") == Number("-1")
 
 
-@pytest.mark.xfail(reason="complex ^ drifts via exp(b·log(a))")
 def test_i_to_the_fourth_equals_one():
+    # Real integer exponents are exact repeated squaring.
     assert Number("i^4") == Number("1")
 
 
@@ -74,13 +74,25 @@ def test_magnitude_of_complex_via_abs():
     assert abs(Number("3+4*i")) == Number("5")
 
 
+@pytest.mark.parametrize("expression, expected", [
+    ("3+4*i", "5"), ("-3-4*i", "5"), ("0*i", "0"),
+    ("-1e-1000*i", "1e-1000"), ("1e1000*i", "1e1000"),
+])
+def test_complex_magnitude_is_orderable_real(expression, expected):
+    magnitude = abs(Number(expression, 64))
+    assert not magnitude.is_complex
+    assert magnitude.precision == 64
+    assert magnitude == Number(expected, 64)
+    assert magnitude >= 0
+    assert (magnitude > 0) == (expected != "0")
+
+
 def test_sum_of_opposite_imaginaries_is_zero_via_arithmetic_op():
     # Use the __add__ surface (not just constructor evaluation): the
     # arithmetic dispatch must preserve the cancellation.
     assert Number("i") + Number("-i") == Number("0")
 
 
-@pytest.mark.xfail(reason="complex ^ drifts via exp(b·log(a))")
 def test_square_of_one_plus_i_is_two_i():
     assert Number("(1+i)^2") == Number("2*i")
 

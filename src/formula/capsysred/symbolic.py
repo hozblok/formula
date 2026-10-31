@@ -5,7 +5,7 @@ at any spectral line by substituting numeric 2*delta(E_m), 2*beta(E_m) into a
 cached bounce-count template (variables s1..s_nb, dd, bb).
 """
 
-from ..formula import Number
+from ..formula import NumberContext
 from .shared.nums import solver
 
 
@@ -29,20 +29,19 @@ def ampl_template(nb: int, precision: int):
 class LineAmplitudes:
     """Per-spectral-line amplitude products prod_j r(s_j; E_m) for one ray."""
 
-    def __init__(self, material, lines, precision: int):
-        two = Number("2", precision)
+    def __init__(self, material, lines, numbers: NumberContext):
+        self.numbers = numbers
         # (2*delta, 2*beta) per line as full-precision strings for the template
         self.two_delta_beta = [
-            (str(material.delta(l.e_kev, precision=precision) * two),
-             str(material.beta(l.e_kev, precision=precision) * two))
+            (str(2 * material.delta(numbers(l.e_kev), precision=numbers.precision)),
+             str(2 * material.beta(numbers(l.e_kev), precision=numbers.precision)))
             for l in lines]
-        self.precision = precision
 
     def __call__(self, sins):
         """sins: sin(theta_j) per bounce (Number or full-precision str)."""
         if not sins:
-            return [Number("1", self.precision)] * len(self.two_delta_beta)
-        template = ampl_template(len(sins), self.precision)
+            return [self.numbers(1)] * len(self.two_delta_beta)
+        template = ampl_template(len(sins), self.numbers.precision)
         values = {f"s{j + 1}": str(s) for j, s in enumerate(sins)}
         out = []
         for dd, bb in self.two_delta_beta:

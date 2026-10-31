@@ -6,12 +6,20 @@
 the exact ray∩torus quartic in Number: float Durand-Kerner seeds -> Newton
 polish at full precision, exact-sign bisection as the fallback."""
 
+from __future__ import annotations
+
 import math
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from ...formula import Number
+from ..shared.coordinates import surface_coordinates
 from ..shared.nums import lift, sqrt, vadd, vdot, vnorm, vscale, vsub, vunit
 from ..shared.types import _EPS_T, _INSIDE_TOL, _TCAP_TOL
 from ..shared.units import m_to_um
+
+if TYPE_CHECKING:
+    from ..shared.jets import _Jet
 
 # Newton polish stop, in digits: quit once the step falls below
 # 10^-max(24, p//2) of the root. Newton doubles digits per step, so the final
@@ -151,13 +159,31 @@ class TorusWall:
     """Torus segment leaving z0 along z and curving toward the unit
     xy-direction `toward` (ring center at z=z0)."""
 
-    def __init__(self, center, a, R, toward, z0):
-        self.kind = "torus"
+    @staticmethod
+    def _local_gradient(qx, qy, qz, s, nx, ny, ratio):
+        """Gradient from ring-plane coordinates; ratio=(rho-R)/rho."""
+        return ratio * qx + s * nx, ratio * qy + s * ny, ratio * qz
+
+    @staticmethod
+    def gradient_hessian(qx, qy, qz, s, nx, ny, rho, ratio):
+        """q lies in the ring plane, (nx, ny, 0) is its unit normal; ratio=(rho-R)/rho."""
+        grad = TorusWall._local_gradient(qx, qy, qz, s, nx, ny, ratio)
+        mx, my, mz = qx / rho, qy / rho, qz / rho
+        w = 1.0 - ratio
+        hess = (ratio + w * (mx * mx + nx * nx), w * (mx * my + nx * ny),
+                w * mx * mz, ratio + w * (my * my + ny * ny), w * my * mz,
+                ratio + w * mz * mz)
+        return grad, hess
+
+    def __init__(self, center: tuple[Number, Number], a: Number, R: Number,
+                 toward: tuple[Number, Number], z0: Number) -> None:
+        self.kind, self.center = "torus", center
         p = center[0].precision
         self._one = Number("1", p)
         self._zero = Number("0", p)
         norm = sqrt(toward[0] * toward[0] + toward[1] * toward[1])
         ux, uy = toward[0] / norm, toward[1] / norm
+        self._toward = (ux, uy)
         self.C = (center[0] + R * ux, center[1] + R * uy, z0)
         self.nhat = (self._zero - uy, ux, self._zero)     # ring-plane normal
         self.R, self.a = R, a
@@ -166,6 +192,8 @@ class TorusWall:
         self._Cf = tuple(float(c) for c in self.C)
         self._nf = (float(self.nhat[0]), float(self.nhat[1]))
         self._Rf, self._af = float(R), float(a)
+        self._cxf, self._cyf, self._z0f = float(center[0]), float(center[1]), float(z0)
+        self._tf = (float(ux), float(uy))
         # float rho-R cancellation noise grows with R: widen the on-wall slack
         self._in2 = (self._af * self._af * (1.0 + _INSIDE_TOL)
                      + 64.0 * 2.2e-16 * self._Rf * self._af)
@@ -176,6 +204,62 @@ class TorusWall:
         self.expr_um = (f"({w2}+({self.K * um * um}))^2"
                         f"-({self.fourR2 * um * um})*({w2}-{s}^2)")
         self.probe_xy = (float(ux), float(uy))
+
+    @property
+    def precision(self) -> int:
+        return self.center[0].precision
+
+    def _tube_coordinates(
+        self, point: Sequence[int | float | Number | _Jet],
+    ) -> tuple[Number | _Jet, Number | _Jet, Number | _Jet, Number | _Jet, Number | _Jet]:
+        """Entrance coordinates and stable rho-R, retaining Number parameter precision."""
+        x, y, z = surface_coordinates(point, self.precision)
+        dx, dy, zr = x - self.center[0], y - self.center[1], z - self.C[2]
+        tx, ty = self._toward
+        nx, ny, _ = self.nhat
+        xi, eta = dx * tx + dy * ty, dx * nx + dy * ny
+        radial = xi - self.R
+        rho = sqrt(radial * radial + zr * zr)
+        dr = (xi * (xi - 2 * self.R) + zr * zr) / (rho + self.R)
+        return xi, eta, zr, rho, dr
+
+    def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
+        """F=((rho-R)^2+eta^2-a^2)/2 at scalar or mixed jet world coordinates in metres."""
+        _, eta, _, _, dr = self._tube_coordinates(point)
+        return (dr * dr + eta * eta - self.a * self.a) / 2
+
+    def gradient(
+        self, point: Sequence[int | float | Number | _Jet],
+    ) -> tuple[Number | _Jet, Number | _Jet, Number | _Jet]:
+        """Unnormalized gradient at scalar or mixed jet world coordinates; requires rho>0."""
+        xi, eta, zr, rho, dr = self._tube_coordinates(point)
+        tx, ty = self._toward
+        nx, ny, _ = self.nhat
+        radial = xi - self.R
+        return self._local_gradient(radial * tx, radial * ty, zr, eta, nx, ny, dr / rho)
+
+    def _tube_coordinates_at(self, x, y, z):
+        """Entrance-frame coordinates, ring-plane radius and stable rho-R."""
+        dx, dy, zr = x - self._cxf, y - self._cyf, z - self._z0f
+        tx, ty = self._tf
+        nx, ny = self._nf
+        xi, eta = dx * tx + dy * ty, dx * nx + dy * ny
+        rho = ((self._Rf - xi) ** 2 + zr * zr) ** 0.5
+        dr = (-2 * self._Rf * xi + xi * xi + zr * zr) / (rho + self._Rf)
+        return xi, eta, zr, rho, dr
+
+    def derivatives_at(self, x, y, z):
+        """World-metre derivatives using entrance coordinates and stable rho-R."""
+        xi, eta, zr, rho, dr = self._tube_coordinates_at(x, y, z)
+        tx, ty = self._tf
+        nx, ny = self._nf
+        return self.gradient_hessian((xi - self._Rf) * tx, (xi - self._Rf) * ty,
+                                     zr, eta, nx, ny, rho, dr / rho)
+
+    def surface_error_at(self, x, y, z):
+        """Nonnegative tube-boundary residual in metres, scalar or batched."""
+        _, eta, _, _, dr = self._tube_coordinates_at(x, y, z)
+        return abs((dr * dr + eta * eta) ** 0.5 - self._af)
 
     def inside(self, xf, yf, zf):
         wx, wy, wz = xf - self._Cf[0], yf - self._Cf[1], zf - self._Cf[2]

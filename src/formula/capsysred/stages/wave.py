@@ -23,7 +23,9 @@ from scipy import fft as sfft
 from scipy.special import fresnel
 
 from ... import __version__
+from ...physical_constants import HC_KEV_ANGSTROM
 from .. import render, rays_v3
+from ..fresnel import optical_constants
 from ..screen import ScreenGrid
 from ..shared.units import m_to_um
 
@@ -610,14 +612,14 @@ def preflight_wave_inputs(sim, wave):
     if cap is not None and wave["provider"] in ("auto", "uisk", "images", "march", "fb"):
         prov = capillary_provider(cap, wave)
         if prov in ("uisk", "images", "march"):
-            for i, scr in enumerate([cap.screen, *cap.screens]):
+            for i, scr in enumerate(cap.all_screens):
                 if float(scr.z) < float(cap.z1):
                     raise ValueError(f"wave_estimator: capillary screen {i} at z = {float(scr.z)} "
                                      f"lies before the exit z1 = {float(cap.z1)}; {prov} screens sit "
                                      "on the exit plane or behind it")
         if wave["far_field"] is not None and (prov not in ("uisk", "images", "march") or len(cap.bores) != 1):
             raise ValueError("wave_estimator: far_field needs provider uisk, images or march and a single bore")
-        scenes.append([cap.screen, *cap.screens])
+        scenes.append(cap.all_screens)
     for screens in scenes:
         for scr in screens:
             g = ScreenGrid(scr)
@@ -712,10 +714,12 @@ def _run(sim, out_dir, partial, wave, rays_paths, log):
     files, report, results = [], [], {}
     workers = wave["workers"] or -1
     p = cfg.precision
-    lines = [(float(ln.k), float(ln.weight),
-              float(cfg.material.delta(ln.e_kev, precision=p)) if sim.per_line else sim.delta_f,
-              float(cfg.material.beta(ln.e_kev, precision=p)) if sim.per_line else sim.beta_f)
-             for ln in sim.lines if float(ln.weight) > 0.0]
+    lines = []
+    for ln in sim.lines:
+        if float(ln.weight) > 0.0:
+            delta, beta = (optical_constants(cfg.material, ln.e_kev, p)
+                           if sim.per_line else (sim.delta_f, sim.beta_f))
+            lines.append((float(ln.k), float(ln.weight), delta, beta))
     if cfg.free_source is not None and wave["provider"] in ("auto", "free"):
         res = _free_scene(sim, wave, lines, rays_paths)
         results["free"] = res
@@ -795,7 +799,7 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log, dump_dir=None, 
                 f"{spot['center'][1] * 1e6:.3f}) um, tilt ({spot['tilt'][0] * 1e3:.3f}, {spot['tilt'][1] * 1e3:.3f}) mrad")
     else:
         nodes, weights, rule = _rule(wave, "capillary", src, rays_paths)
-    screens = [cap.screen, *cap.screens]
+    screens = cap.all_screens
     labels = ["capillary"] + [f"capillary-s{i}" for i in range(1, len(cap.screens) + 1)]
     z_in = float(cap.z0) - float(src.position[2])
     length = float(cap.z1) - float(cap.z0)
@@ -956,7 +960,9 @@ def _emit_far_field(out_dir, far, lines, ff, wave):
     for (k, wl, *_), f in zip(lines, far):
         t, px, py, total, inside = f
         row = far_field_summary(t, px, py, total, inside)
-        row.update(k_per_m=float(k), e_kev=float(12.398419843 / (2.0e10 * np.pi / k)), weight=float(wl))
+        row.update(k_per_m=float(k),
+                   e_kev=float(float(HC_KEV_ANGSTROM) / (2.0e10 * np.pi / k)),
+                   weight=float(wl))
         rows.append(row)
         wx = wl * px if wx is None else wx + wl * px
         wy = wl * py if wy is None else wy + wl * py

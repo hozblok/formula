@@ -201,7 +201,7 @@ def test_complex_numbers_1():
     formula = Formula("2*asin(x)*i*i*i^2", 24)
     assert (
         formula.get({"x": "1"}, digits=23, format=FmtFlags.fixed)
-        == "3.14159265358979323846264+i*(0.00000000000000000000000)"
+        == "3.14159265358979323846264+i*(-0.00000000000000000000000)"
     )
 
 
@@ -225,7 +225,7 @@ def test_complex_numbers_2():
     formula = Formula("asin(x)*i*i*i^2*(i+i)", 24)
     assert (
         formula.get({"x": "1"}, digits=23, format=FmtFlags.fixed)
-        == "-0.00000000000000000000000+i*(3.14159265358979323846264)"
+        == "0.00000000000000000000000+i*(3.14159265358979323846264)"
     )
 
 

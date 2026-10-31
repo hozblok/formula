@@ -11,15 +11,14 @@ import math
 import pytest
 
 from formula import Formula, Solver
+from tests.derivatives import first_derivative
 
 
 # Compact helpers --------------------------------------------------------
 
 def deriv(expr, var, values=None, *, precision=24, digits=0):
-    """get_derivative on a fresh Formula. values defaults to {}."""
-    return Formula(expr, precision=precision).get_derivative(
-        var, values or {}, digits
-    )
+    """First derivative on a fresh Formula through both mechanisms."""
+    return first_derivative(Formula(expr, precision=precision), var, values, digits)
 
 
 def approx_eq(s, expected, tol=1e-10):
@@ -240,7 +239,7 @@ def test_deriv_pow_base_zero_does_not_silently_produce_nan():
     # d/dx 0^x hits _pow2(0, b) = log(0) * 0 = NaN; the engine now raises
     # (consistent with _log_d's guard) instead of leaking a literal "nan".
     with pytest.raises((ValueError, RuntimeError)):
-        Formula("0^x").get_derivative("x", {"x": "2"})
+        first_derivative(Formula("0^x"), "x", {"x": "2"})
 
 
 # G2. Structural-zero short-circuit --------------------------------------
@@ -402,20 +401,26 @@ def test_deriv_of_logical_and_is_zero():
 
 def test_deriv_of_imaginary_unit_times_x_squared():
     # Already in test_derivative_formatting; restated as part of the audit.
-    assert Solver("i*x^2")({"x": "2"}, derivative="x") == "0+i*(4)"
+    s = Solver("i*x^2")
+    assert s({"x": "2"}, derivative="x") == "0+i*(4)"
+    assert s.get_partial_derivative(["x"], {"x": "2"}, s.precision) == "0+i*(4)"
 
 
 def test_deriv_of_i_times_sin_at_zero():
     # d/dx (i*sin(x)) at x=0 = i*cos(0) = i. Real part 0; imag part starts with "1".
-    out = Solver("i*sin(x)")({"x": "0"}, derivative="x", format_digits=10)
+    s = Solver("i*sin(x)")
+    out = s({"x": "0"}, derivative="x", format_digits=10)
     assert out.startswith("0+i*(1")
+    assert s.get_partial_derivative(["x"], {"x": "0"}, 10) == out
 
 
 def test_deriv_complex_polynomial_real_var():
     # d/dx (x^2 + i*x) at x=3 = 6 + i. Use small digits to suppress noise.
-    out = Solver("x^2 + i*x")({"x": "3"}, derivative="x", format_digits=10)
+    s = Solver("x^2 + i*x")
+    out = s({"x": "3"}, derivative="x", format_digits=10)
     # Real part rounds to 6.000000000; imag part rounds to 1.000000000.
     assert out.startswith("6") and "+i*(1" in out
+    assert s.get_partial_derivative(["x"], {"x": "3"}, 10) == out
 
 
 # L. Multi-variable -------------------------------------------------------
@@ -461,14 +466,16 @@ def test_deriv_exp_at_zero_is_exact():
 # O. Solver wrapper pass-through -----------------------------------------
 
 def test_solver_derivative_matches_raw_formula():
-    raw = Formula("x^3").get_derivative("x", {"x": "4"})
+    raw = first_derivative(Formula("x^3"), "x", {"x": "4"})
     via = Solver("x^3")({"x": "4"}, derivative="x")
     assert raw == via == "48"
 
 
 def test_solver_one_var_shortcut_with_derivative():
     # Solver supports positional scalar for the single-variable case.
-    assert Solver("x^2")(3, derivative="x") == "6"
+    s = Solver("x^2")
+    assert s(3, derivative="x") == "6"
+    assert s.get_partial_derivative(["x"], {"x": "3"}, s.precision) == "6"
 
 
 # P. Derivative variable validity ----------------------------------------
@@ -495,7 +502,7 @@ def test_deriv_of_pi_times_x():
 def test_deriv_missing_required_value_raises():
     # Expression uses x; derivative wrt x at no value should fail clearly.
     with pytest.raises((ValueError, RuntimeError, KeyError)):
-        Formula("x^2").get_derivative("x", {})
+        first_derivative(Formula("x^2"), "x", {})
 
 
 def test_deriv_extra_values_ignored():

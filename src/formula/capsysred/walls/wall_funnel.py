@@ -9,11 +9,22 @@ f = g = 1 degeneracy) — solved by the torus two-tier machinery: float
 Durand-Kerner seeds -> Newton polish at full precision, exact-sign bisection
 as the fallback."""
 
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, TypeVar
+
 from ...formula import Number
+from ..shared.coordinates import surface_coordinates
 from ..shared.nums import lift, vadd, vscale, vunit
 from ..shared.types import _EPS_T, _INSIDE_TOL, _TCAP_TOL
 from ..shared.units import m_to_um
 from .wall_torus import _quartic_first
+
+if TYPE_CHECKING:
+    from ..shared.jets import _Jet
+
+_Coordinate = TypeVar("_Coordinate")
 
 
 def _poly_first(cs, t_capf):
@@ -38,6 +49,36 @@ class FunnelWall:
     """Bore whose axis scales as center*g(z) and radius as r0*f(z), with
     g = 1 + ag*(z-z0) + bg*(z-z0)^2 and f of the same form (SI units)."""
 
+    @staticmethod
+    def _local_terms(
+        x: _Coordinate, y: _Coordinate, z: _Coordinate,
+        cx: float | Number, cy: float | Number, ag: float | Number,
+        bg: float | Number, af: float | Number, bf: float | Number,
+    ) -> tuple[_Coordinate, _Coordinate, _Coordinate, _Coordinate, _Coordinate, _Coordinate]:
+        """Axis offsets, center projection, radius profile and its two profile slopes."""
+        gg = (z * bg + ag) * z + 1
+        ff = (z * bf + af) * z + 1
+        gp, fp = z * (2 * bg) + ag, z * (2 * bf) + af
+        uu, vv = x - gg * cx, y - gg * cy
+        return uu, vv, uu * cx + vv * cy, ff, gp, fp
+
+    @staticmethod
+    def _local_gradient(
+        uu: _Coordinate, vv: _Coordinate, cn: _Coordinate, ff: _Coordinate,
+        gp: _Coordinate, fp: _Coordinate, r02: float | Number,
+    ) -> tuple[_Coordinate, _Coordinate, _Coordinate]:
+        return uu, vv, (cn * gp + ff * fp * r02) * -1
+
+    @staticmethod
+    def gradient_hessian(x, y, z, cx, cy, r0, ag, bg, af, bf):
+        """Derivatives of (|xy - center*g(z)|^2 - r0^2*f(z)^2)/2; z is local."""
+        uu, vv, cn, ff, gp, fp = FunnelWall._local_terms(x, y, z, cx, cy, ag, bg, af, bf)
+        r02 = r0 ** 2
+        hzz = ((cx * cx + cy * cy) * gp * gp - 2.0 * cn * bg
+               - r02 * (fp * fp + 2.0 * ff * bf))
+        return (FunnelWall._local_gradient(uu, vv, cn, ff, gp, fp, r02),
+                (1.0, 0.0, -cx * gp, 1.0, -cy * gp, hzz))
+
     def __init__(self, center, r0, g, f, z0):
         self.kind = "funnel"
         p = center[0].precision
@@ -59,6 +100,31 @@ class FunnelWall:
         self.expr_um = (f"(x-({center[0] * um})*{G})^2"
                         f"+(y-({center[1] * um})*{G})^2"
                         f"-({r0 * um})^2*{F}^2")
+
+    @property
+    def precision(self) -> int:
+        return self.center[0].precision
+
+    def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
+        """F=(|xy-center*g(z)|^2-r0^2*f(z)^2)/2 at scalar or mixed jet world coordinates."""
+        x, y, z = surface_coordinates(point, self.precision)
+        uu, vv, _, ff, _, _ = self._local_terms(
+            x, y, z - self.z0, *self.center, self.ag, self.bg, self.af, self.bf)
+        return (uu * uu + vv * vv - ff * ff * self.r02) / 2
+
+    def gradient(
+        self, point: Sequence[int | float | Number | _Jet],
+    ) -> tuple[Number | _Jet, Number | _Jet, Number | _Jet]:
+        """Unnormalized gradient at scalar or mixed jet world coordinates in metres."""
+        x, y, z = surface_coordinates(point, self.precision)
+        terms = self._local_terms(x, y, z - self.z0, *self.center,
+                                  self.ag, self.bg, self.af, self.bf)
+        return self._local_gradient(*terms, self.r02)
+
+    def derivatives_at(self, x, y, z):
+        """World-metre derivatives; Hessian order: xx, xy, xz, yy, yz, zz."""
+        return self.gradient_hessian(x, y, z - self._z0f, self._cxf, self._cyf,
+                                     self._r0f, self._agf, self._bgf, self._aff, self._bff)
 
     def _gf(self, zrf):
         gg = 1.0 + zrf * (self._agf + zrf * self._bgf)

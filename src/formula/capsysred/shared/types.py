@@ -66,3 +66,49 @@ _TCAP_TOL = 1e-9
 # radius for a um-scale bore and stays far below the _EPS_LOC nudge, which
 # makes the actual inside/outside decision.
 _INSIDE_TOL = 1e-9
+
+# Absolute tolerance for the geometric residual of a point on a side wall (m).
+# A point passes a surface-residual check only when
+# wall.surface_error_at(x, y, z) is strictly below this value.
+# The 1 nm threshold preserves the existing geometry-consistency criterion;
+# it is a numerical acceptance tolerance, not an analytically derived error bound.
+# Unlike _INSIDE_TOL and _TCAP_TOL, this is an absolute length, independent
+# of the bore radius, surface-equation scaling and gradient magnitude.
+_WALL_SURFACE_TOL_M = 1e-9
+
+# Absolute Euclidean tolerance for comparing ray positions (m).
+# Reconstructed and reference points must differ by strictly less than 1 nm.
+# This checks the mutual placement of ray endpoints, independently of the
+# wall-surface residual and the dimensionless direction error.
+_RAY_POSITION_TOL_M = 1e-9
+
+# Absolute Euclidean tolerance for differences of unit-direction components
+# (dimensionless). Apply it to transverse components when those are recorded.
+# The numeric value matches other tolerances, but the criterion and units
+# are distinct; keep this constant independently adjustable.
+_RAY_DIRECTION_TOL = 1e-9
+
+# Minimum permitted abs(u dot N) for unit ray direction u and wall normal N
+# (dimensionless): the sine of the grazing angle measured from the wall.
+# Hit-time derivatives divide by u dot N; values at or below this threshold
+# mark a grazing trajectory as numerically unreliable.
+_GRAZING_SIN_MIN = 1e-9
+
+# Maximum relative Lagrangian defect (dimensionless), tested with strict <:
+# ||Q.T P - P.T Q||_F / max(||Q||_F ||P||_F, _FLOAT64_SCALE_FLOOR).
+# The 1e-9 threshold checks numerical consistency of position/direction
+# variations; it is not a bound on the reconstructed field error.
+_LAGRANGIAN_DEFECT_TOL = 1e-9
+
+# Positive binary64 scale floor for relative normalization and near-zero scales.
+# It has the units of the guarded quantity, rather than a fixed physical unit.
+# The existing 1e-300 value is retained to preserve behavior at vanishing scales;
+# it is a numerical guard, separate from geometry acceptance tolerances.
+_FLOAT64_SCALE_FLOOR = 1e-300
+
+# Relative slack for assigning points to entrance apertures (dimensionless).
+# Circular radii are multiplied by 1 + tol; polygon face residuals may be
+# at most tol * max(apothems). Keep the existing transport value of 1e-8.
+# A bore is assigned only when exactly one aperture contains the point;
+# overlaps, including tolerance-band overlaps, remain unassigned.
+_APERTURE_REL_TOL = 1e-8

@@ -83,6 +83,28 @@ const std::map<std::string, Complex (*)(Complex, Complex)>
         {std::string("^"), cseval_complex<Complex>::_pow2}};
 
 template <typename Complex>
+const std::map<std::string, std::vector<Complex> (*)(const Complex &, unsigned)>
+    cseval_complex<Complex>::functionsOneArgDerivatives = {
+        {std::string("sin"), d_sin<Complex>},
+        {std::string("asin"), d_asin<Complex>},
+        {std::string("cos"), d_cos<Complex>},
+        {std::string("acos"), d_acos<Complex>},
+        {std::string("tan"), d_tan<Complex>},
+        {std::string("atan"), d_atan<Complex>},
+        {std::string("log"), d_log<Complex>},
+        {std::string("sqrt"), d_sqrt<Complex>},
+        {std::string("exp"), d_exp<Complex>},
+        {std::string("abs"), d_zero<Complex>},
+        {std::string("log2"), d_log2<Complex>},
+        {std::string("log10"), d_log10<Complex>},
+        {std::string("sinh"), d_sinh<Complex>},
+        {std::string("cosh"), d_cosh<Complex>},
+        {std::string("tanh"), d_tanh<Complex>},
+        {std::string("asinh"), d_asinh<Complex>},
+        {std::string("acosh"), d_acosh<Complex>},
+        {std::string("atanh"), d_atanh<Complex>}};
+
+template <typename Complex>
 cseval_complex<Complex>::cseval_complex(const cseval_complex<Complex> &other)
     : kind_(other.kind_),
       id_(std::string(other.id_)),
@@ -465,6 +487,158 @@ Complex cseval_complex<Complex>::calculate_derivative(
   return calculate_derivative(variable, values, mapFunctionTwoArgsValue,
                               mapFunctionOneArgValue, mapFunctionDerivLeft,
                               mapFunctionDerivRight);
+}
+
+template <typename Complex>
+csjet<Complex> cseval_complex<Complex>::apply_function(
+    const std::string &name, const csjet<Complex> &x) {
+  auto it0 = functionsOneArg.find(name);
+  auto it1 = functionsTwoArgsDLeft.find(name);
+  auto itd = functionsOneArgDerivatives.find(name);
+  if (it0 == functionsOneArg.cend() || it1 == functionsTwoArgsDLeft.cend() ||
+      itd == functionsOneArgDerivatives.cend()) {
+    throw std::invalid_argument(
+        (boost::format("The required function is not found \
+during the calculation of the derivative, id: %s") %
+         name)
+            .str());
+  }
+  const Complex &x0 = x.c[0];
+  std::vector<Complex> d;
+  return compose(x, it0->second(x0), [&](unsigned k) {
+    if (k == 1) return it1->second(x0, ZERO);
+    if (d.empty()) d = itd->second(x0, x.order());
+    return d[k];
+  });
+}
+
+template <typename Complex>
+csjet<Complex> cseval_complex<Complex>::calculate_jet(
+    unsigned order, const std::map<std::string, unsigned> &seeds,
+    const std::map<std::string, Complex> &variables_to_values) const {
+  std::map<std::string, csjet<Complex>> jets;
+  for (const auto &item : variables_to_values) {
+    csjet<Complex> r(order, item.second);
+    auto it = seeds.find(item.first);
+    if (it != seeds.cend()) {
+      for (unsigned e = 1; e < r.c.size(); e <<= 1) {
+        if (it->second & e) {
+          r.c[e] = ONE;
+          r.support |= 1u << e;
+        }
+      }
+    }
+    jets.emplace(item.first, std::move(r));
+  }
+  return calculate_jet(order, jets);
+}
+
+template <typename Complex>
+csjet<Complex> cseval_complex<Complex>::calculate_jet(
+    unsigned order,
+    const std::map<std::string, csjet<Complex>> &variables_to_jets) const {
+  if (kind_ == 'n') {
+    return csjet<Complex>(order, value_);
+  } else if (kind_ == 'v') {
+    auto it = variables_to_jets.find(id_);
+    if (it == variables_to_jets.cend()) {
+      throw std::invalid_argument(
+          "The required value is not found during the calculation of the expression, variable name: '" + id_ + "'");
+    }
+    return it->second;
+  } else if (kind_ == 'f') {
+    if (left_eval_ && right_eval_) {
+      auto itValue = functionsTwoArgs.find(id_);
+      auto itLeft = functionsTwoArgsDLeft.find(id_);
+      auto itRight = functionsTwoArgsDRight.find(id_);
+      if (itValue != functionsTwoArgs.cend() &&
+          itLeft != functionsTwoArgsDLeft.cend() &&
+          itRight != functionsTwoArgsDRight.cend()) {
+        csjet<Complex> a =
+            left_eval_->calculate_jet(order, variables_to_jets);
+        csjet<Complex> b =
+            right_eval_->calculate_jet(order, variables_to_jets);
+        Complex value = itValue->second(a.c[0], b.c[0]);
+        // First-order partials, evaluated as in calculate_derivative.
+        uint32_t first = 0;
+        for (unsigned e = 1; e < a.c.size(); e <<= 1) first |= 1u << e;
+        Complex fa = ZERO, fb = ZERO;
+        if (a.support & first) fa = itLeft->second(a.c[0], b.c[0]);
+        if (b.support & first) fb = itRight->second(a.c[0], b.c[0]);
+        // Comparisons and logic are piecewise constant: zero coefficients.
+        csjet<Complex> r(order, value);
+        r.support = a.support | b.support;
+        if (order > 1) {
+          if (id_ == "+") {
+            r = a + b;
+          } else if (id_ == "-") {
+            r = a - b;
+          } else if (id_ == "*") {
+            r = a * b;
+          } else if (id_ == "/") {
+            r = a / b;
+          } else if (id_ == "^") {
+            const Complex &a0 = a.c[0], &b0 = b.c[0];
+            if (b.is_constant()) {
+              r = compose(a, value,
+                          [&](unsigned k) { return _pow_dk(a0, b0, k); });
+            } else if (a.is_constant()) {
+              r = compose(b, value,
+                          [&](unsigned k) { return _pow_ek(a0, b0, k); });
+            } else {
+              // u^v = exp(v * log(u))
+              r = apply_function("exp", b * apply_function("log", a));
+            }
+          }
+        }
+        for (unsigned e = 1; e < r.c.size(); e <<= 1) {
+          if (!a.has(e) && !b.has(e)) continue;
+          Complex t = ZERO;
+          if (a.has(e)) t = t + fa * a.c[e];
+          if (b.has(e)) t = t + fb * b.c[e];
+          r.c[e] = t;
+        }
+        r.c[0] = value;
+        return r;
+      }
+    } else if (left_eval_) {
+      return apply_function(
+          id_, left_eval_->calculate_jet(order, variables_to_jets));
+    }
+    throw std::invalid_argument(
+        (boost::format("The required function is not found \
+during the calculation of the derivative, id: %s") %
+         id_)
+            .str());
+  }
+  throw std::runtime_error(
+      (boost::format("Unknown error during the calculation of the derivative, \
+id: %s, kind: %s") %
+       id_ % kind_)
+          .str());
+}
+
+template <typename Complex>
+Complex cseval_complex<Complex>::calculate_partial_derivative(
+    const std::vector<std::string> &variables,
+    const std::map<std::string, std::string> &variables_to_values) const {
+  if (variables.empty() || variables.size() > kMaxDerivativeOrder) {
+    throw std::invalid_argument(
+        "The order of the partial derivative must be from 1 to 5");
+  }
+  std::map<std::string, unsigned> seeds;
+  for (size_t k = 0; k < variables.size(); ++k) {
+    seeds[variables[k]] |= 1u << k;
+  }
+  typename std::map<std::string, Complex> values;
+  typename std::map<std::string, std::string>::const_iterator it;
+  for (it = variables_to_values.cbegin(); it != variables_to_values.cend();
+       ++it) {
+    validate_variable_value(it->first, it->second);
+    values[it->first] = Complex(it->second, "0.0");
+  }
+  unsigned order = variables.size();
+  return calculate_jet(order, seeds, values).c[(1u << order) - 1];
 }
 
 template <typename Complex>

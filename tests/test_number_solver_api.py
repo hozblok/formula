@@ -3,7 +3,8 @@
 
 import pytest
 
-from formula import Number, Solver
+from formula import FmtFlags, Formula, Number, Solver
+from formula.backend import MP_TYPES
 
 
 # --------------------------------------------------------------------------- #
@@ -94,21 +95,22 @@ def test_real_imag_roundtrip_exact():
 # --------------------------------------------------------------------------- #
 
 def test_eq_with_raw_mp_value_cross_precision():
-    # Used to raise ValueError; now compares by parts like Number-vs-Number.
-    assert Number("1", 24) == Number("1", 64)._value
-    assert Number("2", 24) != Number("1", 64)._value
+    with pytest.raises(ValueError, match="precision mismatch"):
+        _ = Number("1", 24) == Number("1", 64)._value
+    with pytest.raises(ValueError, match="precision mismatch"):
+        _ = Number("2", 24) != Number("1", 64)._value
 
 
 # --------------------------------------------------------------------------- #
 # Solver.number
 # --------------------------------------------------------------------------- #
 
-def test_solver_number_returns_number_at_solver_precision():
+def test_solver_number_returns_a_backend_value_at_solver_precision():
     s = Solver("x*acos(0)", precision=48)
     n = s.number(2)
-    assert isinstance(n, Number)
+    assert isinstance(n, MP_TYPES)
     assert n.precision == s.precision
-    assert n == Number("pi", s.precision)
+    assert Number(n) == Number("pi", s.precision)  # equal at the display precision
 
 
 def test_solver_number_no_variables():
@@ -118,6 +120,26 @@ def test_solver_number_no_variables():
 def test_solver_number_dict_form():
     s = Solver("x + y", precision=32)
     assert s.number({"x": 1, "y": "2"}) == Number("3", 32)
+
+
+@pytest.mark.parametrize("precision", [32, 64, 256])
+@pytest.mark.parametrize("mapping", [False, True])
+def test_solver_preserves_real_number_guard_digits(precision, mapping):
+    x = Number("1." + "0" * precision + "1", precision)
+    values = {"x": x} if mapping else x
+    expected = x - 1
+    assert str(x) == "1"
+    assert expected._value != Number(0, precision)._value
+    s = Solver("x-1", precision)
+    assert s.number(values) == expected._value
+    assert s(values) == str(expected)
+    assert s.pair(values) == expected.parts
+    assert Solver("x^2/2-x", precision)(values, derivative="x") == str(expected)
+
+
+def test_solver_identity_preserves_all_stored_digits():
+    x = Number("1/7", 64)
+    assert Solver("x", 64).number(x) == x._value
 
 
 def test_solver_number_complex_result():
@@ -148,6 +170,8 @@ def test_derivative_non_iterable_raises_value_error():
 def test_derivative_generator_accepted():
     s = Solver("x^2 + y")
     assert s({"x": 2, "y": 1}, derivative=(v for v in ("x", "y"))) == ["4", "1"]
+    values = {"x": "2", "y": "1"}
+    assert [s.get_partial_derivative([v], values, s.precision) for v in "xy"] == ["4", "1"]
 
 
 def test_derivative_element_error_not_masked_as_iterable_error():
@@ -156,3 +180,41 @@ def test_derivative_element_error_not_masked_as_iterable_error():
     with pytest.raises(TypeError) as ex:
         Solver("x^2")(2, derivative=[None])
     assert "not a string or iterable" not in str(ex.value)
+    with pytest.raises(TypeError):
+        Solver("x^2").get_partial_derivative([None], {"x": "2"})
+
+
+# get_partial_derivative next to get_derivative and the Solver call.
+FORMATS = [FmtFlags.default, FmtFlags.fixed, FmtFlags.scientific, FmtFlags.showpos]
+
+
+@pytest.mark.parametrize("expr", ["x^3*sin(x)", "x^3*sin(x)+i*x^2"])
+def test_first_partial_derivative_equals_get_derivative_in_every_format(expr):
+    f, at = Formula(expr, 32), {"x": "0.7"}
+    for digits in (0, 7, 25):
+        for fmt in FORMATS:
+            assert f.get_partial_derivative(["x"], at, digits, fmt) == \
+                f.get_derivative("x", at, digits, fmt)
+
+
+@pytest.mark.parametrize("expr", ["x^4*y", "x^4*y+i*x"])
+def test_solver_partial_derivative_equals_formula(expr):
+    s, f, at = Solver(expr, precision=32), Formula(expr, 32), {"x": "2", "y": "3"}
+    for names in (["x"], ["x", "y"], ["x", "x", "x", "y"], ["x"] * 5):
+        assert s.get_partial_derivative(names, at) == f.get_partial_derivative(names, at)
+
+
+def test_solver_derivative_list_keeps_separate_first_derivatives():
+    s = Solver("x^4")
+    assert s(2, derivative=["x", "x"]) == ["32", "32"]
+    assert s.get_partial_derivative(["x", "x"], {"x": "2"}) == "48"
+
+
+@pytest.mark.parametrize("unit", ["i", "j"])
+def test_precision_round_up_and_custom_unit_on_higher_orders(unit):
+    expr = f"{unit}*x^5+x^3"
+    rounded, exact = Formula(expr, 30, unit), Formula(expr, 32, unit)
+    assert rounded.precision == 32
+    for k in range(2, 6):
+        assert rounded.get_partial_derivative(["x"] * k, {"x": "1.5"}) == \
+            exact.get_partial_derivative(["x"] * k, {"x": "1.5"})
