@@ -121,8 +121,8 @@ static void register_one_mp_complex(py::module_ &m) {
       .def("__bool__", [](const C &x) { return !(x == 0); })
       // |z| as mp_real, through its decimal text.
       .def("__abs__", [](const C &x) { return to_real<P>(abs(x)); })
-      // x ** 0.5, the former Number path; sqrt(x) differs in the last bits.
-      .def("sqrt", [](const C &x) { return pow(x, C("0.5")); })
+      // The native sqrt, the one Solver's sqrt() uses.
+      .def("sqrt", [](const C &x) { return sqrt(x); })
       .def_property_readonly("real",
                              [](const C &x) { return to_real<P>(x.real()); })
       .def_property_readonly("imag",

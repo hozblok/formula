@@ -134,9 +134,12 @@ def test_real_imag_abs_sqrt(p):
     assert z.real == R("3") and z.imag == R("-4") and not z.real.is_complex
     assert z.real.precision == p and abs(z) == R("5") and not abs(z).is_complex
     assert N("1.5").real == N("1.5") and N("1.5").imag == 0
-    assert z.sqrt() == z ** N("0.5")
+    # The named operation is Solver's sqrt(), not ** 0.5: the same algorithm, the same bits.
+    assert z.sqrt() == E(N, "sqrt(3-4*i)") and N("2").sqrt() == E(N, "sqrt(2)")
     assert abs(N("(-4,0)").sqrt() - N("(0,2)")) < N(f"1e-{p - 2}")
     assert N("2.25").sqrt() == N("1.5")
+    tiny = N("(1e-400000000,1e-400000000)")
+    assert "nan" not in str(tiny.sqrt()) and tiny.sqrt() == E(N, "sqrt(1e-400000000+1e-400000000*i)")
 
 
 @pytest.mark.parametrize("p", PRECISIONS)
