@@ -1,8 +1,8 @@
 """YAML/dict -> typed simulation config.
 
-The single numeric boundary: every physical scalar becomes a backend value of
-cfg.numbers here; downstream code reads precision from the values it receives,
-never as a parameter.
+The single numeric boundary: every physical scalar, a number or an expression
+text, becomes a backend value of cfg.numbers here; downstream code reads precision
+from the values it receives, never as a parameter.
 Counts stay int, spectral weights stay float (not phase-critical).
 """
 
@@ -200,14 +200,14 @@ class SourceCfg:
         self.shape = raw["shape"]
         if self.shape not in ("point", "gaussian", "disk", "grid"):
             raise ValueError(f"unknown source shape: {self.shape!r}")
-        self.size = N(str(raw["size"]))
-        self.position = tuple(N(str(c)) for c in raw["position"])
+        self.size = N.eval(str(raw["size"]))
+        self.position = tuple(N.eval(str(c)) for c in raw["position"])
         self.n_modes = int(raw["n_modes"])
         self.n_rays = int(raw["n_rays"])
         if self.shape == "grid":
             # deterministic anode lattice: grid_n x grid_n nodes, gaussian weights
             self.grid_n = int(raw["grid_n"])
-            self.grid_step = N(str(raw["grid_step"]))
+            self.grid_step = N.eval(str(raw["grid_step"]))
             # lattice orientation about the axis, degrees (45 = diamond)
             self.grid_rot_deg = float(raw.get("grid_rot_deg", 0.0))
             # optional disc trim: keep nodes with r <= grid_r_max (m)
@@ -235,10 +235,10 @@ def _required_source(raw: object, scene: str, N: NumberContext) -> SourceCfg:
 
 class ScreenCfg:
     def __init__(self, raw: dict, N: NumberContext):
-        self.z = N(str(raw["z"]))
-        self.center = tuple(N(str(c)) for c in raw["center"])
-        self.edge_x = N(str(raw["edge_x"]))
-        self.edge_y = N(str(raw["edge_y"]))
+        self.z = N.eval(str(raw["z"]))
+        self.center = tuple(N.eval(str(c)) for c in raw["center"])
+        self.edge_x = N.eval(str(raw["edge_x"]))
+        self.edge_y = N.eval(str(raw["edge_y"]))
         self.nx = int(raw["nx"])
         self.ny = int(raw["ny"])
         ref = raw.get("reference")
@@ -257,7 +257,7 @@ def _bore(raw: dict, N: NumberContext, idx: int) -> dict:
             if raw.get(k) is not None]
     if len(mods) > 1:
         raise ValueError(f"bore {idx}: {' + '.join(mods)} cannot be combined")
-    out = {"center": tuple(N(str(c)) for c in raw.get("center", [0.0, 0.0]))}
+    out = {"center": tuple(N.eval(str(c)) for c in raw.get("center", [0.0, 0.0]))}
     if raw.get("surface") is not None:
         if raw.get("radius") is not None:
             raise ValueError(f"bore {idx}: surface bore takes aim_radius, not radius")
@@ -273,7 +273,7 @@ def _bore(raw: dict, N: NumberContext, idx: int) -> dict:
                 f"bore {idx}: invalid engine_method {raw['engine_method']!r}"
             ) from exc
         out.update(kind="implicit", surface=str(raw["surface"]),
-                   aim_radius=N(str(raw["aim_radius"])),
+                   aim_radius=N.eval(str(raw["aim_radius"])),
                    engine_method=engine_method)
         return out
     if "engine_method" in raw:
@@ -286,20 +286,20 @@ def _bore(raw: dict, N: NumberContext, idx: int) -> dict:
             raise ValueError(f"bore {idx}: r2_poly takes 1-3 coefficients")
         cs += [0.0] * (3 - len(cs))
         out.update(kind="revolution",
-                   r2_poly=tuple(N(str(c)) for c in cs))
+                   r2_poly=tuple(N.eval(str(c)) for c in cs))
         return out
     if raw.get("apothems") is not None and raw.get("sides") is None:
         raise ValueError(f"bore {idx}: apothems needs sides")
     if raw.get("radius") is None:
         raise ValueError(f"bore {idx}: needs radius, r2_poly or surface")
-    out["radius"] = N(str(raw["radius"]))
+    out["radius"] = N.eval(str(raw["radius"]))
     if raw.get("bend") is not None:
         bend = raw["bend"]
         if bend.get("radius") is None or bend.get("toward") is None:
             raise ValueError(f"bore {idx}: bend needs radius and toward [ux, uy]")
         out.update(kind="torus", bend={
-            "radius": N(str(bend["radius"])),
-            "toward": tuple(N(str(c)) for c in bend["toward"]),
+            "radius": N.eval(str(bend["radius"])),
+            "toward": tuple(N.eval(str(c)) for c in bend["toward"]),
         })
     elif raw.get("sides") is not None:
         n = int(raw["sides"])
@@ -310,8 +310,8 @@ def _bore(raw: dict, N: NumberContext, idx: int) -> dict:
             aps = [raw["radius"]] * n
         elif len(aps) != n or any(float(a) <= 0.0 for a in aps):
             raise ValueError(f"bore {idx}: apothems needs {n} positive values, one per face")
-        out.update(kind="polygon", sides=n, apothems=tuple(N(str(a)) for a in aps),
-                   rotation=N.eval("d*pi/180", d=str(raw.get("rotation_deg", 0))))
+        out.update(kind="polygon", sides=n, apothems=tuple(N.eval(str(a)) for a in aps),
+                   rotation=N.eval(f"({raw.get('rotation_deg', 0)})*pi/180"))
     elif raw.get("funnel") is not None:
         fn = raw["funnel"]
         g = list(fn.get("g", ()))
@@ -321,8 +321,8 @@ def _bore(raw: dict, N: NumberContext, idx: int) -> dict:
         if len(f) != 2:
             raise ValueError(f"bore {idx}: funnel f takes [a, b]")
         out.update(kind="funnel",
-                   g=tuple(N(str(c)) for c in g),
-                   f=tuple(N(str(c)) for c in f))
+                   g=tuple(N.eval(str(c)) for c in g),
+                   f=tuple(N.eval(str(c)) for c in f))
     else:
         out["kind"] = "cylinder"
     return out
@@ -387,8 +387,8 @@ def _precision_target(raw, p: int, bores, theta_c: float, z_span: float = 0.0):
 
 class CapillaryCfg:
     def __init__(self, raw: dict, base_screen: dict, N: NumberContext):
-        self.z0 = N(str(raw["z0"]))
-        self.z1 = N(str(raw["z1"]))
+        self.z0 = N.eval(str(raw["z0"]))
+        self.z1 = N.eval(str(raw["z1"]))
         self.bores = [_bore(b, N, i) for i, b in enumerate(raw["bores"])]
         self.source = _required_source(raw.get("source"), "capillary", N)
         base = _merge(base_screen, raw.get("screen", {}))
@@ -456,7 +456,7 @@ class Config:
         self.precision = p
         self.numbers = N = NumberContext(p)
         self.seed = int(cfg["seed"])
-        self.energy_kev = N(str(cfg["energy_kev"]))
+        self.energy_kev = N.eval(str(cfg["energy_kev"]))
         self.spectrum = cfg["spectrum"]
         mat = str(cfg["material"])
         if mat not in MATERIALS:
