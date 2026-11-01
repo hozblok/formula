@@ -5,7 +5,7 @@ several seed sets recover the complete two-parameter Taylor polynomial of degree
 
 Examples::
 
-    from formula import Number
+    from formula import NumberContext
     from formula.capsysred.stages._ray_jets import Hit, Surface, transport_ray
     from formula.capsysred.surfaces import ImplicitWall, Mirror
     from formula.capsysred.walls.wall_cylinder import CylinderWall
@@ -22,7 +22,8 @@ Examples::
     plane_jet.predict_position([.001, 0.])
 
     # Straight cylinder of radius 1.
-    zero, one = Number("0", 64), Number("1", 64)
+    N = NumberContext(64)
+    zero, one = N(0), N(1)
     cylinder = CylinderWall((zero, zero), one)
     cylinder_jet = transport_ray([.5, 0.], [0., 0., -2.], 0., 5.,
                                  [Hit(cylinder, [1., 0., 2.])], order=4)
@@ -30,21 +31,21 @@ Examples::
     cylinder_jet.predict_position([.001, 0.])
 
     # Torus: tube radius 1, bend radius 4, bending toward +x.
-    torus = TorusWall((zero, zero), one, Number("4", 64), (one, zero), zero)
+    torus = TorusWall((zero, zero), one, N(4), (one, zero), zero)
     torus_jet = transport_ray([0., 0.], [0., 0., -2.], 0., 4.,
                               [Hit(torus, [0., 0., 3.])], order=4)
     torus_jet.predict_position([.001, 0.])
 
     # Surface of revolution: r(z)^2 = 1 + 0.3125*z.
     revolution = RevolutionWall("revolution", (zero, zero),
-                                (one, Number("0.3125", 64), zero))
+                                (one, N("0.3125"), zero))
     revolution_jet = transport_ray([.5, 0.], [0., 0., -2.], 0., 5.,
                                    [Hit(revolution, [1.5, 0., 4.])], order=4)
     revolution_jet.predict_position([.001, 0.])
 
     # Funnel: fixed axis, expanding radius 1 + z/16.
     funnel = FunnelWall((zero, zero), one, (zero, zero),
-                        (Number("0.0625", 64), zero), zero)
+                        (N("0.0625"), zero), zero)
     funnel_jet = transport_ray([.5, 0.], [0., 0., -2.], 0., 4.,
                                [Hit(funnel, [7/6, 0., 8/3])], order=4)
     funnel_jet.predict_position([.001, 0.])
@@ -62,7 +63,7 @@ Examples::
     implicit_jet.predict_position([.001, 0.])
 
     # Finite mirror x=0, illuminated from x>0; the hit is inside its z span.
-    mirror = Mirror(zero, Number("4", 64))
+    mirror = Mirror(zero, N(4))
     mirror_jet = transport_ray([.2, 0.], [.4, 0., -2.], 0., 4.,
                                [Hit(mirror, [0., 0., 2.])], order=4)
     mirror_jet.predict_position([.001, 0.])
@@ -79,7 +80,6 @@ from decimal import Decimal
 import math
 
 from ...backend import round_up_precision
-from ...formula import Number
 from ..shared.implicit_surface import Surface
 from ..shared.jets import _Algebra, _Jet
 from ..shared.nums import vadd, vdot, vnorm, vscale, vsub, vunit

@@ -11,10 +11,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, TypeVar
 
-from ...formula import Number
+from ...formula import NumberContext
 from ..shared.coordinates import surface_coordinates
-from ..shared.nums import lift, vadd, vscale, vunit
-from ..shared.types import _EPS_T, _INSIDE_TOL, Vec3
+from ..shared.nums import lift, text, vadd, vscale, vunit
+from ..shared.types import _EPS_T, _INSIDE_TOL, Scalar, Vec3
 from ..shared.units import m_to_um
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ class RevolutionWall:
     @staticmethod
     def _local_gradient(
         x: _Coordinate, y: _Coordinate, z: _Coordinate,
-        c1: float | Number, c2: float | Number,
+        c1: float | Scalar, c2: float | Scalar,
     ) -> tuple[_Coordinate, _Coordinate, _Coordinate]:
         return x, y, (z * c2 + c1 / 2) * -1
 
@@ -36,25 +36,27 @@ class RevolutionWall:
         """Gradient and Hessian (xx, xy, xz, yy, yz, zz); x, y are local."""
         return RevolutionWall._local_gradient(x, y, z, c1, c2), (1.0, 0.0, 0.0, 1.0, 0.0, -c2)
 
-    def __init__(self, kind: str, center: tuple[Number, Number], r2: Vec3,
+    def __init__(self, kind: str, center: tuple[Scalar, Scalar], r2: Vec3,
                  eps: float = 1e-30):
         # eps: zero threshold for the quadratic coefficients (degenerate -> linear/no hit)
         self.kind, self.center, self.eps = kind, center, eps
         self.c0, self.c1, self.c2 = r2
         p = center[0].precision
-        self._zero, self._half = Number("0", p), Number("0.5", p)
+        N = NumberContext(p)
+        self._zero, self._half = N(0), N("0.5")
         self._cxf, self._cyf = float(center[0]), float(center[1])
         self._c0f, self._c1f, self._c2f = (float(v) for v in r2)
         um = lift(m_to_um(1), p)
-        self.expr_um = (f"(x-({center[0] * um}))^2+(y-({center[1] * um}))^2"
-                        f"-(({self.c0 * um * um})+({self.c1 * um})*z+({self.c2})*z^2)")
+        t = lambda v: text(v, p)
+        self.expr_um = (f"(x-({t(center[0] * um)}))^2+(y-({t(center[1] * um)}))^2"
+                        f"-(({t(self.c0 * um * um)})+({t(self.c1 * um)})*z+({t(self.c2)})*z^2)")
         self.probe_xy = (1.0, 0.0)
 
     @property
     def precision(self) -> int:
         return self.center[0].precision
 
-    def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
+    def value(self, point: Sequence[int | float | Scalar | _Jet]) -> Scalar | _Jet:
         """F=((x-cx)^2+(y-cy)^2-r2(z))/2 at scalar or mixed jet world coordinates."""
         x, y, z = surface_coordinates(point, self.precision)
         dx, dy = x - self.center[0], y - self.center[1]
@@ -62,8 +64,8 @@ class RevolutionWall:
         return (dx * dx + dy * dy - r2) / 2
 
     def gradient(
-        self, point: Sequence[int | float | Number | _Jet],
-    ) -> tuple[Number | _Jet, Number | _Jet, Number | _Jet]:
+        self, point: Sequence[int | float | Scalar | _Jet],
+    ) -> tuple[Scalar | _Jet, Scalar | _Jet, Scalar | _Jet]:
         """Unnormalized gradient at scalar or mixed jet world coordinates in metres."""
         x, y, z = surface_coordinates(point, self.precision)
         return self._local_gradient(x - self.center[0], y - self.center[1], z,
@@ -81,7 +83,7 @@ class RevolutionWall:
         dx, dy = xf - self._cxf, yf - self._cyf
         return dx * dx + dy * dy < self.r2f(zf) * (1.0 + _INSIDE_TOL)
 
-    def hit(self, O: Vec3, d: Vec3, t_exit: Number):
+    def hit(self, O: Vec3, d: Vec3, t_exit: Scalar):
         """First forward parameter to the wall (exact quadratic), with point+normal."""
         rx, ry = O[0] - self.center[0], O[1] - self.center[1]
         A = d[0] * d[0] + d[1] * d[1] - self.c2 * d[2] * d[2]

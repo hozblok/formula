@@ -3,7 +3,7 @@
 # bit-equivalent to it — every run cross-checks the first hit via expr_um
 # (engine_hit_t), and the NN-symb twin configs A/B full maps against it.
 """Bent bore: the axis is an arc of radius R (torus segment). The wall hit is
-the exact ray∩torus quartic in Number: float Durand-Kerner seeds -> Newton
+the exact ray∩torus quartic in Scalar: float Durand-Kerner seeds -> Newton
 polish at full precision, exact-sign bisection as the fallback."""
 
 from __future__ import annotations
@@ -12,10 +12,10 @@ import math
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from ...formula import Number
+from ...formula import NumberContext
 from ..shared.coordinates import surface_coordinates
-from ..shared.nums import lift, vadd, vdot, vnorm, vscale, vsub, vunit
-from ..shared.types import _EPS_T, _INSIDE_TOL, _TCAP_TOL
+from ..shared.nums import lift, text, vadd, vdot, vnorm, vscale, vsub, vunit
+from ..shared.types import _EPS_T, _INSIDE_TOL, _TCAP_TOL, Scalar
 from ..shared.units import m_to_um
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 # threshold ~p/2 digits above the Horner roundoff floor ~10^-p, which a
 # straight 10^-p target would chase forever (never firing — every ray would
 # drop to the slow bisection fallback). The 24-digit floor keeps the p=32
-# behavior. The step is compared as Number: at p ~ 1024 it is ~1e-500 and
+# behavior. The step is compared as Scalar: at p ~ 1024 it is ~1e-500 and
 # would underflow double.
 _NEWTON_MIN_DIGITS = 24
 
@@ -45,7 +45,7 @@ def _horner(cs, t):
 
 
 def _dk_roots(cf):
-    """All roots of a float polynomial (Durand-Kerner); seeds for Number Newton."""
+    """All roots of a float polynomial (Durand-Kerner); seeds for Scalar Newton."""
     scale = max((abs(v) ** (1.0 / (i + 1)) for i, v in enumerate(cf[1:]) if v),
                 default=1.0) or 1.0
     roots = [complex(0.4, 0.9) ** k * scale for k in range(1, len(cf))]
@@ -85,7 +85,7 @@ def _float_seeds(c, t_capf):
 
 
 def _newton_polish(c, dc, seed, rtol):
-    """Newton on the exact quartic from a float seed: Number root or None.
+    """Newton on the exact quartic from a float seed: Scalar root or None.
 
     Digits double per step, so 12 iterations lift a ~13-digit double seed to
     ~13*2^12 digits — enough headroom for any realistic precision; the loop
@@ -115,7 +115,7 @@ def _bisect_first(c, t_capf):
     (_EPS_T, t_capf] in 48 geometric steps — for t_capf=0.1 the probes are
     1e-12, ~1.7e-12, ..., 0.1 — so an exact double root with NO sign change
     (a tangent graze, not a crossing) stays invisible, which is the intended
-    miss. Signs are Number comparisons, not float(): near the root the
+    miss. Signs are Scalar comparisons, not float(): near the root the
     residual underflows double (reads 0.0, i.e. "not negative") and at
     p ~ 1024 that used to corrupt the bracket. 8 + p*log2(10) halvings
     shrink the bracket below 10^-p of its span.
@@ -123,7 +123,7 @@ def _bisect_first(c, t_capf):
     p = c[0].precision
     lo = lift(_EPS_T, p)
     slo = _horner(c, lo) < 0
-    half = Number("0.5", p)
+    half = NumberContext(p)("0.5")
     halvings = 8 + int(p * math.log2(10))
     for k in range(1, 49):
         hi = lift(_EPS_T * (t_capf / _EPS_T) ** (k / 48.0), p)
@@ -141,14 +141,14 @@ def _bisect_first(c, t_capf):
 
 
 def _quartic_first(c, t_capf):
-    """Smallest real root of the monic Number quartic in (_EPS_T, t_capf].
+    """Smallest real root of the monic Scalar quartic in (_EPS_T, t_capf].
 
     Two tiers: float Durand-Kerner seeds polished by Newton at full precision
     (fast path, simple roots), exact-sign bisection when no seed polishes.
     """
     p = c[0].precision
     rtol = lift(f"1e-{max(_NEWTON_MIN_DIGITS, p // 2)}", p)
-    dc = (c[0] * Number("4", p), c[1] * Number("3", p), c[2] * Number("2", p), c[3])
+    dc = (c[0] * 4, c[1] * 3, c[2] * 2, c[3])
     roots = (_newton_polish(c, dc, seed, rtol) for seed in _float_seeds(c, t_capf))
     best = min((t for t in roots if t is not None and float(t) > _EPS_T),
                key=float, default=None)
@@ -175,12 +175,12 @@ class TorusWall:
                 ratio + w * mz * mz)
         return grad, hess
 
-    def __init__(self, center: tuple[Number, Number], a: Number, R: Number,
-                 toward: tuple[Number, Number], z0: Number) -> None:
+    def __init__(self, center: tuple[Scalar, Scalar], a: Scalar, R: Scalar,
+                 toward: tuple[Scalar, Scalar], z0: Scalar) -> None:
         self.kind, self.center = "torus", center
         p = center[0].precision
-        self._one = Number("1", p)
-        self._zero = Number("0", p)
+        N = NumberContext(p)
+        self._one, self._zero = N(1), N(0)
         norm = (toward[0] * toward[0] + toward[1] * toward[1]).sqrt()
         ux, uy = toward[0] / norm, toward[1] / norm
         self._toward = (ux, uy)
@@ -198,11 +198,12 @@ class TorusWall:
         self._in2 = (self._af * self._af * (1.0 + _INSIDE_TOL)
                      + 64.0 * 2.2e-16 * self._Rf * self._af)
         um = lift(m_to_um(1), p)
-        cx, cy, cz = (str(c * um) for c in self.C)
+        t = lambda v: text(v, p)
+        cx, cy, cz = (t(c * um) for c in self.C)
         w2 = f"(x-({cx}))^2+(y-({cy}))^2+(z-({cz}))^2"
-        s = f"((x-({cx}))*({self.nhat[0]})+(y-({cy}))*({self.nhat[1]}))"
-        self.expr_um = (f"({w2}+({self.K * um * um}))^2"
-                        f"-({self.fourR2 * um * um})*({w2}-{s}^2)")
+        s = f"((x-({cx}))*({t(self.nhat[0])})+(y-({cy}))*({t(self.nhat[1])}))"
+        self.expr_um = (f"({w2}+({t(self.K * um * um)}))^2"
+                        f"-({t(self.fourR2 * um * um)})*({w2}-{s}^2)")
         self.probe_xy = (float(ux), float(uy))
 
     @property
@@ -210,9 +211,9 @@ class TorusWall:
         return self.center[0].precision
 
     def _tube_coordinates(
-        self, point: Sequence[int | float | Number | _Jet],
-    ) -> tuple[Number | _Jet, Number | _Jet, Number | _Jet, Number | _Jet, Number | _Jet]:
-        """Entrance coordinates and stable rho-R, retaining Number parameter precision."""
+        self, point: Sequence[int | float | Scalar | _Jet],
+    ) -> tuple[Scalar | _Jet, Scalar | _Jet, Scalar | _Jet, Scalar | _Jet, Scalar | _Jet]:
+        """Entrance coordinates and stable rho-R, retaining Scalar parameter precision."""
         x, y, z = surface_coordinates(point, self.precision)
         dx, dy, zr = x - self.center[0], y - self.center[1], z - self.C[2]
         tx, ty = self._toward
@@ -223,14 +224,14 @@ class TorusWall:
         dr = (xi * (xi - 2 * self.R) + zr * zr) / (rho + self.R)
         return xi, eta, zr, rho, dr
 
-    def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
+    def value(self, point: Sequence[int | float | Scalar | _Jet]) -> Scalar | _Jet:
         """F=((rho-R)^2+eta^2-a^2)/2 at scalar or mixed jet world coordinates in metres."""
         _, eta, _, _, dr = self._tube_coordinates(point)
         return (dr * dr + eta * eta - self.a * self.a) / 2
 
     def gradient(
-        self, point: Sequence[int | float | Number | _Jet],
-    ) -> tuple[Number | _Jet, Number | _Jet, Number | _Jet]:
+        self, point: Sequence[int | float | Scalar | _Jet],
+    ) -> tuple[Scalar | _Jet, Scalar | _Jet, Scalar | _Jet]:
         """Unnormalized gradient at scalar or mixed jet world coordinates; requires rho>0."""
         xi, eta, zr, rho, dr = self._tube_coordinates(point)
         tx, ty = self._toward

@@ -3,7 +3,7 @@
 # bit-equivalent to it — every run cross-checks the first hit via expr_um
 # (engine_hit_t).
 """Conformal-bundle bore (the Liu wall): axis center*g(z), radius r0*f(z),
-f and g quadratic in z-z0. The ray hit is an exact Number polynomial —
+f and g quadratic in z-z0. The ray hit is an exact Scalar polynomial —
 degree 4, dropping to 2 on structural zeros (a straight cylinder is the
 f = g = 1 degeneracy) — solved by the torus two-tier machinery: float
 Durand-Kerner seeds -> Newton polish at full precision, exact-sign bisection
@@ -14,10 +14,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, TypeVar
 
-from ...formula import Number
+from ...formula import NumberContext
 from ..shared.coordinates import surface_coordinates
-from ..shared.nums import lift, vadd, vscale, vunit
-from ..shared.types import _EPS_T, _INSIDE_TOL, _TCAP_TOL
+from ..shared.nums import lift, text, vadd, vscale, vunit
+from ..shared.types import _EPS_T, _INSIDE_TOL, _TCAP_TOL, Scalar
 from ..shared.units import m_to_um
 from .wall_torus import _quartic_first
 
@@ -28,14 +28,13 @@ _Coordinate = TypeVar("_Coordinate")
 
 
 def _poly_first(cs, t_capf):
-    """Smallest real root in (_EPS_T, t_capf] of the degree-<=4 Number
+    """Smallest real root in (_EPS_T, t_capf] of the degree-<=4 Scalar
     polynomial (leading first). Exact-zero leading coefficients (structural
     wall degeneracies: 0-products, never near-zeros — magnitude truncation is
     the sturm-backend failure mode) shift out and the tail pads with zeros:
     q(t)*t^k keeps every t>0 root, the padded roots at t=0 sit below _EPS_T,
     and the monic quartic runs the torus two-tier machinery unchanged."""
-    p = cs[0].precision
-    zero = Number("0", p)
+    zero = NumberContext(cs[0].precision)(0)
     lead = 0
     while lead < len(cs) - 1 and cs[lead] == zero:
         lead += 1
@@ -52,8 +51,8 @@ class FunnelWall:
     @staticmethod
     def _local_terms(
         x: _Coordinate, y: _Coordinate, z: _Coordinate,
-        cx: float | Number, cy: float | Number, ag: float | Number,
-        bg: float | Number, af: float | Number, bf: float | Number,
+        cx: float | Scalar, cy: float | Scalar, ag: float | Scalar,
+        bg: float | Scalar, af: float | Scalar, bf: float | Scalar,
     ) -> tuple[_Coordinate, _Coordinate, _Coordinate, _Coordinate, _Coordinate, _Coordinate]:
         """Axis offsets, center projection, radius profile and its two profile slopes."""
         gg = (z * bg + ag) * z + 1
@@ -65,7 +64,7 @@ class FunnelWall:
     @staticmethod
     def _local_gradient(
         uu: _Coordinate, vv: _Coordinate, cn: _Coordinate, ff: _Coordinate,
-        gp: _Coordinate, fp: _Coordinate, r02: float | Number,
+        gp: _Coordinate, fp: _Coordinate, r02: float | Scalar,
     ) -> tuple[_Coordinate, _Coordinate, _Coordinate]:
         return uu, vv, (cn * gp + ff * fp * r02) * -1
 
@@ -82,8 +81,8 @@ class FunnelWall:
     def __init__(self, center, r0, g, f, z0):
         self.kind = "funnel"
         p = center[0].precision
-        self._one = Number("1", p)
-        self._zero = Number("0", p)
+        N = NumberContext(p)
+        self._one, self._zero = N(1), N(0)
         self.center, self.r0, self.z0 = center, r0, z0
         self.ag, self.bg = g
         self.af, self.bf = f
@@ -94,18 +93,19 @@ class FunnelWall:
         self._aff, self._bff = float(f[0]), float(f[1])
         self.probe_xy = (1.0, 0.0)
         um = lift(m_to_um(1), p)
-        zr = f"(z-({self.z0 * um}))"
-        G = f"(1+({self.ag / um})*{zr}+({self.bg / (um * um)})*{zr}^2)"
-        F = f"(1+({self.af / um})*{zr}+({self.bf / (um * um)})*{zr}^2)"
-        self.expr_um = (f"(x-({center[0] * um})*{G})^2"
-                        f"+(y-({center[1] * um})*{G})^2"
-                        f"-({r0 * um})^2*{F}^2")
+        t = lambda v: text(v, p)
+        zr = f"(z-({t(self.z0 * um)}))"
+        G = f"(1+({t(self.ag / um)})*{zr}+({t(self.bg / (um * um))})*{zr}^2)"
+        F = f"(1+({t(self.af / um)})*{zr}+({t(self.bf / (um * um))})*{zr}^2)"
+        self.expr_um = (f"(x-({t(center[0] * um)})*{G})^2"
+                        f"+(y-({t(center[1] * um)})*{G})^2"
+                        f"-({t(r0 * um)})^2*{F}^2")
 
     @property
     def precision(self) -> int:
         return self.center[0].precision
 
-    def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
+    def value(self, point: Sequence[int | float | Scalar | _Jet]) -> Scalar | _Jet:
         """F=(|xy-center*g(z)|^2-r0^2*f(z)^2)/2 at scalar or mixed jet world coordinates."""
         x, y, z = surface_coordinates(point, self.precision)
         uu, vv, _, ff, _, _ = self._local_terms(
@@ -113,8 +113,8 @@ class FunnelWall:
         return (uu * uu + vv * vv - ff * ff * self.r02) / 2
 
     def gradient(
-        self, point: Sequence[int | float | Number | _Jet],
-    ) -> tuple[Number | _Jet, Number | _Jet, Number | _Jet]:
+        self, point: Sequence[int | float | Scalar | _Jet],
+    ) -> tuple[Scalar | _Jet, Scalar | _Jet, Scalar | _Jet]:
         """Unnormalized gradient at scalar or mixed jet world coordinates in metres."""
         x, y, z = surface_coordinates(point, self.precision)
         terms = self._local_terms(x, y, z - self.z0, *self.center,

@@ -1,19 +1,27 @@
-"""Scalar and 3-vector kit: fast literal lift, cached solvers.
+"""Scalar and 3-vector kit: fast literal lift, value text, cached solvers.
 
-Precision travels inside Numbers (never as a parameter downstream): `lift` is the
-only entry that takes one, and callers derive it from a Number they already hold.
+Precision travels inside the values (never as a parameter downstream): `lift` and
+`text` are the entries that take one, and callers derive it from a value they hold.
 """
 
-from ...backend import mp_number, round_up_precision
-from ...formula import Number, Solver
+from ..._formula import FmtFlags
+from ...backend import MP_TYPES, mp_number, round_up_precision
+from ...formula import Solver
 
 _SOLVERS: dict = {}
 
 
-def lift(value, precision: int) -> Number:
-    """float/int/str -> Number without formula parsing (hot-path constructor)."""
+def lift(value, precision: int):
+    """float/int/str literal -> backend value at the storage precision (hot-path constructor)."""
     s = value if isinstance(value, str) else repr(value)
-    return Number(mp_number(round_up_precision(precision), s))
+    return mp_number(round_up_precision(precision), s)
+
+
+def text(value, precision: int) -> str:
+    """Value text at the storage precision's significant digits; other scalars as str()."""
+    if isinstance(value, MP_TYPES):
+        return value.str(round_up_precision(precision), FmtFlags.default)
+    return str(value)
 
 
 def raw(number):
