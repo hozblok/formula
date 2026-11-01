@@ -1,9 +1,9 @@
-"""CAPSYSred stages on the Number engine.
+"""CAPSYSred stages on the multiprecision engine.
 
 Stage 2 (free space) pushes the ray stream through the jackknife estimator
 (optic = None); stage 3 is the deterministic free-space reference; stage 14
 is the disk-backed jackknife of the capillary scene. Every optical stage
-cross-checks its analytic Number hit against the RaySurface root-finding
+cross-checks its analytic mp hit against the RaySurface root-finding
 engine and the Fresnel factor against xray.reflect_amplitude.
 """
 
@@ -290,7 +290,7 @@ class Simulation:
                 f"Energy E = {float(cfg.energy_kev):g} keV,  λ = {m_to_angstrom(self.lam):.4f} Å;  spectrum: {self._spectrum_note()}.",
                 f"Wall material: {cfg.material.name};  δ = {self.delta_f:.3e},  β = {self.beta_f:.3e},  θ_c = {rad_to_mrad(self.theta_c):.2f} mrad.",
                 f"Source — a set of mutually incoherent point modes (van Cittert–Zernike method from a Monte-Carlo ensemble).",
-                f"Engine precision: {cfg.precision} digits (Number/Solver, no float64 in the physics path);  seed = {cfg.seed}.",
+                f"Engine precision: {cfg.precision} digits (NumberContext/Solver geometry and path lengths; δ, β float64 from the tables);  seed = {cfg.seed}.",
                 "Pipeline: |μ| and intensity behind the capillary.",
             ],
         }
@@ -442,7 +442,7 @@ class Simulation:
                 f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
                 f"- RMS(|μ|_pair − |μ|_fullW_col) = {rms_full:.2e} (must be ~0: same sums)",
                 f"- RMS(|μ|_pair − |μ|_Wigner) = {rms_wig:.4f}; RMS(I_pair − I_Wigner, normalized) = {rms_int:.2e}",
-                f"- Fresnel float64 mirror vs Number (center line): |Δr| = {res['fresnel_check']:.1e}",
+                f"- Fresnel float64 mirror vs mp (center line): |Δr| = {res['fresnel_check']:.1e}",
                 f"- Wigner u bin: {rad_to_urad(res['alt'].du):.3f} µrad",
                 f"- time: {res['seconds']:.1f} s",
             ]

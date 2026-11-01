@@ -1,4 +1,4 @@
-"""Reflecting optics as event generators over exact Scalar geometry.
+"""Reflecting optics as event generators over exact mp geometry.
 
 One event protocol for every optic (the flat mirror uses the same wall-event
 contract): ("reflect", t, point, normal) | ("pass", t) | ("absorb", t) |

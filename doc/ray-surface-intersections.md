@@ -25,7 +25,7 @@ review log — see [ray-surface-design.md](ray-surface-design.md).
 ```python
 rs = RaySurface("x*x + y*y - 1", precision=24)
 ts = rs.intersect(origin=(-2,0,0), direction=(1,0,0), t_max=10)
-# -> [Number('1...'), Number('3...')]  — t parameters along the ray
+# -> [mp_real_24('1.0...'), mp_real_24('2.9...')]  — t parameters along the ray
 pts = rs.points((-2,0,0), (1,0,0), t_max=10)
 # -> [(x,y,z), ...] — the same intersections in coordinates
 ```
@@ -37,22 +37,22 @@ pts = rs.points((-2,0,0), (1,0,0), t_max=10)
 rs = RaySurface(expression, precision=24)
 
 rs.intersect(origin, direction, t_max, method="auto", t_min=0, **options)
-    # -> sorted list[Number] of ray parameters t where the ray meets F = 0
+    # -> sorted list of mp_real ray parameters t where the ray meets F = 0
 
 rs.points(origin, direction, t_max, **kwargs)
     # -> list[(x, y, z)] intersection points on the surface, sorted by t
 ```
 
 - `origin` / `direction` are `(x, y, z)` triples; `direction` must be non-zero.
-- Roots come back as multiprecision `Number`s, ascending.
+- Roots come back as `mp_real` values at the surface's storage precision, ascending.
 - `points()` reconstructs the **full** 3-D point even for axes the surface
   ignores (a cylinder is independent of `z`, but a ray's `z` is still reported):
 
 ```python
 >>> rs = RaySurface("x*x - 1", precision=24)   # depends on x only
 >>> rs.points((-2, 5, 7), (1, 0, 0), t_max=10, method="sturm")
-[(Number('-0.999...'), Number('5'), Number('7')),
- (Number('0.999...'),  Number('5'), Number('7'))]
+[(mp_real_24('-0.9999999999999999999999801476652987273364'), mp_real_24('5'), mp_real_24('7')),
+ (mp_real_24('0.9999999999999999999999933825550995757787'), mp_real_24('5'), mp_real_24('7'))]
 ```
 
 **`method`** — the root-finding backend:
@@ -114,9 +114,9 @@ Hence `(1, 0, 0)` and `(7, 0, 0)` give the same `t`.
 >>> from formula import RaySurface
 >>> rs = RaySurface("x*x + y*y - 1", precision=24)       # unit cylinder
 >>> rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10)        # enters at x=-1 (t=1), exits at x=1 (t=3)
-[Number('1.00000000000000000000002', precision=24), Number('2.99999999999999999999999', precision=24)]
+[mp_real_24('1.0000000000000000000000198523347012726636'), mp_real_24('2.9999999999999999999999933825550995757787')]
 >>> rs.intersect((-2, 0, 0), (7, 0, 0), t_max=10)        # longer d, same direction -> same t
-[Number('1.00000000000000000000002', precision=24), Number('2.99999999999999999999999', precision=24)]
+[mp_real_24('1.0000000000000000000000198523347012726636'), mp_real_24('2.9999999999999999999999933825550995757787')]
 ```
 
 
@@ -137,7 +137,7 @@ separate close roots and certify a root count.
 ## Backends
 
 Every backend implements one contract,
-`find_all(func, t_min, t_max, precision, **opts) -> list[Number]`, and may be
+`find_all(func, t_min, t_max, precision, **opts) -> list` of mp values, and may be
 selected directly or reached through `auto`.
 
 ### `sturm` — exact, for algebraic surfaces
@@ -202,7 +202,7 @@ baseline the rigorous backends are cross-checked against. Non-finite samples
 ## Worked examples
 
 ```python
-from formula import RaySurface, Number
+from formula import RaySurface
 
 # 1) Sphere, two crossings
 rs = RaySurface("x*x + y*y + z*z - 1", precision=48)
@@ -421,9 +421,9 @@ well separated from it.
 
 ```python
 rs = RaySurface("1/(x-5) - 1/2", precision=30)        # pole at x=5, root at x=7
-rs.intersect((0,0,0),(1,0,0), t_max=10, t_min=Number("5.5",30), method="chebyshev")
+rs.intersect((0,0,0),(1,0,0), t_max=10, t_min="5.5", method="chebyshev")
 # -> []            (silent miss: the pole at 5 is just left of t_min=5.5)
-rs.intersect((0,0,0),(1,0,0), t_max=10, t_min=Number("5.5",30), method="subdivision")
+rs.intersect((0,0,0),(1,0,0), t_max=10, t_min="5.5", method="subdivision")
 # -> [7]           (workaround: bracketing backends tolerate a nearby pole)
 ```
 

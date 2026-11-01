@@ -1,7 +1,7 @@
 """Extended incoherent source: mutually incoherent coherent point modes.
 
 Random draws are plain floats (not precision-critical); every emitted point and
-direction is lifted to Number, and directions are unit-normalized in Number so
+direction is lifted to mp values, and directions are unit-normalized in mp so
 the absolute phase k*L stays exact downstream.
 """
 

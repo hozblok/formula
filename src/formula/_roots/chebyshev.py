@@ -20,7 +20,7 @@ def _gauss_samples(func, mid, span, m, N: NumberContext):
     xs, fs = [], []
     for j in range(m):
         theta = pi * (j + 0.5) / m
-        # the cos argument keeps p significant digits, the text a Number printed
+        # cos of the p-significant-digit text of theta
         x = N.eval("cos(a)", a=theta.str(N.precision, FmtFlags.default))
         xs.append(x)
         f = func.g(mid + span * x).real

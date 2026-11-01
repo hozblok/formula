@@ -264,7 +264,7 @@ def test_components_beyond_the_decimal_range_raise():
 
 @pytest.mark.parametrize("p", PRECISIONS)
 def test_float_is_the_correctly_rounded_parse_of_the_stored_digits(p):
-    # float(x) == float(x.str(precision)), as it was through Number; Boost's convert_to<double>
+    # float(x) == float(x.str(precision)); Boost's convert_to<double>
     # is off by an ulp in about one computed value per thousand.
     import random
     N = NumberContext(p)

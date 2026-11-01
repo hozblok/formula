@@ -9,7 +9,6 @@ from ..config import _bore
 from ..shared.apertures import (
     bore_inside, entrance_bore_ids, is_polygon, polygon_apothems, polygon_faces,
 )
-from ..shared.nums import raw
 from ..shared.types import (
     _FLOAT64_SCALE_FLOOR, _GRAZING_SIN_MIN, _LAGRANGIAN_DEFECT_TOL,
     _RAY_DIRECTION_TOL, _RAY_POSITION_TOL_M, _WALL_SURFACE_TOL_M,
@@ -130,8 +129,8 @@ def _transport_wall(bore, z0):
     N = NumberContext(getattr(bore["center"][0], "precision", 32))
     spec = _bore(bore, N, 0)
     if is_polygon(bore) and bore.get("rotation") is not None:
-        spec["rotation"] = N(raw(bore["rotation"]))
-    return _make_wall(spec, N(raw(z0)))
+        spec["rotation"] = N(bore["rotation"])
+    return _make_wall(spec, N(z0))
 
 
 def wall_normal_derivative(points, bore, z0=None):

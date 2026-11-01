@@ -24,11 +24,6 @@ def text(value, precision: int) -> str:
     return str(value)
 
 
-def raw(number):
-    """Number or backend value -> the backend mp value (the C++ boundary takes these)."""
-    return getattr(number, "_value", number)
-
-
 def solver(expression: str, precision: int) -> Solver:
     """Cached Solver for a fixed expression at a precision."""
     key = (expression, round_up_precision(precision))
