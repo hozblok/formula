@@ -4,7 +4,7 @@ nan root."""
 
 import pytest
 
-from formula import NumberContext
+from formula import NumberContext, RaySurface
 from formula._roots import _general, _union, sampling, subdivision
 from formula._roots.utils import finite, finite_sign, merge_close_roots, rtsafe, sign
 
@@ -74,3 +74,33 @@ def test_subdivision_refuses_a_non_finite_m2_sample_and_the_root_survives():
     assert _is_half(root)
     roots = _general(Kink(), N(-1), N(1), 64)
     assert any(_is_half(r) for r in roots)
+
+
+class Pole03:
+    """1/(t - 0.3): a sign change across a pole between the samples, no root."""
+
+    def g(self, t):
+        return 1 / (t - N("0.3"))
+
+    def gprime(self, t):
+        return -1 / ((t - N("0.3")) * (t - N("0.3")))
+
+
+class Jump:
+    """sign(t - 0.3): a jump through zero, no root."""
+
+    def g(self, t):
+        return N(1) if t > N("0.3") else N(-1)
+
+    def gprime(self, t):
+        return N(0)
+
+
+def test_a_pole_or_a_jump_between_the_samples_is_no_root():
+    # A root's residual vanishes with the bracket; a pole's grows and a jump's stays.
+    for func in (Pole03(), Jump()):
+        assert rtsafe(func, N(0), N(1), N("1e-62")) is None
+        assert sampling.find_all(func, N(0), N(1), 64, samples=1) == []
+    assert RaySurface("1/(x-0.3)", 64).intersect((0, 0, 0), (1, 0, 0), 1, method="sampling", samples=1) == []
+    root, = sampling.find_all(Kink(), N(-1), N(1), 64, samples=1)
+    assert _is_half(root)

@@ -59,10 +59,12 @@ def finite_sign(value):
 
 
 def rtsafe(func: _RootFunc, a, b, xacc, maxit: int = 200):
-    """Refine one root of g in a sign-change bracket [a, b].
+    """Refine one root of g in a sign-change bracket [a, b]; None when there is none.
 
     Safeguarded Newton: Newton when the iterate stays bracketed, bisection
-    otherwise.
+    otherwise. A root's residual vanishes with the bracket; a pole's grows and
+    a jump's stays, so a final residual not below the bracket-end values means
+    no root. A non-finite g inside the bracket is an error: g has no value there.
 
     Recipe — Press, Teukolsky, Vetterling & Flannery, *Numerical Recipes*
     (Cambridge Univ. Press), Ch. 9 §9.4 "Newton-Raphson Method Using
@@ -76,7 +78,11 @@ def rtsafe(func: _RootFunc, a, b, xacc, maxit: int = 200):
             stop when |step| < xacc.
     maxit — iteration cap if xacc is not reached.
     """
-    lo, hi = (a, b) if sign(func.g(a)) < 0 else (b, a)
+    g_a, g_b = func.g(a), func.g(b)
+    if not (finite(g_a) and finite(g_b)):
+        raise ValueError("non-finite g at a bracket end")
+    scale = max(abs(g_a), abs(g_b))
+    lo, hi = (a, b) if sign(g_a) < 0 else (b, a)
     t, step = (a + b) * 0.5, abs(b - a)
     g, gp = func.g(t), func.gprime(t)
     for _ in range(maxit):
@@ -89,10 +95,11 @@ def rtsafe(func: _RootFunc, a, b, xacc, maxit: int = 200):
         step = (hi - lo) * 0.5 if secure else g / gp
         t = lo + step if secure else t - step
         if abs(step) < xacc:
-            return t
+            break
         g, gp = func.g(t), func.gprime(t)
         lo, hi = (t, hi) if sign(g) < 0 else (lo, t)
-    return t
+    g = func.g(t)
+    return t if finite(g) and abs(g) < scale else None
 
 
 def merge_close_roots(roots, xacc) -> list:

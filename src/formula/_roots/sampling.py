@@ -25,6 +25,8 @@ def find_all(
         if s_cur == 0:
             roots.append(t_cur)
         elif s_prev is not None and s_cur is not None and s_prev * s_cur < 0:
-            roots.append(rtsafe(func, t_prev, t_cur, xacc))
+            root = rtsafe(func, t_prev, t_cur, xacc)  # None across a pole or a jump
+            if root is not None:
+                roots.append(root)
         t_prev, s_prev = t_cur, s_cur
     return merge_close_roots(roots, xacc)
