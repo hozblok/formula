@@ -56,7 +56,7 @@ def _normalize(components, zero_msg="direction must be a non-zero vector"):
     """Unit-normalize components; raises on an empty or zero vector."""
     if not components:
         raise ValueError(zero_msg)
-    norm = abs(sum((c * c for c in components), 0)) ** 0.5
+    norm = abs(sum((c * c for c in components), 0)).sqrt()
     if norm == 0:
         raise ValueError(zero_msg)
     return tuple(c / norm for c in components)

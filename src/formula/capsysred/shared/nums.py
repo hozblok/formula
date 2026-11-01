@@ -4,6 +4,8 @@ Precision travels inside the values (never as a parameter downstream): `lift` an
 `text` are the entries that take one, and callers derive it from a value they hold.
 """
 
+import math
+
 from ..._formula import FmtFlags
 from ...backend import MP_TYPES, mp_number, round_up_precision
 from ...formula import Solver
@@ -22,6 +24,12 @@ def text(value, precision: int) -> str:
     if isinstance(value, MP_TYPES):
         return value.str(round_up_precision(precision), FmtFlags.default)
     return str(value)
+
+
+def fsqrt(value):
+    """Correctly rounded square root of a float, or elementwise of an array."""
+    # a float's ** 0.5 goes through pow; an array's ** 0.5 is numpy's sqrt
+    return math.sqrt(value) if isinstance(value, float) else value ** 0.5
 
 
 def solver(expression: str, precision: int) -> Solver:

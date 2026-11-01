@@ -124,7 +124,7 @@ def reflect_amplitude(
     s = N.eval("sin(g)", g=_s(grazing_angle))
     delta, beta = material.optical(energy_kev_value)
     d2, b2 = 2.0 * delta, 2.0 * beta
-    root = (s * s - d2 + b2 * N.i) ** 0.5
+    root = (s * s - d2 + b2 * N.i).sqrt()
     return (s - root) / (s + root)
 
 

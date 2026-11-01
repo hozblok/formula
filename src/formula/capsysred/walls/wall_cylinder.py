@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, TypeVar
 
 from ..shared.coordinates import surface_coordinates
-from ..shared.nums import lift, text, vadd, vscale, vunit
+from ..shared.nums import fsqrt, lift, text, vadd, vscale, vunit
 from ..shared.types import _EPS_T, _INSIDE_TOL, Scalar, Vec3
 from ..shared.units import m_to_um
 
@@ -67,7 +67,7 @@ class CylinderWall:
     def surface_error_at(self, x, y, z):
         """Nonnegative boundary residual in metres, scalar or batched."""
         dx, dy = x - self._cxf, y - self._cyf
-        return abs((dx * dx + dy * dy) ** 0.5 - self._rf)
+        return abs(fsqrt(dx * dx + dy * dy) - self._rf)
 
     def inside(self, xf: float, yf: float, zf: float) -> bool:
         dx, dy = xf - self._cxf, yf - self._cyf
