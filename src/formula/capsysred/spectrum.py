@@ -36,7 +36,7 @@ def _table_pairs(path, N: NumberContext):
                 continue
             if len(row) < 2:
                 raise ValueError(f"spectrum table row needs 'E weight': {raw!r}")
-            pairs.append((N(row[0]), float(row[1])))
+            pairs.append((N.eval(row[0]), float(row[1])))
     if not pairs:
         raise ValueError(f"spectrum table {path!r} is empty")
     return pairs
@@ -49,7 +49,7 @@ def spectral_lines(cfg: dict, energy_kev):
     if mode == "monochromatic":
         return [SpectralLine(energy_kev, wavevector(energy_kev), 1.0)]
     if mode == "lines":
-        pairs = [(N(str(l["energy_kev"])), float(l.get("weight", 1.0)))
+        pairs = [(N.eval(str(l["energy_kev"])), float(l.get("weight", 1.0)))
                  for l in cfg["lines"]]
     elif mode == "table":
         pairs = _table_pairs(cfg["file"], N)
