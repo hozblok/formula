@@ -4,8 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from formula import Solver
-from formula.backend import MP_TYPES, mp_class
+from formula import MP_TYPES, Solver, _formula
 
 
 @pytest.mark.parametrize("cls", MP_TYPES)
@@ -21,7 +20,7 @@ def test_float_multiply(cls, scalar):
 
 @pytest.mark.parametrize("is_complex", [False, True])
 def test_float_multiply_uses_the_decimal_repr(is_complex):
-    cls = mp_class(64, is_complex)
+    cls = _formula.mp_complex_64 if is_complex else _formula.mp_real_64
     one = cls("1")
     binary = cls(str(Decimal.from_float(0.1)))
     assert one * 0.1 == cls("0.1") == 0.1 * one

@@ -8,7 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 # pylint: disable=no-name-in-module, import-error
 from ._formula import FmtFlags, Formula
 from .constants import DEFAULT_CASE_INSENSITIVE, DEFAULT_IMAGINARY_UNIT, DEFAULT_PRECISION
-from .backend import MAX_PRECISION, MP_TYPES, REAL_TYPES, mp_number, round_up_precision
+from .backend import MAX_PRECISION, MP_TYPES, mp_number, round_up_precision
 
 class Solver(Formula):
     """Solver for calculating string formulas.
@@ -59,7 +59,7 @@ class Solver(Formula):
             if isinstance(value, MP_TYPES) and value.precision != self.precision:
                 raise ValueError(f"precision mismatch: {name} is {value.precision}, "
                                  f"the solver {self.precision}")
-            if isinstance(value, REAL_TYPES):
+            if isinstance(value, MP_TYPES) and not value.is_complex:
                 result[name] = value.str(0, FmtFlags.default)
             else:
                 result[name] = value if isinstance(value, str) else str(value)

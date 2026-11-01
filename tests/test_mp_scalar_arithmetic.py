@@ -15,7 +15,7 @@ import operator
 import numpy as np
 import pytest
 
-from formula import Solver, NumberContext, mp_class
+from formula import Solver, NumberContext, _formula
 
 PRECISIONS = (16, 64, 256)
 BINARY = [operator.add, operator.sub, operator.mul, operator.truediv, operator.pow]
@@ -61,7 +61,7 @@ def test_bool_is_refused(op):
 def test_real_and_complex_promote(p):
     N = NumberContext(p)
     x, z = N("1.5"), N("(0.5,2)")
-    C = mp_class(p, is_complex=True)
+    C = type(z)
     for op in BINARY:
         assert op(x, z) == op(C("1.5"), z) and op(x, z).is_complex
         assert op(z, x) == op(z, C("1.5")) and op(z, x).is_complex
@@ -92,7 +92,7 @@ def test_other_objects_leave_the_decision_to_python(other):
 @pytest.mark.parametrize("kind", [False, True])
 def test_other_precision_is_a_type_error_everywhere(kind):
     a = NumberContext(64)("1.5")
-    b = mp_class(128, is_complex=kind)("1.5")
+    b = NumberContext(128)("(1.5,0)" if kind else "1.5")
     for op in BINARY + [operator.eq, operator.ne]:
         with pytest.raises(TypeError, match="precision mismatch"):
             op(a, b)
@@ -129,10 +129,9 @@ def test_float_and_complex_conversions(p):
 @pytest.mark.parametrize("p", PRECISIONS)
 def test_real_imag_abs_sqrt(p):
     N = NumberContext(p)
-    R = mp_class(p)
     z = N("(3,-4)")
-    assert z.real == R("3") and z.imag == R("-4") and not z.real.is_complex
-    assert z.real.precision == p and abs(z) == R("5") and not abs(z).is_complex
+    assert z.real == N("3") and z.imag == N("-4") and not z.real.is_complex
+    assert z.real.precision == p and abs(z) == N("5") and not abs(z).is_complex
     assert N("1.5").real == N("1.5") and N("1.5").imag == 0
     # The named operation is Solver's sqrt(), not ** 0.5: the same algorithm, the same bits.
     assert z.sqrt() == E(N, "sqrt(3-4*i)") and N("2").sqrt() == E(N, "sqrt(2)")
@@ -152,11 +151,11 @@ def test_sum_and_hash(p):
 
 def test_context_returns_backend_values_and_constants():
     N = NumberContext(64)
-    assert type(N("1.5")) is mp_class(64) and type(E(N, "1+i")) is mp_class(64, True)
+    assert type(N("1.5")) is _formula.mp_real_64 and type(E(N, "1+i")) is _formula.mp_complex_64
     assert N.i * N.i == -1 and N.i is N.i and N.pi == E(N, "pi")
-    assert N(N("1.5")) is not None and N(mp_class(64)("2")).precision == 64
+    assert N(N("1.5")) is not None and N(_formula.mp_real_64("2")).precision == 64
     with pytest.raises(ValueError, match="precision mismatch"):
-        N(mp_class(128)("2"))
+        N(_formula.mp_real_128("2"))
 
 
 @pytest.mark.parametrize("p", PRECISIONS)
@@ -164,7 +163,7 @@ def test_real_and_complex_never_compare(p):
     # The binary exponent range is wider than the decimal one: 1e-100000000
     # and 2e-100000000 differ, yet neither fits in mp_real, so no conversion
     # compares the kinds faithfully.
-    R, C = mp_class(p), mp_class(p, True)
+    R, C = getattr(_formula, f"mp_real_{p}"), getattr(_formula, f"mp_complex_{p}")
     a, b = C("1e-100000000"), C("2e-100000000")
     assert a != b
     with pytest.raises(ValueError, match="exponent range"):
@@ -227,7 +226,7 @@ def test_only_registered_backend_classes_mismatch_precision():
 @pytest.mark.parametrize("kind", [False, True])
 def test_backend_classes_are_final(kind):
     with pytest.raises(TypeError, match="not an acceptable base type"):
-        type("Sub", (mp_class(64, kind),), {})
+        type("Sub", (_formula.mp_complex_64 if kind else _formula.mp_real_64,), {})
 
 
 @pytest.mark.xfail(strict=True, reason="the native complex sqrt loses the argument of a tiny "
