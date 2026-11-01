@@ -117,11 +117,12 @@ static void register_one_mp_real(py::module_ &m) {
            "Native mp square root (much faster than pow(x, 0.5)).")
       .def_property_readonly("real", [](const R &x) { return x; })
       .def_property_readonly("imag", [](const R &) { return R(0); })
-      .def("__float__",
-           [](const R &x) { return x.template convert_to<double>(); })
+      // Through the stored digits: Boost's convert_to<double> is off by an ulp
+      // in about one value per thousand.
+      .def("__float__", [](const R &x) { return parse_double(x.str(P)); })
       .def("__complex__",
            [](const R &x) {
-             return std::complex<double>(x.template convert_to<double>(), 0.0);
+             return std::complex<double>(parse_double(x.str(P)), 0.0);
            })
       // Python's hash of the value: an int within 2**53 hashes as that int.
       .def("__hash__", [](const R &x) { return real_hash(x); })

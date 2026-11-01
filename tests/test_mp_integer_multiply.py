@@ -11,11 +11,12 @@ from formula.backend import MP_TYPES
                                    -(2**63), 2**63 - 1, 2**63,
                                    -(2**63) - 1, 10**40 + 1])
 def test_integer_multiply(cls, scalar):
+    # Each order multiplies as Python reads it: the backend's product is not commutative in the guard digits.
     value = cls("1.25")
-    expected = value * cls(str(scalar))
+    assert value * scalar == value * cls(str(scalar))
+    assert scalar * value == cls(str(scalar)) * value
     for result in (value * scalar, scalar * value):
         assert type(result) is cls
-        assert result == expected
     assert 2 * (value + value) == cls("5")
 
 

@@ -260,3 +260,20 @@ def test_components_beyond_the_decimal_range_raise():
         with pytest.raises(ValueError, match="exponent range"):
             get()
     assert N("(1e-67000000,0)").real != 0
+
+
+@pytest.mark.parametrize("p", PRECISIONS)
+def test_float_is_the_correctly_rounded_parse_of_the_stored_digits(p):
+    # float(x) == float(x.str(precision)), as it was through Number; Boost's convert_to<double>
+    # is off by an ulp in about one computed value per thousand.
+    import random
+    N = NumberContext(p)
+    rng = random.Random(p)
+    for _ in range(3000):
+        x = N(repr(rng.uniform(0.5, 2))) / N(repr(rng.uniform(0.5, 2))) * N(f"1e{rng.randint(-30, 30)}")
+        assert float(x) == float(x.str(p)) and complex(x) == complex(float(x), 0)
+        z = N(f"({x.str(0)},{(-x).str(0)})")
+        re_text, im_text = z.str(p)[1:-1].split(",")  # the components' own p-digit text
+        assert complex(z) == complex(float(re_text), float(im_text))
+    assert float(N(1) / N(0)) == float("inf") and float(-N(1) / N(0)) == float("-inf")
+    assert float(N(0) / N(0)) != float(N(0) / N(0))  # nan

@@ -135,6 +135,15 @@ inline std::optional<std::pair<std::string, std::string>> complex_literal(
   return std::make_pair(re, im);
 }
 
+// The double of a value's text, Python's own correctly rounded parse: float(x)
+// equals float(str(x)) at the stored digits, as it did through Number.
+inline double parse_double(const std::string &text) {
+  auto f = pybind11::reinterpret_steal<pybind11::object>(
+      PyFloat_FromString(pybind11::str(text).ptr()));
+  if (!f) throw pybind11::error_already_set();
+  return PyFloat_AS_DOUBLE(f.ptr());
+}
+
 // Python's hash of the value: an integer within 2**53 as Python hashes that
 // int (its own modular hash, so 32-bit builds agree), else by canonical text.
 template <class Real>
