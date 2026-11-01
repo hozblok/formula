@@ -3,7 +3,7 @@
 import operator
 import re
 from dataclasses import dataclass
-from functools import cache, cached_property
+from functools import cached_property, lru_cache
 from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional, Union
 
@@ -379,12 +379,7 @@ class Number:
     def __lt__(self, __value): return self._cmp(__value, operator.lt)
 
 
-@cache
-def _constant(precision: int, name: str):
-    return Solver(name, precision=precision).evaluate()
-
-
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class NumberContext:
     """mp_real/mp_complex factory with a fixed storage precision and no global state.
 
@@ -421,10 +416,19 @@ class NumberContext:
             )
         return mp_number(self.precision, str(value))
 
-    @property
-    def i(self):
-        return _constant(self.precision, "i")
+    @staticmethod
+    @lru_cache(maxsize=512)
+    def _solver(expression: str, precision: int) -> Solver:
+        return Solver(expression, precision)
 
-    @property
+    def eval(self, expression: str, **values):
+        """Expression evaluated at this precision; variables by keyword (text or backend value)."""
+        return self._solver(expression, self.precision).number(values or None)
+
+    @cached_property
+    def i(self):
+        return self.eval("i")
+
+    @cached_property
     def pi(self):
-        return _constant(self.precision, "pi")
+        return self.eval("pi")
