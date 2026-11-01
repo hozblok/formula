@@ -2,7 +2,7 @@
 
 import pytest
 
-from formula import Formula, Number, NumberContext, Solver
+from formula import Formula, NumberContext, Solver
 from formula.capsysred.shared.implicit_surface import Surface
 from formula.capsysred.shared.jets import _Algebra, _Jet
 
@@ -10,7 +10,7 @@ from formula.capsysred.shared.jets import _Algebra, _Jet
 @pytest.mark.parametrize("formula_type", [Formula, Solver])
 def test_existing_formula_is_shared_and_expression_changes_reach_both_paths(formula_type):
     formula = formula_type("x*y+z", precision=64)
-    surface = Surface(formula, precision=128, coordinate_scale=Number("2", 64))
+    surface = Surface(formula, precision=128, coordinate_scale=NumberContext(64)("2"))
     assert surface.formula is formula
     assert surface.precision == formula.precision == 64
     alg = _Algebra(2, 64)
@@ -38,7 +38,7 @@ def test_existing_formula_is_shared_and_expression_changes_reach_both_paths(form
 def test_jet_in_later_coordinate_lifts_scalar_and_number_coordinates(axis, first, second, gradient_derivative):
     alg = _Algebra(2, 64)
     surface = Surface("x^2+2*y^2+3*z^2+x*y*z")
-    point = [Number("1", 64), 2.0, 3]
+    point = [NumberContext(64)("1"), 2.0, 3]
     point[axis] = alg.variable(point[axis], (0, 0), 0)
 
     value = surface.value(point)
@@ -93,7 +93,7 @@ def test_coordinate_scale_must_match_effective_surface_precision(existing_formul
     expression = Formula("x", precision=64) if existing_formula else "x"
     with pytest.raises(ValueError, match="coordinate_scale precision"):
         Surface(expression, precision=128 if existing_formula else 64,
-                coordinate_scale=Number("2", 128))
+                coordinate_scale=NumberContext(128)("2"))
 
 
 def test_coordinate_scale_precision_is_checked_for_backend_values_too():

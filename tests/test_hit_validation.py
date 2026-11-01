@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from formula import Number
+from formula import NumberContext
 from formula.capsysred.shared.implicit_surface import Surface
 from formula.capsysred.shared.types import _RAY_POSITION_TOL_M
 from formula.capsysred.stages._ray_jets import Hit, transport_ray
@@ -13,7 +13,8 @@ from formula.capsysred.walls.wall_polygon import PolygonWall
 
 
 def _point(values, number_inputs):
-    return tuple(Number(str(value), 64) for value in values) if number_inputs else tuple(values)
+    N = NumberContext(64)
+    return tuple(N(str(value)) for value in values) if number_inputs else tuple(values)
 
 
 @pytest.mark.parametrize("number_inputs", [False, True])
@@ -24,7 +25,7 @@ def _point(values, number_inputs):
     (2 - _RAY_POSITION_TOL_M / 2, False), (2.0, False), (2 + _RAY_POSITION_TOL_M, False),
 ])
 def test_mirror_requires_clearance_from_both_span_edges(number_inputs, z, allowed):
-    mirror = Mirror(Number("0", 64), Number("2", 64))
+    mirror = Mirror(NumberContext(64)("0"), NumberContext(64)("2"))
     point = _point((0, 0.2, z), number_inputs)
     context = {"origin": _point((1, 0, -1), number_inputs),
                "direction": _point((-1, 0, 1), number_inputs)}
@@ -39,7 +40,7 @@ def test_mirror_requires_clearance_from_both_span_edges(number_inputs, z, allowe
 @pytest.mark.parametrize("origin_x,direction_x", [(-1, -1), (-1, 1), (0, -1), (1, 1), (1, 0)],
                          ids=("behind_moving_away", "backside_approach", "on_plane", "moving_away", "tangent"))
 def test_mirror_rejects_nonreflecting_incidence(number_inputs, origin_x, direction_x):
-    mirror = Mirror(Number("0", 64), Number("2", 64))
+    mirror = Mirror(NumberContext(64)("0"), NumberContext(64)("2"))
     with pytest.raises(ValueError, match="reflecting side"):
         mirror.validate(_point((0, 0, 1), number_inputs),
                         origin=_point((origin_x, 0, 0), number_inputs),
@@ -49,7 +50,7 @@ def test_mirror_rejects_nonreflecting_incidence(number_inputs, origin_x, directi
 @pytest.mark.parametrize("point,allowed", [((1, 0.2, 2), True), ((0, 1, 2), False),
                                          ((1, 1, 2), False), ((1.01, 0.2, 2), False)])
 def test_polygon_face_context_preserves_point_validation(point, allowed):
-    zero, one = Number("0", 64), Number("1", 64)
+    zero, one = NumberContext(64)("0"), NumberContext(64)("1")
     face = PolygonWall((zero, zero), one, 4, zero).face(0)
     for context in ({}, {"origin": (0, 0, 1), "direction": (1, 0.2, 1)}):
         if allowed:
@@ -61,7 +62,7 @@ def test_polygon_face_context_preserves_point_validation(point, allowed):
 
 def test_polished_mirror_hit_cannot_enter_the_edge_margin():
     tolerance = _RAY_POSITION_TOL_M
-    mirror = Mirror(Number("0", 64), Number("2", 64))
+    mirror = Mirror(NumberContext(64)("0"), NumberContext(64)("2"))
     true_z = 0.75 * tolerance
     entrance, source = (1 + true_z, 0), (2 + true_z, 0, -2)
     archived = (-0.5 * tolerance, 0, 1.25 * tolerance)

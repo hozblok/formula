@@ -1,10 +1,10 @@
-"""Surface-of-revolution formulas on Number and higher-order ray jets."""
+"""Surface-of-revolution formulas on mp values and higher-order ray jets."""
 
 from decimal import Decimal
 
 import pytest
 
-from formula import Formula, Number
+from formula import Formula, NumberContext
 from formula.capsysred.shared.nums import vunit
 from formula.capsysred.stages._ray_jets import _Algebra
 from formula.capsysred.walls.wall_revolution import RevolutionWall
@@ -15,7 +15,7 @@ _EXPRESSION = "((x-cx)^2+(y-cy)^2-c0-c1*z-c2*z^2)/2"
 
 
 def _wall(parameters):
-    p = {name: Number(value, 96) for name, value in parameters.items()}
+    p = {name: NumberContext(96)(value) for name, value in parameters.items()}
     return RevolutionWall("revolution", (p["cx"], p["cy"]), (p["c0"], p["c1"], p["c2"]))
 
 
@@ -23,9 +23,9 @@ def _wall(parameters):
 def test_revolution_shifted_scalar_geometry(number_inputs):
     wall = _wall(_PARAMS)
     formula = Formula(_EXPRESSION, precision=96)
-    assert wall.precision == Number("0", 96).precision
+    assert wall.precision == NumberContext(96)("0").precision
     for point in [(1.25, -0.5, 0.0), (1.65, -0.5, 0.0), (1.7, 0.2, 0.7)]:
-        coordinates = tuple(Number(str(v), 96) for v in point) if number_inputs else point
+        coordinates = tuple(NumberContext(96)(str(v)) for v in point) if number_inputs else point
         values = dict(_PARAMS, **dict(zip("xyz", map(str, point))))
         assert float(wall.value(coordinates)) == pytest.approx(float(formula.get(values)), abs=1e-15)
         gradient = tuple(map(float, wall.gradient(coordinates)))
@@ -42,7 +42,7 @@ def test_revolution_retains_parameter_precision(jet_inputs):
                   "c2": "-0.020000000000000000000000000005"}
     wall, alg = _wall(parameters), _Algebra(4, 96)
     coordinates = ("1.7", "0.2", "0.7")
-    point = tuple(Number(v, 96) for v in coordinates)
+    point = tuple(NumberContext(96)(v) for v in coordinates)
     if jet_inputs:
         point = tuple(alg.constant(v) for v in point)
     formula = Formula(_EXPRESSION, precision=96)

@@ -13,14 +13,14 @@ from formula.capsysred.screen import ScreenGrid
 from formula.capsysred.shared.types import RayRecord
 from formula.capsysred.spectrum import spectral_lines
 from formula.capsysred.stages.beamlets.field import BeamletField, _stage11_contract
-from formula.formula import Number
+from formula.formula import NumberContext
 
 from tests.test_capsysred import TINY, _record
 
 
 def _lines(n=3):
     return spectral_lines({"mode": "gaussian", "rel_fwhm": 1.0e-3,
-                           "n_lines": n, "n_sigma": 2.0}, Number("8.0", 32))
+                           "n_lines": n, "n_sigma": 2.0}, NumberContext(32)("8.0"))
 
 
 def _grid_ok():

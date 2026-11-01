@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from formula import Formula, Number
+from formula import Formula, NumberContext
 from formula.capsysred.shared.nums import vunit
 from formula.capsysred.stages._ray_jets import _Algebra
 from formula.capsysred.surfaces import ImplicitWall
@@ -15,17 +15,18 @@ _WORLD_EXPRESSION = "(1000000*x-1.25)^2+(1000000*y+0.5)^2+0.2*(1000000*z-2.5)^3-
 
 
 def _wall(expression):
-    return ImplicitWall(expression, (Number("0", 96), Number("0", 96)), Number("1e-6", 96))
+    N = NumberContext(96)
+    return ImplicitWall(expression, (N("0"), N("0")), N("1e-6"))
 
 
 @pytest.mark.parametrize("number_inputs", [False, True])
 def test_implicit_scalar_values_and_world_gradient(number_inputs):
     wall = _wall(_EXPRESSION)
     formula = Formula(_WORLD_EXPRESSION, precision=96)
-    assert wall.precision == Number("0", 96).precision
+    assert wall.precision == NumberContext(96)("0").precision
     for point in [(1.25e-6, -0.5e-6, 2.5e-6), (1.65e-6, -0.5e-6, 2.5e-6),
                   (1.7e-6, 0.2e-6, 3.2e-6)]:
-        coordinates = tuple(Number(str(v), 96) for v in point) if number_inputs else point
+        coordinates = tuple(NumberContext(96)(str(v)) for v in point) if number_inputs else point
         values = dict(zip("xyz", map(str, point)))
         assert float(wall.value(coordinates)) == pytest.approx(float(formula.get(values)), abs=1e-15)
         expected = [float(formula.get_derivative(axis, values)) for axis in "xyz"]
@@ -37,7 +38,7 @@ def test_implicit_retains_coordinates_beyond_float_precision(jet_inputs):
     wall = _wall("(x-1.000000000000000000000000000001)^2"
                  "+(y+0.500000000000000000000000000002)^2"
                  "+(z-2.500000000000000000000000000003)^2-4e-60")
-    point = tuple(Number(value, 96) for value in
+    point = tuple(NumberContext(96)(value) for value in
                   ("1.000000000000000000000000000004e-6",
                    "-0.500000000000000000000000000006e-6",
                    "2.500000000000000000000000000008e-6"))
@@ -58,7 +59,7 @@ def test_implicit_inactive_coordinates_have_exact_zero_gradient(active_axis):
     u, v = alg.variable("0.3", seeds, 0), alg.variable("0.7", seeds, 1)
     jets = tuple(alg.evaluate(expression, u=u, v=v)
                  for expression in ("(2+u)/1000000", "(3+v)/1000000", "(4+u*v)/1000000"))
-    scalars = tuple(Number(jet.c[0], 96) for jet in jets)
+    scalars = tuple(NumberContext(96)(jet.c[0]) for jet in jets)
     for point in (scalars, jets):
         gradient = wall.gradient(point)
         for axis, component in zip("xyz", gradient, strict=True):

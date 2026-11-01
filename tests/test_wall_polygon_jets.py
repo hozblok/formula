@@ -5,26 +5,27 @@ import math
 
 import pytest
 
-from formula import Formula, Number, NumberContext
+from formula import Formula, NumberContext
 from formula.backend import MP_TYPES
+from formula.capsysred.shared.nums import text
 from formula.capsysred.shared.types import _WALL_SURFACE_TOL_M
 from formula.capsysred.stages._ray_jets import _Algebra
 from formula.capsysred.walls.wall_polygon import PolygonFace, PolygonWall
 
 
 def _square():
-    return PolygonWall((Number("0", 96), Number("0", 96)), Number("1", 96),
-                       4, Number("0", 96))
+    return PolygonWall((NumberContext(96)("0"), NumberContext(96)("0")), NumberContext(96)("1"),
+                       4, NumberContext(96)("0"))
 
 
 @pytest.mark.parametrize("number_inputs", [False, True])
 def test_rotated_unequal_faces_keep_the_selected_plane(number_inputs):
-    center = (Number("1.25", 96), Number("-0.5", 96))
-    apothems = tuple(Number(v, 96) for v in ("0.8", "1.1", "1.4", "1.7"))
-    wall = PolygonWall(center, apothems, 4, Number("atan(4/3)", 96))
+    center = (NumberContext(96)("1.25"), NumberContext(96)("-0.5"))
+    apothems = tuple(NumberContext(96)(v) for v in ("0.8", "1.1", "1.4", "1.7"))
+    wall = PolygonWall(center, apothems, 4, NumberContext(96).eval("atan(4/3)"))
     for index, ((nx, ny), apothem) in enumerate(zip(wall.faces, apothems, strict=True)):
-        point = (center[0] + apothem * nx - Number("0.1", 96) * ny,
-                 center[1] + apothem * ny + Number("0.1", 96) * nx, Number("7", 96))
+        point = (center[0] + apothem * nx - NumberContext(96)("0.1") * ny,
+                 center[1] + apothem * ny + NumberContext(96)("0.1") * nx, NumberContext(96)("7"))
         if not number_inputs:
             point = tuple(map(float, point))
         face = wall.surface_at(point)
@@ -71,9 +72,10 @@ def test_explicit_face_rejects_a_hit_on_another_face():
 
 @pytest.mark.parametrize("jet_inputs", [False, True])
 def test_face_parameters_keep_precision_beyond_float(jet_inputs):
-    wall = PolygonWall((Number("1.000000000000000000000000000001", 96), Number("-2", 96)),
-                       Number("1.000000000000000000000000000002", 96), 4, Number("0", 96))
-    point = (Number("2.000000000000000000000000000006", 96), Number("-2", 96), Number("0", 96))
+    N = NumberContext(96)
+    wall = PolygonWall((N("1.000000000000000000000000000001"), N("-2")),
+                       N("1.000000000000000000000000000002"), 4, N("0"))
+    point = (N("2.000000000000000000000000000006"), N("-2"), N("0"))
     face = wall.surface_at(point)
     assert face.index == 0
     if jet_inputs:
@@ -82,7 +84,7 @@ def test_face_parameters_keep_precision_beyond_float(jet_inputs):
     value = face.value(point)
     result = value.c[0] if jet_inputs else str(value)
     assert abs(Decimal(result) - Decimal("3e-30")) < Decimal("1e-85")
-    assert all(isinstance(value, (Number, *MP_TYPES)) and value.precision == face.precision
+    assert all(isinstance(value, MP_TYPES) and value.precision == face.precision
                for value in face.gradient(point))
 
 
@@ -94,8 +96,8 @@ def test_linear_face_composes_higher_derivatives_without_changing_faces(order):
     u, v = alg.variable("0.3", seeds, 0), alg.variable("0.7", seeds, 1)
     point = tuple(alg.evaluate(expression, u=u, v=v)
                   for expression in ("u^3*v+u*v^2+1", "u^2*v^2-u+2", "u+v"))
-    wall = PolygonWall((Number("1.25", 96), Number("-0.5", 96)), Number("0.8", 96),
-                       4, Number("atan(4/3)", 96))
+    N = NumberContext(96)
+    wall = PolygonWall((N("1.25"), N("-0.5")), N("0.8"), 4, N.eval("atan(4/3)"))
     face = wall.face(0)
     result = face.value(point)
     formula = Formula("0.6*(u^3*v+u*v^2-0.25)+0.8*(u^2*v^2-u+2.5)-0.8", precision=96)
@@ -106,7 +108,7 @@ def test_linear_face_composes_higher_derivatives_without_changing_faces(order):
                     if variables else formula.get(values))
         assert abs(Decimal(coefficient) - Decimal(expected)) < Decimal("1e-80")
     assert abs(Decimal(result.c[-1])) > Decimal("1")
-    assert tuple(str(Number(v, 96)) for v in face.gradient(point)) == ("0.6", "0.8", "0")
+    assert tuple(text(v, 96) for v in face.gradient(point)) == ("0.6", "0.8", "0")
 
 
 def test_surface_tolerance_is_a_backend_value_of_the_wall_precision():

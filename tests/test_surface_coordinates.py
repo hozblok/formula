@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from formula import Number
+from formula import NumberContext
 from formula.capsysred.shared.implicit_surface import Surface
 from formula.capsysred.shared.jets import _Algebra, _Jet
 from formula.capsysred.surfaces import ImplicitWall, Mirror
@@ -19,8 +19,7 @@ _KINDS = ("surface", "implicit", "cylinder", "revolution", "funnel", "torus", "p
 
 
 def _surface(kind, precision=64):
-    def number(value):
-        return Number(value, precision)
+    number = NumberContext(precision)
 
     center = (number("0.1"), number("-0.2"))
     if kind == "surface":
@@ -38,7 +37,7 @@ def _surface(kind, precision=64):
         return TorusWall(center, number("1"), number("4"),
                          (number("3"), number("4")), number("0.3"))
     if kind == "polygon_face":
-        return PolygonWall(center, number("0.8"), 4, number("atan(4/3)")).face(0)
+        return PolygonWall(center, number("0.8"), 4, number.eval("atan(4/3)")).face(0)
     return Mirror(number("0"), number("2"))
 
 
@@ -55,7 +54,7 @@ def _assert_equal(actual, expected):
 @pytest.mark.parametrize("axis", range(3), ids=("jet_x", "jet_y", "jet_z"))
 def test_mixed_coordinates_match_all_jet_inputs(kind, axis):
     surface, alg = _surface(kind), _Algebra(2, 64)
-    point = [Number(value, 64) for value in ("0.6", "0.25", "0.5")]
+    point = [NumberContext(64)(value) for value in ("0.6", "0.25", "0.5")]
     point[axis] = alg.variable(point[axis], (0, 0), 0)
     all_jets = tuple(value if isinstance(value, _Jet) else alg.constant(value) for value in point)
     value = surface.value(point)
@@ -69,13 +68,13 @@ def test_mixed_coordinates_match_all_jet_inputs(kind, axis):
 @pytest.mark.parametrize("failure", ("algebra", "jet_precision", "number_precision", "mixed_number_precision"))
 def test_value_and_gradient_reject_incompatible_coordinates(kind, failure):
     surface, alg = _surface(kind), _Algebra(2, 64)
-    point = [Number(value, 64) for value in ("0.6", "0.25", "0.5")]
+    point = [NumberContext(64)(value) for value in ("0.6", "0.25", "0.5")]
     if failure == "algebra":
         point[0], point[2] = alg.constant(point[0]), _Algebra(2, 64).constant(point[2])
     elif failure == "jet_precision":
         point[2] = _Algebra(2, 32).constant(str(point[2]))  # text: the explicit cross-precision way
     else:
-        point[2] = Number("0.500000000000000000000000000001", 128)
+        point[2] = NumberContext(128)("0.500000000000000000000000000001")
         if failure == "mixed_number_precision":
             point[0] = alg.constant(point[0])
     message = "algebra" if failure == "algebra" else "precision"
@@ -88,7 +87,7 @@ def test_value_and_gradient_reject_incompatible_coordinates(kind, failure):
 @pytest.mark.parametrize("surface_precision,jet_precision", [(50, 64), (64, 50)])
 def test_equivalent_rounded_precisions_are_accepted(kind, surface_precision, jet_precision):
     surface, alg = _surface(kind, surface_precision), _Algebra(2, jet_precision)
-    point = tuple(Number(value, 50) for value in ("0.6", "0.25", "0.5"))
+    point = tuple(NumberContext(50)(value) for value in ("0.6", "0.25", "0.5"))
     mixed = (point[0], alg.constant(point[1]), point[2])
     value = surface.value(mixed)
     assert isinstance(value, _Jet)
@@ -100,12 +99,12 @@ def test_equivalent_rounded_precisions_are_accepted(kind, surface_precision, jet
 @pytest.mark.parametrize("kind", _KINDS)
 def test_mixed_coordinates_retain_small_number_digits(kind):
     surface, alg = _surface(kind), _Algebra(2, 64)
-    point = (Number("1.250000000000000000000000000001", 64),
-             alg.variable("0.25", (0, 0), 0), Number("0.5", 64))
+    point = (NumberContext(64)("1.250000000000000000000000000001"),
+             alg.variable("0.25", (0, 0), 0), NumberContext(64)("0.5"))
     all_jets = (alg.constant(point[0]), point[1], alg.constant(point[2]))
     actual = surface.value(point)
     _assert_equal(actual, surface.value(all_jets))
-    rounded = surface.value((Number("1.25", 64), point[1], point[2]))
+    rounded = surface.value((NumberContext(64)("1.25"), point[1], point[2]))
     assert abs(Decimal(actual.c[0]) - Decimal(rounded.c[0])) > Decimal("1e-32")
     for component, expected in zip(surface.gradient(point), surface.gradient(all_jets), strict=True):
         _assert_equal(component, expected)

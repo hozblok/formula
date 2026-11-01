@@ -6,6 +6,7 @@ import pytest
 
 from formula import MAX_PRECISION, Number, NumberContext, Solver, mp_class
 from formula.backend import MP_TYPES, mp_number, round_up_precision
+from formula.constants import DEFAULT_PRECISION
 
 
 def E(context, text):
@@ -23,12 +24,12 @@ def test_storage_precision_is_rounded_once(precision):
 @pytest.mark.parametrize("value, expression", [
     (0, "0"), (-7, "-7"), (0.125, "0.125"), ("1e-80", "1e-80"), ("(3,4)", "3+4*i"),
 ])
-def test_literals_match_the_number_constructor(value, expression):
+def test_literals_match_the_evaluated_expression(value, expression):
     N = NumberContext(64)
     actual = N(value)
-    expected = Number(expression, 64)
+    expected = E(N, expression)
     assert isinstance(actual, MP_TYPES)
-    assert actual == expected._value
+    assert actual == expected
     assert actual.is_complex == expected.is_complex
 
 
@@ -54,7 +55,7 @@ def test_contexts_do_not_change_each_other_or_the_default():
     y = E(high, "1/7")
     assert (2 * x + low(1)).precision == low.precision
     assert (2 * y + high(1)).precision == high.precision
-    assert NumberContext().precision == Number.DEFAULT_PRECISION
+    assert NumberContext().precision == round_up_precision(DEFAULT_PRECISION)
     with pytest.raises(TypeError, match="precision mismatch"):
         _ = x + y
 
@@ -100,7 +101,7 @@ def test_constants_follow_the_context():
         assert N.i.precision == N.pi.precision == precision
         assert N.i.is_complex and not N.pi.is_complex
         assert N.i * N.i == -1
-        assert N.pi == Number("pi", precision)._value
+        assert N.pi == Solver("pi", precision).evaluate()
 
 
 def test_context_precision_is_immutable():
