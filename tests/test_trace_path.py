@@ -3,12 +3,12 @@ plus point+direction bookkeeping on wall, cylinder, cone, torus and funnel."""
 
 import math
 
-from formula import Number, RaySurface
+from formula import NumberContext, RaySurface
 
 
 def _close(a, b, eps="1e-20"):
-    prec = a.precision
-    return abs(a - Number(b, prec)) < Number(eps, prec)
+    N = NumberContext(a.precision)
+    return abs(a - N(b)) < N(eps)
 
 
 def _vec_close(v, expected, eps="1e-20"):
@@ -17,7 +17,7 @@ def _vec_close(v, expected, eps="1e-20"):
 
 def _unit(v):
     prec = v[0].precision
-    norm2 = sum((c * c for c in v), Number(0, prec))
+    norm2 = sum((c * c for c in v), NumberContext(prec)(0))
     return _close(norm2, "1")
 
 
@@ -34,7 +34,7 @@ def test_wall_single_reflection_full_bookkeeping():
     r = path.reflections[0]
     assert _vec_close(r.point, ["-1", "0", "0"])
     assert _vec_close(r.direction, ["1", "0", "0"])
-    assert _close(r.grazing, Number("2*atan(1)", 48))  # normal incidence: pi/2
+    assert _close(r.grazing, NumberContext(48).eval("2*atan(1)"))  # normal incidence: pi/2
     assert path.exited
     assert _vec_close(path.screen_point, ["2", "0", "0"])
     assert _vec_close(path.screen_direction, ["1", "0", "0"])
@@ -93,7 +93,7 @@ def test_cylinder_missed_ray_flies_down_the_bore():
 
 def test_cylinder_two_bounce_zigzag_exact_geometry():
     rs = RaySurface("x*x + y*y - 1", precision=48)
-    inv = Number("1/2^0.5", 48)
+    inv = NumberContext(48).eval("1/2^0.5")
     path = rs.trace_path((0, 0, 0), (1, 0, 1), t_max=10,
                          exit_surface="z - 4", screen_surface="z - 6")
     assert len(path.reflections) == 2
@@ -104,11 +104,11 @@ def test_cylinder_two_bounce_zigzag_exact_geometry():
     assert _vec_close(r2.direction, [inv, "0", inv])
     for r in (r1, r2):
         assert _unit(r.direction)
-        assert _close(r.grazing, Number("atan(1)", 48))  # pi/4
+        assert _close(r.grazing, NumberContext(48).eval("atan(1)"))  # pi/4
     assert path.exited
     assert _vec_close(path.screen_point, ["2", "0", "6"])
     assert _vec_close(path.screen_direction, [inv, "0", inv])
-    assert _close(path.opl, Number("6*2^0.5", 48))
+    assert _close(path.opl, NumberContext(48).eval("6*2^0.5"))
 
 
 def test_cylinder_trapped_ray_max_bounces():

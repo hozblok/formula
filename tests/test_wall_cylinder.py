@@ -4,7 +4,7 @@ from decimal import Decimal, localcontext
 
 import pytest
 
-from formula import Formula, Number
+from formula import Formula, NumberContext
 from formula.capsysred.shared.nums import vunit
 from formula.capsysred.stages._ray_jets import _Algebra
 from formula.capsysred.walls.wall_cylinder import CylinderWall
@@ -12,11 +12,12 @@ from formula.capsysred.walls.wall_cylinder import CylinderWall
 
 @pytest.mark.parametrize("number_inputs", [False, True])
 def test_shifted_cylinder_value_and_gradient(number_inputs):
-    wall = CylinderWall((Number("1.25", 64), Number("-0.5", 64)), Number("2", 64))
+    N = NumberContext(64)
+    wall = CylinderWall((N("1.25"), N("-0.5")), N("2"))
     for point, expected in [((1.25, -0.5, -7.0), -2.0),
                             ((3.25, -0.5, 0.0), 0.0),
                             ((4.25, -0.5, 9.0), 2.5)]:
-        coordinates = tuple(Number(str(v), 64) for v in point) if number_inputs else point
+        coordinates = tuple(NumberContext(64)(str(v)) for v in point) if number_inputs else point
         value = wall.value(coordinates)
         assert float(value) == pytest.approx(expected)
         assert value.precision == 64
@@ -36,8 +37,9 @@ def test_cylinder_parameters_keep_precision_beyond_float(jet_inputs):
              -Decimal("2e-30") - Decimal("2e-60"), Decimal("1")),
         ]
         for center, radius, x, expected_value, expected_gradient in cases:
-            wall = CylinderWall((Number(center, 96), Number("0", 96)), Number(radius, 96))
-            point = tuple(Number(v, 96) for v in (x, "0", "0"))
+            N = NumberContext(96)
+            wall = CylinderWall((N(center), N("0")), N(radius))
+            point = tuple(N(v) for v in (x, "0", "0"))
             if jet_inputs:
                 point = tuple(alg.constant(v) for v in point)
             value, gradient = wall.value(point), wall.gradient(point)
@@ -65,7 +67,8 @@ def test_cylinder_composes_higher_derivatives_and_normal(order):
     u, v = alg.variable("0.3", seeds, 0), alg.variable("0.7", seeds, 1)
     x = alg.evaluate("u^2+u*v+1", u=u, v=v)
     y = alg.evaluate("v^2-u+2", u=u, v=v)
-    wall = CylinderWall((Number("1.25", 96), Number("-0.5", 96)), Number("2", 96))
+    N = NumberContext(96)
+    wall = CylinderWall((N("1.25"), N("-0.5")), N("2"))
     point = (x, y, 0)
     value, gradient = wall.value(point), wall.gradient(point)
     dx, dy = "(u^2+u*v-0.25)", "(v^2-u+2.5)"

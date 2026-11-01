@@ -21,19 +21,15 @@ from formula.capsysred.surfaces import CapillaryBundle, Mirror
 from formula.capsysred.trace import trace_ray
 from formula.capsysred.walls.wall_revolution import RevolutionWall
 from formula.capsysred.walls.wall_torus import _dk_roots, _quartic_first
-from formula.formula import Number
+from formula.formula import NumberContext
 
 PRECISIONS = (16, 30)          # storage 16 and 32
 HIT_TOL = 1e-15                # single hit / root / event
 TRACE_TOL = 1e-10              # multi-bounce chains
 
 
-def num(value):
-    return value if isinstance(value, Number) else Number(value)
-
-
 def assert_close(py_val, c_val, tol):
-    a, b = num(py_val), num(c_val)
+    a, b = py_val, c_val
     fa, fb = float(a), float(b)
     scale = max(abs(fa), abs(fb))
     if scale == 0.0:
@@ -86,7 +82,7 @@ def raw_vec(vec):
 # ------------------------------------------------------------- geometry kit
 
 def make_bundle(kind, p):
-    N = lambda s: Number(s, p)
+    N = NumberContext(p)
     z0, z1 = N("0"), N("0.05")
     if kind == "cylinder":
         bores = [{"kind": "cylinder", "center": (N("0"), N("0")),
@@ -97,7 +93,7 @@ def make_bundle(kind, p):
     elif kind == "polygon":
         bores = [{"kind": "polygon", "center": (N("0"), N("0")),
                   "radius": N("5e-6"), "sides": 6,
-                  "rotation": Number("15*pi/180", p)}]
+                  "rotation": NumberContext(p).eval("15*pi/180")}]
     elif kind == "torus":
         bores = [{"kind": "torus", "center": (N("0"), N("0")),
                   "radius": N("6e-6"),
@@ -116,7 +112,7 @@ def make_bundle(kind, p):
 
 
 def make_revolution_bundle(r2_strs, p):
-    N = lambda s: Number(s, p)
+    N = NumberContext(p)
     bores = [{"kind": "revolution", "center": (N("0"), N("0")),
               "r2_poly": tuple(N(s) for s in r2_strs)}]
     return CapillaryBundle(bores, N("0"), N("0.05"))
@@ -163,13 +159,13 @@ def test_dk_roots_close():
 
 
 def quartic_from_roots(r_mult3, s, p):
-    """Monic (t-r)^3 (t-s) in Number — triple root stalls Newton, forcing the
+    """Monic (t-r)^3 (t-s) in mp — triple root stalls Newton, forcing the
     exact-sign bisection fallback in _quartic_first."""
     r, s = lift(r_mult3, p), lift(s, p)
-    three, one = Number("3", p), Number("1", p)
-    c3 = Number("0", p) - three * r - s
+    three, one = NumberContext(p)("3"), NumberContext(p)("1")
+    c3 = NumberContext(p)("0") - three * r - s
     c2 = three * r * r + three * r * s
-    c1 = Number("0", p) - r * r * r - three * r * r * s
+    c1 = NumberContext(p)("0") - r * r * r - three * r * r * s
     c0 = r * r * r * s
     return (one, c3, c2, c1, c0)
 
@@ -181,7 +177,7 @@ def test_quartic_first_close():
         for _ in range(60):
             cs = tuple(lift(rng.uniform(-1.0, 1.0) * 10.0 ** rng.randint(-11, -4), p)
                        for _ in range(4))
-            cases.append(((Number("1", p),) + cs, 10.0 ** rng.randint(-4, -1),
+            cases.append(((NumberContext(p)("1"),) + cs, 10.0 ** rng.randint(-4, -1),
                           HIT_TOL))
         # Triple roots: conditioning is ~ eps^(1/3), so the twins only agree
         # to the noise basin of the root, not to working precision.
@@ -251,7 +247,7 @@ def test_cylinder_equals_revolution(p):
     bundle = make_bundle("cylinder", p)
     native = compile_optic(bundle)
     cyl = bundle.walls[0]
-    zero = Number("0", p)
+    zero = NumberContext(p)("0")
     rev = RevolutionWall("revolution", cyl.center, (cyl._a2, zero, zero))
     hits = 0
     for origin, direction in rays(bundle, p, seed=503, count=25):
@@ -280,7 +276,7 @@ def test_cylinder_degenerate_linear_branch(p):
     bundle = make_bundle("cylinder", p)
     native = compile_optic(bundle)
     cyl = bundle.walls[0]
-    zero = Number("0", p)
+    zero = NumberContext(p)("0")
     rev = RevolutionWall("revolution", cyl.center, (cyl._a2, zero, zero))
     O = (lift(5.9999e-6, p), lift(0.0, p), lift(0.0, p))
     d = vunit((lift(1e-16, p), lift(0.0, p), lift(1.0, p)))
@@ -320,7 +316,7 @@ def test_revolution_shapes_hit_parity(r2, p):
 def test_axis_parallel_branches(p):
     """d = (0,0,1): cylinder → None both sides; narrowing cone → the exact
     linear branch (A == 0, B ≠ 0) with a matching hit."""
-    N = lambda s: Number(s, p)
+    N = NumberContext(p)
     d = (N("0"), N("0"), N("1"))
     cyl_bundle = make_bundle("cylinder", p)
     native_cyl = compile_optic(cyl_bundle)
@@ -339,7 +335,7 @@ def test_axis_parallel_branches(p):
     c_hit = _formula.trace_wall_hit(native_cone, 0, raw_vec(O), raw_vec(d),
                                     raw(t_exit))
     assert_hit_equal(py_hit, c_hit)
-    screen_z = Number("0.051", p)
+    screen_z = NumberContext(p)("0.051")
     tracer = make_tracer(cone)
     assert_trace_equal(trace_ray(O, d, cone, screen_z, 50),
                        tracer(O, d, cone, screen_z, 50))
@@ -376,7 +372,7 @@ def test_on_wall_event_chain_parity(kind, p):
     """next_event parity at every bounce: origins land exactly on the wall."""
     bundle = make_bundle(kind, p)
     native = compile_optic(bundle)
-    two = Number("2", p)
+    two = NumberContext(p)("2")
     reflects = 0
     for origin, direction in rays(bundle, p, seed=307, count=6,
                                   slope_scale=5.0):
@@ -421,7 +417,7 @@ def test_bundle_next_event_parity(p):
 def test_bundle_tangent_bores_reflect(p):
     """Close-packed bores (pitch = 2r): a reflection at the tangency line is on
     two walls at once; the ray must reflect off the far wall, not pass through."""
-    N = lambda s: Number(s, p)
+    N = NumberContext(p)
     bores = [{"kind": "cylinder", "center": (N("0"), N("0")), "radius": N("1e-5")},
              {"kind": "cylinder", "center": (N("-2e-5"), N("0")), "radius": N("1e-5")}]
     bundle = CapillaryBundle(bores, N("0"), N("0.5"))
@@ -440,7 +436,7 @@ def test_bundle_tangent_bores_reflect(p):
 def test_mirror_branches_parity(p):
     """One deterministic ray per Mirror branch: reflect, absorb (leading
     edge), exit beyond z1, exit moving away."""
-    N = lambda s: Number(s, p)
+    N = NumberContext(p)
     mirror = Mirror(N("0"), N("0.06"))
     native = compile_optic(mirror)
     O = (N("1e-5"), N("0"), N("-0.05"))
@@ -457,7 +453,7 @@ def test_mirror_branches_parity(p):
 
 @pytest.mark.parametrize("p", PRECISIONS)
 def test_mirror_events_and_traces_parity(p):
-    N = lambda s: Number(s, p)
+    N = NumberContext(p)
     mirror = Mirror(N("0"), N("0.06"))
     native = compile_optic(mirror)
     assert native is not None and native.kind == "mirror"
@@ -487,7 +483,7 @@ def test_trace_ray_parity(kind, p):
     bundle = make_bundle(kind, p)
     tracer = make_tracer(bundle)
     assert tracer is not trace_ray          # the native path really engaged
-    screen_z = Number("0.051", p)
+    screen_z = NumberContext(p)("0.051")
     count = 8 if kind in ("torus", "mixed") else 20
     fates = set()
     for origin, direction in rays(bundle, p, seed=211, count=count,
@@ -506,7 +502,7 @@ def test_absorb_paths_parity(p):
     bundle = make_bundle("mixed", p)
     native = compile_optic(bundle)
     tracer = make_tracer(bundle)
-    screen_z = Number("0.051", p)
+    screen_z = NumberContext(p)("0.051")
     web = (lift(1e-5, p), lift(0.0, p), lift(0.01, p))
     up = vunit((lift(0.0, p), lift(0.0, p), lift(1.0, p)))
     down = vunit((lift(1e-4, p), lift(0.0, p), lift(-1.0, p)))
@@ -526,7 +522,7 @@ def test_exit_at_z1_parity(p):
     """Origin exactly at z1: immediate exit, then the free leg to the screen."""
     bundle = make_bundle("cylinder", p)
     tracer = make_tracer(bundle)
-    screen_z = Number("0.051", p)
+    screen_z = NumberContext(p)("0.051")
     O = (lift(0.0, p), lift(0.0, p), lift(0.05, p))
     d = vunit((lift(1e-4, p), lift(0.0, p), lift(1.0, p)))
     py_tr = trace_ray(O, d, bundle, screen_z, 50)
@@ -538,7 +534,7 @@ def test_exit_at_z1_parity(p):
 def test_max_bounces_lost_parity(p):
     bundle = make_bundle("cylinder", p)
     tracer = make_tracer(bundle)
-    screen_z = Number("0.051", p)
+    screen_z = NumberContext(p)("0.051")
     fates = set()
     for origin, direction in rays(bundle, p, seed=907, count=6,
                                   slope_scale=6.0):
@@ -552,7 +548,7 @@ def test_max_bounces_lost_parity(p):
 def test_trace_free_space_parity():
     p = 30
     tracer = make_tracer(None)
-    screen_z = Number("0.06", p)
+    screen_z = NumberContext(p)("0.06")
     rng = random.Random(31)
     for _ in range(20):
         origin = (lift(rng.uniform(-1e-6, 1e-6), p),
@@ -568,7 +564,7 @@ def test_trace_free_space_parity():
 def test_free_space_edges_parity():
     p = 30
     tracer = make_tracer(None)
-    N = lambda s: Number(s, p)
+    N = NumberContext(p)
     O = (N("1e-6"), N("-2e-6"), N("0"))
     cases = [
         (vunit((N("0"), N("0"), N("-1"))), N("0.05")),      # backward: lost
@@ -595,7 +591,7 @@ def test_tracer_optic_mismatch_falls_back():
     b1 = make_bundle("cylinder", p)
     b2 = make_bundle("polygon", p)
     tracer = make_tracer(b1)
-    screen_z = Number("0.051", p)
+    screen_z = NumberContext(p)("0.051")
     (origin, direction), = list(rays(b2, p, seed=5, count=1))
     ref = trace_ray(origin, direction, b2, screen_z, 50)
     assert_trace_equal(ref, tracer(origin, direction, b2, screen_z, 50),
@@ -607,7 +603,7 @@ def test_float_screen_z_accepted():
     tracer = make_tracer(None)
     O = (lift(0.0, p), lift(0.0, p), lift(-0.08, p))
     d = vunit((lift(1e-4, p), lift(0.0, p), lift(1.0, p)))
-    assert_trace_equal(trace_ray(O, d, None, Number(0.06, p), 10),
+    assert_trace_equal(trace_ray(O, d, None, NumberContext(p)(0.06), 10),
                        tracer(O, d, None, 0.06, 10))
 
 
@@ -617,14 +613,14 @@ def test_precision_mismatch_raises():
     O30 = (lift(0.0, 30), lift(0.0, 30), lift(0.0, 30))
     d30 = vunit((lift(1e-4, 30), lift(0.0, 30), lift(1.0, 30)))
     with pytest.raises(ValueError):
-        trace_ray_native(native16, O30, d30, Number("0.051", 30), 10)
+        trace_ray_native(native16, O30, d30, NumberContext(30)("0.051"), 10)
 
 
 def test_native_deterministic():
     p = 30
     bundle = make_bundle("torus", p)
     tracer = make_tracer(bundle)
-    screen_z = Number("0.051", p)
+    screen_z = NumberContext(p)("0.051")
     (origin, direction), = list(rays(bundle, p, seed=71, count=1))
     a = tracer(origin, direction, bundle, screen_z, 50)
     b = tracer(origin, direction, bundle, screen_z, 50)
@@ -686,10 +682,10 @@ def test_simulation_native_equals_python(tmp_path, monkeypatch):
     keys = ("stage", "mode", "ray", "fate", "pixel")
     for rn, rp in zip(n_rows, p_rows):
         assert {k: rn[k] for k in keys} == {k: rp[k] for k in keys}
-        assert_close(Number(rp["opl"], p), Number(rn["opl"], p), TRACE_TOL)
+        assert_close(NumberContext(p)(rp["opl"]), NumberContext(p)(rn["opl"]), TRACE_TOL)
         assert len(rn["sins"]) == len(rp["sins"])
         for sn, sp in zip(rn["sins"], rp["sins"]):
-            assert_close(Number(sp, p), Number(sn, p), TRACE_TOL)
+            assert_close(NumberContext(p)(sp), NumberContext(p)(sn), TRACE_TOL)
     for stage in ("free", "beamlet:capillary"):
         rn, rp = sim_native.results[stage], sim_python.results[stage]
         assert rn["stats"] == rp["stats"]
@@ -701,7 +697,7 @@ def test_simulation_native_equals_python(tmp_path, monkeypatch):
 @pytest.mark.parametrize("p", PRECISIONS)
 def test_rectangle_apothems_hit_parity(p):
     """Per-face apothems: Python and native hits agree on every face of a 250 x 358.8 nm channel."""
-    N = lambda s: Number(s, p)
+    N = NumberContext(p)
     bore = {"kind": "polygon", "center": (N("0"), N("0")), "radius": N("1.25e-7"), "sides": 4,
             "rotation": N("0"), "apothems": (N("1.25e-7"), N("1.794e-7"), N("1.25e-7"), N("1.794e-7"))}
     bundle = CapillaryBundle([bore], N("0"), N("0.005"))

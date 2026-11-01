@@ -10,7 +10,7 @@ import pytest
 
 from formula.capsysred import Simulation
 from formula.capsysred.stages.analytic import vcz_mu
-from formula.capsysred.shared.nums import lift, vunit
+from formula.capsysred.shared.nums import lift, text, vunit
 from formula.capsysred.spectrum import spectral_lines, wavevector
 from formula.capsysred.surfaces import CapillaryBundle, Mirror, engine_hit_t
 from formula.capsysred.walls.wall_cylinder import CylinderWall
@@ -23,7 +23,7 @@ from formula.capsysred.fresnel import FresnelAmplitude
 from formula.capsysred.trace import trace_ray
 from formula.capsysred.shared.types import HitMethod
 from formula import xray
-from formula.formula import Number, NumberContext
+from formula.formula import NumberContext
 
 FREE_SOURCE = {
     "shape": "point",
@@ -234,13 +234,13 @@ def test_symbolic_templates_match_references():
 
     for e in ("8.0", "9.0", "10.0"):
         for theta in ("2.5e-4", "1.5e-3", "3.5e-3"):
-            s = Number(f"sin({theta})", p)
-            r_sym = ampl_template(1, p).number({"s1": str(s), **db(e)})
+            s = N.eval(f"sin({theta})")
+            r_sym = ampl_template(1, p).number({"s1": text(s, p), **db(e)})
             r_ref = xray.reflect_amplitude(theta, e, mat, precision=p)
             assert float(abs(r_sym - r_ref)) < 1e-27
-    sins = [Number(f"sin({t})", p) for t in ("8e-4", "1.2e-3", "2.1e-3")]
+    sins = [N.eval(f"sin({t})") for t in ("8e-4", "1.2e-3", "2.1e-3")]
     chain = fres(sins[0]) * fres(sins[1]) * fres(sins[2])
-    values = {f"s{j + 1}": str(s) for j, s in enumerate(sins)}
+    values = {f"s{j + 1}": text(s, p) for j, s in enumerate(sins)}
     values.update(db("8.0"))
     prod = ampl_template(3, p).number(values)
     assert float(abs(chain - prod)) < 1e-27
@@ -270,7 +270,7 @@ def test_cylinder_grazing_invariant_gives_r_pow_nb():
 
 
 def test_spectral_lines_carry_energy_and_k(tmp_path):
-    e0 = Number("8.0", 30)
+    e0 = NumberContext(30)("8.0")
     lines = spectral_lines({"mode": "gaussian", "rel_fwhm": 2e-4, "n_lines": 5,
                             "n_sigma": 3.0}, e0)
     assert len(lines) == 5
@@ -286,11 +286,11 @@ def test_spectral_lines_carry_energy_and_k(tmp_path):
 
 def test_line_amplitudes_energy_dependence():
     # Between the two critical angles reflection collapses at the higher energy.
-    e0 = Number("8.0", 30)
+    e0 = NumberContext(30)("8.0")
     lines = spectral_lines({"mode": "lines", "lines": [
         {"energy_kev": 8.0}, {"energy_kev": 10.0}]}, e0)
     la = LineAmplitudes(xray.FUSED_SILICA, lines, NumberContext(30))
-    amps = la([str(Number("sin(3.4e-3)", 30))])
+    amps = la([text(NumberContext(30).eval("sin(3.4e-3)"), 30)])
     assert float(abs(amps[0])) > 2.0 * float(abs(amps[1]))
     # no bounces -> unit amplitude on every line
     ones = la([])
@@ -548,7 +548,7 @@ def test_ellipsoid_focus_opl_degeneracy():
                      "r2_poly": [b * b - k * zc * zc, 2 * k * zc, -k]}],
                    z0=0.015, z1=0.025)
     p = sim.cfg.precision
-    f = Number(f"(({A})^2-({b})^2)^0.5", p)
+    f = NumberContext(p).eval(f"(({A})^2-({b})^2)^0.5")
     src = (lift(0.0, p), lift(0.0, p), lift(zc, p) - f)
     cap = sim.cfg.capillary
     bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
@@ -589,11 +589,11 @@ def test_vcz_reference_sane():
 
 
 def _monic_quartic(roots, p):
-    """Monic Number quartic with the given integer roots (exact coefficients)."""
+    """Monic mp quartic with the given integer roots (exact coefficients)."""
     cs = [1]
     for r in roots:
         cs = [a - r * b for a, b in zip(cs + [0], [0] + cs)]
-    return tuple(Number(str(v), p) for v in cs)
+    return tuple(NumberContext(p)(str(v)) for v in cs)
 
 
 def test_quartic_newton_accuracy_scales_with_precision():
@@ -602,7 +602,7 @@ def test_quartic_newton_accuracy_scales_with_precision():
     for p, bound in ((32, "1e-45"), (64, "1e-60"), (256, "1e-200")):
         t = _quartic_first(_monic_quartic((1, 2, 3, 4), p), 10.0)
         assert t is not None
-        assert abs(t - Number("1", p)) < Number(bound, p)
+        assert abs(t - NumberContext(p)("1")) < NumberContext(p)(bound)
 
 
 def test_quartic_bisection_scales_with_precision():
@@ -611,7 +611,7 @@ def test_quartic_bisection_scales_with_precision():
     for p, bound in ((32, "1e-30"), (256, "1e-240")):
         t = _bisect_first(_monic_quartic((1, 2, 3, 4), p), 10.0)
         assert t is not None
-        assert abs(t - Number("1", p)) < Number(bound, p)
+        assert abs(t - NumberContext(p)("1")) < NumberContext(p)(bound)
 
 
 def test_float_seeds_window_and_complex_filter():
@@ -632,12 +632,12 @@ def test_on_wall_point_counts_inside():
     # _INSIDE_TOL: a reflection point sits exactly ON the wall; float rounding
     # of dx^2+dy^2 vs a^2 must not flip it outside (coin-flip absorption)
     p = 32
-    zero = Number("0", p)
-    a = float(Number("6e-6", p))
-    cyl = CylinderWall((zero, zero), Number("6e-6", p))
+    zero = NumberContext(p)("0")
+    a = float(NumberContext(p)("6e-6"))
+    cyl = CylinderWall((zero, zero), NumberContext(p)("6e-6"))
     rev = RevolutionWall("revolution", (zero, zero),
-                         (Number("6e-6", p) * Number("6e-6", p), zero, zero))
-    poly = PolygonWall((zero, zero), Number("6e-6", p), 6, zero)
+                         (NumberContext(p)("6e-6") * NumberContext(p)("6e-6"), zero, zero))
+    poly = PolygonWall((zero, zero), NumberContext(p)("6e-6"), 6, zero)
     for wall in (cyl, rev, poly):
         assert wall.inside(a, 0.0, 0.0)
         assert not wall.inside(a * (1 + 1e-6), 0.0, 0.0)
@@ -1071,7 +1071,7 @@ def test_estimator_protocol_direct_drive_identical_modes():
     from formula.capsysred.stages.jackknife import JackknifeCoherence
     from formula.capsysred.shared.types import RayRecord
 
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     rec = lambda mode, ray, pixel, opl: RayRecord(
         mode, ray, "screen", pixel, None, None, opl, (), ())
     jack = JackknifeCoherence(lines, 0)
@@ -1092,7 +1092,7 @@ def test_jackknife_direct_drive_pi_flip_decoheres():
     from formula.capsysred.stages.jackknife import JackknifeCoherence
     from formula.capsysred.shared.types import RayRecord
 
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     k = float(lines[0].k)
     rec = lambda mode, ray, pixel, opl: RayRecord(
         mode, ray, "screen", pixel, None, None, opl, (), ())
@@ -1116,7 +1116,7 @@ def test_beamlet_direct_drive_single_mode_fully_coherent():
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
 
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     scr = ScreenGrid(SimpleNamespace(z=0.06, nx=7, ny=1, center=[0.0, 0.0],
                                      edge_x=1.0e-5, edge_y=2.0e-6))
     bf = BeamletField(lines, scr, 3, 5.0e-7, 3.0)
@@ -1535,7 +1535,7 @@ def test_beamlet_deposit_implicit_multibore():
     from formula.capsysred.shared.types import RayRecord
     cap = _cap_sim(_IMPLICIT_PAIR).cfg.capillary
     bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     scr = ScreenGrid(SimpleNamespace(z=0.06, nx=21, ny=5, center=[0.0, 0.0],
                                      edge_x=1.2e-5, edge_y=6.0e-6))
     field = BeamletField(lines, scr, 52, 5.0e-7, 3.0, bundle)
@@ -1578,7 +1578,7 @@ def test_beamlet_native_deposit_matches_python():
     if make_beamlet_grid(1, 1, 0.0, 0.0, 1.0, 1.0, [1.0], [1.0], [1.0], 3.0) is None:
         pytest.skip("BeamletGrid missing from the built .so")
     lines = spectral_lines({"mode": "gaussian", "rel_fwhm": 1.0e-3,
-                            "n_lines": 3, "n_sigma": 2.0}, Number("8.0", 32))
+                            "n_lines": 3, "n_sigma": 2.0}, NumberContext(32)("8.0"))
     scr = ScreenGrid(SimpleNamespace(z=0.06, nx=21, ny=5, center=[0.0, 0.0],
                                      edge_x=1.2e-5, edge_y=6.0e-6))
     rays = [
@@ -1629,7 +1629,7 @@ def test_beamlet_fan_reconstructs_diffraction_limited_focus():
     # diffraction limit FWHM = 0.886*lam*f/(2a), where rays give infinity
     import cmath
     from formula.capsysred.shared.types import RayRecord
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     k = float(lines[0].k)
     lam = 2.0 * math.pi / k
     f, a, n = 0.1, 5.0e-6, 81
@@ -1660,7 +1660,7 @@ def test_beamlet_two_beam_fringes_period():
     # two crossed beamlets interfere with period lam/(2*theta): the direct
     # regression for the tilt-phase term of the deposit
     from formula.capsysred.shared.types import RayRecord
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     lam = 2.0 * math.pi / float(lines[0].k)
     theta = 5.0e-5
     field, scr = _beamlet_field_1d(lines, z=0.06, w0=5.0e-7)
@@ -1727,7 +1727,7 @@ def test_beamlet_edge_deposits():
     # (b) far beyond the 3w window deposits nothing and must not crash;
     # (c) a bounce exactly at the source (zero first segment) stays finite
     from formula.capsysred.shared.types import RayRecord
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     field, scr = _beamlet_field_1d(lines, nx=21, edge=1.2e-5, z=0.06, w0=5e-7)
     field.new_mode()
     field.add_ray(RayRecord(0, 0, "screen", None, (8.0e-6, 0.0, 0.06),
@@ -1765,7 +1765,7 @@ def test_beamlet_single_pixel_screen():
     from formula.capsysred.stages.beamlets.field import BeamletField
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     scr = ScreenGrid(SimpleNamespace(z=0.06, nx=1, ny=1, center=[0.0, 0.0],
                                      edge_x=2.0e-6, edge_y=2.0e-6))
     field = BeamletField(lines, scr, 0, 5.0e-7, 3.0, None)
@@ -2012,7 +2012,7 @@ def test_beamlet_anisotropic_spot_flips_aspect():
     from formula.capsysred.stages.beamlets.field import BeamletField
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     scr = ScreenGrid(SimpleNamespace(z=0.06, nx=41, ny=41, center=[0.0, 0.0],
                                      edge_x=2.4e-5, edge_y=2.4e-5))
     field = BeamletField(lines, scr, scr.ref_pixel(None), 5.0e-7, 3.0, None,
@@ -2039,7 +2039,7 @@ def test_beamlet_native_parity_anisotropic():
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
     lines = spectral_lines({"mode": "gaussian", "rel_fwhm": 1.0e-3,
-                            "n_lines": 2, "n_sigma": 2.0}, Number("8.0", 32))
+                            "n_lines": 2, "n_sigma": 2.0}, NumberContext(32)("8.0"))
     scr = ScreenGrid(SimpleNamespace(z=0.06, nx=21, ny=5, center=[0.0, 0.0],
                                      edge_x=1.2e-5, edge_y=6.0e-6))
     rays = [
@@ -2089,7 +2089,7 @@ def test_beamlet_jackknife_identical_modes_pinned():
     # identical modes: mu = 1 with sigma = 0 everywhere lit — pinned at the
     # clamp, so every lit pixel must carry the don't-trust flag
     from formula.capsysred.shared.types import RayRecord
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     field, scr = _beamlet_field_1d(lines, nx=21, edge=1.2e-5, z=0.06, w0=5e-7)
     rec = RayRecord(0, 0, "screen", scr.pixel((0.0, 0.0)), (0.0, 0.0, 0.06),
                     (0.0, 0.0, 1.0), 0.06, (), ())
@@ -2113,7 +2113,7 @@ def test_beamlet_jackknife_matches_bruteforce_leave_one_out():
     # the incremental rows (W - W_s, I - I_s) must land on the sigma computed
     # the hard way: an independent field rebuilt from every K-1 mode subset
     from formula.capsysred.shared.types import RayRecord
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     K = 5
 
     def mode_rays(mode):
@@ -2152,7 +2152,7 @@ def test_beamlet_jackknife_outlier_mode_inflates_sigma():
     # ref phased identically every mode; the probe pixel flips phase by pi in
     # ONE of three modes: the loo set is asymmetric and sigma is large
     from formula.capsysred.shared.types import RayRecord
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     k = float(lines[0].k)
     field, scr = _beamlet_field_1d(lines, nx=21, edge=1.2e-5, z=0.06,
                                    w0=3.0e-6)
@@ -2179,7 +2179,7 @@ def test_beamlet_jackknife_single_mode_pixel_guard():
     # a pixel lit by exactly one mode: its own leave-out term is skipped
     # (denominator would vanish) and sigma stays finite
     from formula.capsysred.shared.types import RayRecord
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     field, scr = _beamlet_field_1d(lines, nx=41, edge=4.0e-5, z=0.01,
                                    w0=3.0e-6)
     lone_x = 1.5e-5
@@ -2207,7 +2207,7 @@ def test_beamlet_aniso_free_widths_match_gaussian():
     from formula.capsysred.stages.beamlets.field import BeamletField
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     k = float(lines[0].k)
     w0s, w0t, L = 5.0e-7, 3.0e-6, 0.06
     scr = ScreenGrid(SimpleNamespace(z=L, nx=61, ny=61, center=[0.0, 0.0],
@@ -2244,7 +2244,7 @@ def _point_source_fan(w0_t=None, waist_dz=0.0, use_native=True, kev="8.0",
     from formula.capsysred.screen import ScreenGrid
     from formula.capsysred.shared.types import RayRecord
     D = 0.1
-    lines = spectral_lines({"mode": "monochromatic"}, Number(kev, 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)(kev))
     scr = ScreenGrid(SimpleNamespace(z=D, nx=41, ny=41, center=[0.0, 0.0],
                                      edge_x=4.0e-6, edge_y=4.0e-6))
     field = BeamletField(lines, scr, scr.ref_pixel(None), w0, 3.0, None,
@@ -2505,7 +2505,7 @@ def test_beamlet_jackknife_skips_sole_mode_pixels():
     from formula.capsysred.stages.beamlets.field import BeamletField
     from formula.capsysred.native import make_beamlet_grid
     from formula.capsysred.screen import ScreenGrid
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     scr = ScreenGrid(SimpleNamespace(z=0.1, nx=401, ny=1, center=[0.0, 0.0],
                                      edge_x=2.0e-4, edge_y=2.0e-6))
     ref = scr.pixel((-6.0e-5, 0.0))
@@ -2538,7 +2538,7 @@ def test_beamlet_window_is_the_ellipse_bounding_box():
     from types import SimpleNamespace
     from formula.capsysred.stages.beamlets.field import BeamletField
     from formula.capsysred.screen import ScreenGrid
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     scr = ScreenGrid(SimpleNamespace(z=0.1, nx=201, ny=101, center=[0.0, 0.0],
                                      edge_x=2.0e-4, edge_y=1.0e-4))
 
@@ -2567,7 +2567,7 @@ def test_beamlet_tail_ray_deposit_stays_finite():
     from formula.capsysred.stages.beamlets.field import BeamletField
     from formula.capsysred.native import make_beamlet_grid
     from formula.capsysred.screen import ScreenGrid
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     scr = ScreenGrid(SimpleNamespace(z=0.5, nx=101, ny=3, center=[0.0, 0.0],
                                      edge_x=1.0e-4, edge_y=6.0e-6))
     fields = {}
@@ -2606,7 +2606,7 @@ def test_beamlet_native_lensed_bounces_match_python():
                          3.0) is None:
         pytest.skip("BeamletGrid missing from the built .so")
     lines = spectral_lines({"mode": "gaussian", "rel_fwhm": 1.0e-3,
-                            "n_lines": 3, "n_sigma": 2.0}, Number("8.0", 32))
+                            "n_lines": 3, "n_sigma": 2.0}, NumberContext(32)("8.0"))
     scr = ScreenGrid(SimpleNamespace(z=0.06, nx=21, ny=5, center=[0.0, 0.0],
                                      edge_x=1.2e-5, edge_y=6.0e-6))
     a = 3.0e-6
@@ -2666,7 +2666,7 @@ def test_beamlet_native_multimode_fold_matches_python():
                          3.0) is None:
         pytest.skip("BeamletGrid missing from the built .so")
     lines = spectral_lines({"mode": "gaussian", "rel_fwhm": 1.0e-3,
-                            "n_lines": 3, "n_sigma": 2.0}, Number("8.0", 32))
+                            "n_lines": 3, "n_sigma": 2.0}, NumberContext(32)("8.0"))
     scr = ScreenGrid(SimpleNamespace(z=0.06, nx=21, ny=5, center=[0.0, 0.0],
                                      edge_x=1.2e-5, edge_y=6.0e-6))
     modes = [
@@ -2754,9 +2754,9 @@ def test_funnel_pinch_axial_ray_does_not_tunnel():
     cap = sim.cfg.capillary
     bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
     p = cap.z0.precision
-    zero, one = Number("0", p), Number("1", p)
-    res = trace_ray((zero, zero, Number("-0.01", p)), (zero, zero, one),
-                    bundle, Number("0.4", p), 200)
+    zero, one = NumberContext(p)("0"), NumberContext(p)("1")
+    res = trace_ray((zero, zero, NumberContext(p)("-0.01")), (zero, zero, one),
+                    bundle, NumberContext(p)("0.4"), 200)
     assert res.fate == "absorbed"
 
 
@@ -2810,17 +2810,18 @@ def test_native_quartic_first_matches_python_at_eps_t_edge():
     r = lift("0.99999999999999999e-12", P)   # binary 1e-12 < r <= decimal
     assert float(r) == 1e-12
     roots = [r] + [lift(v, P) for v in ("0.002", "-0.001", "0.05")]
-    c = [Number("1", P)]
+    N = NumberContext(P)
+    c = [N("1")]
     for rt in roots:
-        nc = [Number("0", P) for _ in range(len(c) + 1)]
+        nc = [N("0") for _ in range(len(c) + 1)]
         for i, v in enumerate(c):
             nc[i] = nc[i] + v
             nc[i + 1] = nc[i + 1] - v * rt
         c = nc
     py = wt._quartic_first(tuple(c), 0.1)
-    nat = _formula.trace_dbg_quartic_first(tuple(v._value for v in c), 0.1)
+    nat = _formula.trace_dbg_quartic_first(tuple(c), 0.1)
     assert (py is None) == (nat is None)
-    assert float(py) == float(Number._wrap(nat, P, False))
+    assert float(py) == float(nat)
 
 
 def _run_jack(modes, ref=3, npx=7):
@@ -2941,15 +2942,15 @@ def _hex_grazing_case():
             "+(y-(0))*(-0.86602540378443864676372317075295)-(24))"
             "*((x-(0))*(0.49999999999999999999999999999997)"
             "+(y-(0))*(-0.86602540378443864676372317075296)-(24))")
-    O = tuple(Number(s, p) for s in
+    O = tuple(NumberContext(p)(s) for s in
               ("-1.2167386983331492e-08", "2.4448041063369702e-05",
                "-7.67726609566741e-42"))
-    d = tuple(Number(s, p) for s in
+    d = tuple(NumberContext(p)(s) for s in
               ("2.272177873466233779743747043025e-06",
                "0.00061157517247929563405253923964793",
                "0.99999981298530532006755016828724"))
-    t_exit = Number("0.052500009818273306857838382314289", p)
-    t_ref = Number("0.0053382644074804444925814276487202", p)
+    t_exit = NumberContext(p)("0.052500009818273306857838382314289")
+    t_ref = NumberContext(p)("0.0053382644074804444925814276487202")
     rs = RaySurface(expr, p)
     scale = lift(m_to_um(1), p)
     return rs, scale, O, d, t_exit, t_ref
@@ -3005,7 +3006,7 @@ def test_beamlet_native_matches_python_through_a_mirrored_lens():
     from types import SimpleNamespace
     from formula.capsysred.stages.beamlets.field import BeamletField
     from formula.capsysred.screen import ScreenGrid
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     scr = ScreenGrid(SimpleNamespace(z=0.1, nx=21, ny=21, center=[0.0, 0.0],
                                      edge_x=2.0e-5, edge_y=2.0e-5))
     out = []
@@ -3029,7 +3030,7 @@ def test_beamlet_flags_unshared_and_unlit_reference_pixels():
     from types import SimpleNamespace
     from formula.capsysred.stages.beamlets.field import BeamletField
     from formula.capsysred.screen import ScreenGrid
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     scr = ScreenGrid(SimpleNamespace(z=0.1, nx=41, ny=3, center=[0.0, 0.0],
                                      edge_x=4.0e-5, edge_y=3.0e-6))
     for native in (True, False):
@@ -3127,7 +3128,7 @@ def test_beamlet_skew_cylinder_chain_matches_ray_bundle_abcd():
     M = [[cols[j][i] for j in range(4)] for i in range(4)]
     cap = _cap_sim([{"center": [0.0, 0.0], "radius": a}]).cfg.capillary
     bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     scr = ScreenGrid(SimpleNamespace(z=z_end, nx=3, ny=3, center=[0.0, 0.0],
                                      edge_x=1.0e-5, edge_y=1.0e-5))
     field = BeamletField(lines, scr, 4, 3.8e-6, 3.0, bundle, use_native=False,
@@ -3167,7 +3168,7 @@ def test_beamlet_native_matches_python_on_skew_curved_chains():
                          3.0) is None:
         pytest.skip("BeamletGrid missing from the built .so")
     lines = spectral_lines({"mode": "gaussian", "rel_fwhm": 1.0e-3,
-                            "n_lines": 2, "n_sigma": 2.0}, Number("8.0", 32))
+                            "n_lines": 2, "n_sigma": 2.0}, NumberContext(32)("8.0"))
     scr = ScreenGrid(SimpleNamespace(z=0.06, nx=21, ny=5, center=[0.0, 0.0],
                                      edge_x=1.2e-5, edge_y=6.0e-6))
     a, c = 6.0e-6, 2.0e-4
@@ -3299,7 +3300,7 @@ def test_beamlet_coherent_scene_flags_match_native_and_python():
     from types import SimpleNamespace
     from formula.capsysred.stages.beamlets.field import BeamletField
     from formula.capsysred.screen import ScreenGrid
-    lines = spectral_lines({"mode": "monochromatic"}, Number("8.0", 32))
+    lines = spectral_lines({"mode": "monochromatic"}, NumberContext(32)("8.0"))
     scr = ScreenGrid(SimpleNamespace(z=0.1, nx=15, ny=15, center=[0.0, 0.0],
                                      edge_x=1.0e-5, edge_y=1.0e-5))
     out = []

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from formula import Number
+from formula import NumberContext
 from formula.capsysred.stages._ray_jets import Hit, transport_ray
 from formula.capsysred.stages.variational_transport import transport_mode
 from formula.capsysred.walls.wall_cylinder import CylinderWall
@@ -33,7 +33,7 @@ def _family(q, reflections):
 def test_cylinder_replay_matches_analytic_family_through_fourth_order(reflections):
     source, q = np.array([0.0, 0.0, -2.0]), np.array([0.5, 0.0])
     point, direction, path, hits = _family(q, reflections)
-    wall = CylinderWall((Number("0", 64), Number("0", 64)), Number("1", 64))
+    wall = CylinderWall((NumberContext(64)("0"), NumberContext(64)("0")), NumberContext(64)("1"))
     jet = transport_ray(q, source, 0.0, point[2],
                         [Hit(wall, hit) for hit in hits], order=4)
     a, sign, c = q[0], (-1) ** reflections, 2.0 * reflections

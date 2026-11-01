@@ -5,7 +5,7 @@ import math
 
 import pytest
 
-from formula import Formula, Number
+from formula import Formula, NumberContext
 from formula.capsysred.shared.nums import vunit
 from formula.capsysred.stages._ray_jets import _Algebra
 from formula.capsysred.walls.wall_torus import TorusWall
@@ -13,14 +13,14 @@ from formula.capsysred.walls.wall_torus import TorusWall
 
 @pytest.mark.parametrize("number_inputs", [False, True])
 def test_shifted_rotated_torus_value_and_gradient(number_inputs):
-    wall = TorusWall((Number("1.25", 64), Number("-0.5", 64)),
-                     Number("0.4", 64), Number("5", 64),
-                     (Number("3", 64), Number("4", 64)), Number("2.5", 64))
+    wall = TorusWall((NumberContext(64)("1.25"), NumberContext(64)("-0.5")),
+                     NumberContext(64)("0.4"), NumberContext(64)("5"),
+                     (NumberContext(64)("3"), NumberContext(64)("4")), NumberContext(64)("2.5"))
     assert wall.precision == 64
     for xi, eta, zr in [(0, 0, 0), (0, 0.4, 0), (0, 0.7, 0), (0.3, -0.2, 1.1)]:
         point = (1.25 + 0.6 * xi - 0.8 * eta,
                  -0.5 + 0.8 * xi + 0.6 * eta, 2.5 + zr)
-        coordinates = tuple(Number(str(v), 64) for v in point) if number_inputs else point
+        coordinates = tuple(NumberContext(64)(str(v)) for v in point) if number_inputs else point
         expected = ((math.hypot(xi - 5, zr) - 5) ** 2 + eta ** 2 - 0.4 ** 2) / 2
         value = wall.value(coordinates)
         assert float(value) == pytest.approx(expected, abs=1e-14)
@@ -38,11 +38,10 @@ def test_torus_keeps_tiny_offsets_with_large_bend_radius(jet_inputs):
                       "-2.000000000000000000000000000002",
                       "3.000000000000000000000000000003")
         bend_radius = "1.000000000000000000000000000002e40"
-        wall = TorusWall((Number(cx, 96), Number(cy, 96)),
-                         Number("2e-30", 96), Number(bend_radius, 96),
-                         (Number("1", 96), Number("0", 96)), Number(z0, 96))
+        N = NumberContext(96)
+        wall = TorusWall((N(cx), N(cy)), N("2e-30"), N(bend_radius), (N("1"), N("0")), N(z0))
         xi, eta, zr = Decimal("3e-30"), Decimal("4e-30"), Decimal("1e5")
-        point = tuple(Number(str(v), 96) for v in
+        point = tuple(N(str(v)) for v in
                       (Decimal(cx) + xi, Decimal(cy) + eta, Decimal(z0) + zr))
         if jet_inputs:
             point = tuple(alg.constant(v) for v in point)
@@ -75,9 +74,9 @@ def test_torus_composes_higher_derivatives_and_normal(order):
     u, v = alg.variable("0.3", seeds, 0), alg.variable("0.7", seeds, 1)
     point = tuple(alg.evaluate(expression, u=u, v=v)
                   for expression in ("1+u^2+u*v", "v^2-u+2", "2+u+v^2"))
-    wall = TorusWall((Number("1.25", 96), Number("-0.5", 96)),
-                     Number("0.4", 96), Number("5", 96),
-                     (Number("3", 96), Number("4", 96)), Number("2.5", 96))
+    wall = TorusWall((NumberContext(96)("1.25"), NumberContext(96)("-0.5")),
+                     NumberContext(96)("0.4"), NumberContext(96)("5"),
+                     (NumberContext(96)("3"), NumberContext(96)("4")), NumberContext(96)("2.5"))
     dx, dy, zr = "(u^2+u*v-0.25)", "(v^2-u+2.5)", "(u+v^2-0.5)"
     xi, eta = f"(0.6*{dx}+0.8*{dy})", f"(-0.8*{dx}+0.6*{dy})"
     rho = f"sqrt(({xi}-5)^2+{zr}^2)"

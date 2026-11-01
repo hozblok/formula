@@ -3,7 +3,8 @@
 import numpy as np
 import pytest
 
-from formula import Formula, Number, NumberContext
+from formula import Formula, NumberContext
+from formula.capsysred.shared.nums import text
 from formula.capsysred.config import _bore
 from formula.capsysred.surfaces import _make_wall
 from formula.capsysred.walls.wall_cylinder import CylinderWall
@@ -104,7 +105,7 @@ WORLD_POINTS = [(.7, -.1, .55), (-.35, .6, .82), (-.4, -.55, -.15)]
 
 def _world_wall(kind):
     raw = dict(WORLD_BORES[kind], center=[.15, -.12])
-    return _make_wall(_bore(raw, NumberContext(64), 0), Number(".37", 64))
+    return _make_wall(_bore(raw, NumberContext(64), 0), NumberContext(64)(".37"))
 
 
 def _world_reference(kind, point):
@@ -122,7 +123,7 @@ def _world_reference(kind, point):
         formula = Formula(expression, precision=64)
         candidates = [dict(values, face=str(k), a=repr(a))
                       for k, a in enumerate(WORLD_BORES[kind]["apothems"])]
-        values = max(candidates, key=lambda v: float(Number(formula.evaluate(v), 64)))
+        values = max(candidates, key=lambda v: float(NumberContext(64)(formula.evaluate(v))))
     else:
         xi = "(2*(x-cx)-3*(y-cy))/sqrt(13)"
         eta = "(3*(x-cx)+2*(y-cy))/sqrt(13)"
@@ -209,7 +210,7 @@ def _full_hessian(compact):
 def test_world_surface_normal_and_curvature_match_stored_formula(kind):
     wall, point = _world_wall(kind), _world_surface_point(kind)
     formula = Formula(wall.expr_um, precision=64)
-    values = {axis: str(Number(repr(float(value)), 64) * Number("1000000", 64))
+    values = {axis: text(NumberContext(64)(repr(float(value))) * NumberContext(64)("1000000"), 64)
               for axis, value in zip("xyz", point)}
     expected_g = np.array([float(formula.get_derivative(axis, values)) for axis in "xyz"])
     expected_h = np.array([[float(formula.get_partial_derivative([a, b], values)) for b in "xyz"]
@@ -230,7 +231,7 @@ def test_world_surface_normal_and_curvature_match_stored_formula(kind):
 def test_shifted_rotated_torus_world_derivatives_at_large_radius(radius, toward):
     raw = {"center": [72e-6, -3e-6], "radius": 24e-6,
            "bend": {"radius": radius, "toward": toward}}
-    wall = _make_wall(_bore(raw, NumberContext(64), 0), Number(".07", 64))
+    wall = _make_wall(_bore(raw, NumberContext(64), 0), NumberContext(64)(".07"))
     point = (80e-6, 17e-6, .25)
     xi = "(tx*(x-cx)+ty*(y-cy))/sqrt(tx^2+ty^2)"
     eta = "(-ty*(x-cx)+tx*(y-cy))/sqrt(tx^2+ty^2)"
@@ -244,7 +245,8 @@ def test_shifted_rotated_torus_world_derivatives_at_large_radius(radius, toward)
     np.testing.assert_allclose(actual_g, grad, rtol=5e-14, atol=2e-20)
     np.testing.assert_allclose(actual_h, hess, rtol=5e-14, atol=3e-16)
     distance_formula = Formula(f"sqrt((sqrt((R-({xi}))^2+(z-z0)^2)-R)^2+({eta})^2)-a", precision=64)
-    expected_error = abs(float(Number(distance_formula.evaluate(dict(values, a="24e-6")), 64)))
+    distance = NumberContext(64)(distance_formula.evaluate(dict(values, a="24e-6")))
+    expected_error = abs(float(distance))
     np.testing.assert_allclose(wall.surface_error_at(*point), expected_error, rtol=5e-14, atol=2e-20)
 
 
@@ -262,7 +264,7 @@ def test_surface_error_matches_normal_offsets_and_ignores_derivative_scale(kind,
 
     wall, point = _world_wall(kind), _world_surface_point(kind)
     formula = Formula(wall.expr_um, precision=64)
-    values = {axis: str(Number(repr(float(value)), 64) * Number("1000000", 64))
+    values = {axis: text(NumberContext(64)(repr(float(value))) * NumberContext(64)("1000000"), 64)
               for axis, value in zip("xyz", point)}
     normal = np.array([float(formula.get_derivative(axis, values)) for axis in "xyz"])
     normal /= np.linalg.norm(normal)
@@ -294,7 +296,7 @@ def test_surface_error_matches_normal_offsets_and_ignores_derivative_scale(kind,
 def test_polygon_surface_error_rejects_face_extensions(rotation):
     raw = {"center": [.3, -.4], "radius": 1., "sides": 4, "rotation_deg": rotation,
            "apothems": [1., 2., 1., 2.]}
-    wall = _make_wall(_bore(raw, NumberContext(64), 0), Number(".37", 64))
+    wall = _make_wall(_bore(raw, NumberContext(64), 0), NumberContext(64)(".37"))
     angle = np.deg2rad(rotation)
     transform = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
     local = np.array([[.2, 2.], [.2, 2.00001], [.2, 1.99999], [1., 2.1], [0., 0.]])

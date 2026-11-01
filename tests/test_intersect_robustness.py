@@ -10,23 +10,22 @@ import math
 
 import pytest
 
-from formula import Number, RaySurface
+from formula import NumberContext, RaySurface
 from formula._roots import is_polynomial
 
 
 def _pi(prec):
-    return Number("4*atan(1)", prec)
+    return NumberContext(prec).eval("4*atan(1)")
 
 
 def _close(a, b, eps="1e-18"):
-    prec = a.precision
-    return abs(a - Number(b, prec)) < Number(eps, prec)
+    N = NumberContext(a.precision)
+    return abs(a - N(b)) < N(eps)
 
 
 def _match(roots, expected, eps="1e-18"):
     return len(roots) == len(expected) and all(
-        _close(r, e if isinstance(e, Number) else str(e), eps)
-        for r, e in zip(roots, expected)
+        _close(r, e, eps) for r, e in zip(roots, expected)
     )
 
 
@@ -45,7 +44,7 @@ def test_point_at_recovers_axes_the_surface_ignores():
     assert len(pts) == 2
     for x, y, z in pts:
         assert str(y) == "5" and str(z) == "7"
-        assert abs(x * x - Number(1, 24)) < Number("1e-20", 24)
+        assert abs(x * x - NumberContext(24)(1)) < NumberContext(24)("1e-20")
 
 
 def test_t_is_arc_length_under_nonunit_direction():
@@ -61,7 +60,7 @@ def test_oblique_ray_points_lie_on_surface():
     pts = rs.points((-3, -3, -3), (1, 1, 1), t_max=20, method="sturm")
     assert len(pts) == 2
     for x, y, z in pts:
-        assert abs(x * x + y * y + z * z - Number(4, 48)) < Number("1e-18", 48)
+        assert abs(x * x + y * y + z * z - NumberContext(48)(4)) < NumberContext(48)("1e-18")
 
 
 def test_ray_along_ignored_axis_returns_empty_not_nan():
@@ -142,7 +141,7 @@ def test_transcendental_root_at_tmin(method):
     rs = RaySurface("sin(x)", precision=32)
     roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=7, t_min=0, method=method)
     pi = _pi(32)
-    assert _match(roots, ["0", pi, pi * Number(2, 32)], eps="1e-12")
+    assert _match(roots, ["0", pi, pi * NumberContext(32)(2)], eps="1e-12")
 
 
 def test_endpoint_net_adds_no_false_positive():
@@ -239,13 +238,13 @@ def test_chebyshev_sine_roots():
     rs = RaySurface("sin(x)", precision=32)
     roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=10, t_min="0.5", method="chebyshev")
     pi = _pi(32)
-    assert _match(roots, [pi, pi * Number(2, 32), pi * Number(3, 32)], eps="1e-24")
+    assert _match(roots, [pi, pi * NumberContext(32)(2), pi * NumberContext(32)(3)], eps="1e-24")
 
 
 def test_chebyshev_exp_root():
     rs = RaySurface("exp(x) - 2", precision=32)
     roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=3, method="chebyshev")
-    assert _match(roots, [Number("log(2)", 32)], eps="1e-24")
+    assert _match(roots, [NumberContext(32).eval("log(2)")], eps="1e-24")
 
 
 @pytest.mark.parametrize("method", ["subdivision", "auto"])
@@ -254,7 +253,7 @@ def test_corrugated_wall_twelve_roots(method):
     rs = RaySurface("x*x + y*y - (1 + 0.3*sin(4*z))^2", precision=32)
     roots = rs.intersect((1, 0, 0), (0, 0, 1), t_max=10, t_min="0.1", method=method)
     pi = _pi(32)
-    expected = [pi * Number(k, 32) / Number(4, 32) for k in range(1, 13)]
+    expected = [pi * NumberContext(32)(k) / NumberContext(32)(4) for k in range(1, 13)]
     assert _match(roots, expected, eps="1e-22")
 
 
@@ -270,7 +269,7 @@ def test_subdivision_tangency_and_rejects_turning_point():
     rs = RaySurface("cos(x) + 1", precision=32)
     roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=10, t_min="0.1", method="subdivision")
     pi = _pi(32)
-    assert _match(roots, [pi, pi * Number(3, 32)], eps="1e-12")
+    assert _match(roots, [pi, pi * NumberContext(32)(3)], eps="1e-12")
 
 
 @pytest.mark.parametrize("method", ["chebyshev", "subdivision"])
@@ -374,11 +373,10 @@ def test_torus_points_lie_on_surface():
     rs = RaySurface(_TORUS, precision=48)
     pts = rs.points((-4, 0, 0), (1, 0, 0), t_max=10, method="sturm")
     assert len(pts) == 4
+    N = NumberContext(48)
     for x, y, z in pts:
-        residual = (x * x + y * y + z * z + Number(3, 48)) ** Number(2, 48) - Number(
-            16, 48
-        ) * (x * x + y * y)
-        assert abs(residual) < Number("1e-40", 48)
+        residual = (x * x + y * y + z * z + N(3)) ** N(2) - N(16) * (x * x + y * y)
+        assert abs(residual) < N("1e-40")
 
 
 def test_sturm_wide_coefficient_spread_keeps_true_degree():
@@ -397,7 +395,7 @@ def test_sturm_wide_coefficient_spread_keeps_true_degree():
     sturm = rs.intersect(O, d, t_max=5.0e4, t_min=1.0, method="sturm")
     subdiv = rs.intersect(O, d, t_max=5.0e4, t_min=1.0, method="subdivision")
     assert len(sturm) == 1 and len(subdiv) == 1
-    assert abs((sturm[0] - subdiv[0]) / subdiv[0]) < Number("1e-25", 32)
+    assert abs((sturm[0] - subdiv[0]) / subdiv[0]) < NumberContext(32)("1e-25")
 
 
 # --------------------------------------------------------------------------- #

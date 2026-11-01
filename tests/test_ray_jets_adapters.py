@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from formula import Number, NumberContext
+from formula import NumberContext
 from formula.capsysred.stages._ray_jets import Hit, transport_ray
 from formula.capsysred.surfaces import ImplicitWall, Mirror
 from formula.capsysred.walls.wall_cylinder import CylinderWall
@@ -11,8 +11,8 @@ from formula.capsysred.walls.wall_cylinder import CylinderWall
 
 @pytest.mark.parametrize("precision", [50, 64])
 def test_implicit_wall_reuses_micrometre_geometry(precision):
-    center = (Number("1.25", precision), Number("-0.5", precision))
-    radius = Number("1", precision)
+    center = (NumberContext(precision)("1.25"), NumberContext(precision)("-0.5"))
+    radius = NumberContext(precision)("1")
     walls = [ImplicitWall("(x-1250000)^2+(y+500000)^2-1000000000000", center, radius),
              CylinderWall(center, radius)]
     jets = [transport_ray((1.75, -0.5), (1.25, -0.5, -2), 0, 5,
@@ -25,7 +25,8 @@ def test_implicit_wall_reuses_micrometre_geometry(precision):
 
 
 def test_implicit_wall_precision_mismatch_is_rejected():
-    wall = ImplicitWall("x-1000000", (Number("0", 96), Number("0", 96)), Number("1", 96))
+    N = NumberContext(96)
+    wall = ImplicitWall("x-1000000", (N("0"), N("0")), N("1"))
     with pytest.raises(ValueError, match="precision"):
         transport_ray((0.2, 0), (0, 0, -2), 0, 10, [Hit(wall, (1, 0, 8))])
 
@@ -33,14 +34,14 @@ def test_implicit_wall_precision_mismatch_is_rejected():
 @pytest.mark.parametrize("z0,z1", [(2, 4), (0, 2), (3, 4), (0, 1),
                                      (2-5e-10, 3), (0, 2+5e-10)])
 def test_mirror_rejects_hits_outside_its_smooth_reflecting_span(z0, z1):
-    mirror = Mirror(Number(str(z0), 64), Number(str(z1), 64))
+    mirror = Mirror(NumberContext(64)(str(z0)), NumberContext(64)(str(z1)))
     with pytest.raises(ValueError, match="reflecting span"):
         transport_ray((0.2, 0), (0.4, 0, -2), 0, 4,
                       [Hit(mirror, (0, 0, 2))], order=1)
 
 
 def test_mirror_rejects_the_back_side():
-    mirror = Mirror(Number("0", 64), Number("4", 64))
+    mirror = Mirror(NumberContext(64)("0"), NumberContext(64)("4"))
     with pytest.raises(ValueError, match="reflecting side"):
         transport_ray((-0.2, 0), (-0.4, 0, -2), 0, 4,
                       [Hit(mirror, (0, 0, 2))], order=1)

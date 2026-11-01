@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from formula import Number
+from formula import NumberContext
 from formula.capsysred.shared.nums import vadd, vdot, vscale, vsub, vunit
 from formula.capsysred.stages._ray_jets import Hit, transport_ray
 from formula.capsysred.stages.variational_transport import transport_mode
@@ -16,7 +16,7 @@ from formula.capsysred.walls.wall_revolution import RevolutionWall
 
 
 def _number(value):
-    return Number(str(value), 64)
+    return NumberContext(64)(str(value))
 
 
 def _wall(kind):

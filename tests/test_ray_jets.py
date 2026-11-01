@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from scipy.optimize import brentq
 
-from formula import Number
+from formula import NumberContext
 from formula.capsysred.stages.variational_transport import transport_mode
 from formula.capsysred.stages._ray_jets import Hit, Surface, transport_ray
 from formula.capsysred.walls.wall_cylinder import CylinderWall
@@ -17,15 +17,15 @@ from formula.capsysred.walls.wall_torus import TorusWall
 def _cylinder_surface(provider, precision=64):
     if provider == "expression":
         return Surface("x^2+y^2-1", precision=precision)
-    zero = Number("0", precision)
-    return CylinderWall((zero, zero), Number("1", precision))
+    zero = NumberContext(precision)("0")
+    return CylinderWall((zero, zero), NumberContext(precision)("1"))
 
 
 def _torus_surface(provider, precision=64):
     if provider == "expression":
         return Surface("(sqrt((x-100)^2+z^2)-100)^2+y^2-1", precision=precision)
-    zero, one = Number("0", precision), Number("1", precision)
-    return TorusWall((zero, zero), one, Number("100", precision), (one, zero), zero)
+    zero, one = NumberContext(precision)("0"), NumberContext(precision)("1")
+    return TorusWall((zero, zero), one, NumberContext(precision)("100"), (one, zero), zero)
 
 
 def _path_result(source, q, direction, points, target_z):
@@ -246,7 +246,7 @@ def test_surface_precision_matches_rounded_transport_precision(provider, surface
     source, q = np.array([0.08, -0.04, -2.0]), np.array([0.5, 0.15])
     reference = trace(q, source)
     surface = surface_factory(provider, precision=50)
-    assert surface.precision == Number("0", 50).precision
+    assert surface.precision == NumberContext(50)("0").precision
     jet = transport_ray(q, source, 0.0, 12.0,
                         [Hit(surface, point) for point in reference[2]], order=1, precision=50)
     _check_nominal_and_fermat(jet, reference)

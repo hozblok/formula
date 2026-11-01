@@ -2,12 +2,12 @@
 
 import pytest
 
-from formula import Number, RaySurface
+from formula import NumberContext, RaySurface
 
 
 def _close(a, b, eps="1e-20"):
-    prec = a.precision
-    return abs(a - Number(b, prec)) < Number(eps, prec)
+    N = NumberContext(a.precision)
+    return abs(a - N(b)) < N(eps)
 
 
 def _match(roots, expected, eps="1e-20"):
@@ -57,8 +57,8 @@ def test_points_map_back_to_surface():
     pts = rs.points((-2, 0, 0), (1, 0, 0), t_max=10, method="sturm")
     assert len(pts) == 2
     for x, y, z in pts:
-        residual = x * x + y * y - Number(1, 48)
-        assert abs(residual) < Number("1e-20", 48)
+        residual = x * x + y * y - NumberContext(48)(1)
+        assert abs(residual) < NumberContext(48)("1e-20")
 
 
 def test_sampling_matches_sturm():
@@ -71,14 +71,14 @@ def test_sampling_matches_sturm():
 def test_chebyshev_transcendental_roots():
     rs = RaySurface("sin(x)", precision=32)
     roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=10, t_min="0.5", method="chebyshev")
-    pi = Number("4*atan(1)", 32)
-    assert _match(roots, [pi, pi * Number(2, 32), pi * Number(3, 32)], eps="1e-28")
+    pi = NumberContext(32).eval("4*atan(1)")
+    assert _match(roots, [pi, pi * NumberContext(32)(2), pi * NumberContext(32)(3)], eps="1e-28")
 
 
 def test_chebyshev_exp_root():
     rs = RaySurface("exp(x) - 2", precision=32)
     roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=3, method="chebyshev")
-    ln2 = Number("log(2)", 32)
+    ln2 = NumberContext(32).eval("log(2)")
     assert _match(roots, [ln2], eps="1e-28")
 
 
@@ -99,8 +99,8 @@ def test_complex_surface_real_intersections():
 # --- variant 7: subdivision with derivative/range bounds ---
 
 def _kpi_over_4(n, prec=32):
-    pi = Number("4*atan(1)", prec)
-    return [pi * Number(k, prec) / Number(4, prec) for k in range(1, n + 1)]
+    pi = NumberContext(prec).eval("4*atan(1)")
+    return [pi * NumberContext(prec)(k) / NumberContext(prec)(4) for k in range(1, n + 1)]
 
 
 @pytest.mark.parametrize("method", ["subdivision", "sturm"])
@@ -133,8 +133,8 @@ def test_subdivision_tangent_and_rejects_turning_point():
     # cos(t)+1 touches zero (double root) at pi, 3pi; at 2pi g'=0 but g=2 (no root).
     rs = RaySurface("cos(x) + 1", precision=32)
     roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=10, t_min="0.1", method="subdivision")
-    pi = Number("4*atan(1)", 32)
-    assert _match(roots, [pi, pi * Number(3, 32)], eps="1e-12")
+    pi = NumberContext(32).eval("4*atan(1)")
+    assert _match(roots, [pi, pi * NumberContext(32)(3)], eps="1e-12")
 
 
 def test_auto_unions_chebyshev_and_subdivision():
