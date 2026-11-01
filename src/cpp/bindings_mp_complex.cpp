@@ -125,12 +125,12 @@ static void register_one_mp_complex(py::module_ &m) {
            [](const C &x) {
              if (x.imag() != 0)
                throw py::type_error("cannot convert a complex value to float");
-             return x.real().template convert_to<double>();
+             return parse_double(x.real().str(P));
            })
       .def("__complex__",
            [](const C &x) {
-             return std::complex<double>(x.real().template convert_to<double>(),
-                                         x.imag().template convert_to<double>());
+             return std::complex<double>(parse_double(x.real().str(P)),
+                                         parse_double(x.imag().str(P)));
            })
       // An integer within 2**53 hashes as that int, as in equality.
       .def("__hash__",
