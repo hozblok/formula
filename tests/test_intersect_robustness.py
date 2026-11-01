@@ -76,6 +76,20 @@ def test_zero_direction_rejected():
         rs.intersect((0, 0, 0), (0, 0, 0), t_max=5)
 
 
+def test_non_finite_coordinates_rejected_on_every_axis():
+    # The surface ignores y and z, yet point_at and the normalization use all three coordinates.
+    from formula import NumberContext
+    rs = RaySurface("x-1", precision=64)
+    N = NumberContext(64)
+    nan, inf = N(0) / N(0), N(1) / N(0)
+    for origin, direction in (((0, nan, 0), (1, 0, 0)), ((0, 0, 0), (1, inf, 0)),
+                              ((inf, 0, 0), (1, 0, 0)), ((0, 0, 0), (1, 0, nan))):
+        with pytest.raises(ValueError, match="finite"):
+            rs.points(origin, direction, t_max=2)
+    (x, y, z), = rs.points((0, 0, 0), (1, 0, 0), t_max=2)
+    assert abs(x - 1) < N("1e-60") and y == 0 and z == 0
+
+
 def test_tmin_above_tmax_rejected():
     rs = RaySurface("x*x - 1", precision=24)
     with pytest.raises(ValueError, match="t_min"):

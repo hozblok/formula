@@ -10,7 +10,7 @@ from typing import Optional, Sequence
 
 from ._formula import FmtFlags
 from ._roots import get_backend
-from ._roots.utils import real_text, tol_half, tol_third
+from ._roots.utils import finite, real_text, tol_half, tol_third
 from .backend import MP_TYPES
 from .formula import NumberContext, Solver
 
@@ -114,9 +114,14 @@ class RaySurfaceFunction:
         # the full x,y,z so point_at and the arc-length normalization stay correct
         # even when the surface ignores an axis.
         self._axes = [a for a in _AXES if a in axes]
-        self.origin = {a: _value(origin[_AXES.index(a)], N) for a in _AXES}
-        self.direction = dict(zip(
-            _AXES, _normalize([_value(direction[_AXES.index(a)], N) for a in _AXES])))
+        origin = [_value(origin[_AXES.index(a)], N) for a in _AXES]
+        direction = [_value(direction[_AXES.index(a)], N) for a in _AXES]
+        # Every coordinate, on the surface's axes or not: point_at and the
+        # normalization use all three, and the evaluator never sees the others.
+        if not all(finite(c) for c in origin + direction):
+            raise ValueError("origin and direction coordinates must be finite")
+        self.origin = dict(zip(_AXES, origin))
+        self.direction = dict(zip(_AXES, _normalize(direction)))
 
     def _point(self, t) -> dict:
         """Ray coordinates (surface axes only) at parameter t, as value strings."""
