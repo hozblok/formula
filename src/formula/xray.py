@@ -11,8 +11,10 @@ silica). This is the building block for tracing X-rays down a glass capillary
 """
 
 from collections import namedtuple
-from typing import Callable, Union
+from typing import Callable
 
+from ._formula import FmtFlags
+from .backend import MP_TYPES
 from .formula import Number
 from .intersect import RaySurface
 from .henke import silica_electron_density, silicon_electron_density
@@ -173,6 +175,6 @@ def reflect_ray(
     return ReflectionEvent(point, refl_dir, grazing, reflec, t)
 
 
-def _s(value: Union[Number, str, int, float]) -> str:
-    """Render a scalar for embedding in a formula expression."""
-    return str(value)
+def _s(value) -> str:
+    """Scalar text for a formula expression; a backend value prints its precision's digits."""
+    return value.str(value.precision, FmtFlags.default) if isinstance(value, MP_TYPES) else str(value)
