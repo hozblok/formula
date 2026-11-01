@@ -16,15 +16,15 @@ from typing import Callable
 
 from ._formula import FmtFlags
 from .backend import MP_TYPES
-from .formula import Number
+from .formula import NumberContext
 from .intersect import RaySurface
 from .henke import silica_electron_density, silicon_electron_density
 from .physical_constants import ANGSTROM, HC_KEV_ANGSTROM, R_E
 
 
-def wavelength_angstrom(energy_kev, *, precision: int) -> Number:
+def wavelength_angstrom(energy_kev, *, precision: int):
     """Photon wavelength (angstrom) for an energy in keV."""
-    return Number(f"({HC_KEV_ANGSTROM})/({_s(energy_kev)})", precision)
+    return NumberContext(precision).eval(f"({HC_KEV_ANGSTROM})/({_s(energy_kev)})")
 
 
 class GlassMaterial:
@@ -114,16 +114,17 @@ def reflect_amplitude(
     material: GlassMaterial = FUSED_SILICA,
     *,
     precision: int,
-) -> Number:
+):
     """Complex amplitude reflection coefficient r (s-polarization).
 
     r = (s - sqrt(s^2 - 2*delta + 2i*beta)) / (s + sqrt(...)), s = sin(theta).
     Carries magnitude and phase; coherent tracing must multiply r, not sqrt(R).
     """
-    s = Number(f"sin({_s(grazing_angle)})", precision)
+    N = NumberContext(precision)
+    s = N.eval("sin(g)", g=_s(grazing_angle))
     delta, beta = material.optical(energy_kev_value)
     d2, b2 = 2.0 * delta, 2.0 * beta
-    root = (s * s - d2 + b2 * Number("i", precision)) ** Number("0.5", precision)
+    root = (s * s - d2 + b2 * N.i) ** 0.5
     return (s - root) / (s + root)
 
 
@@ -133,13 +134,13 @@ def reflectivity(
     material: GlassMaterial = FUSED_SILICA,
     *,
     precision: int,
-) -> Number:
+):
     """Fresnel reflectivity R = |r|^2 at a grazing angle for a photon energy.
 
     At grazing incidence s and p polarization are indistinguishable.
     """
     r = reflect_amplitude(grazing_angle, energy_kev_value, material, precision=precision)
-    return abs(r) ** Number("2", precision)
+    return abs(r) ** 2
 
 
 def reflect_ray(
