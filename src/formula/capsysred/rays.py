@@ -21,7 +21,8 @@ import json
 import math
 import random
 
-from ..formula import Number
+from .._formula import FmtFlags
+from ..formula import NumberContext
 from . import rays_v3
 from .shared.nums import raw
 from .shared.types import RayRecord
@@ -111,7 +112,8 @@ def recorded_screen_z_text(geometry: dict, scene: str) -> str | None:
         return None
     try:
         # numbers are exact at any precision; 32 covers recordings without one
-        return str(Number(str(screen["z"]), int(geometry.get("precision", 32))))
+        N = NumberContext(int(geometry.get("precision", 32)))
+        return N.eval(str(screen["z"])).str(N.precision, FmtFlags.default)
     except Exception as exc:
         raise ValueError(f"invalid recorded screen z {screen['z']!r}") from exc
 
