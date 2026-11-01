@@ -18,8 +18,7 @@ _AXES = ("x", "y", "z")
 
 
 def _value(v, N: NumberContext):
-    """Input scalar -> backend value at N; a Number is unwrapped, an expression text evaluated."""
-    v = getattr(v, "_value", v)
+    """Input scalar -> backend value at N; an expression text is evaluated."""
     if isinstance(v, str):
         try:
             return N(v)
@@ -29,7 +28,7 @@ def _value(v, N: NumberContext):
 
 
 def _text(v, precision: int) -> str:
-    """Value text at precision significant digits, the digits a Number printed."""
+    """Value text at precision significant digits."""
     return v.str(precision, FmtFlags.default) if isinstance(v, MP_TYPES) else str(v)
 
 

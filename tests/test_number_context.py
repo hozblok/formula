@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from formula import MAX_PRECISION, Number, NumberContext, Solver, mp_class
+from formula import MAX_PRECISION, NumberContext, Solver, mp_class
 from formula.backend import MP_TYPES, mp_number, round_up_precision
 from formula.constants import DEFAULT_PRECISION
 
@@ -77,12 +77,6 @@ def test_a_backend_value_passes_through_unchanged(expression):
 def test_a_backend_value_of_another_storage_precision_is_rejected():
     with pytest.raises(ValueError, match="precision mismatch"):
         NumberContext(64)(mp_class(256)("0.125"))
-
-
-def test_a_number_is_not_an_input():
-    # The factory takes text, int, float and backend values; unwrap a Number first.
-    with pytest.raises(TypeError, match="value must be"):
-        NumberContext(64)(Number("0.125", 64))
 
 
 @pytest.mark.parametrize("precision", [16, 64, 256])

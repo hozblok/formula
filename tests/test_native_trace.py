@@ -16,7 +16,7 @@ import pytest
 from formula import _formula
 from formula.capsysred.native import (compile_optic, make_tracer,
                                       trace_ray_native)
-from formula.capsysred.shared.nums import lift, vadd, vdot, vscale, vsub, vunit, raw
+from formula.capsysred.shared.nums import lift, vadd, vdot, vscale, vsub, vunit
 from formula.capsysred.surfaces import CapillaryBundle, Mirror
 from formula.capsysred.trace import trace_ray
 from formula.capsysred.walls.wall_revolution import RevolutionWall
@@ -76,7 +76,7 @@ def assert_trace_equal(py_tr, c_tr, tol=TRACE_TOL):
 
 
 def raw_vec(vec):
-    return tuple(raw(c) for c in vec)
+    return tuple(vec)
 
 
 # ------------------------------------------------------------- geometry kit
@@ -185,7 +185,7 @@ def test_quartic_first_close():
         cases.append((quartic_from_roots(4e-5, 9e-3, p), 1e-3, 1e-7))
         for c, t_capf, tol in cases:
             py = _quartic_first(c, t_capf)
-            cc = _formula.trace_dbg_quartic_first([raw(x) for x in c], t_capf)
+            cc = _formula.trace_dbg_quartic_first([x for x in c], t_capf)
             if py is None or cc is None:
                 assert py is None and cc is None
             else:
@@ -206,7 +206,7 @@ def test_wall_hit_parity(kind, p):
         t_exit = t_exit_of(bundle, origin, direction)
         py_hit = wall.hit(origin, direction, t_exit)
         c_hit = _formula.trace_wall_hit(native, 0, raw_vec(origin),
-                                        raw_vec(direction), raw(t_exit))
+                                        raw_vec(direction), t_exit)
         assert_hit_equal(py_hit, c_hit)
 
 
@@ -219,7 +219,7 @@ def test_wall_hit_none_paths(p):
     t_exit = t_exit_of(bundle, axis, dz)
     assert bundle.walls[0].hit(axis, dz, t_exit) is None
     assert _formula.trace_wall_hit(native, 0, raw_vec(axis), raw_vec(dz),
-                                   raw(t_exit)) is None
+                                   t_exit) is None
 
 
 @pytest.mark.parametrize("kind", ["cylinder", "revolution", "polygon", "torus"])
@@ -255,7 +255,7 @@ def test_cylinder_equals_revolution(p):
         h_cyl = cyl.hit(origin, direction, t_exit)
         h_rev = rev.hit(origin, direction, t_exit)
         h_cc = _formula.trace_wall_hit(native, 0, raw_vec(origin),
-                                       raw_vec(direction), raw(t_exit))
+                                       raw_vec(direction), t_exit)
         assert_hit_equal(h_cyl, h_rev)
         assert_hit_equal(h_cyl, h_cc)
         hits += h_cyl is not None
@@ -285,7 +285,7 @@ def test_cylinder_degenerate_linear_branch(p):
     assert h_cyl is not None      # A ~ 1e-32 < eps, B ~ 1e-21 -> linear root
     assert_hit_equal(h_cyl, rev.hit(O, d, t_exit))
     assert_hit_equal(h_cyl, _formula.trace_wall_hit(
-        native, 0, raw_vec(O), raw_vec(d), raw(t_exit)))
+        native, 0, raw_vec(O), raw_vec(d), t_exit))
 
 
 R2_SHAPES = [("3.6e-11", "-4e-10", "0"),      # narrowing cone
@@ -306,7 +306,7 @@ def test_revolution_shapes_hit_parity(r2, p):
         t_exit = t_exit_of(bundle, origin, direction)
         py_hit = wall.hit(origin, direction, t_exit)
         c_hit = _formula.trace_wall_hit(native, 0, raw_vec(origin),
-                                        raw_vec(direction), raw(t_exit))
+                                        raw_vec(direction), t_exit)
         assert_hit_equal(py_hit, c_hit)
         hits += py_hit is not None
     assert hits
@@ -324,7 +324,7 @@ def test_axis_parallel_branches(p):
     t_exit = t_exit_of(cyl_bundle, O, d)
     assert cyl_bundle.walls[0].hit(O, d, t_exit) is None
     assert _formula.trace_wall_hit(native_cyl, 0, raw_vec(O), raw_vec(d),
-                                   raw(t_exit)) is None
+                                   t_exit) is None
 
     cone = make_revolution_bundle(("3.6e-11", "-4e-10", "0"), p)
     native_cone = compile_optic(cone)
@@ -333,7 +333,7 @@ def test_axis_parallel_branches(p):
     py_hit = cone.walls[0].hit(O, d, t_exit)
     assert py_hit is not None            # the wall narrows onto the ray
     c_hit = _formula.trace_wall_hit(native_cone, 0, raw_vec(O), raw_vec(d),
-                                    raw(t_exit))
+                                    t_exit)
     assert_hit_equal(py_hit, c_hit)
     screen_z = NumberContext(p)("0.051")
     tracer = make_tracer(cone)
@@ -358,7 +358,7 @@ def test_polygon_tangent_rays_parity(p):
         t_exit = t_exit_of(bundle, O, d)
         py_hit = wall.hit(O, d, t_exit)
         c_hit = _formula.trace_wall_hit(native, 0, raw_vec(O), raw_vec(d),
-                                        raw(t_exit))
+                                        t_exit)
         assert_hit_equal(py_hit, c_hit)
         hits += py_hit is not None
     assert hits
@@ -709,6 +709,6 @@ def test_rectangle_apothems_hit_parity(p):
         O = (lift(2e-8, p), lift(-3e-8, p), lift(0.0, p))
         t_exit = t_exit_of(bundle, O, d)
         py_hit = wall.hit(O, d, t_exit)
-        c_hit = _formula.trace_wall_hit(native, 0, raw_vec(O), raw_vec(d), raw(t_exit))
+        c_hit = _formula.trace_wall_hit(native, 0, raw_vec(O), raw_vec(d), t_exit)
         assert py_hit is not None
         assert_hit_equal(py_hit, c_hit)

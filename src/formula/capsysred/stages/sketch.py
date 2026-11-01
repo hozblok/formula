@@ -85,7 +85,7 @@ class SketchCoherence:
     def _mu(self, col):
         np = self.np
         # float |e^{iθ}|²-1 ~ 1e-16 leaves a fake positive Ic on 1-ray pixels
-        # where the Number engine gets an exact 0: gate Ic against I.
+        # where the mp engine gets an exact 0: gate Ic against I.
         mu = np.zeros(self.M)
         if self.Ic[self.ref] <= 1e-12 * self.I[self.ref]:
             return mu

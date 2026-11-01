@@ -1,4 +1,4 @@
-"""Capillary X-ray coherence simulator on the Number/Solver engine (no numpy).
+"""Capillary X-ray coherence simulator on the NumberContext/Solver engine (no numpy).
 
 trace_v3 records rays; the stages consume the recording:
 

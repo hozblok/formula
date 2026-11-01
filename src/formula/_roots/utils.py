@@ -47,8 +47,8 @@ def finite(value) -> bool:
 
 
 def real_text(value, precision: int) -> str:
-    """Real part of a Number or backend value, formatted at precision."""
-    return getattr(value, "_value", value).real.str(precision)
+    """Real part of a value, formatted at precision."""
+    return value.real.str(precision)
 
 
 def finite_sign(value):

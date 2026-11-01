@@ -24,7 +24,6 @@ import random
 from .._formula import FmtFlags
 from ..formula import NumberContext
 from . import rays_v3
-from .shared.nums import raw
 from .shared.types import RayRecord
 
 
@@ -224,8 +223,7 @@ class MultiRaysReader:
 
 def archive_text(x) -> str:
     """The stored digits without the guard digits: the text every archive carries."""
-    value = raw(x)
-    return value.str(value.precision)
+    return x.str(x.precision)
 
 
 def row_of(scene: str, rec: RayRecord, lean: bool) -> dict:

@@ -11,7 +11,6 @@ from ..formula import NumberContext
 from .env import Env
 from .surfaces import CapillaryBundle, Mirror
 from .trace import TraceResult, trace_ray
-from .shared.nums import raw as _raw
 from .shared.types import _INSIDE_TOL
 from .walls.wall_cylinder import CylinderWall
 from .walls.wall_funnel import FunnelWall
@@ -27,33 +26,29 @@ def _wall_spec(wall):
         # side skips the known-zero terms but keeps the same branches.
         zero = NumberContext(wall.center[0].precision)(0)
         return ("revolution",
-                (_raw(wall.center[0]), _raw(wall.center[1]),
-                 _raw(wall._a2), _raw(zero), _raw(zero)),
+                (wall.center[0], wall.center[1], wall._a2, zero, zero),
                 (wall.eps, wall._cxf, wall._cyf, wall._a2f, 0.0, 0.0))
     if type(wall) is RevolutionWall:
         return ("revolution",
-                (_raw(wall.center[0]), _raw(wall.center[1]),
-                 _raw(wall.c0), _raw(wall.c1), _raw(wall.c2)),
+                (wall.center[0], wall.center[1], wall.c0, wall.c1, wall.c2),
                 (wall.eps, wall._cxf, wall._cyf,
                  wall._c0f, wall._c1f, wall._c2f))
     if type(wall) is PolygonWall:
         # (cx, cy, then m_x, m_y, a_k per face) in mp and in float
-        mp = [_raw(wall.center[0]), _raw(wall.center[1])]
+        mp = [wall.center[0], wall.center[1]]
         fl = [wall._cxf, wall._cyf]
         for (mx, my), (mxf, myf), a, af in zip(wall.faces, wall._facesf, wall.apothems, wall._afs):
-            mp += [_raw(mx), _raw(my), _raw(a)]
+            mp += [mx, my, a]
             fl += [mxf, myf, af]
         return ("polygon", tuple(mp), tuple(fl))
     if type(wall) is TorusWall:
         return ("torus",
-                tuple(_raw(v) for v in (*wall.C, *wall.nhat,
-                                        wall.R, wall.K, wall.fourR2)),
+                (*wall.C, *wall.nhat, wall.R, wall.K, wall.fourR2),
                 (*wall._Cf, *wall._nf, wall._Rf, wall._in2))
     if type(wall) is FunnelWall:
         return ("funnel",
-                tuple(_raw(v) for v in (wall.center[0], wall.center[1],
-                                        wall.r0, wall.r02, wall.ag, wall.bg,
-                                        wall.af, wall.bf, wall.z0)),
+                (wall.center[0], wall.center[1], wall.r0, wall.r02, wall.ag, wall.bg,
+                 wall.af, wall.bf, wall.z0),
                 (wall._cxf, wall._cyf, wall._r0f, wall._agf, wall._bgf,
                  wall._aff, wall._bff, wall._z0f, 1.0 + _INSIDE_TOL))
     return None
@@ -62,23 +57,22 @@ def _wall_spec(wall):
 def compile_optic(optic):
     """NativeOptic twin of a Python optic; None when a wall is unsupported."""
     if type(optic) is Mirror:
-        return _formula.trace_make_mirror(_raw(optic.z0), _raw(optic.z1),
+        return _formula.trace_make_mirror(optic.z0, optic.z1,
                                           optic._z0f, optic._z1f)
     if type(optic) is CapillaryBundle:
         specs = [_wall_spec(wall) for wall in optic.walls]
         if any(spec is None for spec in specs):
             return None
-        return _formula.trace_make_bundle(_raw(optic.z0), _raw(optic.z1),
+        return _formula.trace_make_bundle(optic.z0, optic.z1,
                                           optic._z0f, optic._z1f, specs)
     return None
 
 
 def trace_ray_native(native, origin, direction, screen_z, max_bounces):
     """trace_ray twin on a compiled optic (native=None traces free space)."""
-    screen_z = NumberContext(origin[0].precision)(_raw(screen_z))
+    screen_z = NumberContext(origin[0].precision)(screen_z)
     fate, point, opl, refl, direction = _formula.trace_ray_native(
-        native, tuple(_raw(c) for c in origin),
-        tuple(_raw(c) for c in direction), screen_z, max_bounces)
+        native, tuple(origin), tuple(direction), screen_z, max_bounces)
     return TraceResult(fate, tuple(point), opl,
                        [(tuple(pt), s) for pt, s in refl], tuple(direction))
 

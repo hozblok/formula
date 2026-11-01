@@ -3,7 +3,7 @@
 # bit-equivalent to it — every run cross-checks the first hit via expr_um
 # (engine_hit_t), and the NN-symb twin configs A/B full maps against it.
 """Bent bore: the axis is an arc of radius R (torus segment). The wall hit is
-the exact ray∩torus quartic in Scalar: float Durand-Kerner seeds -> Newton
+the exact ray∩torus quartic in mp: float Durand-Kerner seeds -> Newton
 polish at full precision, exact-sign bisection as the fallback."""
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 # threshold ~p/2 digits above the Horner roundoff floor ~10^-p, which a
 # straight 10^-p target would chase forever (never firing — every ray would
 # drop to the slow bisection fallback). The 24-digit floor keeps the p=32
-# behavior. The step is compared as Scalar: at p ~ 1024 it is ~1e-500 and
+# behavior. The step is compared as mp: at p ~ 1024 it is ~1e-500 and
 # would underflow double.
 _NEWTON_MIN_DIGITS = 24
 
@@ -45,7 +45,7 @@ def _horner(cs, t):
 
 
 def _dk_roots(cf):
-    """All roots of a float polynomial (Durand-Kerner); seeds for Scalar Newton."""
+    """All roots of a float polynomial (Durand-Kerner); seeds for mp Newton."""
     scale = max((abs(v) ** (1.0 / (i + 1)) for i, v in enumerate(cf[1:]) if v),
                 default=1.0) or 1.0
     roots = [complex(0.4, 0.9) ** k * scale for k in range(1, len(cf))]
@@ -85,7 +85,7 @@ def _float_seeds(c, t_capf):
 
 
 def _newton_polish(c, dc, seed, rtol):
-    """Newton on the exact quartic from a float seed: Scalar root or None.
+    """Newton on the exact quartic from a float seed: mp root or None.
 
     Digits double per step, so 12 iterations lift a ~13-digit double seed to
     ~13*2^12 digits — enough headroom for any realistic precision; the loop
@@ -115,7 +115,7 @@ def _bisect_first(c, t_capf):
     (_EPS_T, t_capf] in 48 geometric steps — for t_capf=0.1 the probes are
     1e-12, ~1.7e-12, ..., 0.1 — so an exact double root with NO sign change
     (a tangent graze, not a crossing) stays invisible, which is the intended
-    miss. Signs are Scalar comparisons, not float(): near the root the
+    miss. Signs are mp comparisons, not float(): near the root the
     residual underflows double (reads 0.0, i.e. "not negative") and at
     p ~ 1024 that used to corrupt the bracket. 8 + p*log2(10) halvings
     shrink the bracket below 10^-p of its span.
@@ -141,7 +141,7 @@ def _bisect_first(c, t_capf):
 
 
 def _quartic_first(c, t_capf):
-    """Smallest real root of the monic Scalar quartic in (_EPS_T, t_capf].
+    """Smallest real root of the monic mp quartic in (_EPS_T, t_capf].
 
     Two tiers: float Durand-Kerner seeds polished by Newton at full precision
     (fast path, simple roots), exact-sign bisection when no seed polishes.
@@ -213,7 +213,7 @@ class TorusWall:
     def _tube_coordinates(
         self, point: Sequence[int | float | Scalar | _Jet],
     ) -> tuple[Scalar | _Jet, Scalar | _Jet, Scalar | _Jet, Scalar | _Jet, Scalar | _Jet]:
-        """Entrance coordinates and stable rho-R, retaining Scalar parameter precision."""
+        """Entrance coordinates and stable rho-R, retaining mp parameter precision."""
         x, y, z = surface_coordinates(point, self.precision)
         dx, dy, zr = x - self.center[0], y - self.center[1], z - self.C[2]
         tx, ty = self._toward

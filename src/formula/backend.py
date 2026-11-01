@@ -36,20 +36,3 @@ round_up_precision = _formula.round_up_precision
 mp_number = _formula.mp_number
 
 MP_TYPES = REAL_TYPES + COMPLEX_TYPES
-
-def mp_precision(value) -> int:
-    if not isinstance(value, MP_TYPES):
-        raise TypeError(
-            f"expected mp_real_* or mp_complex_*, got {type(value).__name__}"
-        )
-    name = type(value).__name__
-    if name.startswith(_REAL_PREFIX):
-        suffix = name[len(_REAL_PREFIX):]
-    elif name.startswith(_COMPLEX_PREFIX):
-        suffix = name[len(_COMPLEX_PREFIX):]
-    else:
-        raise TypeError(f"unexpected mp class name: {name!r}")
-    try:
-        return int(suffix)
-    except ValueError as exc:
-        raise TypeError(f"invalid precision in mp class name: {name!r}") from exc

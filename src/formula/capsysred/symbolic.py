@@ -38,7 +38,7 @@ class LineAmplitudes:
             self.two_delta_beta.append((repr(2.0 * delta), repr(2.0 * beta)))
 
     def __call__(self, sins):
-        """sins: sin(theta_j) per bounce (Number or full-precision str)."""
+        """sins: sin(theta_j) per bounce (backend value or full-precision str)."""
         if not sins:
             return [self.numbers(1)] * len(self.two_delta_beta)
         template = ampl_template(len(sins), self.numbers.precision)

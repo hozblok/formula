@@ -64,7 +64,7 @@ class PolygonFace:
                 - self.wall.apothems[self.index])
 
     def gradient(self, point: Sequence[int | float | Scalar | _Jet]) -> tuple[Scalar, Scalar, Scalar]:
-        """Constant world gradient, retaining the original Scalar precision."""
+        """Constant world gradient, retaining the original mp precision."""
         surface_coordinates(point, self.precision)
         nx, ny = self.wall.faces[self.index]
         return nx, ny, self.wall._zero

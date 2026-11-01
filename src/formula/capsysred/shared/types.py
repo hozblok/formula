@@ -23,7 +23,7 @@ class HitMethod(StrEnum):
 # One traced ray as every estimator consumes it (protocol: new_mode ->
 # add_ray(rec, amps) -> fold_mode -> finalize). Pure geometry — amplitudes
 # are physics and stay a separate add_ray argument. opl/sins/point/direction
-# are Number; float estimators convert at the point of use.
+# are mp values; float estimators convert at the point of use.
 RayRecord = namedtuple("RayRecord", [
     "mode", "ray", "fate", "pixel",   # fate is post-amplitude_min
     "point", "direction",             # arrival on the screen plane
@@ -62,7 +62,7 @@ _EPS_LOC = 1e-7
 _TCAP_TOL = 1e-9
 
 # Relative slack on r^2 in inside(): the probed point is a reflection point,
-# i.e. exactly ON the wall, so after Number->double conversion dx^2+dy^2 lands
+# i.e. exactly ON the wall, so after mp->double conversion dx^2+dy^2 lands
 # on either side of a^2 within a few ulp (~1e-15 relative); a strict < would
 # randomly classify on-wall points as outside and _locate would absorb the
 # ray. 1e-9 covers double roundoff with ~6 orders of margin, yet is ~fm in

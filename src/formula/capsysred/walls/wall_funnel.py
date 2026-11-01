@@ -3,7 +3,7 @@
 # bit-equivalent to it — every run cross-checks the first hit via expr_um
 # (engine_hit_t).
 """Conformal-bundle bore (the Liu wall): axis center*g(z), radius r0*f(z),
-f and g quadratic in z-z0. The ray hit is an exact Scalar polynomial —
+f and g quadratic in z-z0. The ray hit is an exact mp polynomial —
 degree 4, dropping to 2 on structural zeros (a straight cylinder is the
 f = g = 1 degeneracy) — solved by the torus two-tier machinery: float
 Durand-Kerner seeds -> Newton polish at full precision, exact-sign bisection
@@ -28,7 +28,7 @@ _Coordinate = TypeVar("_Coordinate")
 
 
 def _poly_first(cs, t_capf):
-    """Smallest real root in (_EPS_T, t_capf] of the degree-<=4 Scalar
+    """Smallest real root in (_EPS_T, t_capf] of the degree-<=4 mp
     polynomial (leading first). Exact-zero leading coefficients (structural
     wall degeneracies: 0-products, never near-zeros — magnitude truncation is
     the sturm-backend failure mode) shift out and the tail pads with zeros:

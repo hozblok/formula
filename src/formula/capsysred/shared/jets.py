@@ -6,7 +6,6 @@ from collections.abc import Iterable, Sequence
 
 from ...backend import MP_TYPES, round_up_precision
 from .formulas import cached_formula
-from .nums import raw
 
 
 class _Algebra:
@@ -17,8 +16,7 @@ class _Algebra:
         self.order, self.precision = order, precision
 
     def constant(self, value) -> _Jet:
-        # The backend text carries every stored digit; a Number's str() would round.
-        value = raw(value)
+        # str() of a backend value carries every stored digit
         if isinstance(value, MP_TYPES) and value.precision != round_up_precision(self.precision):
             raise ValueError(f"precision mismatch: the value is {value.precision}, "
                              f"the algebra {round_up_precision(self.precision)}")

@@ -12,7 +12,7 @@ differences are estimator effects, not statistics:
               carries no intra-mode ray phases (the radiometric limit).
 
 All three run in float64: the maps are statistical estimators with noise
-floors far above 1e-15 (doc/mu28_capsysred.py: the float mirror of the Number
+floors far above 1e-15 (doc/mu28_capsysred.py: the float mirror of the mp
 estimator lands on the same maps). 1D screens only (ny = 1).
 """
 

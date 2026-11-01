@@ -10,7 +10,7 @@ from ...formula import Formula, NumberContext
 from .coordinates import surface_coordinates
 from .formulas import cached_formula
 from .jets import _Jet
-from .nums import raw, text
+from .nums import text
 
 
 class Surface:
@@ -23,8 +23,7 @@ class Surface:
             raise ValueError("coordinate_scale must be positive and finite")
         self.coordinate_scale = coordinate_scale
         self.formula = cached_formula(expression, precision) if isinstance(expression, str) else expression
-        scale = raw(coordinate_scale)
-        if isinstance(scale, MP_TYPES) and scale.precision != self.precision:
+        if isinstance(coordinate_scale, MP_TYPES) and coordinate_scale.precision != self.precision:
             raise ValueError("surface and coordinate_scale precision must agree")
         self.numbers = NumberContext(self.precision)
         if set(self.formula.variables()) - set("xyz"):
