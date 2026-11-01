@@ -6,7 +6,8 @@ Sturm machinery and then polished on the true g. Captures all roots of smooth g,
 including the even-multiplicity ones sampling misses.
 """
 
-from ..formula import Number, NumberContext, Solver
+from .._formula import FmtFlags
+from ..formula import NumberContext
 from . import _isolate, _poly
 from .utils import finite, tol_full, tol_third
 
@@ -15,12 +16,12 @@ _MAX_DEGREE = 256
 
 def _gauss_samples(func, mid, span, m, N: NumberContext):
     """Chebyshev-Gauss nodes x_j and g values f_j on the mapped interval."""
-    pi = Number("4*atan(1)", N.precision)
-    cos_solver = Solver("cos(a)", N.precision)
+    pi = N.eval("4*atan(1)")
     xs, fs = [], []
     for j in range(m):
         theta = pi * (j + 0.5) / m
-        x = cos_solver.number({"a": str(theta)})
+        # the cos argument keeps p significant digits, the text a Number printed
+        x = N.eval("cos(a)", a=theta.str(N.precision, FmtFlags.default))
         xs.append(x)
         f = func.g(mid + span * x).real
         if not finite(f):

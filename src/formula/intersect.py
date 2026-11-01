@@ -24,7 +24,7 @@ def _value(v, N: NumberContext):
         try:
             return N(v)
         except ValueError:
-            return Solver(v, N.precision).evaluate()
+            return N.eval(v)
     return N(v)
 
 
@@ -170,7 +170,7 @@ class RaySurfaceFunction:
         reflected = tuple(incident[k] - 2 * dot * normal[k] for k in range(3))
         # |d.n| can round above 1 at near-normal incidence; clamp before asin.
         sine = min(abs(dot), 1)
-        grazing = Solver(f"asin({_text(sine, self.precision)})", self.precision).evaluate()
+        grazing = self.numbers.eval("asin(s)", s=_text(sine, self.precision))
         return self.point_at(t), reflected, grazing
 
 

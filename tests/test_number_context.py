@@ -84,6 +84,16 @@ def test_a_number_is_not_an_input():
         NumberContext(64)(Number("0.125", 64))
 
 
+@pytest.mark.parametrize("precision", [16, 64, 256])
+def test_eval_is_a_cached_solver_at_the_context_precision(precision):
+    N = NumberContext(precision)
+    assert N.eval("1/3") == E(N, "1/3") and N.eval("1/3").precision == N.precision
+    assert N.eval("cos(a)", a="0") == 1 and N.eval("x*x", x=N("1.5")) == N("2.25")
+    assert N.eval("asin(s)", s="0.5") == Solver("asin(0.5)", precision).evaluate()
+    with pytest.raises(ValueError, match="Missing values"):
+        N.eval("x+1")
+
+
 def test_constants_follow_the_context():
     for precision in (32, 256):
         N = NumberContext(precision)
