@@ -8,6 +8,7 @@ including the even-multiplicity ones sampling misses.
 
 from ..formula import Number, NumberContext, Solver
 from . import _isolate, _poly
+from .utils import finite, tol_full, tol_third
 
 _MAX_DEGREE = 256
 
@@ -21,7 +22,10 @@ def _gauss_samples(func, mid, span, m, N: NumberContext):
         theta = pi * (j + 0.5) / m
         x = cos_solver.number({"a": str(theta)})
         xs.append(x)
-        fs.append(func.g(mid + span * x).real)
+        f = func.g(mid + span * x).real
+        if not finite(f):
+            raise ValueError(f"non-finite g at t = {mid + span * x}")
+        fs.append(f)
     return xs, fs
 
 
@@ -99,9 +103,12 @@ def _newton(func, t, xacc, maxit: int = 100):
     """Polish a simple root of g starting from a good guess."""
     for _ in range(maxit):
         gp = func.gprime(t)
-        if gp == 0:
+        if not finite(gp) or gp == 0:  # a kink or a turning point: the guess stands
             return t
-        step = func.g(t) / gp
+        g = func.g(t)
+        if not finite(g):
+            raise ValueError(f"non-finite g at t = {t}")
+        step = g / gp
         t = t - step
         if abs(step) < xacc:
             break
@@ -116,7 +123,8 @@ def _proxy_roots(func, q, transform, tol, xacc, N: NumberContext):
     roots = []
     for x in _isolate.isolate_roots(q, chain, -one, one, xacc, tol):
         t_root = mid + span * x
-        if abs(func.gprime(t_root)) > tol:  # simple root: polish on true g
+        gp = func.gprime(t_root)
+        if finite(gp) and abs(gp) > tol:  # simple root: polish on true g
             t_root = _newton(func, t_root, xacc)
         roots.append(t_root)
     return roots
@@ -129,8 +137,7 @@ def find_all(
     if func.g(t_min).is_complex:
         raise NotImplementedError("chebyshev backend handles real surfaces only")
     N = NumberContext(precision)
-    tol = N(f"1e-{max(precision // 3, 4)}")
-    xacc = N(f"1e-{max(precision - 2, 1)}")
+    tol, xacc = tol_third(N), tol_full(N)
     mid, span = (t_min + t_max) * 0.5, (t_max - t_min) * 0.5
     coeffs = _converged_fit(func, (mid, span), N, tol, cheb_degree)
     q = _poly.square_free(_poly.trim(_cheb_to_monomial(coeffs, N), tol), tol, N)

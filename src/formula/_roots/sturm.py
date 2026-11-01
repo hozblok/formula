@@ -13,6 +13,7 @@ badly scaled polynomials (a micrometre torus quartic spans ~16 orders in raw t).
 
 from ..formula import NumberContext
 from . import _isolate, _poly
+from .utils import tol_full, tol_half
 
 
 def _nodes(t_min, t_max, count: int):
@@ -41,8 +42,7 @@ def find_all(
     if max_degree < 2:
         raise ValueError("max_degree must be >= 2 (need >= 3 interpolation nodes)")
     N = NumberContext(precision)
-    tol = N(f"1e-{max(precision // 2, 4)}")
-    xacc = N(f"1e-{max(precision - 2, 1)}")
+    tol, xacc = tol_half(N), tol_full(N)
     complex_surface = func.g(t_min).is_complex
     one = N(1)
     mid, span = (t_min + t_max) * 0.5, (t_max - t_min) * 0.5

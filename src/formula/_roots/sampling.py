@@ -5,14 +5,14 @@ Serves as the baseline/oracle that the rigorous backends are checked against.
 """
 
 from ..formula import NumberContext
-from .utils import finite_sign, merge_close_roots, rtsafe
+from .utils import finite_sign, merge_close_roots, rtsafe, tol_full
 
 
 def find_all(
     func, t_min, t_max, precision: int, samples: int = 256, **_
 ) -> list:
     """All sign-change roots of g on [t_min, t_max], refined to precision."""
-    xacc = NumberContext(precision)(f"1e-{max(precision - 2, 1)}")
+    xacc = tol_full(NumberContext(precision))
     step = (t_max - t_min) / samples
     roots = []
     t_prev = t_min

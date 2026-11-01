@@ -9,7 +9,7 @@ from collections import namedtuple
 from typing import List, Optional, Sequence, Tuple
 
 from ._roots import get_backend
-from ._roots.utils import real_text
+from ._roots.utils import real_text, tol_half, tol_third
 from .formula import Number, NumberContext, Solver
 
 _AXES = ("x", "y", "z")
@@ -45,8 +45,7 @@ def _with_endpoint_roots(func, roots, t0, t1, precision):
     small near a root without t0/t1 being one. Require the Newton step |g|/|g'|
     within tol too (a vanishing g' means a tangential root at the endpoint)."""
     N = NumberContext(precision)
-    gtol = N(f"1e-{max(precision // 3, 4)}")
-    tol = N(f"1e-{max(precision // 2, 6)}")
+    gtol, tol = tol_third(N), tol_half(N)
     out = list(roots)
     for t in (t0, t1):
         mag = real_text(abs(func.g(t)), precision)  # modulus as a real string
