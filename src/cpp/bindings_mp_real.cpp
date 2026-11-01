@@ -7,11 +7,13 @@
 #include <complex>
 #include <functional>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 #include <cseval/cseval.hpp>
 #include <cseval/cseval_complex.hpp>
 
+#include "mp_pow.hpp"
 #include "mp_scalar.hpp"
 #include "strip_neg_zero.hpp"
 
@@ -74,7 +76,13 @@ static void register_one_mp_real(py::module_ &m) {
   auto minus = [](const auto &x, const auto &y) { return x - y; };
   auto times = [](const auto &x, const auto &y) { return x * y; };
   auto over = [](const auto &x, const auto &y) { return x / y; };
-  auto power = [](const auto &x, const auto &y) { return pow(x, y); };
+  // Promoted to C, the power follows the complex rule shared with Solver.
+  auto power = [](const auto &x, const auto &y) {
+    if constexpr (std::is_same_v<std::decay_t<decltype(x)>, C>)
+      return complex_pow(x, y);
+    else
+      return pow(x, y);
+  };
   py::class_<R>(m, class_name.c_str(), py::is_final())
       .def(py::init([](const std::string &text) {
              require_literal(text);
