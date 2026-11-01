@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "../csconstants.hpp"
+#include "../mp_pow.hpp"
 #include "./csjet.hpp"
 
 /**
@@ -234,22 +235,8 @@ right path of the derivative");
   static Complex _mul1(Complex, Complex b) { return b; }
   // multiplication for the computation of the derivative (right path)
   static Complex _mul2(Complex a, Complex) { return a; }
-  // "^" - exponentiation
-  // Real integer exponents by repeated squaring, others by exp(b log a).
-  static Complex _pow(Complex a, Complex b) {
-    if (b.imag() == 0 && b.real() == floor(b.real()) &&
-        abs(b.real()) <= 2147483647 && !(a == ZERO && b.real() < 0)) {
-      long long n = b.real().template convert_to<long long>();
-      unsigned long long m = n < 0 ? -n : n;
-      Complex r = ONE, s = a;
-      for (; m; m >>= 1) {
-        if (m & 1) r = r * s;
-        if (m > 1) s = s * s;
-      }
-      return n < 0 ? ONE / r : r;
-    }
-    return pow(a, b);
-  }
+  // "^" - exponentiation, the rule shared with the mp bindings.
+  static Complex _pow(Complex a, Complex b) { return complex_pow(a, b); }
   // exponentiation for the computation of the derivative (left path)
   static Complex _pow1(Complex a, Complex b) {
     // Same dispatch as the real _pow1, on the real part of the exponent.

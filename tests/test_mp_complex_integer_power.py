@@ -4,7 +4,7 @@ the general exp/log pow returned nan."""
 
 import pytest
 
-from formula import NumberContext
+from formula import NumberContext, Solver
 
 PRECISIONS = (16, 64, 256)
 
@@ -51,3 +51,15 @@ def test_other_exponents_take_the_general_pow():
     assert N("(1,0)") ** (2 ** 70) == 1
     with pytest.raises(TypeError):
         N("(0,1)") ** True
+
+
+def test_the_power_rule_is_shared_with_solver():
+    # One helper behind R ** C, C ** C and Solver's ^: the same bounds, the same zero base.
+    N = NumberContext(64)
+    E = lambda text: Solver(text, 64).evaluate()
+    assert N(-1) ** N("(2,0)") == N("(-1,0)") ** N("(2,0)") == E("(-1+0*i)^2") == 1
+    assert N("(0,1)") ** 2147483648 == E("i^2147483648") == 1
+    assert N("(0,0)") ** -1 == E("(0*i)^(-1)") and N("(0,0)") ** 0 == E("(0*i)^0") == 1
+    z = N("(0.6,-0.8)")
+    for k in (3, -7, 2 ** 40, 2 ** 62, 2 ** 62 + 1, 2 ** 70):
+        assert z ** k == E(f"(0.6-0.8*i)^{k}") == z ** N(f"({k},0)")

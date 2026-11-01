@@ -12,6 +12,7 @@
 #include <cseval/cseval.hpp>
 #include <cseval/cseval_complex.hpp>
 
+#include "mp_pow.hpp"
 #include "mp_scalar.hpp"
 #include "strip_neg_zero.hpp"
 
@@ -78,14 +79,7 @@ static void register_one_mp_complex(py::module_ &m) {
   auto minus = [](const C &x, const C &y) { return x - y; };
   auto times = [](const C &x, const C &y) { return x * y; };
   auto over = [](const C &x, const C &y) { return x / y; };
-  // An exponent of integral value takes Boost's integral pow (repeated
-  // squaring), as cpp_dec_float does for reals: z ** 2 == z * z exactly.
-  auto power = [](const C &x, const C &y) {
-    const auto &e = y.real();
-    if (y.imag() == 0 && e == floor(e) && abs(e) <= (1LL << 62))
-      return pow(x, e.template convert_to<long long>());
-    return pow(x, y);
-  };
+  auto power = [](const C &x, const C &y) { return complex_pow(x, y); };
   py::class_<C>(m, class_name.c_str(), py::is_final())
       .def(py::init([](const std::string &text) {
              if (auto parts = complex_literal(text))
