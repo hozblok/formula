@@ -1,22 +1,11 @@
 """Optical constants and Fresnel reflection amplitudes."""
 
 import cmath
-from functools import lru_cache
 from typing import Sequence
 
 from ..formula import NumberContext
 from ..xray import GlassMaterial
-from .shared.nums import raw
 from .spectrum import SpectralLine
-
-
-@lru_cache(maxsize=256)
-def optical_constants(material, energy, precision: int) -> tuple[float, float]:
-    """Cached float64 (delta, beta) for a material and energy in keV."""
-    return (
-        float(material.delta(energy, precision=precision)),
-        float(material.beta(energy, precision=precision)),
-    )
 
 
 class FresnelAmplitude:
@@ -28,9 +17,8 @@ class FresnelAmplitude:
 
     def __init__(self, material, energy_kev, numbers: NumberContext):
         self.numbers = N = numbers
-        energy_kev = N(raw(energy_kev))
-        self.d2 = 2 * material.delta(energy_kev, precision=N.precision)
-        self.b2 = 2 * material.beta(energy_kev, precision=N.precision)
+        delta, beta = material.optical(energy_kev)
+        self.d2, self.b2 = 2.0 * delta, 2.0 * beta
         self.b2i = self.b2 * N.i
 
     def __call__(self, sin_theta):
@@ -54,8 +42,7 @@ class FloatLineAmplitudes:
         # (2*delta, 2*beta) per line: the root is sqrt(sin^2 - 2d + 2ib)
         self.two_delta_beta: list[tuple[float, float]] = []
         for line in lines:
-            delta, beta = optical_constants(material, numbers(raw(line.e_kev)),
-                                            numbers.precision)
+            delta, beta = material.optical(line.e_kev)
             self.two_delta_beta.append((2.0 * delta, 2.0 * beta))
 
     def __call__(self, sins: Sequence[float]) -> list[complex]:

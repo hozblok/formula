@@ -25,7 +25,6 @@ from scipy.special import fresnel
 from ... import __version__
 from ...physical_constants import HC_KEV_ANGSTROM
 from .. import render, rays_v3
-from ..fresnel import optical_constants
 from ..screen import ScreenGrid
 from ..shared.units import m_to_um
 
@@ -717,7 +716,7 @@ def _run(sim, out_dir, partial, wave, rays_paths, log):
     lines = []
     for ln in sim.lines:
         if float(ln.weight) > 0.0:
-            delta, beta = (optical_constants(cfg.material, ln.e_kev, p)
+            delta, beta = (cfg.material.optical(ln.e_kev)
                            if sim.per_line else (sim.delta_f, sim.beta_f))
             lines.append((float(ln.k), float(ln.weight), delta, beta))
     if cfg.free_source is not None and wave["provider"] in ("auto", "free"):

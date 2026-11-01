@@ -15,7 +15,7 @@ import time
 import zlib
 
 from .. import __version__
-from ..formula import Number, NumberContext
+from ..formula import NumberContext
 from .. import xray
 from . import render, schematic
 from .stages import analytic
@@ -35,7 +35,7 @@ from .source import aim_disk_direction, slope_direction
 from .spectrum import spectral_lines, wavelength_m
 from .surfaces import CapillaryBundle, engine_hit_t, entrance_disk
 from .symbolic import LineAmplitudes, ampl_template
-from .fresnel import FresnelAmplitude, optical_constants
+from .fresnel import FresnelAmplitude
 from . import rays_v3
 from .rays import (RNG_SCHEME, MultiRaysReader, RaysReader, geometry_core,
                    geometry_metadata, metadata_equal, recorded_plane)
@@ -109,9 +109,8 @@ class Simulation:
         self.per_line = cfg.per_line_fresnel and len(self.lines) > 1
         self.line_amps = LineAmplitudes(cfg.material, self.lines, self.numbers)
         self.lam = wavelength_m(cfg.energy_kev)
-        p = cfg.precision
-        self.theta_c = float(cfg.material.critical_angle(cfg.energy_kev, precision=p))
-        self.delta_f, self.beta_f = optical_constants(cfg.material, cfg.energy_kev, p)
+        self.theta_c = cfg.material.critical_angle(cfg.energy_kev)
+        self.delta_f, self.beta_f = cfg.material.optical(cfg.energy_kev)
         self.report = []
         self.files = []
         self.results = {}   # stage name -> MC result dict (maps, stats, ...)
@@ -150,11 +149,9 @@ class Simulation:
         r_fast = self.fresnel(s)
         r_ref = xray.reflect_amplitude(theta, str(self.cfg.energy_kev),
                                        self.cfg.material, precision=p)
-        two = Number("2", p)
-        mat, e0 = self.cfg.material, self.cfg.energy_kev
+        delta, beta = self.cfg.material.optical(self.cfg.energy_kev)
         r_sym = ampl_template(1, p).number(
-            {"s1": str(s), "dd": str(mat.delta(e0, precision=p) * two),
-             "bb": str(mat.beta(e0, precision=p) * two)})
+            {"s1": str(s), "dd": repr(2.0 * delta), "bb": repr(2.0 * beta)})
         diff = float(abs(r_fast - r_ref))
         diff_sym = float(abs(r_sym - r_ref))
         return (f"Fresnel r(θ={rad_to_mrad(theta):g} mrad): "
