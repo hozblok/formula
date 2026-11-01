@@ -69,13 +69,13 @@ class Mirror:
             raise ValueError("mirror hit must approach from the reflecting side")
 
     def next_event(self, O, d):
-        if float(O[0]) <= 0.0 or float(d[0]) >= 0.0:
+        if O[0] <= 0 or d[0] >= 0:
             return ("exit", None)
         t = -O[0] / d[0]
-        zf = float(O[2]) + float(t) * float(d[2])
-        if zf > self._z1f:
+        z = O[2] + t * d[2]                # the hit's z against the span, in mp
+        if z > self.z1:
             return ("exit", None)          # crosses the plane beyond the mirror
-        if zf < self._z0f:                 # runs under the leading edge -> front face
+        if z < self.z0:                    # runs under the leading edge -> front face
             return ("absorb", (self.z0 - O[2]) / d[2])
         return ("reflect", t, vadd(O, vscale(d, t)), self._normal)
 
@@ -204,7 +204,7 @@ class CapillaryBundle:
         return None
 
     def next_event(self, O, d):
-        if float(d[2]) <= 0.0:
+        if d[2] <= 0:
             return ("absorb", self._zero)          # backward ray: lost in the assembly
         zf = float(O[2])
         if zf < self._z0f - _EPS_T:

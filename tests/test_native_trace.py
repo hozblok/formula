@@ -192,6 +192,60 @@ def test_quartic_first_close():
                 assert_close(py, cc, tol)
 
 
+def quartic_of(roots, p):
+    """Monic quartic with these real roots, leading first."""
+    N = NumberContext(p)
+    cs = [N(1)]
+    for r in roots:
+        r = N(r)
+        cs = [a - r * b for a, b in zip(cs + [N(0)], [N(0)] + cs)]
+    return tuple(cs)
+
+
+@pytest.mark.parametrize("p, roots, first, tol", [
+    (p, *case) for p in PRECISIONS + (64,) for case in (
+        (("1", "1", "1", "2"), "1", "1e-8"),                       # triple root stalls Newton
+        (("1", "1.0000001", "2", "2.5"), "1", "2.5e-8"),           # close pair first
+        (("0.5", "0.5", "1", "2"), "1", "1e-15"),                  # tangent graze stays invisible
+        (("1", "2", "3", "4"), "1", "1e-15"))
+] + [
+    (p, *case) for p in (30, 64) for case in (                     # pairs above 10^-(p/2) only
+        (("1", "1.0000000001", "2", "2.5"), "1", "2.5e-11"),
+        (("0.3", "0.30000000001", "0.31", "2"), "0.3", "2.5e-12"))
+])
+def test_quartic_first_takes_the_first_crossing(p, roots, first, tol):
+    # Newton may polish a later root while an earlier one stalls or hides in a close pair.
+    N = NumberContext(p)
+    c = quartic_of(roots, p)
+    for t in (_quartic_first(c, 3.0), _formula.trace_dbg_quartic_first(list(c), 3.0)):
+        assert t is not None and abs(t - N(first)) < N(tol)
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+def test_quartic_first_ignores_a_complex_pair_before_the_root(p):
+    # (t^2 - t + 0.2501)(t - 1)(t - 2): the pair 0.5 +- 0.01i sits in Descartes' disk before t = 1.
+    N = NumberContext(p)
+    c = tuple(N(v) for v in ("1", "-4", "5.2501", "-2.7503", "0.5002"))
+    py, cc = _quartic_first(c, 3.0), _formula.trace_dbg_quartic_first(list(c), 3.0)
+    assert abs(py - 1) < N("1e-15") and abs(cc - 1) < N("1e-15")
+
+
+def test_torus_graze_pair_parity():
+    # A chord dipping 2.371e-21*a into a bent bore: both pair seeds stall, the first crossing of the pair wins.
+    p = 32
+    N = NumberContext(p)
+    a, R = N("6e-6"), N("0.5")
+    bundle = CapillaryBundle([{"kind": "torus", "center": (N(0), N(0)), "radius": a,
+                               "bend": {"radius": R, "toward": (N(1), N(0))}}], N(0), N("0.05"))
+    dz = (R - a - N("2.371e-21") * a) / R
+    O, d = (N(0), N(0), N(0)), ((N(1) - dz * dz).sqrt(), N(0), dz)
+    native = compile_optic(bundle)
+    for cap in ("0.1", "4e-3"):
+        py_hit = bundle.walls[0].hit(O, d, N(cap))
+        assert abs(float(py_hit[0]) - 2.4494823940579796e-3) < 1e-8
+        assert_hit_equal(py_hit, _formula.trace_wall_hit(native, 0, raw_vec(O), raw_vec(d), N(cap)))
+
+
 # ------------------------------------------------------------- walls
 
 @pytest.mark.parametrize("kind", ["cylinder", "revolution", "polygon", "torus"])
@@ -712,3 +766,25 @@ def test_rectangle_apothems_hit_parity(p):
         c_hit = _formula.trace_wall_hit(native, 0, raw_vec(O), raw_vec(d), t_exit)
         assert py_hit is not None
         assert_hit_equal(py_hit, c_hit)
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+@pytest.mark.parametrize("end, shift, kind", [
+    ("0.06", "0", None), ("0.06", "1e-20", "exit"), ("0.06", "-1e-20", "reflect"),
+    ("0.01", "0", None), ("0.01", "-1e-20", "absorb"), ("0.01", "1e-20", "reflect"),
+])
+def test_mirror_span_ends_parity(p, end, shift, kind):
+    """Hits on either end of the span and 1e-20 beside it, below double resolution:
+    both twins decide on the hit's mp z against the mp span."""
+    N = NumberContext(p)
+    mirror = Mirror(N("0.01"), N("0.06"))
+    d = (N("-0.6"), N(0), N("0.8"))
+    t = -N("0.03") / d[0]
+    O = (N("0.03"), N(0), N(end) - t * d[2] + N(shift))
+    z = O[2] + t * d[2]
+    expected = kind or ("exit" if z > mirror.z1 else "absorb" if z < mirror.z0 else "reflect")
+    ev_py = mirror.next_event(O, d)
+    assert ev_py[0] == expected
+    assert_event_equal(ev_py, _formula.trace_next_event(compile_optic(mirror), raw_vec(O), raw_vec(d)))
+    py_tr = trace_ray(O, d, mirror, N("0.08"), 10)
+    assert_trace_equal(py_tr, make_tracer(mirror)(O, d, mirror, N("0.08"), 10))

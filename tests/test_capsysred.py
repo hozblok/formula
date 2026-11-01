@@ -16,7 +16,7 @@ from formula.capsysred.surfaces import CapillaryBundle, Mirror, engine_hit_t
 from formula.capsysred.walls.wall_cylinder import CylinderWall
 from formula.capsysred.walls.wall_polygon import PolygonWall
 from formula.capsysred.walls.wall_revolution import RevolutionWall
-from formula.capsysred.walls.wall_torus import (_bisect_first, _float_seeds,
+from formula.capsysred.walls.wall_torus import (_first_crossing, _float_seeds,
                                           _quartic_first)
 from formula.capsysred.symbolic import LineAmplitudes, ampl_template
 from formula.capsysred.fresnel import FresnelAmplitude
@@ -609,7 +609,7 @@ def test_quartic_bisection_scales_with_precision():
     # rescue path: 8 + p*log2(10) halvings shrink the bracket to ~10^-p;
     # the old fixed 90 gave only ~1e-27 of the bracket at any precision
     for p, bound in ((32, "1e-30"), (256, "1e-240")):
-        t = _bisect_first(_monic_quartic((1, 2, 3, 4), p), 10.0)
+        t = _first_crossing(_monic_quartic((1, 2, 3, 4), p), 10.0)
         assert t is not None
         assert abs(t - NumberContext(p)("1")) < NumberContext(p)(bound)
 
@@ -2705,10 +2705,6 @@ def test_beamlet_native_multimode_fold_matches_python():
 # ---------------------------------------- tracer audit xfails (2026-07-31)
 
 
-@pytest.mark.xfail(strict=True, reason="audit 2026-07-31: a near-zero (not "
-                   "exactly zero) leading coefficient collapses the DK seed "
-                   "tier in _poly_first; the 48-point bisect grid cannot see "
-                   "the grazing pair — hit() returns None on a real crossing")
 def test_funnel_near_zero_lead_finds_grazing_chord():
     # straight taper with a bf = 1e-20 residue; tangent chord dipping
     # 1e-5*r0 (60 pm, grazing sine ~4.5 mrad — physical range) into the
@@ -2772,10 +2768,6 @@ def test_funnel_inside_stays_closed_past_pinch():
     assert not wall.inside(1.0e-6, 0.0, 0.2)   # r(0.2) = -1.2e-6: ghost
 
 
-@pytest.mark.xfail(strict=True, reason="audit 2026-07-31: below ~2.4e-21*a "
-                   "chord depth both pair seeds stall in Newton and the "
-                   "bisect grid is ~10 orders too coarse — hit() returns "
-                   "the far outer-wall root or None instead of the pair")
 def test_torus_graze_pair_survives_seed_floor():
     # in-plane grazing chord dipping 2.371e-21*a into the inner wall of a
     # bent bore (R = 0.5, a = 6e-6): the exact quartic has the crossing

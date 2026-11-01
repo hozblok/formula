@@ -5,9 +5,9 @@
 """Conformal-bundle bore (the Liu wall): axis center*g(z), radius r0*f(z),
 f and g quadratic in z-z0. The ray hit is an exact mp polynomial —
 degree 4, dropping to 2 on structural zeros (a straight cylinder is the
-f = g = 1 degeneracy) — solved by the torus two-tier machinery: float
-Durand-Kerner seeds -> Newton polish at full precision, exact-sign bisection
-as the fallback."""
+f = g = 1 degeneracy) — solved by the torus machinery: float Durand-Kerner
+seeds -> Newton polish at full precision, a Descartes-guarded exact-sign search
+as the check and the fallback."""
 
 from __future__ import annotations
 

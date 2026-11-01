@@ -85,12 +85,13 @@ class CylinderWall:
             ts = ((0 - C) / B,)
         else:
             disc = B * B - 4 * A * C
-            if float(disc) < 0.0:
+            if disc < 0:
                 return None
             root = disc.sqrt()
             ts = ((0 - B - root) / (2 * A),
                   (0 - B + root) / (2 * A))
-        t = min((tt for tt in ts if float(tt) > _EPS_T), key=float, default=None)
+        eps = lift(_EPS_T, self.precision)
+        t = min((tt for tt in ts if tt > eps), default=None)
         if t is None:
             return None
         P = vadd(O, vscale(d, t))

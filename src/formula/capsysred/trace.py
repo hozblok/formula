@@ -57,7 +57,7 @@ def trace_ray(origin: Vec3, direction: Vec3, optic, screen_z,
             reflections.append((P, abs(dot)))
             O = P
 
-    if float(d[2]) <= 0.0:
+    if d[2] <= 0:
         return TraceResult("lost", O, opl, reflections, d)
     t = (screen_z - O[2]) / d[2]
     zero = N(0)
