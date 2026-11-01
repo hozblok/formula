@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from ...formula import NumberContext
 from ..shared.coordinates import surface_coordinates
-from ..shared.nums import lift, text, vadd, vdot, vnorm, vscale, vsub, vunit
+from ..shared.nums import fsqrt, lift, text, vadd, vdot, vnorm, vscale, vsub, vunit
 from ..shared.types import _EPS_T, _INSIDE_TOL, _TCAP_TOL, Scalar
 from ..shared.units import m_to_um
 
@@ -245,7 +245,7 @@ class TorusWall:
         tx, ty = self._tf
         nx, ny = self._nf
         xi, eta = dx * tx + dy * ty, dx * nx + dy * ny
-        rho = ((self._Rf - xi) ** 2 + zr * zr) ** 0.5
+        rho = fsqrt((self._Rf - xi) ** 2 + zr * zr)
         dr = (-2 * self._Rf * xi + xi * xi + zr * zr) / (rho + self._Rf)
         return xi, eta, zr, rho, dr
 
@@ -260,7 +260,7 @@ class TorusWall:
     def surface_error_at(self, x, y, z):
         """Nonnegative tube-boundary residual in metres, scalar or batched."""
         _, eta, _, _, dr = self._tube_coordinates_at(x, y, z)
-        return abs((dr * dr + eta * eta) ** 0.5 - self._af)
+        return abs(fsqrt(dr * dr + eta * eta) - self._af)
 
     def inside(self, xf, yf, zf):
         wx, wy, wz = xf - self._Cf[0], yf - self._Cf[1], zf - self._Cf[2]
