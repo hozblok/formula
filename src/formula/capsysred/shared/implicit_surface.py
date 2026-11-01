@@ -5,10 +5,12 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
+from ...backend import MP_TYPES
 from ...formula import Formula, Number
 from .coordinates import surface_coordinates
 from .formulas import cached_formula
 from .jets import _Jet
+from .nums import raw
 
 
 class Surface:
@@ -21,7 +23,8 @@ class Surface:
             raise ValueError("coordinate_scale must be positive and finite")
         self.coordinate_scale = coordinate_scale
         self.formula = cached_formula(expression, precision) if isinstance(expression, str) else expression
-        if isinstance(coordinate_scale, Number) and coordinate_scale.precision != self.precision:
+        scale = raw(coordinate_scale)
+        if isinstance(scale, MP_TYPES) and scale.precision != self.precision:
             raise ValueError("surface and coordinate_scale precision must agree")
         if set(self.formula.variables()) - set("xyz"):
             raise ValueError("surface variables must be x, y, z")

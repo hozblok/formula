@@ -73,7 +73,7 @@ def test_value_and_gradient_reject_incompatible_coordinates(kind, failure):
     if failure == "algebra":
         point[0], point[2] = alg.constant(point[0]), _Algebra(2, 64).constant(point[2])
     elif failure == "jet_precision":
-        point[2] = _Algebra(2, 32).constant(point[2])
+        point[2] = _Algebra(2, 32).constant(str(point[2]))  # text: the explicit cross-precision way
     else:
         point[2] = Number("0.500000000000000000000000000001", 128)
         if failure == "mixed_number_precision":

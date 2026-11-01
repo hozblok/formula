@@ -2,7 +2,7 @@
 
 import pytest
 
-from formula import Formula, Number, Solver
+from formula import Formula, Number, NumberContext, Solver
 from formula.capsysred.shared.implicit_surface import Surface
 from formula.capsysred.shared.jets import _Algebra, _Jet
 
@@ -94,3 +94,13 @@ def test_coordinate_scale_must_match_effective_surface_precision(existing_formul
     with pytest.raises(ValueError, match="coordinate_scale precision"):
         Surface(expression, precision=128 if existing_formula else 64,
                 coordinate_scale=Number("2", 128))
+
+
+def test_coordinate_scale_precision_is_checked_for_backend_values_too():
+    # A backend scale of another precision is refused up front, not only on the scalar path.
+    with pytest.raises(ValueError, match="precision must agree"):
+        Surface("x", 64, NumberContext(128)(2))
+    surface = Surface("x", 64, NumberContext(64)(2))
+    alg = _Algebra(1, 64)
+    assert surface.value((alg.variable(1, [0], 0), 0, 0)).c == ["2", "2"]
+    assert surface.value((1, 0, 0)) == 2
