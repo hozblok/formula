@@ -6,6 +6,7 @@ from collections.abc import Iterable, Sequence
 
 from ...formula import Number
 from .formulas import cached_formula
+from .nums import raw
 
 
 class _Algebra:
@@ -16,7 +17,8 @@ class _Algebra:
         self.order, self.precision = order, precision
 
     def constant(self, value: str | int | float | Number) -> _Jet:
-        return _Jet(self, [str(value)] + ["0"] * ((1 << self.order) - 1), 1)
+        # The backend text carries every stored digit; a Number's str() would round.
+        return _Jet(self, [str(raw(value))] + ["0"] * ((1 << self.order) - 1), 1)
 
     def variable(self, value: str | int | float | Number, seeds: Sequence[int], axis: int) -> _Jet:
         result = self.constant(value)
