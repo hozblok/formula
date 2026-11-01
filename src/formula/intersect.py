@@ -10,7 +10,7 @@ from typing import Optional, Sequence
 
 from ._formula import FmtFlags
 from ._roots import get_backend
-from ._roots.utils import finite, real_text, tol_half, tol_third
+from ._roots.utils import finite, tol_half, tol_third
 from .backend import MP_TYPES
 from .formula import NumberContext, Solver
 
@@ -73,18 +73,13 @@ def _with_endpoint_roots(func, roots, t0, t1, precision):
     gtol, tol = tol_third(N), tol_half(N)
     out = list(roots)
     for t in (t0, t1):
-        mag = real_text(abs(func.g(t)), precision)  # modulus as a real string
-        if "inf" in mag or "nan" in mag:
+        g = abs(func.g(t))
+        if not finite(g):
             continue
-        g = N(mag)
         if g > gtol or any(abs(t - r) <= tol for r in out):
             continue
-        gpmag = real_text(abs(func.gprime(t)), precision)
-        if "inf" in gpmag or "nan" in gpmag:
-            out.append(t)
-            continue
-        gp = N(gpmag)
-        if gp <= gtol or g <= tol * gp:
+        gp = abs(func.gprime(t))
+        if not finite(gp) or gp <= gtol or g <= tol * gp:
             out.append(t)
     return out
 

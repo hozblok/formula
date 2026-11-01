@@ -46,11 +46,6 @@ def finite(value) -> bool:
     return value - value == 0
 
 
-def real_text(value, precision: int) -> str:
-    """Real part of a value, formatted at precision."""
-    return value.real.str(precision)
-
-
 def finite_sign(value):
     """sign(value), or None where value is non-finite (inf/nan)."""
     if value.is_complex:
