@@ -5,7 +5,7 @@ __version__ = "6.0.0"
 # pylint: disable=no-name-in-module, import-error
 from .constants import DEFAULT_CASE_INSENSITIVE, DEFAULT_IMAGINARY_UNIT
 from ._formula import FmtFlags, Formula
-from .backend import COMPLEX_TYPES, MAX_PRECISION, REAL_TYPES, mp_class
+from .backend import MAX_PRECISION, MP_TYPES
 from .formula import NumberContext, Solver
 from .intersect import RayPath, RaySurface, RaySurfaceFunction, Reflection
 
@@ -25,10 +25,8 @@ __all__ = [
     "DEFAULT_IMAGINARY_UNIT",
     "FmtFlags",
     "Formula",
-    "COMPLEX_TYPES",
     "MAX_PRECISION",
-    "REAL_TYPES",
-    "mp_class",
+    "MP_TYPES",
     "NumberContext",
     "Solver",
     "RayPath",

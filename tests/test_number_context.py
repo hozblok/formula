@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from formula import MAX_PRECISION, NumberContext, Solver, mp_class
+from formula import MAX_PRECISION, NumberContext, Solver, _formula
 from formula.backend import MP_TYPES, mp_number, round_up_precision
 from formula.constants import DEFAULT_PRECISION
 
@@ -43,7 +43,7 @@ def test_expressions_are_not_literals(text):
 @pytest.mark.parametrize("text, is_complex", [("1.5", False), ("(1.5,0)", True), ("-1e-80", False)])
 def test_the_backend_factory_picks_the_kind_from_the_text(text, is_complex):
     value = mp_number(64, text)
-    assert type(value) is mp_class(64, is_complex)
+    assert type(value) is (_formula.mp_complex_64 if is_complex else _formula.mp_real_64)
     with pytest.raises(ValueError, match="unsupported precision"):
         mp_number(65, text)
 
@@ -76,7 +76,7 @@ def test_a_backend_value_passes_through_unchanged(expression):
 
 def test_a_backend_value_of_another_storage_precision_is_rejected():
     with pytest.raises(ValueError, match="precision mismatch"):
-        NumberContext(64)(mp_class(256)("0.125"))
+        NumberContext(64)(NumberContext(256)("0.125"))
 
 
 @pytest.mark.parametrize("precision", [16, 64, 256])
