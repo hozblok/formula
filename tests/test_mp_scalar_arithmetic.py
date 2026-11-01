@@ -230,6 +230,15 @@ def test_backend_classes_are_final(kind):
         type("Sub", (mp_class(64, kind),), {})
 
 
+@pytest.mark.xfail(strict=True, reason="the native complex sqrt loses the argument of a tiny "
+                   "base; Solver's sqrt() is the same algorithm, so it agrees and is as wrong")
+def test_sqrt_of_a_tiny_base_scales():
+    # sqrt(z) = sqrt(z s^2) / s with s = 1e200000000: the reference is an O(1) sqrt, (1.0987, 0.4551).
+    N = NumberContext(64)
+    tiny, s = N("(1e-400000000,1e-400000000)"), N("(1e200000000,0)")
+    assert abs(tiny.sqrt() * s - N("(1,1)").sqrt()) < N("1e-60")
+
+
 @pytest.mark.parametrize("p", PRECISIONS)
 def test_negative_infinity_keeps_its_sign(p):
     N = NumberContext(p)
