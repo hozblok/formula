@@ -12,6 +12,7 @@
 #include <complex>
 #include <cstddef>
 #include <optional>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -340,42 +341,140 @@ struct Tracer {
     return std::nullopt;
   }
 
-  // wall_torus._bisect_first: first sign change of the quartic on a 48-step
-  // geometric grid over (kEpsT, t_capf], then bisection — all on the exact
-  // quartic. Rescue path for roots Newton cannot polish; an exact double
-  // root (tangent graze, no sign change) stays invisible by design. Signs
-  // are mp comparisons: near the root the residual underflows double (reads
-  // 0.0, "not negative") and would corrupt the bracket at P ~ 1024.
+  // wall_torus._bisect: a sign change of the quartic in [lo, hi]; signs are
+  // mp comparisons, since near the root the residual underflows double.
   // 8 + P*log2(10) halvings shrink the bracket below 10^-P of its span.
-  static std::optional<R> bisect_first(const std::array<R, 5> &c,
-                                       double t_capf) {
-    R lo = eps_t();
-    bool lneg = horner(c, lo) < 0;
+  static R bisect(const std::array<R, 5> &c, R lo, bool lneg, R hi) {
     static const int halvings = 8 + static_cast<int>(P * std::log2(10.0));
-    for (int k = 1; k < 49; ++k) {
-      R hi(kEpsT * std::pow(t_capf / kEpsT, k / 48.0));
-      bool hneg = horner(c, hi) < 0;
-      if (lneg != hneg) {
-        for (int i = 0; i < halvings; ++i) {
-          R mid = (lo + hi) / 2;
-          if (lneg != (horner(c, mid) < 0)) {
-            hi = mid;
-          } else {
-            lo = mid;
-          }
-        }
-        return (lo + hi) / 2;
+    for (int i = 0; i < halvings; ++i) {
+      R mid = (lo + hi) / 2;
+      if (lneg != (horner(c, mid) < 0)) {
+        hi = mid;
+      } else {
+        lo = mid;
       }
-      lo = hi;
-      lneg = hneg;
+    }
+    return (lo + hi) / 2;
+  }
+
+  // wall_torus._taylor_shift: coefficients of p(x + s), leading first.
+  static std::array<R, 5> taylor_shift(std::array<R, 5> d, const R &s) {
+    for (int i = 0; i < 4; ++i) {
+      for (int j = 1; j < 5 - i; ++j) {
+        d[j] = d[j] + s * d[j - 1];
+      }
+    }
+    return d;
+  }
+
+  // wall_torus._descartes: sign variations of (1+y)^4 p(a + (b-a)/(1+y)),
+  // a bound of the right parity on the roots in (a, b): 0 none, 1 exactly one.
+  static int descartes(const std::array<R, 5> &c, const R &a, const R &b) {
+    std::array<R, 5> d = taylor_shift(c, a);
+    R w = b - a;
+    R power = w;
+    for (int j = 3; j >= 0; --j) {
+      d[j] = d[j] * power;
+      if (j) {
+        power = power * w;
+      }
+    }
+    std::array<R, 5> h = {d[4], d[3], d[2], d[1], d[0]};
+    for (int i = 0; i < 4; ++i) {
+      for (int j = 1; j < 5 - i; ++j) {
+        h[j] = h[j] + h[j - 1];
+      }
+    }
+    int variations = 0, last = 0;
+    for (const R &x : h) {
+      int s = x > 0 ? 1 : (x < 0 ? -1 : 0);
+      if (s) {
+        if (last && s != last) {
+          ++variations;
+        }
+        last = s;
+      }
+    }
+    return variations;
+  }
+
+  // wall_torus._cell_crossing: first sign change in (lo, hi]; halves until
+  // Descartes rules a half out or leaves a sign change with at most one root.
+  // Under the floor width a pair without a sign change drops (tangent graze).
+  static std::optional<R> cell_crossing(const std::array<R, 5> &c, const R &lo,
+                                        bool lneg, const R &hi, bool hneg,
+                                        const R &floor) {
+    static const R half("0.5");
+    struct Span {
+      R a;
+      bool sa;
+      R b;
+      bool sb;
+    };
+    std::vector<Span> stack{{lo, lneg, hi, hneg}};
+    while (!stack.empty()) {
+      Span s = std::move(stack.back());
+      stack.pop_back();
+      if (s.sa != s.sb) {
+        if (s.b - s.a <= floor || descartes(c, s.a, s.b) <= 1) {
+          return bisect(c, s.a, s.sa, s.b);
+        }
+      } else if (s.b - s.a <= floor || descartes(c, s.a, s.b) == 0) {
+        continue;
+      }
+      R m = (s.a + s.b) * half;
+      bool sm = horner(c, m) < 0;
+      stack.push_back({m, sm, s.b, s.sb});
+      stack.push_back({s.a, s.sa, m, sm});
     }
     return std::nullopt;
   }
 
-  // wall_torus._quartic_first: smallest real root in (_EPS_T, t_capf].
-  // Two tiers: float DK seeds polished by Newton at full precision (fast
-  // path, simple roots), exact-sign bisection when no seed polishes. As in
-  // first_forward, exact mp order replaces Python's float key.
+  // wall_torus._first_crossing: first sign change in (kEpsT, t_capf], or in
+  // (kEpsT, *limit). Runs of the 48 geometric cells halve by index, leftmost
+  // first, while a sign change or Descartes allows a root.
+  static std::optional<R> first_crossing(const std::array<R, 5> &c,
+                                         double t_capf, const R *limit) {
+    static const R rel("1e-" + std::to_string(P / 2));
+    std::vector<R> nodes{eps_t()};
+    for (int k = 1; k < 49; ++k) {
+      R node(kEpsT * std::pow(t_capf / kEpsT, k / 48.0));
+      if (limit && node >= *limit) {
+        nodes.push_back(*limit);
+        break;
+      }
+      nodes.push_back(std::move(node));
+    }
+    std::vector<bool> signs;
+    for (const R &x : nodes) {
+      signs.push_back(horner(c, x) < 0);
+    }
+    std::vector<std::pair<size_t, size_t>> stack{{0, nodes.size() - 1}};
+    while (!stack.empty()) {
+      auto [i, j] = stack.back();
+      stack.pop_back();
+      if (signs[i] == signs[j] && descartes(c, nodes[i], nodes[j]) == 0) {
+        continue;
+      }
+      if (j == i + 1) {
+        std::optional<R> root = cell_crossing(c, nodes[i], signs[i], nodes[j],
+                                              signs[j], rel * nodes[j]);
+        if (root) {
+          return root;
+        }
+        continue;
+      }
+      size_t m = (i + j) / 2;
+      stack.push_back({m, j});
+      stack.push_back({i, m});
+    }
+    return std::nullopt;
+  }
+
+  // wall_torus._quartic_first: smallest root in (_EPS_T, t_capf] where the
+  // quartic changes sign. Float DK seeds polished by Newton are the fast path;
+  // Descartes must rule out a root before the accepted one (an earlier root
+  // may stall or hide in a close pair), else the exact-sign search decides.
   static std::optional<R> quartic_first(const std::array<R, 5> &c,
                                         double t_capf) {
     std::array<R, 4> dc = {c[0] * 4, c[1] * 3, c[2] * 2, c[3]};
@@ -390,10 +489,16 @@ struct Tracer {
         best = std::move(t);
       }
     }
-    if (best) {
+    if (!best) {
+      return first_crossing(c, t_capf, nullptr);
+    }
+    static const R tfloor("1e-9");
+    R end = *best - newton_rtol() * std::max(abs(*best), tfloor);
+    if (end <= eps_t() || descartes(c, eps_t(), end) == 0) {
       return best;
     }
-    return bisect_first(c, t_capf);
+    std::optional<R> earlier = first_crossing(c, t_capf, &end);
+    return earlier ? earlier : best;
   }
 
   // wall_torus.TorusWall
@@ -511,17 +616,17 @@ struct Tracer {
   };
   using Optic = std::variant<Mirror, Bundle>;
 
-  // surfaces.Mirror.next_event
+  // surfaces.Mirror.next_event: the hit's z against the span, in mp.
   static Event next_event(const Mirror &m, const V3 &O, const V3 &d) {
     if (O.x <= 0 || d.x >= 0) {
       return {kExit, R(), {}, {}};
     }
     R t = -O.x / d.x;
-    double zf = to_double(O.z + t * d.z);
-    if (zf > m.z1f) {
+    R z = O.z + t * d.z;
+    if (z > m.z1) {
       return {kExit, R(), {}, {}};
     }
-    if (zf < m.z0f) {
+    if (z < m.z0) {
       return {kAbsorb, (m.z0 - O.z) / d.z, {}, {}};
     }
     return {kReflect, t, vadd(O, vscale(d, t)), {R(1), R(), R()}};

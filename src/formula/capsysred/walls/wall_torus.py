@@ -4,7 +4,8 @@
 # (engine_hit_t), and the NN-symb twin configs A/B full maps against it.
 """Bent bore: the axis is an arc of radius R (torus segment). The wall hit is
 the exact ray∩torus quartic in mp: float Durand-Kerner seeds -> Newton
-polish at full precision, exact-sign bisection as the fallback."""
+polish at full precision, a Descartes-guarded exact-sign search as the check
+and the fallback."""
 
 from __future__ import annotations
 
@@ -98,7 +99,7 @@ def _newton_polish(c, dc, seed, rtol):
     t = lift(seed, c[0].precision)
     for _ in range(12):
         gp = _horner(dc, t)
-        if float(abs(gp)) == 0.0:
+        if gp == 0:
             break
         step = _horner(c, t) / gp
         t = t - step
@@ -107,52 +108,128 @@ def _newton_polish(c, dc, seed, rtol):
     return None
 
 
-def _bisect_first(c, t_capf):
-    """First sign change of the quartic on a geometric grid, then bisection.
+def _bisect(c, lo, slo, hi):
+    """Root of a sign change of the quartic in [lo, hi]; signs are mp comparisons, since
+    near the root the residual underflows double. 8 + p*log2(10) halvings shrink the
+    bracket below 10^-p of its span."""
+    p = c[0].precision
+    half = NumberContext(p)("0.5")
+    for _ in range(8 + int(p * math.log2(10))):
+        mid = (lo + hi) * half
+        if slo != (_horner(c, mid) < 0):
+            hi = mid
+        else:
+            lo = mid
+    return (lo + hi) * half
 
-    Rescue path for roots Newton cannot polish (near-double roots, stalled
-    seeds); everything runs on the exact quartic. The grid spans
-    (_EPS_T, t_capf] in 48 geometric steps — for t_capf=0.1 the probes are
-    1e-12, ~1.7e-12, ..., 0.1 — so an exact double root with NO sign change
-    (a tangent graze, not a crossing) stays invisible, which is the intended
-    miss. Signs are mp comparisons, not float(): near the root the
-    residual underflows double (reads 0.0, i.e. "not negative") and at
-    p ~ 1024 that used to corrupt the bracket. 8 + p*log2(10) halvings
-    shrink the bracket below 10^-p of its span.
+
+def _taylor_shift(cs, s):
+    """Coefficients of p(x + s) from those of p(x), leading first."""
+    d = list(cs)
+    for i in range(len(d) - 1):
+        for j in range(1, len(d) - i):
+            d[j] = d[j] + s * d[j - 1]
+    return d
+
+
+def _descartes(c, a, b):
+    """Sign variations of (1+y)^4 p(a + (b-a)/(1+y)): a bound of the right parity on
+    the quartic's roots in (a, b), so 0 means none and 1 exactly one."""
+    d = _taylor_shift(c, a)
+    w = b - a
+    power = w
+    for j in range(len(d) - 2, -1, -1):
+        d[j] = d[j] * power
+        if j:
+            power = power * w
+    h = d[::-1]
+    for i in range(len(h) - 1):
+        for j in range(1, len(h) - i):
+            h[j] = h[j] + h[j - 1]
+    variations, last = 0, 0
+    for x in h:
+        s = 1 if x > 0 else -1 if x < 0 else 0
+        if s:
+            if last and s != last:
+                variations += 1
+            last = s
+    return variations
+
+
+def _cell_crossing(c, lo, slo, hi, shi, floor):
+    """First sign change of the quartic in (lo, hi]: halves until Descartes rules a half
+    out, or finds a sign change with at most one root to bisect. Under the floor width a
+    sign change bisects and a pair without one drops: a tangent graze stays invisible."""
+    half = NumberContext(c[0].precision)("0.5")
+    stack = [(lo, slo, hi, shi)]
+    while stack:
+        a, sa, b, sb = stack.pop()
+        if sa != sb:
+            if b - a <= floor or _descartes(c, a, b) <= 1:
+                return _bisect(c, a, sa, b)
+        elif b - a <= floor or _descartes(c, a, b) == 0:
+            continue
+        m = (a + b) * half
+        sm = _horner(c, m) < 0
+        stack.append((m, sm, b, sb))
+        stack.append((a, sa, m, sm))
+    return None
+
+
+def _first_crossing(c, t_capf, limit=None):
+    """First sign change of the quartic in (_EPS_T, t_capf], or in (_EPS_T, limit).
+
+    Cells of 48 geometric steps over (_EPS_T, t_capf] — for t_capf=0.1 the nodes are
+    1e-12, ~1.7e-12, ..., 0.1. Runs of cells halve by index, leftmost first, while a
+    sign change or Descartes allows a root; a cell is searched to 10^-(p/2) of its end.
     """
     p = c[0].precision
-    lo = lift(_EPS_T, p)
-    slo = _horner(c, lo) < 0
-    half = NumberContext(p)("0.5")
-    halvings = 8 + int(p * math.log2(10))
+    nodes = [lift(_EPS_T, p)]
     for k in range(1, 49):
-        hi = lift(_EPS_T * (t_capf / _EPS_T) ** (k / 48.0), p)
-        shi = _horner(c, hi) < 0
-        if slo != shi:
-            for _ in range(halvings):
-                mid = (lo + hi) * half
-                if slo != (_horner(c, mid) < 0):
-                    hi = mid
-                else:
-                    lo = mid
-            return (lo + hi) * half
-        lo, slo = hi, shi
+        node = lift(_EPS_T * (t_capf / _EPS_T) ** (k / 48.0), p)
+        if limit is not None and node >= limit:
+            nodes.append(limit)
+            break
+        nodes.append(node)
+    signs = [_horner(c, x) < 0 for x in nodes]
+    rel = NumberContext(p)(f"1e-{p // 2}")
+    stack = [(0, len(nodes) - 1)]
+    while stack:
+        i, j = stack.pop()
+        if signs[i] == signs[j] and _descartes(c, nodes[i], nodes[j]) == 0:
+            continue
+        if j == i + 1:
+            root = _cell_crossing(c, nodes[i], signs[i], nodes[j], signs[j], rel * nodes[j])
+            if root is not None:
+                return root
+            continue
+        m = (i + j) // 2
+        stack.append((m, j))
+        stack.append((i, m))
     return None
 
 
 def _quartic_first(c, t_capf):
-    """Smallest real root of the monic mp quartic in (_EPS_T, t_capf].
+    """Smallest root of the monic mp quartic in (_EPS_T, t_capf] where it changes sign.
 
-    Two tiers: float Durand-Kerner seeds polished by Newton at full precision
-    (fast path, simple roots), exact-sign bisection when no seed polishes.
+    Float Durand-Kerner seeds polished by Newton at full precision are the fast path.
+    Newton can polish a later root while an earlier one stalls or hides in a close pair,
+    so Descartes must rule out a root before the accepted one; otherwise, and when no
+    seed polishes, the exact-sign search decides.
     """
     p = c[0].precision
     rtol = lift(f"1e-{max(_NEWTON_MIN_DIGITS, p // 2)}", p)
     dc = (c[0] * 4, c[1] * 3, c[2] * 2, c[3])
+    eps = lift(_EPS_T, p)
     roots = (_newton_polish(c, dc, seed, rtol) for seed in _float_seeds(c, t_capf))
-    best = min((t for t in roots if t is not None and float(t) > _EPS_T),
-               key=float, default=None)
-    return best if best is not None else _bisect_first(c, t_capf)
+    best = min((t for t in roots if t is not None and t > eps), default=None)
+    if best is None:
+        return _first_crossing(c, t_capf)
+    end = best - rtol * max(abs(best), lift(_NEWTON_TFLOOR, p))
+    if end <= eps or _descartes(c, eps, end) == 0:
+        return best
+    earlier = _first_crossing(c, t_capf, end)
+    return best if earlier is None else earlier
 
 
 class TorusWall:
