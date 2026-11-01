@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
+from ...backend import MP_TYPES, round_up_precision
 from ...formula import Number
 from .formulas import cached_formula
 from .nums import raw
@@ -18,7 +19,11 @@ class _Algebra:
 
     def constant(self, value: str | int | float | Number) -> _Jet:
         # The backend text carries every stored digit; a Number's str() would round.
-        return _Jet(self, [str(raw(value))] + ["0"] * ((1 << self.order) - 1), 1)
+        value = raw(value)
+        if isinstance(value, MP_TYPES) and value.precision != round_up_precision(self.precision):
+            raise ValueError(f"precision mismatch: the value is {value.precision}, "
+                             f"the algebra {round_up_precision(self.precision)}")
+        return _Jet(self, [str(value)] + ["0"] * ((1 << self.order) - 1), 1)
 
     def variable(self, value: str | int | float | Number, seeds: Sequence[int], axis: int) -> _Jet:
         result = self.constant(value)

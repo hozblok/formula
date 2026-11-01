@@ -60,6 +60,10 @@ class Solver(Formula):
         for name, value in values.items():
             if isinstance(value, Number):
                 value = value._value
+            # A typed value keeps its storage precision; text is the explicit conversion.
+            if isinstance(value, MP_TYPES) and value.precision != self.precision:
+                raise ValueError(f"precision mismatch: {name} is {value.precision}, "
+                                 f"the solver {self.precision}")
             if isinstance(value, REAL_TYPES):
                 result[name] = value.str(0, FmtFlags.default)
             else:

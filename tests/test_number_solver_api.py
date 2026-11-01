@@ -3,7 +3,7 @@
 
 import pytest
 
-from formula import FmtFlags, Formula, Number, Solver
+from formula import FmtFlags, Formula, Number, NumberContext, Solver
 from formula.backend import MP_TYPES
 
 
@@ -218,3 +218,13 @@ def test_precision_round_up_and_custom_unit_on_higher_orders(unit):
     for k in range(2, 6):
         assert rounded.get_partial_derivative(["x"] * k, {"x": "1.5"}) == \
             exact.get_partial_derivative(["x"] * k, {"x": "1.5"})
+
+
+def test_typed_variables_must_match_the_solver_precision():
+    # A backend value or Number of another storage precision is refused; text is the explicit way.
+    s = Solver("x+1", 64)
+    for value in (NumberContext(128)(2), Number("2", 128)):
+        with pytest.raises(ValueError, match="precision mismatch"):
+            s.number(value)
+        assert s.number(str(value)) == 3
+    assert s.number(NumberContext(64)(2)) == 3 and s.number(Number("2", 63)) == 3
