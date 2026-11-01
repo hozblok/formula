@@ -2,6 +2,8 @@
 
 from typing import Protocol
 
+from ..formula import NumberContext
+
 
 class _RootFunc(Protocol):
     """A surface restricted to one ray; what every backend consumes."""
@@ -13,13 +15,35 @@ class _RootFunc(Protocol):
         """g'(t) = grad F . d, the derivative of g along the ray."""
 
 
+def tol_full(N: NumberContext):
+    """1e-(p-2): accuracy of a root parameter t, two digits inside the storage precision."""
+    return N(f"1e-{N.precision - 2}")
+
+
+def tol_half(N: NumberContext):
+    """1e-(p//2): roots closer than this are one root; polynomial coefficients below it are zero."""
+    return N(f"1e-{N.precision // 2}")
+
+
+def tol_third(N: NumberContext):
+    """1e-(p//3): a value of g this small counts as zero; the Chebyshev proxy tolerance."""
+    return N(f"1e-{N.precision // 3}")
+
+
 def sign(x) -> int:
-    """-1, 0 or +1."""
+    """-1, 0 or +1; a nan raises instead of posing as 0."""
     if x > 0:
         return 1
     if x < 0:
         return -1
-    return 0
+    if x == 0:
+        return 0
+    raise ValueError("non-finite value in a sign test")
+
+
+def finite(value) -> bool:
+    """False for inf and nan: two operations, no text conversion."""
+    return value - value == 0
 
 
 def real_text(value, precision: int) -> str:
@@ -31,9 +55,7 @@ def finite_sign(value):
     """sign(value), or None where value is non-finite (inf/nan)."""
     if value.is_complex:
         raise NotImplementedError("real surfaces only; use sturm/chebyshev for complex")
-    if str(value) in ("inf", "-inf", "nan"):
-        return None
-    return sign(value)
+    return sign(value) if finite(value) else None
 
 
 def rtsafe(func: _RootFunc, a, b, xacc, maxit: int = 200):
@@ -58,7 +80,10 @@ def rtsafe(func: _RootFunc, a, b, xacc, maxit: int = 200):
     t, step = (a + b) * 0.5, abs(b - a)
     g, gp = func.g(t), func.gprime(t)
     for _ in range(maxit):
-        secure = (gp == 0
+        if not finite(g):
+            raise ValueError(f"non-finite g inside the bracket at t = {t}")
+        # A non-finite g' (a kink) takes the bisection step, as g' = 0 does.
+        secure = (not finite(gp) or gp == 0
                   or ((t - hi) * gp - g) * ((t - lo) * gp - g) > 0
                   or abs(g + g) > abs(step * gp))
         step = (hi - lo) * 0.5 if secure else g / gp
@@ -76,6 +101,9 @@ def merge_close_roots(roots, xacc) -> list:
     roots — candidate ray parameters t with g(t)≈0; may repeat the same root.
     xacc — merge radius: |t1-t2| ≤ xacc counts as one root (leftmost kept).
     """
+    roots = list(roots)
+    if not all(finite(t) for t in roots):
+        raise ValueError("non-finite root candidate")
     out = []
     for t in sorted(roots):
         if not out or abs(t - out[-1]) > xacc:

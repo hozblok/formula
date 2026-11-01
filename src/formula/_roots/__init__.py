@@ -5,6 +5,7 @@ import re
 from typing import Callable
 
 from ..formula import NumberContext
+from .utils import merge_close_roots, tol_half
 
 _BACKENDS = {
     "sampling": "sampling",
@@ -60,12 +61,8 @@ def _load(name: str) -> Callable:
 
 def _union(lists, precision: int) -> list:
     """Merge root lists, treating values within a tolerance as the same root."""
-    tol = NumberContext(precision)(f"1e-{max(precision // 2, 6)}")
-    out = []
-    for t in sorted(r for lst in lists for r in lst):
-        if not out or abs(t - out[-1]) > tol:
-            out.append(t)
-    return out
+    tol = tol_half(NumberContext(precision))
+    return merge_close_roots((r for lst in lists for r in lst), tol)
 
 
 def _general(func, t_min, t_max, precision, **opts) -> list:
