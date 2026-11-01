@@ -10,6 +10,7 @@ silica). This is the building block for tracing X-rays down a glass capillary
 (see XRAY.md).
 """
 
+import math
 from collections import namedtuple
 from typing import Callable
 
@@ -55,33 +56,28 @@ class GlassMaterial:
         self.energy_ref_kev = energy_ref_kev
         self.name = name
 
-    def _optical(self, n_eff_part: float, energy_kev_value, precision: int) -> Number:
-        lam_m = f"({HC_KEV_ANGSTROM})/({_s(energy_kev_value)})*({ANGSTROM})"
-        expr = f"({R_E})*({lam_m})^2*({repr(n_eff_part)})/(2*pi)"
-        return Number(expr, precision)
+    def optical(self, energy_kev_value) -> tuple[float, float]:
+        """(delta, beta) at E in float64: the tabulated n_eff(E) carries no more digits."""
+        e = float(str(energy_kev_value))
+        if self.electron_density is None:
+            ratio = float(self.energy_ref_kev) / e
+            return self.delta_beta_ref.real * ratio ** 2, self.delta_beta_ref.imag * ratio ** 4
+        n_eff = self.electron_density(e)
+        lam_m = float(HC_KEV_ANGSTROM) / e * float(ANGSTROM)
+        prefactor = float(R_E) * lam_m ** 2 / (2 * math.pi)
+        return prefactor * n_eff.real, prefactor * n_eff.imag
 
-    def delta(self, energy_kev_value, *, precision: int) -> Number:
+    def delta(self, energy_kev_value) -> float:
         """delta(E): prefactor * Re n_eff(E), or the empirical anchor * 1/E^2."""
-        if self.electron_density is None:
-            ratio = float(self.energy_ref_kev) / float(str(energy_kev_value))
-            return Number(repr(self.delta_beta_ref.real * ratio ** 2), precision)
-        else:
-            n_eff = self.electron_density(float(str(energy_kev_value)))
-            return self._optical(n_eff.real, energy_kev_value, precision)
+        return self.optical(energy_kev_value)[0]
 
-    def beta(self, energy_kev_value, *, precision: int) -> Number:
+    def beta(self, energy_kev_value) -> float:
         """beta(E): prefactor * Im n_eff(E), or the empirical anchor * 1/E^4."""
-        if self.electron_density is None:
-            ratio = float(self.energy_ref_kev) / float(str(energy_kev_value))
-            return Number(repr(self.delta_beta_ref.imag * ratio ** 4), precision)
-        else:
-            n_eff = self.electron_density(float(str(energy_kev_value)))
-            return self._optical(n_eff.imag, energy_kev_value, precision)
+        return self.optical(energy_kev_value)[1]
 
-    def critical_angle(self, energy_kev_value, *, precision: int) -> Number:
+    def critical_angle(self, energy_kev_value) -> float:
         """Critical grazing angle theta_c = sqrt(2*delta) (radians)."""
-        d = self.delta(energy_kev_value, precision=precision)
-        return Number(f"sqrt(2*({d}))", precision)
+        return math.sqrt(2 * self.delta(energy_kev_value))
 
 
 # Fused silica (SiO2, ~2.20 g/cm^3): tabulated Henke n_eff(E).
@@ -125,8 +121,8 @@ def reflect_amplitude(
     Carries magnitude and phase; coherent tracing must multiply r, not sqrt(R).
     """
     s = Number(f"sin({_s(grazing_angle)})", precision)
-    d2 = material.delta(energy_kev_value, precision=precision) * 2
-    b2 = material.beta(energy_kev_value, precision=precision) * 2
+    delta, beta = material.optical(energy_kev_value)
+    d2, b2 = 2.0 * delta, 2.0 * beta
     root = (s * s - d2 + b2 * Number("i", precision)) ** Number("0.5", precision)
     return (s - root) / (s + root)
 

@@ -118,16 +118,14 @@ def test_material_enum_selects_wall_glass():
     # OE 20:3975 glass: eps = 1 - 9.115e-6 + i*1.145e-7 at 8 keV -> 2*delta, 2*beta
     sim = Simulation.from_dict(dict(TINY, material="glass_oe2012"))
     assert sim.cfg.material is xray.OE2012_GLASS
-    assert abs(2.0 * float(sim.cfg.material.delta("8.0", precision=32))
-               - 9.115e-6) < 1e-9
-    assert abs(2.0 * float(sim.cfg.material.beta("8.0", precision=32))
-               - 1.145e-7) < 1e-12
+    assert abs(2.0 * sim.cfg.material.delta("8.0") - 9.115e-6) < 1e-9
+    assert abs(2.0 * sim.cfg.material.beta("8.0") - 1.145e-7) < 1e-12
     assert Simulation.from_dict(TINY).cfg.material is xray.FUSED_SILICA
     si = Simulation.from_dict(dict(TINY, material="silicon")).cfg.material
     assert si is xray.SILICON
-    assert abs(float(si.delta("8.048", precision=32)) - 7.581e-6) < 2e-9          # Henke, 2.33 g/cm^3
-    assert abs(float(si.beta("8.048", precision=32)) - 1.728e-7) < 2e-10
-    assert abs(float(si.critical_angle("8.048", precision=32)) - 3.894e-3) < 2e-6
+    assert abs(si.delta("8.048") - 7.581e-6) < 2e-9          # Henke, 2.33 g/cm^3
+    assert abs(si.beta("8.048") - 1.728e-7) < 2e-10
+    assert abs(si.critical_angle("8.048") - 3.894e-3) < 2e-6
     with pytest.raises(ValueError, match="unknown material"):
         Simulation.from_dict(dict(TINY, material="lead"))
 
@@ -229,11 +227,10 @@ def test_symbolic_templates_match_references():
     mat = xray.FUSED_SILICA
     N = NumberContext(p)
     fres = FresnelAmplitude(mat, N("8.0"), N)
-    two = Number("2", p)
 
     def db(e):
-        return {"dd": str(mat.delta(e, precision=p) * two),
-                "bb": str(mat.beta(e, precision=p) * two)}
+        delta, beta = mat.optical(e)
+        return {"dd": repr(2.0 * delta), "bb": repr(2.0 * beta)}
 
     for e in ("8.0", "9.0", "10.0"):
         for theta in ("2.5e-4", "1.5e-3", "3.5e-3"):

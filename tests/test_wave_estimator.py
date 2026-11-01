@@ -369,8 +369,7 @@ def test_broadband_grid_is_permutation_invariant(tmp_path):
         sim = Simulation.from_dict(raw)
         wave = sim.cfg.validate_wave_estimator()
         p = sim.cfg.precision
-        lines = [(float(ln.k), float(ln.weight), float(sim.cfg.material.delta(ln.e_kev, precision=p)),
-                  float(sim.cfg.material.beta(ln.e_kev, precision=p))) for ln in sim.lines]
+        lines = [(float(ln.k), float(ln.weight), *sim.cfg.material.optical(ln.e_kev)) for ln in sim.lines]
         (label, res), = W._capillary_scene(sim, wave, lines, None, 1, lambda _: None)
         return res
 

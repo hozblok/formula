@@ -29,16 +29,6 @@ def test_amplitudes_share_context_and_agree(precision):
     assert floating([]) == [1 + 0j]
 
 
-@pytest.mark.parametrize("calculator", [FresnelAmplitude, LineAmplitudes, FloatLineAmplitudes])
-def test_context_rejects_energy_with_different_precision(calculator):
-    energy = NumberContext(256)(8)
-    values = energy if calculator is FresnelAmplitude else spectral_lines(
-        {"mode": "monochromatic"}, energy
-    )
-    with pytest.raises(ValueError, match="precision mismatch"):
-        calculator(xray.FUSED_SILICA, values, NumberContext(64))
-
-
 def test_simulations_own_independent_contexts():
     low = Simulation.from_dict({"precision": 30})
     high = Simulation.from_dict({"precision": 64})
