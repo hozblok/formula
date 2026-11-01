@@ -4,7 +4,7 @@ import importlib
 import re
 from typing import Callable
 
-from ..formula import Number
+from ..formula import NumberContext
 
 _BACKENDS = {
     "sampling": "sampling",
@@ -60,7 +60,7 @@ def _load(name: str) -> Callable:
 
 def _union(lists, precision: int) -> list:
     """Merge root lists, treating values within a tolerance as the same root."""
-    tol = Number(f"1e-{max(precision // 2, 6)}", precision)
+    tol = NumberContext(precision)(f"1e-{max(precision // 2, 6)}")
     out = []
     for t in sorted(r for lst in lists for r in lst):
         if not out or abs(t - out[-1]) > tol:

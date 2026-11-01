@@ -10,7 +10,7 @@ from typing import List, Optional, Sequence, Tuple
 
 from ._roots import get_backend
 from ._roots.utils import real_text
-from .formula import Number, Solver
+from .formula import Number, NumberContext, Solver
 
 _AXES = ("x", "y", "z")
 
@@ -44,21 +44,22 @@ def _with_endpoint_roots(func, roots, t0, t1, precision):
     |g| small alone is not enough: at grazing incidence g' is tiny, so g stays
     small near a root without t0/t1 being one. Require the Newton step |g|/|g'|
     within tol too (a vanishing g' means a tangential root at the endpoint)."""
-    gtol = Number(f"1e-{max(precision // 3, 4)}", precision)
-    tol = Number(f"1e-{max(precision // 2, 6)}", precision)
+    N = NumberContext(precision)
+    gtol = N(f"1e-{max(precision // 3, 4)}")
+    tol = N(f"1e-{max(precision // 2, 6)}")
     out = list(roots)
     for t in (t0, t1):
         mag = real_text(abs(func.g(t)), precision)  # modulus as a real string
         if "inf" in mag or "nan" in mag:
             continue
-        g = Number(mag, precision)
+        g = N(mag)
         if g > gtol or any(abs(t - r) <= tol for r in out):
             continue
         gpmag = real_text(abs(func.gprime(t)), precision)
         if "inf" in gpmag or "nan" in gpmag:
             out.append(t)
             continue
-        gp = Number(gpmag, precision)
+        gp = N(gpmag)
         if gp <= gtol or g <= tol * gp:
             out.append(t)
     return out

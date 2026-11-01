@@ -11,9 +11,7 @@ over the search interval (sampled from g', inflated). Practically reliable, not
 a formal proof — the guarantee is only as good as the M2 bound.
 """
 
-from typing import List
-
-from ..formula import Number
+from ..formula import NumberContext
 from .utils import merge_close_roots, rtsafe, sign
 
 
@@ -87,14 +85,15 @@ def _refine(func, a, b, xacc, gtol):
 
 
 def find_all(
-    func, t_min: Number, t_max: Number, precision: int, m2_samples: int = 200, **opts
-) -> List[Number]:
+    func, t_min, t_max, precision: int, m2_samples: int = 200, **opts
+) -> list:
     """All real roots of g in [t_min, t_max] via adaptive exclusion subdivision."""
     if func.g(t_min).is_complex:
         raise NotImplementedError("subdivision backend handles real surfaces only")
-    xacc = Number(f"1e-{max(precision - 2, 1)}", precision)
-    gtol = Number(f"1e-{max(precision // 3, 4)}", precision)
-    region_tol = opts.get("region_tol") or (t_max - t_min) * Number("1e-6", precision)
+    N = NumberContext(precision)
+    xacc = N(f"1e-{max(precision - 2, 1)}")
+    gtol = N(f"1e-{max(precision // 3, 4)}")
+    region_tol = opts.get("region_tol") or (t_max - t_min) * 1e-6
     m2 = _estimate_m2(func, t_min, t_max, m2_samples)
     regions = _merge(_candidates(func, t_min, t_max, m2, region_tol), region_tol)
     roots = [r for r in (_refine(func, a, b, xacc, gtol) for a, b in regions) if r is not None]

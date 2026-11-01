@@ -4,19 +4,17 @@ Not rigorous — even-multiplicity roots and sub-sample features can be missed.
 Serves as the baseline/oracle that the rigorous backends are checked against.
 """
 
-from typing import List
-
-from ..formula import Number
+from ..formula import NumberContext
 from .utils import finite_sign, merge_close_roots, rtsafe
 
 
 def find_all(
-    func, t_min: Number, t_max: Number, precision: int, samples: int = 256, **_
-) -> List[Number]:
+    func, t_min, t_max, precision: int, samples: int = 256, **_
+) -> list:
     """All sign-change roots of g on [t_min, t_max], refined to precision."""
-    xacc = Number(f"1e-{max(precision - 2, 1)}", precision)
+    xacc = NumberContext(precision)(f"1e-{max(precision - 2, 1)}")
     step = (t_max - t_min) / samples
-    roots: List[Number] = []
+    roots = []
     t_prev = t_min
     s_prev = finite_sign(func.g(t_prev))
     if s_prev == 0:

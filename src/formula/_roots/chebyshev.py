@@ -6,8 +6,6 @@ Sturm machinery and then polished on the true g. Captures all roots of smooth g,
 including the even-multiplicity ones sampling misses.
 """
 
-from typing import List
-
 from ..formula import Number, NumberContext, Solver
 from . import _isolate, _poly
 
@@ -97,7 +95,7 @@ def _pmul_x2(p, N: NumberContext):
     return [N(0)] + [c * 2 for c in p]
 
 
-def _newton(func, t: Number, xacc: Number, maxit: int = 100) -> Number:
+def _newton(func, t, xacc, maxit: int = 100):
     """Polish a simple root of g starting from a good guess."""
     for _ in range(maxit):
         gp = func.gprime(t)
@@ -125,14 +123,14 @@ def _proxy_roots(func, q, transform, tol, xacc, N: NumberContext):
 
 
 def find_all(
-    func, t_min: Number, t_max: Number, precision: int, cheb_degree: int = 32, **_
-) -> List[Number]:
+    func, t_min, t_max, precision: int, cheb_degree: int = 32, **_
+) -> list:
     """All real roots of g in [t_min, t_max] via a Chebyshev polynomial proxy."""
     if func.g(t_min).is_complex:
         raise NotImplementedError("chebyshev backend handles real surfaces only")
-    tol = Number(f"1e-{max(precision // 3, 4)}", precision)
-    xacc = Number(f"1e-{max(precision - 2, 1)}", precision)
     N = NumberContext(precision)
+    tol = N(f"1e-{max(precision // 3, 4)}")
+    xacc = N(f"1e-{max(precision - 2, 1)}")
     mid, span = (t_min + t_max) * 0.5, (t_max - t_min) * 0.5
     coeffs = _converged_fit(func, (mid, span), N, tol, cheb_degree)
     q = _poly.square_free(_poly.trim(_cheb_to_monomial(coeffs, N), tol), tol, N)
