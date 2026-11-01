@@ -2371,7 +2371,7 @@ def test_grid_source_draws_weighted_nodes():
 
     cfg = SourceCfg({"shape": "grid", "size": 2.1e-6, "grid_n": 7,
                      "grid_step": 1.5085e-6, "position": [0.0, 0.0, -0.03],
-                     "n_modes": 49, "n_rays": 10}, 32)
+                     "n_modes": 49, "n_rays": 10}, NumberContext(32))
     src = Source(cfg, random.Random(7))
     counts = {}
     for _ in range(20000):

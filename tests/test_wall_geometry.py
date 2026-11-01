@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from formula import Formula, Number
+from formula import Formula, Number, NumberContext
 from formula.capsysred.config import _bore
 from formula.capsysred.surfaces import _make_wall
 from formula.capsysred.walls.wall_cylinder import CylinderWall
@@ -104,7 +104,7 @@ WORLD_POINTS = [(.7, -.1, .55), (-.35, .6, .82), (-.4, -.55, -.15)]
 
 def _world_wall(kind):
     raw = dict(WORLD_BORES[kind], center=[.15, -.12])
-    return _make_wall(_bore(raw, 64, 0), Number(".37", 64))
+    return _make_wall(_bore(raw, NumberContext(64), 0), Number(".37", 64))
 
 
 def _world_reference(kind, point):
@@ -230,7 +230,7 @@ def test_world_surface_normal_and_curvature_match_stored_formula(kind):
 def test_shifted_rotated_torus_world_derivatives_at_large_radius(radius, toward):
     raw = {"center": [72e-6, -3e-6], "radius": 24e-6,
            "bend": {"radius": radius, "toward": toward}}
-    wall = _make_wall(_bore(raw, 64, 0), Number(".07", 64))
+    wall = _make_wall(_bore(raw, NumberContext(64), 0), Number(".07", 64))
     point = (80e-6, 17e-6, .25)
     xi = "(tx*(x-cx)+ty*(y-cy))/sqrt(tx^2+ty^2)"
     eta = "(-ty*(x-cx)+tx*(y-cy))/sqrt(tx^2+ty^2)"
@@ -294,7 +294,7 @@ def test_surface_error_matches_normal_offsets_and_ignores_derivative_scale(kind,
 def test_polygon_surface_error_rejects_face_extensions(rotation):
     raw = {"center": [.3, -.4], "radius": 1., "sides": 4, "rotation_deg": rotation,
            "apothems": [1., 2., 1., 2.]}
-    wall = _make_wall(_bore(raw, 64, 0), Number(".37", 64))
+    wall = _make_wall(_bore(raw, NumberContext(64), 0), Number(".37", 64))
     angle = np.deg2rad(rotation)
     transform = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
     local = np.array([[.2, 2.], [.2, 2.00001], [.2, 1.99999], [1., 2.1], [0., 0.]])

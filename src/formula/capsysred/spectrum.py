@@ -7,7 +7,7 @@ line energy E_m feeds the per-line Fresnel amplitude (symbolic.LineAmplitudes).
 import math
 from collections import namedtuple
 
-from ..formula import Number
+from ..formula import NumberContext
 from ..physical_constants import HC_KEV_ANGSTROM
 
 _FWHM_TO_SIGMA = 2.0 * math.sqrt(2.0 * math.log(2.0))
@@ -15,18 +15,18 @@ _FWHM_TO_SIGMA = 2.0 * math.sqrt(2.0 * math.log(2.0))
 SpectralLine = namedtuple("SpectralLine", ["e_kev", "k", "weight"])
 
 
-def wavevector(energy_kev: Number) -> Number:
+def wavevector(energy_kev):
     """k = 2*pi/lambda [rad/m] for a photon energy in keV."""
-    p = energy_kev.precision
-    return Number(f"2*pi*({energy_kev})/(({HC_KEV_ANGSTROM})*1e-10)", p)
+    N = NumberContext(energy_kev.precision)
+    return N.eval(f"2*pi*E/(({HC_KEV_ANGSTROM})*1e-10)", E=energy_kev)
 
 
-def wavelength_m(energy_kev: Number) -> Number:
-    p = energy_kev.precision
-    return Number(f"(({HC_KEV_ANGSTROM})*1e-10)/({energy_kev})", p)
+def wavelength_m(energy_kev):
+    N = NumberContext(energy_kev.precision)
+    return N.eval(f"(({HC_KEV_ANGSTROM})*1e-10)/E", E=energy_kev)
 
 
-def _table_pairs(path, p):
+def _table_pairs(path, N: NumberContext):
     """Two columns E_keV weight; '#' comments, blank lines and commas allowed."""
     pairs = []
     with open(path, encoding="utf-8") as fh:
@@ -36,23 +36,23 @@ def _table_pairs(path, p):
                 continue
             if len(row) < 2:
                 raise ValueError(f"spectrum table row needs 'E weight': {raw!r}")
-            pairs.append((Number(row[0], p), float(row[1])))
+            pairs.append((N(row[0]), float(row[1])))
     if not pairs:
         raise ValueError(f"spectrum table {path!r} is empty")
     return pairs
 
 
-def spectral_lines(cfg: dict, energy_kev: Number):
+def spectral_lines(cfg: dict, energy_kev):
     """Config -> [SpectralLine(e_kev, k, weight)], weights normalized to 1."""
-    p = energy_kev.precision
+    N = NumberContext(energy_kev.precision)
     mode = cfg.get("mode", "monochromatic")
     if mode == "monochromatic":
         return [SpectralLine(energy_kev, wavevector(energy_kev), 1.0)]
     if mode == "lines":
-        pairs = [(Number(str(l["energy_kev"]), p), float(l.get("weight", 1.0)))
+        pairs = [(N(str(l["energy_kev"])), float(l.get("weight", 1.0)))
                  for l in cfg["lines"]]
     elif mode == "table":
-        pairs = _table_pairs(cfg["file"], p)
+        pairs = _table_pairs(cfg["file"], N)
     elif mode == "gaussian":
         e0 = float(energy_kev)
         sigma = e0 * float(cfg["rel_fwhm"]) / _FWHM_TO_SIGMA
@@ -62,7 +62,7 @@ def spectral_lines(cfg: dict, energy_kev: Number):
         for j in range(n):
             e = e0 - span + 2.0 * span * j / (n - 1) if n > 1 else e0
             w = math.exp(-0.5 * ((e - e0) / sigma) ** 2)
-            pairs.append((Number(repr(e), p), w))
+            pairs.append((N(repr(e)), w))
     else:
         raise ValueError(f"unknown spectrum mode: {mode!r}")
     total = sum(w for _, w in pairs)

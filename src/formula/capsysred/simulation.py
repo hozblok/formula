@@ -102,7 +102,7 @@ def _make_sampler():
 class Simulation:
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self.numbers = NumberContext(cfg.precision)
+        self.numbers = cfg.numbers
         self.lines = spectral_lines(cfg.spectrum, cfg.energy_kev)
         self.fresnel = FresnelAmplitude(cfg.material, cfg.energy_kev, self.numbers)
         # per_line: energy-dependent r(E_m) per spectral line via the symbolic template

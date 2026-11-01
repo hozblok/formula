@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from formula import Number
+from formula import Number, NumberContext
 from formula.capsysred.config import _bore
 from formula.capsysred.shared.apertures import entrance_bore_ids
 from formula.capsysred.shared.types import _APERTURE_REL_TOL
@@ -94,7 +94,7 @@ def test_transport_diagnostics_and_exit_mesh_share_bore_assignment(case, rotatio
     if expected < 0:
         np.testing.assert_array_equal(nodes["amplitude"], [0j])
 
-    typed = [_bore(b, 32, i) for i, b in enumerate(bores)]
+    typed = [_bore(b, NumberContext(32), i) for i, b in enumerate(bores)]
     bundle = CapillaryBundle(typed, Number("0", 32), Number(".025", 32))
     centers = np.array([b["center"] for b in bores])
     radii = np.array([b["radius"] for b in bores])
