@@ -11,9 +11,7 @@ degree cutoff (scale*tol) cannot mistake a true leading term for noise on
 badly scaled polynomials (a micrometre torus quartic spans ~16 orders in raw t).
 """
 
-from typing import List
-
-from ..formula import Number, NumberContext
+from ..formula import NumberContext
 from . import _isolate, _poly
 
 
@@ -37,15 +35,15 @@ def _poly_from_samples(func, us, ts, complex_surface, tol, max_degree, N: Number
 
 
 def find_all(
-    func, t_min: Number, t_max: Number, precision: int, max_degree: int = 16, **_
-) -> List[Number]:
+    func, t_min, t_max, precision: int, max_degree: int = 16, **_
+) -> list:
     """All real roots of g in [t_min, t_max] via Sturm isolation."""
     if max_degree < 2:
         raise ValueError("max_degree must be >= 2 (need >= 3 interpolation nodes)")
-    tol = Number(f"1e-{max(precision // 2, 4)}", precision)
-    xacc = Number(f"1e-{max(precision - 2, 1)}", precision)
-    complex_surface = func.g(t_min).is_complex
     N = NumberContext(precision)
+    tol = N(f"1e-{max(precision // 2, 4)}")
+    xacc = N(f"1e-{max(precision - 2, 1)}")
+    complex_surface = func.g(t_min).is_complex
     one = N(1)
     mid, span = (t_min + t_max) * 0.5, (t_max - t_min) * 0.5
     # bisection runs in u; dividing by span keeps the t-units accuracy at xacc
