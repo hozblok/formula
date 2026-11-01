@@ -10,10 +10,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, TypeVar
 
-from ...formula import Number
 from ..shared.coordinates import surface_coordinates
-from ..shared.nums import lift, vadd, vscale, vunit
-from ..shared.types import _EPS_T, _INSIDE_TOL, Vec3
+from ..shared.nums import lift, text, vadd, vscale, vunit
+from ..shared.types import _EPS_T, _INSIDE_TOL, Scalar, Vec3
 from ..shared.units import m_to_um
 
 if TYPE_CHECKING:
@@ -31,7 +30,7 @@ class CylinderWall:
         """Derivatives at offsets from the axis; Hessian: xx, xy, xz, yy, yz, zz."""
         return (dx, dy, 0.0), (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
-    def __init__(self, center: tuple[Number, Number], radius: Number,
+    def __init__(self, center: tuple[Scalar, Scalar], radius: Scalar,
                  eps: float = 1e-30):
         self.kind, self.center, self.radius = "cylinder", center, radius
         # zero threshold for the quadratic coefficients (degenerate -> linear/no hit)
@@ -42,20 +41,21 @@ class CylinderWall:
         self._a2f = float(self._a2)
         self._rf = float(radius)
         um = lift(m_to_um(1), self._p)
-        self.expr_um = (f"(x-({center[0] * um}))^2+(y-({center[1] * um}))^2"
-                        f"-({self._a2 * um * um})")
+        t = lambda v: text(v, self._p)
+        self.expr_um = (f"(x-({t(center[0] * um)}))^2+(y-({t(center[1] * um)}))^2"
+                        f"-({t(self._a2 * um * um)})")
         self.probe_xy = (1.0, 0.0)
 
     @property
     def precision(self) -> int:
         return self._p
 
-    def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
+    def value(self, point: Sequence[int | float | Scalar | _Jet]) -> Scalar | _Jet:
         """F = ((x-cx)^2 + (y-cy)^2 - radius^2)/2 in world metres."""
         dx, dy, _ = self.gradient(point)
         return (dx * dx + dy * dy - self._a2) / 2
 
-    def gradient(self, point: Sequence[int | float | Number | _Jet]) -> tuple[Number | _Jet, Number | _Jet, float]:
+    def gradient(self, point: Sequence[int | float | Scalar | _Jet]) -> tuple[Scalar | _Jet, Scalar | _Jet, float]:
         """Unnormalized gradient of F at scalar or jet world coordinates in metres."""
         x, y, _ = surface_coordinates(point, self.precision)
         return self._local_gradient_hessian(x - self.center[0], y - self.center[1])[0]
@@ -73,7 +73,7 @@ class CylinderWall:
         dx, dy = xf - self._cxf, yf - self._cyf
         return dx * dx + dy * dy < self._a2f * (1.0 + _INSIDE_TOL)
 
-    def hit(self, O: Vec3, d: Vec3, t_exit: Number):
+    def hit(self, O: Vec3, d: Vec3, t_exit: Scalar):
         """First forward parameter to the wall (exact quadratic), with point+normal."""
         rx, ry = O[0] - self.center[0], O[1] - self.center[1]
         A = d[0] * d[0] + d[1] * d[1]

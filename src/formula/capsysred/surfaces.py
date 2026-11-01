@@ -1,4 +1,4 @@
-"""Reflecting optics as event generators over exact Number geometry.
+"""Reflecting optics as event generators over exact Scalar geometry.
 
 One event protocol for every optic (the flat mirror uses the same wall-event
 contract): ("reflect", t, point, normal) | ("pass", t) | ("absorb", t) |
@@ -17,12 +17,12 @@ import math
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from ..formula import Number
+from ..formula import NumberContext
 from .shared.coordinates import surface_coordinates
 from .shared.implicit_surface import Surface
 from .shared.nums import lift, vadd, vscale
 from .shared.types import (_EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _RAY_POSITION_TOL_M, _TCAP_TOL,
-                    HitMethod)
+                    HitMethod, Scalar)
 from .shared.units import m_to_um
 from .walls.wall_cylinder import CylinderWall
 from .walls.wall_funnel import FunnelWall
@@ -40,8 +40,8 @@ class Mirror:
     def __init__(self, z0, z1):
         self.z0, self.z1 = z0, z1
         self._z0f, self._z1f = float(z0), float(z1)
-        p = z0.precision
-        self._normal = (Number("1", p), Number("0", p), Number("0", p))
+        N = NumberContext(z0.precision)
+        self._normal = (N(1), N(0), N(0))
 
     expr_um = "x"  # surface F=0 for engine cross-checks (scale-free)
 
@@ -49,18 +49,18 @@ class Mirror:
     def precision(self) -> int:
         return self.z0.precision
 
-    def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
+    def value(self, point: Sequence[int | float | Scalar | _Jet]) -> Scalar | _Jet:
         """F=x for the reflecting plane, in world metres."""
         return surface_coordinates(point, self.precision)[0]
 
-    def gradient(self, point: Sequence[int | float | Number | _Jet]) -> tuple[Number, Number, Number]:
+    def gradient(self, point: Sequence[int | float | Scalar | _Jet]) -> tuple[Scalar, Scalar, Scalar]:
         """Constant world-coordinate gradient of the reflecting plane."""
         surface_coordinates(point, self.precision)
         return self._normal
 
     def validate(
-        self, point: Sequence[int | float | Number], *,
-        origin: Sequence[int | float | Number], direction: Sequence[int | float | Number],
+        self, point: Sequence[int | float | Scalar], *,
+        origin: Sequence[int | float | Scalar], direction: Sequence[int | float | Scalar],
     ) -> None:
         """Require an interior nominal hit approached from the reflecting side."""
         if not self._z0f + _RAY_POSITION_TOL_M < float(point[2]) < self._z1f - _RAY_POSITION_TOL_M:
@@ -106,13 +106,13 @@ class ImplicitWall:
     def precision(self) -> int:
         return self._surface.precision
 
-    def value(self, point: Sequence[int | float | Number | _Jet]) -> Number | _Jet:
+    def value(self, point: Sequence[int | float | Scalar | _Jet]) -> Scalar | _Jet:
         """Evaluate the original micrometre expression at world coordinates in metres."""
         return self._surface.value(point)
 
     def gradient(
-        self, point: Sequence[int | float | Number | _Jet],
-    ) -> tuple[Number, ...] | tuple[_Jet, ...]:
+        self, point: Sequence[int | float | Scalar | _Jet],
+    ) -> tuple[Scalar, ...] | tuple[_Jet, ...]:
         """Gradient of the original expression with respect to world metres."""
         return self._surface.gradient(point)
 
@@ -120,7 +120,7 @@ class ImplicitWall:
         val = self.rs.surface.evaluate(
             {"x": repr(m_to_um(xf)), "y": repr(m_to_um(yf)),
              "z": repr(m_to_um(zf))})
-        return float(Number(val, self.rs.precision))
+        return float(val)
 
     def inside(self, xf, yf, zf):
         # slack vs the bore-center depth keeps on-wall points (F rounds to ±eps)
@@ -185,7 +185,7 @@ class CapillaryBundle:
     def __init__(self, bores, z0, z1):
         self.bores, self.z0, self.z1 = bores, z0, z1
         self._z0f, self._z1f = float(z0), float(z1)
-        self._zero = Number("0", z0.precision)
+        self._zero = NumberContext(z0.precision)(0)
         self.walls = []
         for bore in bores:
             wall = _make_wall(bore, z0)

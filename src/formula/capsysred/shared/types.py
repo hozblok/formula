@@ -3,9 +3,12 @@
 from collections import namedtuple
 from enum import StrEnum
 
-from ...formula import Number
+from typing import Union
 
-Vec3 = tuple[Number, Number, Number]
+from ...backend import MP_TYPES
+
+Scalar = Union[*MP_TYPES]
+Vec3 = tuple[Scalar, Scalar, Scalar]
 
 
 class HitMethod(StrEnum):

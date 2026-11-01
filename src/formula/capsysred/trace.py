@@ -1,14 +1,14 @@
 """The one multi-bounce tracer behind every stage.
 
 Free space and capillaries run through the same loop — the optic
-only supplies wall events. Pure geometry: exact Number positions, grazing
+only supplies wall events. Pure geometry: exact mp positions, grazing
 sines per bounce, optical path length from the source point. Energy enters
 later — Fresnel amplitudes are computed from the recorded sines.
 """
 
 from collections import namedtuple
 
-from ..formula import Number, NumberContext
+from ..formula import NumberContext
 from .shared.nums import raw, vadd, vdot, vscale, vsub
 from .shared.types import _EPS_T, Vec3
 
@@ -19,11 +19,11 @@ TraceResult = namedtuple(
 )
 
 
-def trace_ray(origin: Vec3, direction: Vec3, optic, screen_z: Number,
+def trace_ray(origin: Vec3, direction: Vec3, optic, screen_z,
               max_bounces: int) -> TraceResult:
     """Trace one ray from the source point to the screen plane z=screen_z.
 
-    `direction` must be unit (Number-normalized) so parameters are path lengths.
+    `direction` must be unit (mp-normalized) so parameters are path lengths.
     `max_bounces` caps the reflections; passes and the exit are free, and the
     wall hit that would exceed the cap ends the ray there as "lost".
     """

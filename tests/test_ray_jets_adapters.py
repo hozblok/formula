@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from formula import Number
+from formula import Number, NumberContext
 from formula.capsysred.stages._ray_jets import Hit, transport_ray
 from formula.capsysred.surfaces import ImplicitWall, Mirror
 from formula.capsysred.walls.wall_cylinder import CylinderWall
@@ -47,8 +47,9 @@ def test_mirror_rejects_the_back_side():
 
 
 def test_mirror_keeps_constant_gradient_and_number_precision():
-    mirror = Mirror(Number("0", 96), Number("4", 96))
-    point = (Number("1.000000000000000000000000000001", 96), 0, 2)
+    N = NumberContext(96)
+    mirror = Mirror(N(0), N(4))
+    point = (N("1.000000000000000000000000000001"), 0, 2)
     assert mirror.precision == mirror.z0.precision
     assert mirror.value(point) is point[0]
     assert tuple(map(float, mirror.gradient(point))) == (1, 0, 0)
