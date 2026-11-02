@@ -222,12 +222,7 @@ of the derivative");
           "Division by zero during the computation of \
 right path of the derivative");
     }
-    // b^2 outside the exponent range: a / b / b.
-    Complex bb = b * b;
-    if (bb == ZERO || isinf(bb.real()) || isinf(bb.imag())) {
-      return ZERO - a / b / b;
-    }
-    return ZERO - a / bb;
+    return ZERO - a / (b * b);
   }
   // "*" - multiplication
   static Complex _mul(Complex a, Complex b) { return a * b; }
@@ -425,15 +420,7 @@ during the computation of the power derivative");
     // b - k drops digits of b: a^b a^(-k) keeps the factor a^b.
     Complex e = b - int(k), mk = ZERO - int(k) * ONE;
     bool split = e + int(k) != b && a != ZERO;
-    Complex r = split ? f * _pow(a, b) * _pow(a, mk) : f * _pow(a, e);
-    // a^(b-k) outside the exponent range (0, inf or nan parts): f p p,
-    // p = a^((b-k)/2).
-    if (r == ZERO || isinf(r.real()) || isinf(r.imag()) || isnan(r.real()) ||
-        isnan(r.imag())) {
-      Complex p = split ? _pow(a, b / 2) * _pow(a, mk / 2) : _pow(a, e / 2);
-      r = f * p * p;
-    }
-    return r;
+    return split ? f * _pow(a, b) * _pow(a, mk) : f * _pow(a, e);
   }
   // k-th derivative of a^v in v: log(a)^k a^v.
   static Complex _pow_ek(Complex a, Complex b, unsigned k) {
