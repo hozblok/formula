@@ -429,9 +429,9 @@ struct Tracer {
 
   // wall_torus._descartes: sign variations of (1+y)^4 p(a + (b-a)/(1+y)),
   // a bound of the right parity on the open-interval roots in (a, b): 0 none,
-  // 1 exactly one. An exactly zero coefficient is skipped, the classic rule
-  // (a root exactly on an endpoint shows up as one); nullopt while a nonzero
-  // coefficient is within 512 u P(|a| + |b-a|/2).
+  // 1 exactly one. nullopt while a coefficient is within
+  // 512 u P(|a| + |b-a|/2); an exact zero sits inside that band — rounded
+  // arithmetic cannot certify it, so it is undecided, never skipped.
   static std::optional<int> descartes(const std::array<R, 5> &c, const R &a,
                                       const R &b) {
     static const R slack = bound(512);
@@ -453,18 +453,14 @@ struct Tracer {
     }
     R e = slack * magnitude(c, abs(a) + abs(w) * half);
     for (const R &x : h) {
-      if (x != 0 && abs(x) <= e) {
+      if (abs(x) <= e) {
         return std::nullopt;
       }
     }
-    int variations = 0, last = 0;
-    for (const R &x : h) {
-      int sgn = x > 0 ? 1 : (x < 0 ? -1 : 0);
-      if (sgn) {
-        if (last && sgn != last) {
-          ++variations;
-        }
-        last = sgn;
+    int variations = 0;
+    for (int i = 1; i < 5; ++i) {
+      if ((h[i] < 0) != (h[i - 1] < 0)) {
+        ++variations;
       }
     }
     return variations;
@@ -646,25 +642,7 @@ struct Tracer {
         return earlier ? earlier : best;
       }
     }
-    std::optional<R> root = first_crossing(c, cap, t_capf, nullptr);
-    if (root) {
-      return root;
-    }
-    if (horner(c, cap) == 0) {
-      // a root exactly on the closed end: its multiplicity is exact arithmetic
-      std::array<R, 5> d = taylor_shift(c, cap);
-      int m = 4;
-      for (int k = 1; k <= 4; ++k) {
-        if (d[4 - k] != 0) {
-          m = k;
-          break;
-        }
-      }
-      if (m % 2) {
-        return cap;  // odd: the crossing sits on the cap itself
-      }
-    }
-    return std::nullopt;
+    return first_crossing(c, cap, t_capf, nullptr);
   }
 
   // wall_torus.TorusWall

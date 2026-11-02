@@ -159,9 +159,9 @@ def _sign(c, x):
 def _descartes(c, a, b):
     """Sign variations of (1+y)^4 p(a + (b-a)/(1+y)): a bound of the right parity on
     the quartic's open-interval roots in (a, b), so 0 means none and 1 exactly one.
-    An exactly zero coefficient is skipped, the classic rule (a root exactly on an
-    endpoint shows up as one); None while a nonzero coefficient is within
-    512 u P(|a| + |b-a|/2), about twice the bound of the transform's rounding error."""
+    None while a coefficient is within 512 u P(|a| + |b-a|/2), about twice the bound
+    of the transform's rounding error; an exact zero sits inside that band — rounded
+    arithmetic cannot certify it, so it is undecided, never skipped."""
     d = _taylor_shift(c, a)
     w = b - a
     power = w
@@ -175,9 +175,9 @@ def _descartes(c, a, b):
             h[j] = h[j] + h[j - 1]
     p = c[0].precision
     e = _bound(p, 512) * _horner([abs(x) for x in c], abs(a) + abs(w) * lift("0.5", p))
-    if any(x != 0 and abs(x) <= e for x in h):
+    if any(abs(x) <= e for x in h):
         return None
-    signs = [x < 0 for x in h if x != 0]
+    signs = [x < 0 for x in h]
     return sum(s != t for s, t in zip(signs, signs[1:]))
 
 
@@ -299,16 +299,7 @@ def _quartic_first(c, cap):
                 return best
             earlier = _first_crossing(c, cap, lo)
             return best if earlier is None else earlier
-    root = _first_crossing(c, cap)
-    if root is not None:
-        return root
-    if _horner(c, cap) == 0:
-        # a root exactly on the closed end: its multiplicity is exact arithmetic
-        d = _taylor_shift(c, cap)
-        m = next(k for k in range(1, 5) if d[4 - k] != 0)
-        if m % 2:
-            return cap                     # odd: the crossing sits on the cap itself
-    return None
+    return _first_crossing(c, cap)
 
 
 class TorusWall:
