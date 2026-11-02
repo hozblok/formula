@@ -10,7 +10,7 @@ import math
 
 import pytest
 
-from formula import NumberContext, RaySurface
+from formula import NumberContext, RaySurface, UnresolvedRootError
 from formula._roots import is_polynomial
 
 
@@ -191,10 +191,12 @@ def test_max_degree_below_two_rejected():
         rs.intersect((-2, 0, 0), (1, 0, 0), t_max=5, method="sturm", max_degree=1)
 
 
-def test_tangent_double_root_sturm_finds_sampling_misses():
+def test_tangent_double_root_unresolved_sampling_misses():
+    # The strict contract of 2026-11-02: an exact tangency cannot be told from a
+    # sub-noise pair or a miss, so sturm raises; sampling misses it as documented.
     rs = RaySurface("x*x + y*y + z*z - 1", precision=48)
-    found = rs.intersect((-2, 1, 0), (1, 0, 0), t_max=10, method="sturm")
-    assert _match(found, ["2"], eps="1e-13")
+    with pytest.raises(UnresolvedRootError):
+        rs.intersect((-2, 1, 0), (1, 0, 0), t_max=10, method="sturm")
     missed = rs.intersect((-2, 1, 0), (1, 0, 0), t_max=10, method="sampling")
     assert missed == []  # even multiplicity, no sign change
 
@@ -264,12 +266,13 @@ def test_subdivision_handles_moderate_oscillation():
     assert len(roots) == len([k for k in range(1, 40) if 1 < k * math.pi < 60])
 
 
-def test_subdivision_tangency_and_rejects_turning_point():
-    # cos(t)+1 touches zero at pi,3pi; at 2pi g'=0 but g=2 (no root).
+def test_subdivision_tangency_unresolved_and_turning_point_rejected():
+    # cos(t)+1 touches zero at pi: unresolved under the strict contract of 2026-11-02;
+    # around 2pi g'=0 with g=2, which is still no root.
     rs = RaySurface("cos(x) + 1", precision=32)
-    roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=10, t_min="0.1", method="subdivision")
-    pi = _pi(32)
-    assert _match(roots, [pi, pi * NumberContext(32)(3)], eps="1e-12")
+    with pytest.raises(UnresolvedRootError):
+        rs.intersect((0, 0, 0), (1, 0, 0), t_max=10, t_min="0.1", method="subdivision")
+    assert rs.intersect((0, 0, 0), (1, 0, 0), t_max=7, t_min="5.5", method="subdivision") == []
 
 
 @pytest.mark.parametrize("method", ["chebyshev", "subdivision"])
@@ -360,11 +363,12 @@ def test_torus_ray_misses_through_the_hole():
     assert rs.intersect((-4, 0, 5), (1, 0, 0), t_max=10, method="sturm") == []
 
 
-def test_torus_grazing_outer_rim_is_tangent():
-    # Ray grazing the outer equator touches it once (double root) at t=3.
+def test_torus_grazing_outer_rim_is_unresolved():
+    # Ray grazing the outer equator touches it once (double root) at t=3: unresolved
+    # under the strict contract of 2026-11-02; sampling misses it as documented.
     rs = RaySurface(_TORUS, precision=48)
-    sturm = rs.intersect((3, -3, 0), (0, 1, 0), t_max=10, method="sturm")
-    assert _match(sturm, ["3"], eps="1e-10")
+    with pytest.raises(UnresolvedRootError):
+        rs.intersect((3, -3, 0), (0, 1, 0), t_max=10, method="sturm")
     missed = rs.intersect((3, -3, 0), (0, 1, 0), t_max=10, method="sampling")
     assert missed == []  # even multiplicity, no sign change
 

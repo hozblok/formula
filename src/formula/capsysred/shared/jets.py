@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
-from ...backend import MP_TYPES, round_up_precision
+from ...backend import MAX_PRECISION, MP_TYPES, round_up_precision
 from .formulas import cached_formula
 
 
@@ -13,13 +13,17 @@ class _Algebra:
     precision: int
 
     def __init__(self, order: int, precision: int) -> None:
-        self.order, self.precision = order, precision
+        if isinstance(precision, bool) or not isinstance(precision, int):
+            raise TypeError("precision must be an int")
+        if not 0 < precision <= MAX_PRECISION:
+            raise ValueError(f"precision must be in [1, {MAX_PRECISION}] (got {precision})")
+        self.order, self.precision = order, round_up_precision(precision)   # the storage precision
 
     def constant(self, value) -> _Jet:
         # str() of a backend value carries every stored digit
-        if isinstance(value, MP_TYPES) and value.precision != round_up_precision(self.precision):
+        if isinstance(value, MP_TYPES) and value.precision != self.precision:
             raise ValueError(f"precision mismatch: the value is {value.precision}, "
-                             f"the algebra {round_up_precision(self.precision)}")
+                             f"the algebra {self.precision}")
         return _Jet(self, [str(value)] + ["0"] * ((1 << self.order) - 1), 1)
 
     def variable(self, value, seeds: Sequence[int], axis: int) -> _Jet:

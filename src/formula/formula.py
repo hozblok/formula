@@ -8,7 +8,8 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 # pylint: disable=no-name-in-module, import-error
 from ._formula import FmtFlags, Formula
 from .constants import DEFAULT_CASE_INSENSITIVE, DEFAULT_IMAGINARY_UNIT, DEFAULT_PRECISION
-from .backend import MAX_PRECISION, MP_TYPES, mp_number, round_up_precision
+from .backend import MAX_PRECISION, MP_TYPES, mp_number, round_up_precision, scalar_text
+
 
 class Solver(Formula):
     """Solver for calculating string formulas.
@@ -25,6 +26,8 @@ class Solver(Formula):
         imaginary_unit: str = DEFAULT_IMAGINARY_UNIT,
         case_insensitive: bool = DEFAULT_CASE_INSENSITIVE,
     ):
+        if isinstance(precision, bool) or not isinstance(precision, int):
+            raise TypeError("precision must be an int")
         if not 0 <= precision <= MAX_PRECISION:
             raise ValueError(
                 f"precision must be in [0, {MAX_PRECISION}] (got {precision})"
@@ -56,13 +59,24 @@ class Solver(Formula):
         result = {}
         for name, value in values.items():
             # A typed value keeps its storage precision; text is the explicit conversion.
-            if isinstance(value, MP_TYPES) and value.precision != self.precision:
-                raise ValueError(f"precision mismatch: {name} is {value.precision}, "
-                                 f"the solver {self.precision}")
-            if isinstance(value, MP_TYPES) and not value.is_complex:
-                result[name] = value.str(0, FmtFlags.default)
+            if isinstance(value, MP_TYPES):
+                if value.precision != self.precision:
+                    raise ValueError(f"precision mismatch: {name} is {value.precision}, "
+                                     f"the solver {self.precision}")
+                if value.is_complex:
+                    # the evaluator kind follows the expression text, never the values
+                    if not self.is_complex:
+                        raise TypeError(
+                            f"{name} is complex but the formula is real; put the "
+                            "imaginary unit into the expression (e.g. '(...)+0*i') "
+                            "to evaluate with the complex engine")
+                    result[name] = str(value)      # the "(re,im)" pair
+                else:
+                    result[name] = value.str(0, FmtFlags.default)
+            elif isinstance(value, str):
+                result[name] = value
             else:
-                result[name] = value if isinstance(value, str) else str(value)
+                result[name] = scalar_text(value)
         return result
 
     def __call__(
@@ -142,7 +156,8 @@ class Solver(Formula):
     def number(self, values: Optional[Union[Dict[str, Any], Any]] = None):
         """Evaluate to an mp_real/mp_complex value at this solver's precision.
 
-        Same `values` semantics as __call__; no string round-trip.
+        Same `values` semantics as __call__; no string round-trip. A complex value fits
+        only a complex formula: the evaluator kind follows the expression text.
         """
         return self.evaluate(self._coerce_variables_to_values(values))
 
@@ -157,7 +172,8 @@ class NumberContext:
 
     Literals only: a real one or the backend's own "(re,im)" text; an
     expression belongs to Solver. Existing backend values must have this
-    storage precision; they are not rounded.
+    storage precision; they are not rounded. `label` names the input in the
+    error, e.g. N(raw["z"], label="screen z") at a config boundary.
     """
 
     precision: int = DEFAULT_PRECISION
@@ -171,26 +187,32 @@ class NumberContext:
             )
         object.__setattr__(self, "precision", round_up_precision(self.precision))
 
-    def __call__(self, value: Union[str, int, float, *MP_TYPES]):
-        if isinstance(value, MP_TYPES):
-            if value.precision != self.precision:
-                raise ValueError(
-                    f"precision mismatch: {value.precision} != {self.precision}"
+    def __call__(self, value: Union[str, int, float, *MP_TYPES], *, label: Optional[str] = None):
+        try:
+            if isinstance(value, MP_TYPES):
+                if value.precision != self.precision:
+                    raise ValueError(
+                        f"precision mismatch: {value.precision} != {self.precision}"
+                    )
+                return value
+            if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+                raise TypeError(
+                    f"value must be str, int, float, or mp_*; got {type(value).__name__}"
                 )
-            return value
-        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
-            raise TypeError(
-                f"value must be str, int, float, or mp_*; got {type(value).__name__}"
-            )
-        return mp_number(self.precision, str(value))
+            return mp_number(self.precision, value if isinstance(value, str) else scalar_text(value))
+        except (TypeError, ValueError) as exc:
+            if label is None:
+                raise
+            raise type(exc)(f"{label}: {exc}") from exc
 
     @staticmethod
     @lru_cache(maxsize=512)
     def _solver(expression: str, precision: int) -> Solver:
         return Solver(expression, precision)
 
-    def eval(self, expression: str, **values):
-        """Expression evaluated at this precision; variables by keyword (text or backend value)."""
+    def eval(self, expression: str, /, **values):
+        """Expression evaluated at this precision; variables by keyword (text or backend value),
+        any name allowed, `expression` and `self` included."""
         return self._solver(expression, self.precision).number(values or None)
 
     @cached_property

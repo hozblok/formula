@@ -25,6 +25,12 @@ def trim(p, tol):
     return p[: deg(p, tol) + 1]
 
 
+def unit_scaled(values):
+    """The values divided by their largest magnitude, and that magnitude; zeros stay."""
+    scale = max((abs(v) for v in values), default=0)
+    return ([v / scale for v in values] if scale else list(values)), scale
+
+
 def peval(p, t):
     """Evaluate p at t (Horner)."""
     acc = p[-1]

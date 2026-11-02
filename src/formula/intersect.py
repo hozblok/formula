@@ -66,9 +66,9 @@ def _with_endpoint_roots(func, roots, t0, t1, precision):
     """Backend-agnostic net: add an exact root sitting on t0/t1 if a backend
     missed it (Sturm's (a,b] convention, interior Chebyshev nodes, etc.).
 
-    |g| small alone is not enough: at grazing incidence g' is tiny, so g stays
-    small near a root without t0/t1 being one. Require the Newton step |g|/|g'|
-    within tol too (a vanishing g' means a tangential root at the endpoint)."""
+    |g| small alone is not enough: at grazing incidence or for a small-scale
+    equation g' is tiny too, so g stays small without t0/t1 being a root. Require
+    the Newton step |g|/|g'| within tol (an exact zero of g passes even at g' = 0)."""
     N = NumberContext(precision)
     gtol, tol = tol_third(N), tol_half(N)
     out = list(roots)
@@ -79,7 +79,7 @@ def _with_endpoint_roots(func, roots, t0, t1, precision):
         if g > gtol or any(abs(t - r) <= tol for r in out):
             continue
         gp = abs(func.gprime(t))
-        if not finite(gp) or gp <= gtol or g <= tol * gp:
+        if not finite(gp) or g <= tol * gp:
             out.append(t)
     return out
 
@@ -214,6 +214,8 @@ class RaySurface:
         if t0 > t1:
             raise ValueError(f"t_min ({t_min}) must not exceed t_max ({t_max})")
         func = self.function(origin, direction)
+        if t0 == t1:                       # one point: a root by the endpoint test, or none
+            return _with_endpoint_roots(func, [], t0, t1, self.precision)
         roots = backend(func, t0, t1, self.precision, **options)
         return sorted(_with_endpoint_roots(func, roots, t0, t1, self.precision))
 

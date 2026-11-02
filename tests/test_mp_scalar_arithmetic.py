@@ -230,12 +230,42 @@ def test_backend_classes_are_final(kind):
 
 
 @pytest.mark.xfail(strict=True, reason="the native complex sqrt loses the argument of a tiny "
-                   "base; Solver's sqrt() is the same algorithm, so it agrees and is as wrong")
+                   "base (its re^2+im^2 underflows); Solver's sqrt() is the same algorithm, so "
+                   "it agrees and is as wrong. A scaled fix existed and was withdrawn "
+                   "(2026-11-02): physical arguments never leave exponents -7..0, and "
+                   "simplicity wins over an unreachable edge")
 def test_sqrt_of_a_tiny_base_scales():
     # sqrt(z) = sqrt(z s^2) / s with s = 1e200000000: the reference is an O(1) sqrt, (1.0987, 0.4551).
     N = NumberContext(64)
     tiny, s = N("(1e-400000000,1e-400000000)"), N("(1e200000000,0)")
     assert abs(tiny.sqrt() * s - N("(1,1)").sqrt()) < N("1e-60")
+
+
+@pytest.mark.xfail(strict=True, reason="squares of the parts overflow inside Boost's eval_sqrt "
+                   "near the exponent ceiling: (nan,nan) for a finite representable input; "
+                   "withdrawn with the same fix, an unreachable edge")
+def test_sqrt_of_a_huge_negative_base_stays_finite():
+    N = NumberContext(64)
+    z, s = N("(-2.25e646456864,0)"), N("(1e323228432,0)")
+    assert z - z == N("(0,0)")
+    root = z.sqrt()
+    assert abs(root / s - N("(0,1.5)")) < N("1e-60")
+
+
+@pytest.mark.parametrize("w, root", [("(-3,4)", "(1,2)"), ("(-3,-4)", "(1,-2)"), ("(0,-2)", "(1,-1)"),
+                                     ("(-4,0)", "(0,2)"), ("(9,0)", "(3,0)")])
+def test_sqrt_takes_the_principal_branch(w, root):
+    N = NumberContext(64)
+    assert N(w).sqrt() == N(root)
+    assert N.eval(f"sqrt(({w[1:-1].split(',')[0]})+({w[1:-1].split(',')[1]})*i)") == N(root)
+
+
+def test_float_of_a_complex_rounds_its_own_binary_part():
+    # float(z) parses the binary part's 16-digit text; z.real rounds that part once more into a
+    # decimal mp_real, so here the two doubles differ by an ulp (the documented contract).
+    z = NumberContext(16)("(88395772929158265e-16,0)")
+    assert float(z) == float(z.str(16)[1:-1].split(",")[0]) == complex(z).real
+    assert (float(z), float(z.real)) == (8.839577292915827, 8.839577292915825)
 
 
 @pytest.mark.parametrize("p", PRECISIONS)

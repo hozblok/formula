@@ -121,6 +121,9 @@ static void register_one_mp_complex(py::module_ &m) {
                              [](const C &x) { return to_real<P>(x.real()); })
       .def_property_readonly("imag",
                              [](const C &x) { return to_real<P>(x.imag()); })
+      // The binary parts' own P-digit text. .real/.imag round a part once more
+      // into a decimal mp_real, so float(z.real) can differ from float(z) by
+      // an ulp.
       .def("__float__",
            [](const C &x) {
              if (x.imag() != 0)

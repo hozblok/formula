@@ -1,6 +1,6 @@
-"""A recorded screen z is evaluated as the config evaluates it — numbers,
-decimal strings and expressions at the fingerprint's precision — wherever a
-stage reads it back from the fingerprint."""
+"""A recorded screen z is read back wherever a stage needs it. The archive reader
+still evaluates numbers, decimal strings and legacy expression texts at the
+fingerprint's precision; the config loader itself takes literals only."""
 
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ from formula.capsysred.stages.stage14.cache import _recorded_screen_z
 from formula.capsysred.trace_v3 import trace as trace_v3
 
 
-def test_values_numbers_strings_and_expressions():
+def test_values_numbers_strings_and_legacy_expressions():
+    # expressions appear only in old recordings; the reader keeps evaluating them
     geo = {"precision": 64, "screen": {"z": 0.06},
            "capillary": {"screen": {"z": "0.05 + 0.001"}}, "free": {"screen": {}}}
     assert recorded_screen_z(geo, "capillary") == 0.051
@@ -40,18 +41,25 @@ def test_values_numbers_strings_and_expressions():
 
 RAW = {
     "seed": 5,
-    "screen": {"z": "0.05 + 0.01", "nx": 21, "ny": 1, "edge_x": 1.2e-5, "edge_y": 2.0e-6},
+    "screen": {"z": 0.06, "nx": 21, "ny": 1, "edge_x": 1.2e-5, "edge_y": 2.0e-6},
     "free": {"source": {"shape": "point", "size": 0.0, "position": [0.0, 0.0, -0.08],
                         "n_modes": 2, "n_rays": 40}},
     "capillary": {
         "source": {"shape": "point", "size": 3.0e-7, "position": [0.0, 0.0, -0.01],
                    "n_modes": 3, "n_rays": 40},
-        "screen": {"z": "0.05 + 0.001", "nx": 9, "ny": 9},
+        "screen": {"z": 0.051, "nx": 9, "ny": 9},
     },
 }
 
 
-def test_stages_read_an_expression_z_end_to_end(tmp_path):
+def test_screen_z_expression_is_refused_by_the_loader():
+    # the author's contract of 2026-11-02: screen.z lost its expression exception
+    raw = {**RAW, "screen": {**RAW["screen"], "z": "0.05 + 0.01"}}
+    with pytest.raises(ValueError, match="screen z"):
+        Simulation.from_dict(raw)
+
+
+def test_stages_read_the_recorded_z_end_to_end(tmp_path):
     cfg = tmp_path / "cfg.yaml"
     with open(cfg, "w", encoding="utf-8") as fh:
         yaml.safe_dump(RAW, fh, sort_keys=False)

@@ -13,7 +13,7 @@ badly scaled polynomials (a micrometre torus quartic spans ~16 orders in raw t).
 
 from ..formula import NumberContext
 from . import _isolate, _poly
-from .utils import tol_full, tol_half
+from .utils import ZeroFunctionError, tol_full, tol_half
 
 
 def _nodes(t_min, t_max, count: int):
@@ -22,16 +22,21 @@ def _nodes(t_min, t_max, count: int):
 
 
 def _poly_from_samples(func, us, ts, complex_surface, tol, max_degree, N: NumberContext):
-    """Interpolate g over nodes us (g evaluated at the mapped ts) to a polynomial."""
-    reals, imags = [], []
+    """Interpolate g over nodes us (g evaluated at the mapped ts) to a polynomial, g taken
+    in units of its largest sampled |Re| or |Im|, so the absolute tol acts on any scale."""
+    samples = []
     for t in ts:
         g = func.g(t)
-        reals.append(g.real)
-        imags.append(g.imag)
-    pr = _poly.interpolate(us, reals, tol, max_degree, N)
+        samples += [g.real, g.imag]
+    samples, scale = _poly.unit_scaled(samples)
+    if not scale:
+        raise ZeroFunctionError(
+            "g is zero at every interpolation node: the ray lies in the surface "
+            "within tolerance; no isolated-root list exists")
+    pr = _poly.interpolate(us, samples[::2], tol, max_degree, N)
     if not complex_surface:
         return pr
-    pi = _poly.interpolate(us, imags, tol, max_degree, N)
+    pi = _poly.interpolate(us, samples[1::2], tol, max_degree, N)
     return _poly.pgcd(pr, pi, tol, N)  # common roots of Re g and Im g
 
 
@@ -60,4 +65,9 @@ def find_all(
         return []
     chain = _isolate.sturm_chain(q, tol, N)
     roots = _isolate.isolate_roots(q, chain, -one, one, xacc, tol)
-    return sorted(mid + span * u for u in roots)
+    if not complex_surface:          # the gcd is approximate: judge the roots on p itself
+        roots = _isolate.resolved(p, roots, -one, one, xacc, _isolate.noise(p, N),
+                                  where=lambda u: mid + span * u)
+    t_acc = tol_full(N)
+    return sorted(t for t in (mid + span * u for u in roots)
+                  if t_min - t_acc <= t <= t_max + t_acc)

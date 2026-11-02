@@ -9,7 +9,7 @@ including the even-multiplicity ones sampling misses.
 from .._formula import FmtFlags
 from ..formula import NumberContext
 from . import _isolate, _poly
-from .utils import finite, tol_full, tol_third
+from .utils import ZeroFunctionError, finite, tol_full, tol_third
 
 _MAX_DEGREE = 256
 
@@ -116,16 +116,34 @@ def _newton(func, t, xacc, maxit: int = 100):
     return t
 
 
-def _proxy_roots(func, q, transform, tol, xacc, N: NumberContext):
-    """Isolate roots of the monomial proxy q on [-1,1], map to t, polish simple ones."""
+def _proxy_noise(proxy, cut, coeffs, N: NumberContext):
+    """Bound on |proxy - g/scale| near x: rounding, the monomial terms trim cut (cut[0] at
+    the power len(proxy)) and the fit's truncation (len(coeffs) times its last coefficients)."""
+    rounding = _isolate.noise(proxy, N)
+    mags = [abs(c) for c in cut]
+    tail = max(abs(c) for c in coeffs[-max(3, len(coeffs) // 8):]) * len(coeffs)
+
+    def bound(x):
+        ax = abs(x)
+        dropped = _poly.peval(mags, ax) * ax ** len(proxy) if mags else 0
+        return rounding(x) + dropped + tail
+    return bound
+
+
+def _proxy_roots(func, proxy, q, transform, tol, gtol, xacc, noise, N: NumberContext):
+    """Isolate roots of q, the square-free part of the monomial proxy, on [-1,1], judge
+    them on the proxy itself within noise, map to t, polish the simple ones (|g'| above
+    gtol) on g."""
     mid, span = transform
     chain = _isolate.sturm_chain(q, tol, N)
     one = N(1)
     roots = []
-    for x in _isolate.isolate_roots(q, chain, -one, one, xacc, tol):
+    xs = _isolate.isolate_roots(q, chain, -one, one, xacc, tol)
+    for x in _isolate.resolved(proxy, xs, -one, one, xacc, noise,
+                               where=lambda u: mid + span * u):
         t_root = mid + span * x
         gp = func.gprime(t_root)
-        if finite(gp) and abs(gp) > tol:  # simple root: polish on true g
+        if finite(gp) and abs(gp) > gtol:
             t_root = _newton(func, t_root, xacc)
         roots.append(t_root)
     return roots
@@ -140,9 +158,16 @@ def find_all(
     N = NumberContext(precision)
     tol, xacc = tol_third(N), tol_full(N)
     mid, span = (t_min + t_max) * 0.5, (t_max - t_min) * 0.5
-    coeffs = _converged_fit(func, (mid, span), N, tol, cheb_degree)
-    q = _poly.square_free(_poly.trim(_cheb_to_monomial(coeffs, N), tol), tol, N)
+    coeffs, scale = _poly.unit_scaled(_converged_fit(func, (mid, span), N, tol, cheb_degree))
+    if not scale:
+        raise ZeroFunctionError(
+            "g is zero at every Chebyshev node: the ray lies in the surface "
+            "within tolerance; no isolated-root list exists")
+    full = _cheb_to_monomial(coeffs, N)
+    proxy = _poly.trim(full, tol)
+    q = _poly.square_free(proxy, tol, N)
     if _poly.deg(q, tol) == 0:
         return []
-    roots = _proxy_roots(func, q, (mid, span), tol, xacc, N)
+    noise = _proxy_noise(proxy, full[len(proxy):], coeffs, N)
+    roots = _proxy_roots(func, proxy, q, (mid, span), tol, tol * scale, xacc, noise, N)
     return sorted(r for r in roots if t_min - xacc <= r <= t_max + xacc)

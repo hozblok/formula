@@ -5,7 +5,7 @@ import re
 from typing import Callable
 
 from ..formula import NumberContext
-from .utils import merge_close_roots, tol_half
+from .utils import UnresolvedRootError, ZeroFunctionError, merge_close_roots, tol_half
 
 _BACKENDS = {
     "sampling": "sampling",
@@ -67,11 +67,15 @@ def _union(lists, precision: int) -> list:
 
 def _general(func, t_min, t_max, precision, **opts) -> list:
     """Chebyshev reconciled with subdivision; either may fail numerically and
-    drop out, but NotImplementedError (e.g. complex surface) still propagates."""
+    drop out, but NotImplementedError (e.g. complex surface) still propagates.
+    A degeneracy verdict (zero function, unresolved roots) is not a failure:
+    it propagates instead of silently falling back to a guessing backend."""
     lists, numeric_error = [], None
     for name in ("chebyshev", "subdivision"):
         try:
             lists.append(_load(name)(func, t_min, t_max, precision, **opts))
+        except (ZeroFunctionError, UnresolvedRootError):
+            raise
         except (ArithmeticError, ValueError) as exc:
             numeric_error = exc
     if not lists and numeric_error is not None:
@@ -83,11 +87,14 @@ def _auto(func, t_min, t_max, precision, **opts) -> list:
     """Sturm for algebraic surfaces; else Chebyshev backed up by subdivision.
 
     A misclassified or over-degree surface that makes Sturm raise falls back to
-    the general backends instead of failing the whole call.
+    the general backends instead of failing the whole call; a degeneracy verdict
+    propagates.
     """
     if is_polynomial(func.surface):
         try:
             return _load("sturm")(func, t_min, t_max, precision, **opts)
+        except (ZeroFunctionError, UnresolvedRootError):
+            raise
         except (ArithmeticError, ValueError):
             pass
     return _general(func, t_min, t_max, precision, **opts)

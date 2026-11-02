@@ -186,6 +186,9 @@ class CapillaryBundle:
         self.bores, self.z0, self.z1 = bores, z0, z1
         self._z0f, self._z1f = float(z0), float(z1)
         self._zero = NumberContext(z0.precision)(0)
+        eps = lift(_EPS_T, z0.precision)
+        self._z0e, self._z1e = z0 - eps, z1 - eps          # z0, z1 less _EPS_T, in mp
+        self._eps_loc = lift(_EPS_LOC, z0.precision)
         self.walls = []
         for bore in bores:
             wall = _make_wall(bore, z0)
@@ -193,11 +196,9 @@ class CapillaryBundle:
             self.walls.append(wall)
 
     def _locate(self, O, d):
-        """Wall of the bore containing the point nudged ahead along d: a
-        reflection at a bore-bore tangency is on two walls at once."""
-        xf, yf, zf = (float(c) for c in O)
-        dxf, dyf, dzf = (float(c) for c in d)
-        xf, yf, zf = xf + _EPS_LOC * dxf, yf + _EPS_LOC * dyf, zf + _EPS_LOC * dzf
+        """Wall of the bore containing the point nudged ahead along d, in mp and then
+        as floats: a reflection at a bore-bore tangency is on two walls at once."""
+        xf, yf, zf = (float(o + self._eps_loc * di) for o, di in zip(O, d))
         for wall in self.walls:
             if wall.inside(xf, yf, zf):
                 return wall
@@ -206,10 +207,9 @@ class CapillaryBundle:
     def next_event(self, O, d):
         if d[2] <= 0:
             return ("absorb", self._zero)          # backward ray: lost in the assembly
-        zf = float(O[2])
-        if zf < self._z0f - _EPS_T:
+        if O[2] < self._z0e:
             return ("pass", (self.z0 - O[2]) / d[2])
-        if zf >= self._z1f - _EPS_T:
+        if O[2] >= self._z1e:
             return ("exit", None)
         wall = self._locate(O, d)
         if wall is None:

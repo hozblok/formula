@@ -22,8 +22,9 @@ def test_error_names_variable_and_value():
 
 
 def test_python_complex_value_rejected():
-    # str(1j) == "1j" used to silently become 1.
-    with pytest.raises(ValueError, match="Invalid number value"):
+    # str(1j) == "1j" used to silently become 1; now the boundary refuses the type
+    # itself (a complex variable is passed as a typed mp value or the "(re,im)" text).
+    with pytest.raises(TypeError, match="value must be int or float"):
         Solver("x*2")({"x": 1j})
 
 

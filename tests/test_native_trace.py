@@ -10,13 +10,17 @@ scale yet far above the twins' rounding noise.
 import json
 import math
 import random
+import subprocess
+import sys
+from decimal import Decimal, localcontext
 
 import pytest
 
-from formula import _formula
+from formula import UnresolvedRootError, _formula
 from formula.capsysred.native import (compile_optic, make_tracer,
                                       trace_ray_native)
 from formula.capsysred.shared.nums import lift, vadd, vdot, vscale, vsub, vunit
+from formula.capsysred.shared.types import _INSIDE_TOL
 from formula.capsysred.surfaces import CapillaryBundle, Mirror
 from formula.capsysred.trace import trace_ray
 from formula.capsysred.walls.wall_revolution import RevolutionWall
@@ -205,13 +209,14 @@ def quartic_of(roots, p):
 @pytest.mark.parametrize("p, roots, first, tol", [
     (p, *case) for p in PRECISIONS + (64,) for case in (
         (("1", "1", "1", "2"), "1", "1e-8"),                       # triple root stalls Newton
-        (("1", "1.0000001", "2", "2.5"), "1", "2.5e-8"),           # close pair first
-        (("0.5", "0.5", "1", "2"), "1", "1e-15"),                  # tangent graze stays invisible
+        (("1", "1.0000001", "2", "2.5"), "1", "1e-15"),            # close pair first
+        (("1", "1.0000000001", "2", "2.5"), "1", "1e-15"),
+        (("0.3", "0.30000000001", "0.31", "2"), "0.3", "1e-15"),
+        (("1", "1.00000000000001", "2", "2.5"), "1", "1e-15"),     # under the former 10^-(p/2) floor
         (("1", "2", "3", "4"), "1", "1e-15"))
 ] + [
-    (p, *case) for p in (30, 64) for case in (                     # pairs above 10^-(p/2) only
-        (("1", "1.0000000001", "2", "2.5"), "1", "2.5e-11"),
-        (("0.3", "0.30000000001", "0.31", "2"), "0.3", "2.5e-12"))
+    (64, ("1", "1.00000000000000000000000000000000001", "2", "2.5"), "1", "1e-45"),
+    (64, ("1", "1." + "0" * 59 + "1", "2", "2.5"), "1", "1e-62"),
 ])
 def test_quartic_first_takes_the_first_crossing(p, roots, first, tol):
     # Newton may polish a later root while an earlier one stalls or hides in a close pair.
@@ -219,6 +224,102 @@ def test_quartic_first_takes_the_first_crossing(p, roots, first, tol):
     c = quartic_of(roots, p)
     for t in (_quartic_first(c, 3.0), _formula.trace_dbg_quartic_first(list(c), 3.0)):
         assert t is not None and abs(t - N(first)) < N(tol)
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+def test_quartic_first_skips_a_provably_positive_cluster(p):
+    # (t-1)^4 + 1e-30: Descartes proves the dip root-free once the cell is small enough.
+    N = NumberContext(p)
+    c = tuple(N(v) for v in ("1", "-4", "6", "-4", "1.000000000000000000000000000001"))
+    assert _quartic_first(c, 3.0) is None
+    assert _formula.trace_dbg_quartic_first(list(c), 3.0) is None
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+@pytest.mark.parametrize("roots", [
+    ("1", "1", "1", "1"),                       # exact tangencies: the count is not provable
+    ("1", "1", "2", "2"),
+    ("0.5", "0.5", "1", "2"),                   # a tangency before a real crossing hides it too
+])
+def test_quartic_first_raises_on_an_unresolved_cluster(p, roots):
+    # An even or unknown-count cluster is never guessed over (the strict contract of 2026-11-02).
+    c = quartic_of(roots, p)
+    with pytest.raises(UnresolvedRootError):
+        _quartic_first(c, 3.0)
+    with pytest.raises(UnresolvedRootError):
+        _formula.trace_dbg_quartic_first(list(c), 3.0)
+
+
+def test_quartic_first_raises_on_an_unresolved_pair():
+    # (t-1)(t-1-e)(t-2)(t-3) with e below resolution; the far crossing at 2
+    # must never be returned as the first one.
+    for p, e in ((16, "1e-25"), (32, "1e-40"), (64, "1e-70")):
+        N = NumberContext(p)
+        eps = N(e)
+        c = [N(1), -N(7) - eps, N(17) + 6 * eps, -N(17) - 11 * eps, N(6) + 6 * eps]
+        with pytest.raises(UnresolvedRootError):
+            _quartic_first(c, 3.0)
+        with pytest.raises(UnresolvedRootError):
+            _formula.trace_dbg_quartic_first(c, 3.0)
+
+
+def test_quartic_window_touch_on_cap_with_a_root_past_it():
+    # (t-1)^2 (t-1-e) (t+1) — the exact double touch sits on the cap, the
+    # crossing at 1+e lies outside: the window holds no crossing, and the exact shift
+    # at the cap proves the even multiplicity.
+    for p, e in ((16, "1e-20"), (32, "1e-30"), (64, "1e-50")):
+        N = NumberContext(p)
+        eps = N(e)
+        c = [N(1), -N(2) - eps, eps, N(2) + eps, -N(1) - eps]
+        assert _quartic_first(c, 1.0) is None
+        assert _formula.trace_dbg_quartic_first(c, 1.0) is None
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+@pytest.mark.parametrize("roots, first, tol", [
+    (("-3", "-2", "-1", "1.000000000000000000000000000001"), None, None),       # just past the cap
+    (("-3", "-2", "-1", "0.999999999999999999999999999999"), "0.999999999999999999999999999999",
+     "1e-20"),
+    (("-3", "-2", "-1", "1"), "1", "1e-20"),                                    # simple root on it
+    (("-1", "1", "1", "1"), "1", "1e-20"),      # odd multiplicity exactly on the cap
+    (("3", "1", "1", "1"), "1", "1e-20"),
+    (("-3", "-2", "1", "1"), None, None),       # even multiplicity on it: a certified touch
+    (("1", "1", "1", "1"), None, None),
+])
+def test_quartic_first_window_cap(p, roots, first, tol):
+    # The window (_EPS_T, cap] is closed at the cap: roots past it stay out; a root
+    # exactly on it is decided by the exact Taylor shift (odd crosses, even touches).
+    N = NumberContext(p)
+    c = quartic_of(roots, p)
+    for t in (_quartic_first(c, 1.0), _formula.trace_dbg_quartic_first(list(c), 1.0)):
+        if first is None:
+            assert t is None
+        else:
+            assert t is not None and t <= N(1) and abs(t - N(first)) < N(tol)
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+def test_quartic_first_root_at_eps_t_is_outside(p):
+    # The window (_EPS_T, t_capf] is open at 1e-12 in both twins.
+    N = NumberContext(p)
+    c = quartic_of(("1e-12", "0.002", "-0.001", "0.05"), p)
+    for t in (_quartic_first(c, 0.1), _formula.trace_dbg_quartic_first(list(c), 0.1)):
+        assert abs(t - N("0.002")) < N("1e-20")
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+def test_torus_top_circle_tangent_is_unresolved(p):
+    # Along the tangent of the circle s = a, rho = R the quartic is exactly (t-1)^4 with
+    # the touch strictly inside the window: indistinguishable there from a sub-noise pair
+    # or a miss, so both twins raise (the strict contract of 2026-11-02).
+    N = NumberContext(p)
+    bundle = CapillaryBundle([{"kind": "torus", "center": (N(0), N(0)), "radius": N(1),
+                               "bend": {"radius": N(2), "toward": (N(1), N(0))}}], N(0), N(3))
+    O, d = (N(0), N(1), N(-1)), (N(0), N(0), N(1))
+    with pytest.raises(UnresolvedRootError):
+        bundle.walls[0].hit(O, d, N(3))
+    with pytest.raises(UnresolvedRootError):
+        _formula.trace_wall_hit(compile_optic(bundle), 0, raw_vec(O), raw_vec(d), N(3))
 
 
 @pytest.mark.parametrize("p", PRECISIONS + (64,))
@@ -486,6 +587,94 @@ def test_bundle_tangent_bores_reflect(p):
     assert_trace_equal(py_tr, c_tr)
 
 
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+def test_to_double_is_float(p):
+    """The native mp -> double conversion is float(), also next to midpoints of doubles."""
+    N = NumberContext(p)
+    rng = random.Random(41)
+    values = [N(v) for v in ("0", "1e-310", "-4.9e-324", "1.7e308", "1e400")]
+    with localcontext() as ctx:
+        ctx.prec = 80
+        for _ in range(300):
+            f = rng.uniform(-1.0, 1.0) * 10.0 ** rng.randint(-25, 5)
+            mid = (Decimal(f) + Decimal(math.nextafter(f, math.inf))) / 2
+            values += [N(repr(f)), N(str(mid)), N(str(mid * Decimal("1.000000000000000000000000000001"))),
+                       N(str(mid * Decimal("0.999999999999999999999999999999")))]
+    for x in values:
+        assert _formula.trace_dbg_to_double(x) == float(x), str(x)
+
+
+LOCALE_SCRIPT = r'''
+import locale
+from formula import NumberContext, _formula
+from formula.capsysred.native import make_tracer
+from formula.capsysred.shared.nums import vunit
+from formula.capsysred.surfaces import CapillaryBundle
+N = NumberContext(64)
+bundle = CapillaryBundle([{"kind": "cylinder", "center": (N(0), N(0)), "radius": N("6e-6")}], N(0), N(".05"))
+tracer = make_tracer(bundle)
+O, d = (N(0), N(0), N(0)), vunit((N(".0003"), N(0), N(1)))
+def state():
+    tr = tracer(O, d, bundle, N(".051"), 20)
+    xs = [N(v) for v in ("1.25", "-6.5e-6", "0.05")]
+    return [_formula.trace_dbg_to_double(x) == float(x) for x in xs], tr.fate, len(tr.reflections), str(tr.point[0])
+base = state()
+for name in ("de_DE.UTF-8", "de_DE", "German_Germany.1252", "fr_FR.UTF-8", "ru_RU.UTF-8"):
+    try:
+        locale.setlocale(locale.LC_NUMERIC, name)
+    except locale.Error:
+        continue
+    if locale.localeconv()["decimal_point"] == ",":
+        print("same" if state() == base else f"differs {state()} {base}")
+        break
+else:
+    print("no comma locale")
+'''
+
+
+def test_native_to_double_ignores_numeric_locale():
+    """A decimal-comma LC_NUMERIC changes neither the native mp -> double conversion nor a
+    traced ray (a child process: the locale belongs to the whole process)."""
+    out = subprocess.run([sys.executable, "-c", LOCALE_SCRIPT], capture_output=True, text=True,
+                         timeout=300)
+    assert out.returncode == 0, out.stderr
+    if "no comma locale" in out.stdout:
+        pytest.skip("no decimal-comma locale is installed")
+    assert out.stdout.strip() == "same", out.stdout
+
+
+def boundary_x(bound):
+    """Decimal by the midpoint of the doubles lo < hi with lo*lo < bound <= hi*hi, on the side
+    its 19-digit rounding leaves: its long text and its 19-digit text round to lo and hi."""
+    lo = math.sqrt(bound)
+    while lo * lo >= bound:
+        lo = math.nextafter(lo, 0.0)
+    while math.nextafter(lo, 1.0) * math.nextafter(lo, 1.0) < bound:
+        lo = math.nextafter(lo, 1.0)
+    with localcontext() as ctx:
+        ctx.prec = 80
+        mid = (Decimal(lo) + Decimal(math.nextafter(lo, 1.0))) / 2
+        return mid + (Decimal("1e-35") if Decimal(f"{mid:.18e}") < mid else Decimal("-1e-35"))
+
+
+@pytest.mark.parametrize("p", (30, 64))
+def test_bore_membership_boundary_parity(p):
+    """An axial ray by the inside() boundary of a bore: Boost's convert_to, which parses
+    str(18, scientific), and float() put x on opposite sides; the twins take one branch."""
+    N = NumberContext(p)
+    bundle = CapillaryBundle([{"kind": "cylinder", "center": (N(0), N(0)), "radius": N("6e-6")}],
+                             N(0), N("0.05"))
+    wall = bundle.walls[0]
+    x = N(str(boundary_x(wall._a2f * (1.0 + _INSIDE_TOL))))
+    near = float(x.str(18, _formula.FmtFlags.scientific))
+    assert wall.inside(float(x), 0.0, 0.01) != wall.inside(near, 0.0, 0.01)
+    O, d = (x, N(0), N("0.01")), (N(0), N(0), N(1))
+    assert_event_equal(bundle.next_event(O, d),
+                       _formula.trace_next_event(compile_optic(bundle), raw_vec(O), raw_vec(d)))
+    assert_trace_equal(trace_ray(O, d, bundle, N("0.051"), 50),
+                       make_tracer(bundle)(O, d, bundle, N("0.051"), 50))
+
+
 @pytest.mark.parametrize("p", PRECISIONS)
 def test_mirror_branches_parity(p):
     """One deterministic ray per Mirror branch: reflect, absorb (leading
@@ -640,6 +829,20 @@ def test_python_trace_env_escape(monkeypatch):
     assert make_tracer(None) is not trace_ray
 
 
+@pytest.mark.parametrize("slot", range(7))
+@pytest.mark.parametrize("bad", ["nan", "inf", "-inf"])
+def test_non_finite_ray_input_is_refused(slot, bad):
+    # Every component of origin, direction and screen z, in both tracers, with and without an optic.
+    N = NumberContext(64)
+    values = [N(0), N(0), N(0), N(0), N(0), N(1), N(1)]
+    values[slot] = {"nan": N(0) / N(0), "inf": N(1) / N(0), "-inf": N(-1) / N(0)}[bad]
+    O, d, z = tuple(values[:3]), tuple(values[3:6]), values[6]
+    for optic in (None, make_bundle("cylinder", 64)):
+        for tracer in (trace_ray, make_tracer(optic)):
+            with pytest.raises(ValueError, match="non-finite ray input"):
+                tracer(O, d, optic, z, 20)
+
+
 def test_tracer_optic_mismatch_falls_back():
     p = 16
     b1 = make_bundle("cylinder", p)
@@ -746,6 +949,26 @@ def test_simulation_native_equals_python(tmp_path, monkeypatch):
         for name in ("mu", "intensity", "density"):
             for row_n, row_p in zip(rn["maps"][name], rp["maps"][name]):
                 assert row_n == pytest.approx(row_p, rel=1e-9, abs=1e-12)
+
+
+def test_archive_sections_record_their_tracer(tmp_path, monkeypatch):
+    """A native recording topped up by the Python tracer keeps the provenance of both parts."""
+    import copy
+    import yaml
+    from formula.capsysred import rays_v3
+    from formula.capsysred.trace_v3 import trace as trace_v3
+    archive, cfg = str(tmp_path / "rays-modes"), tmp_path / "cfg.yaml"
+    cfg.write_text(yaml.safe_dump(TINY, sort_keys=False), encoding="utf-8")
+    trace_v3(str(cfg), archive, jobs=1, level=6, log=lambda m: None, scenes=["capillary"])
+    more = copy.deepcopy(TINY)
+    more["capillary"]["source"]["n_rays"] = 36
+    cfg.write_text(yaml.safe_dump(more, sort_keys=False), encoding="utf-8")
+    monkeypatch.setenv("CAPSYSRED_PYTHON_TRACE", "1")
+    trace_v3(str(cfg), archive, jobs=1, level=6, log=lambda m: None, scenes=["capillary"])
+    index = rays_v3.load_index(archive)
+    tracers = {(e.mode, e.r0): rays_v3.section_header(archive, e)["provenance"]["tracer"]
+               for e in index.entries}
+    assert tracers == {(m, r0): "native" if r0 == 0 else "python" for m in (0, 1) for r0 in (0, 24)}
 
 
 @pytest.mark.parametrize("p", PRECISIONS)

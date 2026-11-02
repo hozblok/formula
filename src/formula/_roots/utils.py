@@ -2,7 +2,14 @@
 
 from typing import Protocol
 
+# The native tracer's quartic throws the same class; one type for both worlds.
+from .._formula import UnresolvedRootError
 from ..formula import NumberContext
+
+
+class ZeroFunctionError(ValueError):
+    """g is zero, within the working tolerance, at every probe of the interval: the ray
+    lies in the surface, and no finite list of isolated roots exists."""
 
 
 class _RootFunc(Protocol):
@@ -57,9 +64,12 @@ def rtsafe(func: _RootFunc, a, b, xacc, maxit: int = 200):
     """Refine one root of g in a sign-change bracket [a, b]; None when there is none.
 
     Safeguarded Newton: Newton when the iterate stays bracketed, bisection
-    otherwise. A root's residual vanishes with the bracket; a pole's grows and
-    a jump's stays, so a final residual not below the bracket-end values means
-    no root. A non-finite g inside the bracket is an error: g has no value there.
+    otherwise; when maxit steps leave |step| >= xacc, plain bisection narrows the
+    bracket below xacc, and a bracket that cannot shrink any further at this
+    precision raises UnresolvedRootError. A root's residual vanishes with the
+    bracket; a pole's grows and a jump's stays, so a residual not below tol_third
+    of the bracket-end values means no root. A non-finite g inside the bracket is
+    an error: g has no value there.
 
     Recipe — Press, Teukolsky, Vetterling & Flannery, *Numerical Recipes*
     (Cambridge Univ. Press), Ch. 9 §9.4 "Newton-Raphson Method Using
@@ -71,7 +81,7 @@ def rtsafe(func: _RootFunc, a, b, xacc, maxit: int = 200):
     a, b — bracket endpoints; require g(a) and g(b) of opposite sign.
     xacc — absolute tolerance on t (NR name; independent variable is t here);
             stop when |step| < xacc.
-    maxit — iteration cap if xacc is not reached.
+    maxit — Newton-phase cap; the bisection tail after it is bounded by the bracket.
     """
     g_a, g_b = func.g(a), func.g(b)
     if not (finite(g_a) and finite(g_b)):
@@ -93,8 +103,29 @@ def rtsafe(func: _RootFunc, a, b, xacc, maxit: int = 200):
             break
         g, gp = func.g(t), func.gprime(t)
         lo, hi = (t, hi) if sign(g) < 0 else (lo, t)
+    if abs(hi - lo) >= xacc:
+        # a sign change across t -+ xacc certifies |t - root| < xacc; otherwise the probes
+        # narrow the bracket and plain bisection finishes it
+        probes = [(x, func.g(x)) for x in (t - xacc, t + xacc)]
+        if any(not finite(gx) for _, gx in probes):
+            raise ValueError(f"non-finite g inside the bracket near t = {t}")
+        if sign(probes[0][1]) * sign(probes[1][1]) > 0:
+            for x, gx in probes:
+                if min(lo, hi) < x < max(lo, hi):
+                    lo, hi = (x, hi) if sign(gx) < 0 else (lo, x)
+            while abs(hi - lo) >= xacc:
+                t = (lo + hi) * 0.5
+                if t == lo or t == hi:
+                    raise UnresolvedRootError(
+                        f"rtsafe: the bracket near t = {t} cannot shrink below "
+                        f"xacc = {xacc} at this precision")
+                g = func.g(t)
+                if not finite(g):
+                    raise ValueError(f"non-finite g inside the bracket at t = {t}")
+                lo, hi = (t, hi) if sign(g) < 0 else (lo, t)
+            t = (lo + hi) * 0.5
     g = func.g(t)
-    return t if finite(g) and abs(g) < scale else None
+    return t if finite(g) and abs(g) <= scale * tol_third(NumberContext(xacc.precision)) else None
 
 
 def merge_close_roots(roots, xacc) -> list:

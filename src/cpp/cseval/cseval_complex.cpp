@@ -1,5 +1,23 @@
 #include "./cseval_complex.hpp"
 
+// A variable value of a complex formula: a real literal, or the backend's
+// "(re,im)" pair of literals.
+template <typename Complex>
+static Complex complex_variable_value(const std::string &name,
+                                      const std::string &value) {
+  const size_t comma = value.find(',');
+  if (value.size() > 2 && value.front() == '(' && value.back() == ')' &&
+      comma != std::string::npos) {
+    const std::string re = value.substr(1, comma - 1);
+    const std::string im = value.substr(comma + 1, value.size() - comma - 2);
+    validate_variable_value(name, re);
+    validate_variable_value(name, im);
+    return Complex(re, im);
+  }
+  validate_variable_value(name, value);
+  return Complex(value, "0.0");
+}
+
 template <typename Complex>
 const Complex cseval_complex<Complex>::ZERO = Complex("0.0", "0.0");
 
@@ -356,8 +374,7 @@ Complex cseval_complex<Complex>::calculate(
   typename std::map<std::string, std::string>::const_iterator it;
   for (it = variables_to_values.cbegin(); it != variables_to_values.cend();
        ++it) {
-    validate_variable_value(it->first, it->second);
-    values[it->first] = Complex(it->second, "0.0");
+    values[it->first] = complex_variable_value<Complex>(it->first, it->second);
   }
   return calculate(values, mapFunctionTwoArgsValue, mapFunctionOneArgValue);
 }
@@ -481,8 +498,7 @@ Complex cseval_complex<Complex>::calculate_derivative(
   typename std::map<std::string, std::string>::const_iterator it;
   for (it = variables_to_values.cbegin(); it != variables_to_values.cend();
        ++it) {
-    validate_variable_value(it->first, it->second);
-    values[it->first] = Complex(it->second, "0.0");
+    values[it->first] = complex_variable_value<Complex>(it->first, it->second);
   }
   return calculate_derivative(variable, values, mapFunctionTwoArgsValue,
                               mapFunctionOneArgValue, mapFunctionDerivLeft,
@@ -634,8 +650,7 @@ Complex cseval_complex<Complex>::calculate_partial_derivative(
   typename std::map<std::string, std::string>::const_iterator it;
   for (it = variables_to_values.cbegin(); it != variables_to_values.cend();
        ++it) {
-    validate_variable_value(it->first, it->second);
-    values[it->first] = Complex(it->second, "0.0");
+    values[it->first] = complex_variable_value<Complex>(it->first, it->second);
   }
   unsigned order = variables.size();
   return calculate_jet(order, seeds, values).c[(1u << order) - 1];

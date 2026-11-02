@@ -30,6 +30,7 @@ import os
 import sys
 import time
 
+from .. import __version__, _formula
 from . import rays, rays_v3
 from .shared.common import tlog as _log
 from .native import make_tracer
@@ -37,6 +38,7 @@ from .screen import ScreenGrid
 from .source import Source
 from .surfaces import CapillaryBundle
 from .shared.types import ray_record
+from .trace import trace_ray
 
 # aim draws per ray, asserted by tests (rng skip counts)
 SCENES = {"capillary": {"tag": rays.SceneSeed.CAPILLARY, "draws": 3},
@@ -62,6 +64,14 @@ def _scene_parts(sim, scene: str):
 
 
 _W = {}
+
+
+def provenance(tracer) -> dict:
+    """Which tracer recorded a section (python or native) and the versions behind it;
+    kept in the section header, apart from the physical fingerprint."""
+    if tracer is trace_ray:
+        return {"tracer": "python", "formula": __version__}
+    return {"tracer": "native", "formula": __version__, "native": _formula.__version__}
 
 
 def _init_worker(raw: dict):
@@ -99,20 +109,23 @@ def _trace_section(archive, scene, mode, r0, r1, origin_str, lean, level):
         origin_str = [rays.archive_text(c) for c in origin]
     elif [rays.archive_text(c) for c in origin] != list(origin_str):
         raise ValueError(f"{scene} mode {mode}: lattice origin differs from the header")
-    extra = {"rng": {"scheme": rays.RNG_SCHEME, "seed": cfg.seed, "aim_draws": draws}}
+    extra = {"rng": {"scheme": rays.RNG_SCHEME, "seed": cfg.seed, "aim_draws": draws},
+             "provenance": provenance(tracer)}
     draw = rng.random
     for _ in range(draws * r0):
         draw()
     aim = aim_factory(None, screen, rng)
     writer = rays_v3.SectionWriter(archive, scene, mode, r0, r1, origin_str, extra, level)
+    ray = r0
     try:
         for ray in range(r0, r1):
             tr = tracer(origin, aim(origin), optic, screen.z, cfg.max_bounces)
             rec = ray_record(tr, screen, mode, ray, tr.fate)
             writer.write_row(rays.row_of(scene, rec, lean))
         return writer.close().as_dict(), False
-    except BaseException:
+    except BaseException as exc:
         writer.abort()
+        exc.add_note(f"while tracing {scene} mode {mode} ray {ray}; the section was aborted")
         raise
 
 

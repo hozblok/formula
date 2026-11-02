@@ -2,7 +2,7 @@
 
 import pytest
 
-from formula import NumberContext, RaySurface
+from formula import NumberContext, RaySurface, UnresolvedRootError
 
 
 def _close(a, b, eps="1e-20"):
@@ -29,12 +29,13 @@ def test_sphere_two_roots(method):
     assert _match(roots, ["1", "3"])
 
 
-def test_tangent_double_root_sturm_finds_it():
-    # Ray grazes the sphere at y=1: (t-2)^2 = 0, a double root sampling misses.
+def test_tangent_double_root_is_unresolved():
+    # Ray grazes the sphere at y=1: (t-2)^2 = 0. A finite-precision evaluation cannot
+    # tell the touch from a sub-noise pair or a miss, so sturm raises (the strict
+    # contract of 2026-11-02); sampling still misses it silently, as documented.
     rs = RaySurface("x*x + y*y + z*z - 1", precision=48)
-    roots = rs.intersect((-2, 1, 0), (1, 0, 0), t_max=10, method="sturm")
-    assert _match(roots, ["2"], eps="1e-15")
-
+    with pytest.raises(UnresolvedRootError):
+        rs.intersect((-2, 1, 0), (1, 0, 0), t_max=10, method="sturm")
     missed = rs.intersect((-2, 1, 0), (1, 0, 0), t_max=10, method="sampling")
     assert missed == []  # sampling cannot see an even-multiplicity root
 
@@ -129,12 +130,13 @@ def test_chebyshev_self_validates_on_corrugated_wall():
     assert _match(cheb, [str(r) for r in sub], eps="1e-20")
 
 
-def test_subdivision_tangent_and_rejects_turning_point():
-    # cos(t)+1 touches zero (double root) at pi, 3pi; at 2pi g'=0 but g=2 (no root).
+def test_subdivision_tangency_unresolved_and_turning_point_rejected():
+    # cos(t)+1 touches zero (double root) at pi: unresolved under the strict contract.
+    # Around 2pi g'=0 but g=2: a turning point far from zero is still no root.
     rs = RaySurface("cos(x) + 1", precision=32)
-    roots = rs.intersect((0, 0, 0), (1, 0, 0), t_max=10, t_min="0.1", method="subdivision")
-    pi = NumberContext(32).eval("4*atan(1)")
-    assert _match(roots, [pi, pi * NumberContext(32)(3)], eps="1e-12")
+    with pytest.raises(UnresolvedRootError):
+        rs.intersect((0, 0, 0), (1, 0, 0), t_max=10, t_min="0.1", method="subdivision")
+    assert rs.intersect((0, 0, 0), (1, 0, 0), t_max=7, t_min="5.5", method="subdivision") == []
 
 
 def test_auto_unions_chebyshev_and_subdivision():

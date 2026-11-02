@@ -104,3 +104,16 @@ def test_coordinate_scale_precision_is_checked_for_backend_values_too():
     alg = _Algebra(1, 64)
     assert surface.value((alg.variable(1, [0], 0), 0, 0)).c == ["2", "2"]
     assert surface.value((1, 0, 0)) == 2
+
+
+def test_algebra_precision_range_and_rounding():
+    # A request past MAX_PRECISION must not silently become backend 16.
+    import pytest
+    from formula import MAX_PRECISION
+    for bad in (MAX_PRECISION + 1, 0, -1):
+        with pytest.raises(ValueError, match="precision must be in"):
+            _Algebra(1, bad)
+    with pytest.raises(TypeError, match="precision must be an int"):
+        _Algebra(1, True)
+    assert _Algebra(1, 63).precision == _Algebra(1, 64).precision == 64
+    assert _Algebra(1, MAX_PRECISION).precision == MAX_PRECISION
