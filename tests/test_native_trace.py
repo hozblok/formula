@@ -263,16 +263,18 @@ def test_quartic_first_raises_on_an_unresolved_pair():
             _formula.trace_dbg_quartic_first(c, 3.0)
 
 
-def test_quartic_window_touch_on_cap_with_a_root_past_it():
-    # (t-1)^2 (t-1-e) (t+1) — the exact double touch sits on the cap, the
-    # crossing at 1+e lies outside: the window holds no crossing, and the exact shift
-    # at the cap proves the even multiplicity.
+def test_quartic_window_touch_on_cap_is_unresolved():
+    # (t-1)^2 (t-1-e) (t+1) — the double touch sits on the cap, the crossing at 1+e
+    # just past it. Rounded arithmetic cannot prove the touch even (the cap-shift
+    # certification was withdrawn 2026-11-02), so both twins refuse to miss it.
     for p, e in ((16, "1e-20"), (32, "1e-30"), (64, "1e-50")):
         N = NumberContext(p)
         eps = N(e)
         c = [N(1), -N(2) - eps, eps, N(2) + eps, -N(1) - eps]
-        assert _quartic_first(c, 1.0) is None
-        assert _formula.trace_dbg_quartic_first(c, 1.0) is None
+        with pytest.raises(UnresolvedRootError):
+            _quartic_first(c, 1.0)
+        with pytest.raises(UnresolvedRootError):
+            _formula.trace_dbg_quartic_first(c, 1.0)
 
 
 @pytest.mark.parametrize("p", PRECISIONS + (64,))
@@ -281,14 +283,10 @@ def test_quartic_window_touch_on_cap_with_a_root_past_it():
     (("-3", "-2", "-1", "0.999999999999999999999999999999"), "0.999999999999999999999999999999",
      "1e-20"),
     (("-3", "-2", "-1", "1"), "1", "1e-20"),                                    # simple root on it
-    (("-1", "1", "1", "1"), "1", "1e-20"),      # odd multiplicity exactly on the cap
-    (("3", "1", "1", "1"), "1", "1e-20"),
-    (("-3", "-2", "1", "1"), None, None),       # even multiplicity on it: a certified touch
-    (("1", "1", "1", "1"), None, None),
 ])
 def test_quartic_first_window_cap(p, roots, first, tol):
-    # The window (_EPS_T, cap] is closed at the cap: roots past it stay out; a root
-    # exactly on it is decided by the exact Taylor shift (odd crosses, even touches).
+    # The window (_EPS_T, cap] is closed at the cap: roots past it stay out; a simple
+    # root exactly on it is found by the polished fast path.
     N = NumberContext(p)
     c = quartic_of(roots, p)
     for t in (_quartic_first(c, 1.0), _formula.trace_dbg_quartic_first(list(c), 1.0)):
@@ -299,12 +297,52 @@ def test_quartic_first_window_cap(p, roots, first, tol):
 
 
 @pytest.mark.parametrize("p", PRECISIONS + (64,))
-def test_quartic_first_root_at_eps_t_is_outside(p):
-    # The window (_EPS_T, t_capf] is open at 1e-12 in both twins.
+@pytest.mark.parametrize("roots", [
+    ("-1", "1", "1", "1"),                      # odd multiplicity exactly on the cap
+    ("3", "1", "1", "1"),
+    ("-3", "-2", "1", "1"),                     # even multiplicity exactly on the cap
+    ("1", "1", "1", "1"),
+])
+def test_quartic_multiple_root_on_the_cap_is_unresolved(p, roots):
+    # A zero of rounded arithmetic at the cap certifies nothing — the exact-shift
+    # multiplicity answer was withdrawn (2026-11-02): both twins raise instead.
+    c = quartic_of(roots, p)
+    with pytest.raises(UnresolvedRootError):
+        _quartic_first(c, 1.0)
+    with pytest.raises(UnresolvedRootError):
+        _formula.trace_dbg_quartic_first(list(c), 1.0)
+
+
+def test_quartic_rounded_zero_at_the_cap_is_not_a_root():
+    # (t+1)(t-1)^3 - 1e-100 t^2 is strictly negative in (0, 1]; Horner at the cap
+    # rounds to zero, which used to certify a false crossing at 1. The escalated
+    # error band at 2p decides the tiny coefficient and clears the window.
+    N = NumberContext(64)
+    tiny = N("1e-100")
+    c = [N(1), -N(2), -tiny, N(2), -N(1)]
+    assert _quartic_first(c, 1.0) is None
+    assert _formula.trace_dbg_quartic_first(list(c), 1.0) is None
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+def test_quartic_first_root_below_eps_t_is_outside(p):
+    # The window (_EPS_T, t_capf] is open at 1e-12 in both twins: a root strictly
+    # below it is skipped and the first crossing inside comes back.
     N = NumberContext(p)
-    c = quartic_of(("1e-12", "0.002", "-0.001", "0.05"), p)
+    c = quartic_of(("9.9e-13", "0.002", "-0.001", "0.05"), p)
     for t in (_quartic_first(c, 0.1), _formula.trace_dbg_quartic_first(list(c), 0.1)):
         assert abs(t - N("0.002")) < N("1e-20")
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+def test_quartic_first_root_exactly_at_eps_t_is_unresolved(p):
+    # A root exactly on the open end is indistinguishable in rounded arithmetic from
+    # one just inside: both twins refuse (2026-11-02) rather than silently skip it.
+    c = quartic_of(("1e-12", "0.002", "-0.001", "0.05"), p)
+    with pytest.raises(UnresolvedRootError):
+        _quartic_first(c, 0.1)
+    with pytest.raises(UnresolvedRootError):
+        _formula.trace_dbg_quartic_first(list(c), 0.1)
 
 
 @pytest.mark.parametrize("p", PRECISIONS + (64,))
