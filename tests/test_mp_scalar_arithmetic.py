@@ -242,7 +242,7 @@ def test_sqrt_of_a_tiny_base_scales():
 
 
 @pytest.mark.xfail(strict=True, reason="squares of the parts overflow inside Boost's eval_sqrt "
-                   "near the exponent ceiling: (nan,nan) for a finite representable input; "
+                   "near the exponent ceiling: (0,inf) for a finite representable input; "
                    "withdrawn with the same fix, an unreachable edge")
 def test_sqrt_of_a_huge_negative_base_stays_finite():
     N = NumberContext(64)
