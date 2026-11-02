@@ -32,13 +32,6 @@ def _text(v, precision: int) -> str:
     return v.str(precision, FmtFlags.default) if isinstance(v, MP_TYPES) else str(v)
 
 
-def _derivative(text: str, N: NumberContext):
-    """get_derivative text -> backend value; a complex one arrives as 're+i*(im)'."""
-    if "+i*(" in text:
-        re_, im = text.rsplit("+i*(", 1)
-        return N(f"({re_},{im[:-1]})")
-    return N(text)
-
 # Geometry-only record of one ray's life: source point + launch direction, every
 # reflection, the screen hit + direction there, and the total geometric path length.
 RayPath = namedtuple(
@@ -131,7 +124,7 @@ class RaySurfaceFunction:
         point = self._point(t)
         total = self.numbers(0)
         for a in self._axes:
-            partial = _derivative(self.surface.get_derivative(a, point, 0), self.numbers)
+            partial = self.numbers(self.surface.get_derivative(a, point, 0))
             total = total + partial * self.direction[a]
         return total
 
@@ -146,7 +139,7 @@ class RaySurfaceFunction:
         """
         point = self._point(t)
         grad = [
-            _derivative(self.surface.get_derivative(a, point, 0), self.numbers)
+            self.numbers(self.surface.get_derivative(a, point, 0))
             if a in self._axes
             else self.numbers(0)
             for a in _AXES
@@ -174,7 +167,8 @@ class RaySurfaceFunction:
 
 
 class RaySurface:
-    """All intersections of a ray with an implicit surface F=0.
+    """All intersections of a ray with an implicit surface F=0. F is real-only:
+    a complex surface has no sign, no inside and no normal.
 
     Example:
         rs = RaySurface("x*x + y*y - 1", precision=64)
@@ -187,6 +181,9 @@ class RaySurface:
         precision: int = 32,
     ):
         self.surface = Solver(expression, precision)
+        if self.surface.is_complex:
+            raise ValueError("the geometry is real-only: a complex surface has no "
+                             "sign, inside or normal; drop the imaginary unit")
         self.precision = self.surface.precision
         self.numbers = NumberContext(self.precision)
 

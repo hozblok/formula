@@ -90,11 +90,11 @@ def test_auto_routes_transcendental_to_chebyshev():
     assert _match(a, [str(r) for r in b], eps="1e-28")
 
 
-def test_complex_surface_real_intersections():
-    # Complex-valued surface; real hits are the common roots of Re g and Im g.
-    rs = RaySurface("(x*x - 1) * (1 + i)", precision=48)
-    roots = rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10, method="sturm")
-    assert _match(roots, ["1", "3"])
+def test_complex_surface_is_refused():
+    # The geometry is real-only: a complex F has no sign, inside or normal
+    # (the approximate Re/Im gcd path returned false roots and is gone).
+    with pytest.raises(ValueError, match="real-only"):
+        RaySurface("(x*x - 1) * (1 + i)", precision=48)
 
 
 # --- variant 7: subdivision with derivative/range bounds ---
@@ -146,7 +146,3 @@ def test_auto_unions_chebyshev_and_subdivision():
     assert _match(auto, _kpi_over_4(12), eps="1e-25")
 
 
-def test_subdivision_real_only():
-    rs = RaySurface("(x*x - 1) * (1 + i)", precision=32)
-    with pytest.raises(NotImplementedError):
-        rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10, method="subdivision")

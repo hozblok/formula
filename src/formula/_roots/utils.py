@@ -56,7 +56,7 @@ def finite(value) -> bool:
 def finite_sign(value):
     """sign(value), or None where value is non-finite (inf/nan)."""
     if value.is_complex:
-        raise NotImplementedError("real surfaces only; use sturm/chebyshev for complex")
+        raise NotImplementedError("the geometry is real-only: a complex g has no sign")
     return sign(value) if finite(value) else None
 
 

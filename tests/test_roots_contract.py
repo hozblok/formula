@@ -132,3 +132,22 @@ def test_verdicts_pass_through_the_auto_fallback():
     surface, _ = ray("(x-.3)^2")
     with pytest.raises(UnresolvedRootError):
         surface.intersect(O, D, 1, method="auto")
+
+
+class _ComplexG:
+    """g complex at every t: what the real-only backends must refuse."""
+    surface = None
+
+    def g(self, t):
+        return N("(1,1)")
+
+    def gprime(self, t):
+        return N("(0,0)")
+
+
+@pytest.mark.parametrize("backend", [sampling, sturm, chebyshev, subdivision])
+def test_backends_refuse_a_complex_g(backend):
+    # RaySurface already refuses a complex F at construction; the backend guards
+    # stay as the net behind direct calls.
+    with pytest.raises(NotImplementedError):
+        backend.find_all(_ComplexG(), N(0), N(1), N.precision)
