@@ -503,18 +503,27 @@ def test_complex_integer_powers_against_exact_rationals(base, n, x):
         assert all(v.is_finite() for v in got) and componentwise_near(got, to_decimal(exact)), k
 
 
+# Intermediates past the exponent range (about 1e67108864 real) are not rescued
+# any more (2026-11-02): the extreme cases keep their analytic references as xfail.
+WITHDRAWN = pytest.mark.xfail(strict=True, reason=(
+    "intermediate overflow/underflow past the exponent range is no longer rescued; "
+    "the quotient, power and asinh/acosh derivative fallbacks were withdrawn 2026-11-02"))
+
+
 @pytest.mark.parametrize("expr,names,at,expected", [
-    ("x/x", "x", {"x": "1e-40000000"}, "0"),
+    pytest.param("x/x", "x", {"x": "1e-40000000"}, "0", marks=WITHDRAWN),
     ("(x*z)/y", "yz", {"x": "1e-40000000", "y": "1e-40000000", "z": "1"}, "-1e40000000"),
-    ("x/y", "y", {"x": "1e40000000", "y": "1e40000000"}, "-1e-40000000"),
-    ("x^(1e-40000000)", "xxxx", {"x": "1e-20000000"}, "-6e40000000"),
+    pytest.param("x/y", "y", {"x": "1e40000000", "y": "1e40000000"}, "-1e-40000000",
+                 marks=WITHDRAWN),
+    pytest.param("x^(1e-40000000)", "xxxx", {"x": "1e-20000000"}, "-6e40000000",
+                 marks=WITHDRAWN),
     ("x^(1e-40000000)+i*x", "xxxx", {"x": "1e-20000000"}, "-6e40000000"),
-    ("asinh(x)", "x", {"x": "1e40000000"}, "1e-40000000"),
-    ("acosh(x)", "x", {"x": "1e40000000"}, "1e-40000000"),
+    pytest.param("asinh(x)", "x", {"x": "1e40000000"}, "1e-40000000", marks=WITHDRAWN),
+    pytest.param("acosh(x)", "x", {"x": "1e40000000"}, "1e-40000000", marks=WITHDRAWN),
 ])
 def test_intermediates_outside_the_exponent_range(expr, names, at, expected):
-    # b^2 in the division rule, x^(b-k) in the power rule and a^2 in asinh', acosh'
-    # leave the exponent range (about 1e67108864) while the derivatives do not.
+    # The passing rows: the jets' incremental quotient has no large intermediate,
+    # and the complex (binary) range is wider than the real one.
     got = d(expr, names, at)
     if expected == "0":
         assert got == (0, 0)
@@ -522,18 +531,22 @@ def test_intermediates_outside_the_exponent_range(expr, names, at, expected):
         assert rel_near(got, (Decimal(expected), Decimal(0)))
 
 
-# 0.1, 1.3: small exponents, x^(b-k) beyond the exponent range at every order.
+# 0.1, 1.3: small exponents; the orders where the real x^(b-k) leaves the range
+# are withdrawn.
 SMALL_EXPONENTS = [
     # D^k x^b = b (b-1) ... (b-k+1) x^(b-k), corrections of order b relative.
     ("x^(1e-40000000)", "1e-20000000",
-     ["1e-20000000", "-1", "2e20000000", "-6e40000000", "24e60000000"]),
-    ("x^(1e-60000000)", "1e-40000000", ["1e-20000000", "-1e20000000", "2e60000000"]),
-    ("x^(1e-50000000)", "1e-30000000", ["1e-20000000", "-1e10000000", "2e40000000"]),
+     ["1e-20000000", "-1", "2e20000000", "-6e40000000", "24e60000000"], {4, 5}),
+    ("x^(1e-60000000)", "1e-40000000",
+     ["1e-20000000", "-1e20000000", "2e60000000"], {2, 3}),
+    ("x^(1e-50000000)", "1e-30000000",
+     ["1e-20000000", "-1e10000000", "2e40000000"], {3}),
 ]
 
 
 @pytest.mark.parametrize("expr,x,k,expected", [
-    (expr, x, k, e) for expr, x, values in SMALL_EXPONENTS for k, e in enumerate(values, 1)])
+    pytest.param(expr, x, k, e, marks=WITHDRAWN) if k in withdrawn else (expr, x, k, e)
+    for expr, x, values, withdrawn in SMALL_EXPONENTS for k, e in enumerate(values, 1)])
 def test_small_exponent_every_order(expr, x, k, expected):
     at = {"x": x}
     assert rel_near(d(expr, "x" * k, at), (Decimal(expected), Decimal(0)))
@@ -556,7 +569,7 @@ RANGE_LIMIT = ("f^(k)(u) is below the exponent range while f^(k)(u) (u')^k is no
 
 @pytest.mark.parametrize("expr,x,k,c", [
     pytest.param(*case, marks=pytest.mark.xfail(strict=True, reason=RANGE_LIMIT))
-    if case[2] > 1 else pytest.param(*case) for case in COMPOSITIONS])
+    if case[2] > 1 else pytest.param(*case, marks=WITHDRAWN) for case in COMPOSITIONS])
 def test_inverse_hyperbolic_compositions_at_huge_arguments(expr, x, k, c):
     # c (-1)^(k-1) (k-1)! / x^k in Decimal: its exponent is not digits.
     exact = c * (-1) ** (k - 1) * factorial(k - 1) / Decimal(x) ** k
@@ -584,7 +597,7 @@ def test_third_order_component_at_the_other_stationary_points(expr, z, slope, fu
 
 # 1.2: division at extreme magnitudes, real and complex dispatch.
 @pytest.mark.parametrize("x", ["1e40000000", "-1e40000000", "1e-40000000", "-1e-40000000"])
-@pytest.mark.parametrize("expr", ["x/x", "x/x+0*i"])
+@pytest.mark.parametrize("expr", [pytest.param("x/x", marks=WITHDRAWN), "x/x+0*i"])
 def test_x_over_x_has_zero_derivatives_at_extreme_magnitudes(expr, x):
     # Real (decimal): the terms of the quotient rule are powers of ten and cancel exactly.
     # Complex (binary): 1e-40000000 is inexact, the zero is the terms' rounding, ~|x|^-k.
@@ -597,17 +610,23 @@ def test_x_over_x_has_zero_derivatives_at_extreme_magnitudes(expr, x):
 
 
 @pytest.mark.parametrize("expr,names,at,expected", [
-    ("1e40000000*y*(x/x)", "xy", {"x": "1e40000000", "y": "1"}, "0"),
-    ("1e40000000*y*(x/x)", "yx", {"x": "1e40000000", "y": "1"}, "0"),
-    ("x/y", "y", {"x": "-1e40000000", "y": "-1e40000000"}, "1e-40000000"),
+    pytest.param("1e40000000*y*(x/x)", "xy", {"x": "1e40000000", "y": "1"}, "0",
+                 marks=WITHDRAWN),
+    pytest.param("1e40000000*y*(x/x)", "yx", {"x": "1e40000000", "y": "1"}, "0",
+                 marks=WITHDRAWN),
+    pytest.param("x/y", "y", {"x": "-1e40000000", "y": "-1e40000000"}, "1e-40000000",
+                 marks=WITHDRAWN),
     ("x/y+0*i", "y", {"x": "1e40000000", "y": "-1e40000000"}, "-1e-40000000"),
     ("(x*z)/y+0*i", "yz", {"x": "1e-40000000", "y": "1e-40000000", "z": "1"}, "-1e40000000"),
     # 1.4: the even first derivative of asinh, mixed derivatives with a linear factor.
-    ("asinh(x)", "x", {"x": "-1e40000000"}, "1e-40000000"),
-    ("asinh(x)*y", "xy", {"x": "1e40000000", "y": "1"}, "1e-40000000"),
-    ("acosh(x)*y", "xy", {"x": "1e40000000", "y": "1"}, "1e-40000000"),
-    # The complex exponent range is wider than the real one.
-    ("x^(1e-400000000)+i*x", "xxxx", {"x": "1e-200000000"}, "-6e400000000"),
+    pytest.param("asinh(x)", "x", {"x": "-1e40000000"}, "1e-40000000", marks=WITHDRAWN),
+    pytest.param("asinh(x)*y", "xy", {"x": "1e40000000", "y": "1"}, "1e-40000000",
+                 marks=WITHDRAWN),
+    pytest.param("acosh(x)*y", "xy", {"x": "1e40000000", "y": "1"}, "1e-40000000",
+                 marks=WITHDRAWN),
+    # x^(b-4) leaves even the wider complex range.
+    pytest.param("x^(1e-400000000)+i*x", "xxxx", {"x": "1e-200000000"}, "-6e400000000",
+                 marks=WITHDRAWN),
 ])
 def test_more_intermediates_outside_the_exponent_range(expr, names, at, expected):
     got = d(expr, names, at)
@@ -731,7 +750,7 @@ def _power_range(ks, failing):
             if k in failing else k for k in ks]
 
 
-@pytest.mark.parametrize("k", _power_range(range(1, 6), {1, 2, 3, 5}))
+@pytest.mark.parametrize("k", _power_range(range(1, 6), {1, 2, 3, 4, 5}))
 def test_tiny_exponent_phase_where_the_factors_leave_the_exponent_range(k):
     # As above with b = 1e-400000000, x = 1e-200000000 and the factor C = 1e50000000:
     # b B_k ~ 1e-800000000 and x^-k up to 1e1000000000 leave the exponent range, the
