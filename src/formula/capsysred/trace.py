@@ -25,8 +25,12 @@ def trace_ray(origin: Vec3, direction: Vec3, optic, screen_z,
 
     `direction` must be unit (mp-normalized) so parameters are path lengths.
     `max_bounces` caps the reflections; passes and the exit are free, and the
-    wall hit that would exceed the cap ends the ray there as "lost".
+    wall hit that would exceed the cap ends the ray there as "lost". A non-finite
+    component of origin, direction or screen_z raises ValueError.
     """
+    if not all(v - v == 0 for v in (*origin, *direction, screen_z)):
+        raise ValueError(f"non-finite ray input: origin {origin}, direction {direction}, "
+                         f"screen z {screen_z}")
     N = NumberContext(origin[0].precision)
     opl = N(0)
     reflections = []

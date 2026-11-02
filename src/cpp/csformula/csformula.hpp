@@ -123,6 +123,8 @@ class Formula {
 
   /** Get current string formula expression. */
   std::string get_expression() const { return expression_; }
+  // The expression holds the imaginary unit: a complex evaluator.
+  bool is_complex() const { return is_complex_; }
 
   /** Initialize the Formula instance by the string expression. */
   void set_expression(const std::string &expression);

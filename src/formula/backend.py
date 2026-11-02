@@ -24,3 +24,7 @@ round_up_precision = _formula.round_up_precision
 
 # A literal at this storage precision: mp_real_<P>, or mp_complex_<P> for "(re,im)".
 mp_number = _formula.mp_number
+
+# Decimal text of a Python int/float read by value, exactly as the backend's
+# arithmetic reads an operand; a subclass's __str__ never takes part.
+scalar_text = _formula.scalar_text

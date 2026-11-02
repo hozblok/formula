@@ -137,3 +137,18 @@ def test_typed_variables_must_match_the_solver_precision():
         s.number(value)
     assert s.number(str(value)) == 3
     assert s.number(NumberContext(64)(2)) == 3 and s.number(NumberContext(63)(2)) == 3
+
+
+def test_complex_values_need_a_complex_formula():
+    # The author's contract of 2026-11-02: the evaluator kind follows the expression
+    # text; a real formula refuses a complex value with a hint instead of promoting.
+    N = NumberContext(64)
+    with pytest.raises(TypeError, match="imaginary unit"):
+        Solver("z+1", 64).number({"z": N.i})
+    s = Solver("(z+1)+0*i", 64)
+    assert str(s.number({"z": N.i})) == "(1,1)"
+    assert str(s.number({"z": N(2)})) == "(3,0)"
+    s.expression = "(z+2)+0*i"
+    assert str(s.number({"z": N.i})) == "(2,1)"
+    assert str(s.number({"z": N("(1,2)")})) == "(3,2)"
+    assert str(Solver("z*z", 64).number({"z": N(2)})) == "4"

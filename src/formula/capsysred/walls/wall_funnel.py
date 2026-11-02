@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING, TypeVar
 from ...formula import NumberContext
 from ..shared.coordinates import surface_coordinates
 from ..shared.nums import lift, text, vadd, vscale, vunit
-from ..shared.types import _EPS_T, _INSIDE_TOL, _TCAP_TOL, Scalar
+from ..shared.types import _INSIDE_TOL, Scalar
 from ..shared.units import m_to_um
-from .wall_torus import _quartic_first
+from .wall_torus import _quartic_first, _window_cap
 
 if TYPE_CHECKING:
     from ..shared.jets import _Jet
@@ -27,8 +27,8 @@ if TYPE_CHECKING:
 _Coordinate = TypeVar("_Coordinate")
 
 
-def _poly_first(cs, t_capf):
-    """Smallest real root in (_EPS_T, t_capf] of the degree-<=4 mp
+def _poly_first(cs, cap):
+    """Smallest real root in (_EPS_T, cap] of the degree-<=4 mp
     polynomial (leading first). Exact-zero leading coefficients (structural
     wall degeneracies: 0-products, never near-zeros — magnitude truncation is
     the sturm-backend failure mode) shift out and the tail pads with zeros:
@@ -41,7 +41,7 @@ def _poly_first(cs, t_capf):
     if lead == len(cs) - 1:
         return None
     c = tuple(v / cs[lead] for v in cs[lead:]) + (zero,) * lead
-    return _quartic_first(c, t_capf)
+    return _quartic_first(c, cap)
 
 
 class FunnelWall:
@@ -158,7 +158,7 @@ class FunnelWall:
               u1 * u1 + v1 * v1 - w1 * w1 + 2 * (u0 * u2 + v0 * v2 - w0 * w2),
               2 * (u0 * u1 + v0 * v1 - w0 * w1),
               u0 * u0 + v0 * v0 - w0 * w0]
-        t = _poly_first(cs, float(t_exit) * (1.0 + _TCAP_TOL) + _EPS_T)
+        t = _poly_first(cs, _window_cap(t_exit))
         if t is None:
             return None
         P = vadd(O, vscale(d, t))

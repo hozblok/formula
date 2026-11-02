@@ -7,7 +7,7 @@ expected answer.
 
 import pytest
 
-from formula import NumberContext, RaySurface, Solver
+from formula import NumberContext, RaySurface, Solver, UnresolvedRootError
 from formula._roots import is_polynomial
 
 
@@ -59,10 +59,12 @@ def test_div_conics_plane_single_root_arclength():
     roots = rs.intersect((0, 0, 0), (3, 4, 0), t_max=20, method="sturm")
     assert roots_close(roots, ["5"], eps="1e-28")
 
-def test_div_conics_ellipsoid_tangent_double_root():
+def test_div_conics_ellipsoid_tangent_is_unresolved():
+    # The strict contract of 2026-11-02: an exact tangency raises instead of posing as a
+    # found root; sampling misses it silently, as documented.
     rs = RaySurface("x*x/4 + y*y/9 + z*z - 1", precision=48)
-    roots = rs.intersect((-5, 3, 0), (1, 0, 0), t_max=12, method="sturm")
-    assert roots_close(roots, ["5"], eps="1e-12")
+    with pytest.raises(UnresolvedRootError):
+        rs.intersect((-5, 3, 0), (1, 0, 0), t_max=12, method="sturm")
     missed = rs.intersect((-5, 3, 0), (1, 0, 0), t_max=12, method="sampling")
     assert missed == []
 
@@ -275,11 +277,11 @@ def test_div_consistency_auto_and_subdivision_agree_on_count():
     assert roots_close(auto, [str(t) for t in sub], eps="1e-20")
 
 def test_div_consistency_subdivision_repeated_call_is_deterministic():
-    rs = RaySurface("cos(x) + 1", precision=32)
+    rs = RaySurface("sin(x)", precision=32)
     o, d = (0, 0, 0), (1, 0, 0)
     a = rs.intersect(o, d, t_max=10, t_min="0.1", method="subdivision")
     b = rs.intersect(o, d, t_max=10, t_min="0.1", method="subdivision")
-    assert len(a) == len(b) == 2
+    assert len(a) == len(b) == 3
     assert [str(t) for t in a] == [str(t) for t in b]
 
 
@@ -287,47 +289,45 @@ def test_div_consistency_subdivision_repeated_call_is_deterministic():
 # Multiplicity & tangency
 # ---------------------------------------------------------------------------
 
-def test_div_multiplicity_perfect_square_double_root_sturm():
-    # (x-2)^2 + y^2 + z^2 = 0 ; ray along +x from x=-1 grazes at x=2 -> double root t=3.
+def test_div_multiplicity_perfect_square_double_root_is_unresolved():
+    # (x-2)^2 + y^2 + z^2 = 0: the graze at t=3 is a touch no finite evaluation can
+    # certify, so sturm raises (the strict contract of 2026-11-02); sampling misses it.
     rs = RaySurface('(x-2)*(x-2) + y*y + z*z', precision=48)
-    roots = rs.intersect((-1, 0, 0), (1, 0, 0), t_max=10, method='sturm')
-    assert roots_close(roots, ['3'], eps='1e-12')
-
-def test_div_multiplicity_double_root_sampling_misses_sturm_finds():
-    rs = RaySurface('(x-2)*(x-2) + y*y + z*z', precision=48)
+    with pytest.raises(UnresolvedRootError):
+        rs.intersect((-1, 0, 0), (1, 0, 0), t_max=10, method='sturm')
     sampled = rs.intersect((-1, 0, 0), (1, 0, 0), t_max=10, method='sampling')
     assert sampled == []  # sign never changes across an even-multiplicity root
-    sturm = rs.intersect((-1, 0, 0), (1, 0, 0), t_max=10, method='sturm')
-    assert roots_close(sturm, ['3'], eps='1e-12')
 
-def test_div_multiplicity_quadruple_root_collapses_to_single():
-    # (x-1)^4 ; quadruple root at x=1 -> square-free Sturm yields one root t=3.
+def test_div_multiplicity_quadruple_root_is_unresolved():
+    # (x-1)^4: a quadruple touch cannot be told from a sub-noise perturbation, so sturm
+    # raises (the strict contract of 2026-11-02).
     rs = RaySurface('(x-1)^4', precision=48)
-    roots = rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10, method='sturm')
-    assert len(roots) == 1
-    assert roots_close(roots, ['3'], eps='1e-12')
+    with pytest.raises(UnresolvedRootError):
+        rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10, method='sturm')
 
-def test_div_multiplicity_sphere_tangent_to_plane():
-    # Unit sphere at (0,1,0); ray in plane y=0 along +x from x=-2 is tangent at x=0 -> t=2.
+def test_div_multiplicity_sphere_tangent_to_plane_is_unresolved():
+    # Unit sphere at (0,1,0); the tangent ray's double root at t=2 raises under the
+    # strict contract; sampling misses it silently.
     rs = RaySurface('x*x + (y-1)*(y-1) + z*z - 1', precision=48)
-    sturm = rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10, method='sturm')
-    assert roots_close(sturm, ['2'], eps='1e-12')
+    with pytest.raises(UnresolvedRootError):
+        rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10, method='sturm')
     sampled = rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10, method='sampling')
     assert sampled == []
 
-def test_div_multiplicity_mixed_simple_and_double():
-    # x*(x-3)^2 : simple root x=0 (t=1), double root x=3 (t=4) for origin x=-1.
+def test_div_multiplicity_mixed_simple_and_double_is_unresolved():
+    # x*(x-3)^2: the double root at t=4 makes the whole list unprovable -> raise;
+    # sampling still reports the simple root it can see.
     rs = RaySurface('x*(x-3)*(x-3)', precision=48)
-    sturm = rs.intersect((-1, 0, 0), (1, 0, 0), t_max=10, method='sturm')
-    assert roots_close(sturm, ['1', '4'], eps='1e-12')
+    with pytest.raises(UnresolvedRootError):
+        rs.intersect((-1, 0, 0), (1, 0, 0), t_max=10, method='sturm')
     sampled = rs.intersect((-1, 0, 0), (1, 0, 0), t_max=10, method='sampling')
     assert len(sampled) == 1 and near(sampled[0], '1', eps='1e-12')
 
-def test_div_multiplicity_auto_routes_polynomial_to_sturm_for_tangency():
+def test_div_multiplicity_auto_propagates_the_tangency_verdict():
     rs = RaySurface('x*x + (y-1)*(y-1) + z*z - 1', precision=48)
     assert is_polynomial(rs.surface)  # algebraic -> auto picks Sturm
-    auto = rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10, method='auto')
-    assert roots_close(auto, ['2'], eps='1e-12')
+    with pytest.raises(UnresolvedRootError):
+        rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10, method='auto')
 
 
 # ---------------------------------------------------------------------------

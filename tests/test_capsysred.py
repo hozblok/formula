@@ -2737,16 +2737,18 @@ def test_funnel_near_zero_lead_finds_grazing_chord():
     assert abs(float(hit[0]) - 2.7398251603e-4) < 1e-9
 
 
-@pytest.mark.xfail(strict=True, reason="audit 2026-07-31: pinch in span is "
-                   "silently constructible; the exactly-axial ray tunnels "
-                   "through the closed throat (double root, no sign change) "
-                   "and reaches the screen with 0 bounces")
+@pytest.mark.xfail(strict=True, reason="audit 2026-07-31, reframed 2026-11-02: the "
+                   "throat's double root exists in exact algebra, but rounding of the "
+                   "constructed quartic coefficients (w0/w1 at this precision) moves it "
+                   "off the real axis — the stored polynomial provably has no crossing, "
+                   "so the strict root contract cannot flag it; catching this needs "
+                   "interval coefficients")
 def test_funnel_pinch_axial_ray_does_not_tunnel():
     # taper radius r0*f crosses zero at z = 1/6 inside [0, 0.3]: a closed
     # throat. The on-axis ray must not come out the other side.
     sim = _cap_sim([{"center": [0.0, 0.0], "radius": 6.0e-6,
                      "funnel": {"g": [0.0, 0.0], "f": [-6.0, 0.0]}}],
-                   z0=0.0, z1=0.3)
+                   z0=0.0, z1=0.3, screen={"z": 0.4})
     cap = sim.cfg.capillary
     bundle = CapillaryBundle(cap.bores, cap.z0, cap.z1)
     p = cap.z0.precision
@@ -2788,10 +2790,6 @@ def test_torus_graze_pair_survives_seed_floor():
         assert abs(float(hit[0]) - 2.4494823940579796e-3) < 1e-8
 
 
-@pytest.mark.xfail(strict=True, reason="audit 2026-07-31: python filters "
-                   "roots with float(t) > 1e-12 (decimal eps), the C++ twin "
-                   "compares in mp against the binary double image — a root "
-                   "in the half-ulp gap picks different branches")
 def test_native_quartic_first_matches_python_at_eps_t_edge():
     from formula import _formula
     from formula.capsysred.walls import wall_torus as wt

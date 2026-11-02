@@ -1074,6 +1074,14 @@ void register_trace(py::module_ &m) {
   m.def("trace_dbg_dk_roots", [](const std::vector<double> &cf) {
     return cstrace::dk_roots(cf);
   });
+  m.def("trace_dbg_to_double", [](py::object x) {
+    double out = 0.0;
+    dispatch(precision_of(x), [&](auto ic) {
+      constexpr unsigned P = decltype(ic)::value;
+      out = cstrace::Tracer<P>::to_double(py::cast<mp_real<P>>(x));
+    });
+    return out;
+  });
   m.def("trace_dbg_quartic_first", [](py::sequence c, double t_capf) {
     py::object out = py::none();
     dispatch(precision_of(c[0]), [&](auto ic) {
@@ -1083,7 +1091,8 @@ void register_trace(py::module_ &m) {
           py::cast<mp_real<P>>(c[0]), py::cast<mp_real<P>>(c[1]),
           py::cast<mp_real<P>>(c[2]), py::cast<mp_real<P>>(c[3]),
           py::cast<mp_real<P>>(c[4])};
-      auto t = T::quartic_first(arr, t_capf);
+      auto t = T::quartic_first(
+          arr, mp_real<P>(py::repr(py::float_(t_capf)).cast<std::string>()));
       if (t) {
         out = py::cast(*t);
       }

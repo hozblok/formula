@@ -23,6 +23,12 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+// A root search met a case it cannot decide at this precision (a cluster whose
+// root count is unknown); bound to Python as UnresolvedRootError.
+struct unresolved_root_error : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
+
 // 8198 digits of pi number.
 #ifndef M_PI_STR
 #define M_PI_STR                                                               \
@@ -217,7 +223,7 @@ constexpr std::array<unsigned, sizeof...(Ps)> seq_to_array(
 constexpr auto precisions_array = seq_to_array(AllowedPrecisionsSeq{});
 
 // Smallest supported precision >= the request; 0 if it exceeds max_precision.
-inline unsigned round_up_precision(unsigned precision) {
+constexpr unsigned round_up_precision(unsigned precision) {
   for (unsigned prec : precisions_array) {
     if (precision <= prec) {
       return prec;
