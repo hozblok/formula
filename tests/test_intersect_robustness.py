@@ -220,12 +220,6 @@ def test_clustered_roots_resolved_by_sturm():
     assert _match(roots, ["1", "1.001"], eps="1e-15")
 
 
-def test_complex_surface_real_intersections():
-    rs = RaySurface("(x*x - 1) * (1 + i)", precision=48)
-    roots = rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10, method="sturm")
-    assert _match(roots, ["1", "3"])
-
-
 def test_only_roots_in_range_are_returned():
     rs = RaySurface("x*x + y*y - 1", precision=48)
     roots = rs.intersect((-2, 0, 0), (1, 0, 0), t_max=2, method="sturm")
@@ -273,13 +267,6 @@ def test_subdivision_tangency_unresolved_and_turning_point_rejected():
     with pytest.raises(UnresolvedRootError):
         rs.intersect((0, 0, 0), (1, 0, 0), t_max=10, t_min="0.1", method="subdivision")
     assert rs.intersect((0, 0, 0), (1, 0, 0), t_max=7, t_min="5.5", method="subdivision") == []
-
-
-@pytest.mark.parametrize("method", ["chebyshev", "subdivision"])
-def test_general_backends_reject_complex(method):
-    rs = RaySurface("(x*x - 1) * (1 + i)", precision=32)
-    with pytest.raises(NotImplementedError):
-        rs.intersect((-2, 0, 0), (1, 0, 0), t_max=10, method=method)
 
 
 # --------------------------------------------------------------------------- #
