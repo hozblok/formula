@@ -292,7 +292,8 @@ def _quartic_first(c, cap):
     best = min((t for t in roots if t is not None and eps < t <= cap), default=None)
     if best is not None:
         delta = rtol * max(abs(best), lift(_NEWTON_TFLOOR, p))
-        lo, hi = best - delta, best + delta
+        # the certifying bracket lies in the window: the upper probe never leaves it
+        lo, hi = best - delta, min(best + delta, cap)
         s = _decided(_sign, c, lo) if lo > eps else None
         if s and _decided(_sign, c, hi) == -s:
             if _decided(_descartes, c, eps, lo) == 0:

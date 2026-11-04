@@ -282,11 +282,10 @@ def test_quartic_window_touch_on_cap_is_unresolved():
     (("-3", "-2", "-1", "1.000000000000000000000000000001"), None, None),       # just past the cap
     (("-3", "-2", "-1", "0.999999999999999999999999999999"), "0.999999999999999999999999999999",
      "1e-20"),
-    (("-3", "-2", "-1", "1"), "1", "1e-20"),                                    # simple root on it
 ])
 def test_quartic_first_window_cap(p, roots, first, tol):
-    # The window (_EPS_T, cap] is closed at the cap: roots past it stay out; a simple
-    # root exactly on it is found by the polished fast path.
+    # The window (_EPS_T, cap] is closed at the cap: roots past it stay out; a root
+    # inside counts only off a certifying bracket that lies within the window.
     N = NumberContext(p)
     c = quartic_of(roots, p)
     for t in (_quartic_first(c, 1.0), _formula.trace_dbg_quartic_first(list(c), 1.0)):
@@ -298,19 +297,38 @@ def test_quartic_first_window_cap(p, roots, first, tol):
 
 @pytest.mark.parametrize("p", PRECISIONS + (64,))
 @pytest.mark.parametrize("roots", [
+    ("-3", "-2", "-1", "1"),                    # a simple root exactly on the cap
     ("-1", "1", "1", "1"),                      # odd multiplicity exactly on the cap
     ("3", "1", "1", "1"),
     ("-3", "-2", "1", "1"),                     # even multiplicity exactly on the cap
     ("1", "1", "1", "1"),
 ])
-def test_quartic_multiple_root_on_the_cap_is_unresolved(p, roots):
-    # A zero of rounded arithmetic at the cap certifies nothing — the exact-shift
-    # multiplicity answer was withdrawn (2026-11-02): both twins raise instead.
+def test_quartic_root_exactly_on_the_cap_is_unresolved(p, roots):
+    # A zero of rounded arithmetic at the cap certifies nothing, and the fast path's
+    # bracket must lie inside the window — a root exactly on the boundary has no
+    # in-window certificate: both twins raise.
     c = quartic_of(roots, p)
     with pytest.raises(UnresolvedRootError):
         _quartic_first(c, 1.0)
     with pytest.raises(UnresolvedRootError):
         _formula.trace_dbg_quartic_first(list(c), 1.0)
+
+
+def test_quartic_outside_root_rounded_onto_the_cap_is_never_a_hit():
+    # t (t^3 - t - e) is strictly negative in (0, 1]: the nearby root sits just past
+    # the cap, Newton rounds it onto 1, and the certifying bracket used to poke past
+    # the window and accept it. Decided at 2p the window comes back clean; an e below
+    # even that band is a refusal.
+    for p, e, outcome in ((16, "1e-50", "raise"), (32, "1e-70", "raise"), (64, "1e-100", None)):
+        N = NumberContext(p)
+        c = [N(1), N(0), -N(1), -N(e), N(0)]
+        for solve in (lambda: _quartic_first(c, 1.0),
+                      lambda: _formula.trace_dbg_quartic_first(list(c), 1.0)):
+            if outcome is None:
+                assert solve() is None
+            else:
+                with pytest.raises(UnresolvedRootError):
+                    solve()
 
 
 def test_quartic_rounded_zero_at_the_cap_is_not_a_root():

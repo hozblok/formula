@@ -632,7 +632,8 @@ struct Tracer {
     }
     if (best) {
       R delta = newton_rtol() * std::max(abs(*best), newton_tfloor());
-      R lo = *best - delta, hi = *best + delta;
+      // the certifying bracket lies in the window: the upper probe never leaves it
+      R lo = *best - delta, hi = std::min(*best + delta, cap);
       int s = lo > eps_t() ? decided_sign(c, lo) : 0;
       if (s && decided_sign(c, hi) == -s) {
         if (decided_count(c, eps_t(), lo) == 0) {
