@@ -504,10 +504,9 @@ struct Tracer {
   // signs at a and b (0 at an undecided window end). An interval Descartes
   // does not settle halves at its midpoint, or else a quarter point, of
   // decided sign. Where all three are undecided the span is a root cluster
-  // below resolution: opposite end signs prove an odd count, a crossing
-  // inside; anything else (even or unknown count, an undecided window end)
-  // throws unresolved_root_error rather than guess (the strict contract of
-  // 2026-11-02).
+  // below resolution and throws unresolved_root_error — also on opposite end
+  // signs, which prove a crossing exists but not where within the span (the
+  // strict refusal of 2026-11-05).
   static std::optional<R> cell_crossing(const std::array<R, 5> &c, const R &a,
                                         int sa, const R &b, int sb) {
     static const R half("0.5");
@@ -539,15 +538,11 @@ struct Tracer {
         }
       }
       if (pick == 3) {
-        if (s.sa && s.sb && s.sa != s.sb) {
-          return mid;  // odd cluster: a crossing inside, within this width
-        }
         throw unresolved_root_error(
             "quartic root cluster in [" +
             s.a.str(20, std::ios_base::scientific) + ", " +
             s.b.str(20, std::ios_base::scientific) +
-            "] cannot be resolved at precision " + std::to_string(P) +
-            ": root count unknown");
+            "] cannot be resolved at precision " + std::to_string(P));
       }
       stack.push_back({xs[pick], sx, s.b, s.sb});
       stack.push_back({s.a, s.sa, xs[pick], sx});
