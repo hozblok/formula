@@ -326,6 +326,11 @@ class AxisPath:
 
 # ----------------------------------------------------------------- one bore
 
+def _blocks(B, c):
+    """Real blocks B[m] times complex vectors c[m] as two real batched matmuls."""
+    return (np.matmul(B, c.real[:, :, None]) + 1j * np.matmul(B, c.imag[:, :, None]))[:, :, 0]
+
+
 class FBChannel:
     """One circular bore: axis c(z) = c0 + t z^2/(2R) (t toward the bend centre; R None =
     straight); frame coordinates xi along t, eta along t_perp; potential k xi / R."""
@@ -430,8 +435,8 @@ class FBChannel:
             cx = self._cpp[0] + (0.0 if self.rb is None else 1.0 / self.rb)
             cy = self._cpp[1]
             up, dn = self.disc.shift_blocks()
-            out[1:] += 0.5 * self.k * (cx - 1j * cy) * np.einsum("mij,mj->mi", up[:-1], c[:-1])
-            out[:-1] += 0.5 * self.k * (cx + 1j * cy) * np.einsum("mij,mj->mi", dn[1:], c[1:])
+            out[1:] += 0.5 * self.k * (cx - 1j * cy) * _blocks(up[:-1], c[:-1])
+            out[:-1] += 0.5 * self.k * (cx + 1j * cy) * _blocks(dn[1:], c[1:])
         if self._dr is not None:
             d = self.disc
             b = np.sum(d.wall_u * c, axis=1)
@@ -720,7 +725,7 @@ def build_spec(sim, wave, lines):
         half = float(wave["fb_lattice_half"])
     figure = {"terms": wave["fb_figure"] or [], "noise": wave["fb_figure_noise"]}
     scale = WallFigure(figure["terms"], figure["noise"], length).min_scale()
-    dz = min(float(wave["fb_dz"]), scale / 32.0) if scale else float(wave["fb_dz"])
+    dz = min(float(wave["fb_dz"]), scale / 16.0) if scale else float(wave["fb_dz"])
     ff = wave["far_field"]
     far = None
     if ff is not None:

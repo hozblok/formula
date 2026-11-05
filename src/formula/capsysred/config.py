@@ -119,7 +119,7 @@ WAVE_DEFAULTS = {
     "fb_wall_cut": True,            # keep only guided modes: j_mn^2 - m^2 < (k a_w theta_c)^2
     "fb_figure": None,              # fb: [{q, amp, angle, rate, period, phase}] wall dr = amp mod(z) cos(q (phi - angle - rate z)); q = 1 moves the axis
     "fb_figure_noise": None,        # fb: {sigma, lc, q: [...], seed} random figure, gaussian z-correlation lc, equal power per q
-    "fb_dz": 1.0e-4,                # fb: z step [m] of a z-dependent figure or axis (capped by its shortest scale / 32)
+    "fb_dz": 1.0e-3,                # fb: z step [m] of a z-dependent figure or axis (capped by its shortest scale / 16)
     "fb_angle_margin": 1.1,         # lattice h = lambda / (2 (theta_modal + tilt) margin), rounded to pixel / b
     "fb_lattice_half": None,        # lattice half-width [m]; null -> windows + spread + Fresnel tails
     "fb_grid_dtype": "complex128",  # complex64 | complex128 lattice arrays
