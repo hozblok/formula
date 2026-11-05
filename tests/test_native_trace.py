@@ -183,10 +183,6 @@ def test_quartic_first_close():
                        for _ in range(4))
             cases.append(((NumberContext(p)("1"),) + cs, 10.0 ** rng.randint(-4, -1),
                           HIT_TOL))
-        # Triple roots: conditioning is ~ eps^(1/3), so the twins only agree
-        # to the noise basin of the root, not to working precision.
-        cases.append((quartic_from_roots(2e-6, -1e-3, p), 1e-3, 1e-7))
-        cases.append((quartic_from_roots(4e-5, 9e-3, p), 1e-3, 1e-7))
         for c, t_capf, tol in cases:
             py = _quartic_first(c, t_capf)
             cc = _formula.trace_dbg_quartic_first([x for x in c], t_capf)
@@ -194,6 +190,13 @@ def test_quartic_first_close():
                 assert py is None and cc is None
             else:
                 assert_close(py, cc, tol)
+        # Triple roots sit below sign resolution: both twins refuse alike (2026-11-05).
+        for roots in ((2e-6, -1e-3), (4e-5, 9e-3)):
+            c = quartic_from_roots(*roots, p)
+            with pytest.raises(UnresolvedRootError):
+                _quartic_first(c, 1e-3)
+            with pytest.raises(UnresolvedRootError):
+                _formula.trace_dbg_quartic_first(list(c), 1e-3)
 
 
 def quartic_of(roots, p):
@@ -208,7 +211,6 @@ def quartic_of(roots, p):
 
 @pytest.mark.parametrize("p, roots, first, tol", [
     (p, *case) for p in PRECISIONS + (64,) for case in (
-        (("1", "1", "1", "2"), "1", "1e-8"),                       # triple root stalls Newton
         (("1", "1.0000001", "2", "2.5"), "1", "1e-15"),            # close pair first
         (("1", "1.0000000001", "2", "2.5"), "1", "1e-15"),
         (("0.3", "0.30000000001", "0.31", "2"), "0.3", "1e-15"),
@@ -240,9 +242,11 @@ def test_quartic_first_skips_a_provably_positive_cluster(p):
     ("1", "1", "1", "1"),                       # exact tangencies: the count is not provable
     ("1", "1", "2", "2"),
     ("0.5", "0.5", "1", "2"),                   # a tangency before a real crossing hides it too
+    ("1", "1", "1", "2"),                       # odd parity proves a crossing, not its position
 ])
 def test_quartic_first_raises_on_an_unresolved_cluster(p, roots):
-    # An even or unknown-count cluster is never guessed over (the strict contract of 2026-11-02).
+    # A cluster below resolution is never guessed over — even, unknown or odd count
+    # (the strict refusal of 2026-11-05).
     c = quartic_of(roots, p)
     with pytest.raises(UnresolvedRootError):
         _quartic_first(c, 3.0)

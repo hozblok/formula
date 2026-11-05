@@ -202,10 +202,9 @@ def _cell_crossing(c, a, sa, b, sb):
     """First sign change of the quartic in (a, b] from the decided signs at a and b (None
     at an undecided window end). An interval Descartes does not settle halves at its
     midpoint, or else a quarter point, of decided sign. Where all three are undecided the
-    span is a root cluster below resolution: opposite end signs prove an odd count — a
-    crossing inside, within this width; anything else (even or unknown count, an undecided
-    window end) raises UnresolvedRootError rather than guess (the strict contract of
-    2026-11-02)."""
+    span is a root cluster below resolution and raises UnresolvedRootError — also on
+    opposite end signs, which prove a crossing exists but not where within the span
+    (the strict refusal of 2026-11-05)."""
     half = NumberContext(c[0].precision)("0.5")
     stack = [(a, sa, b, sb)]
     while stack:
@@ -220,11 +219,9 @@ def _cell_crossing(c, a, sa, b, sb):
                   if a < x < b)
         x, sx = next(((x, s) for x, s in splits if s), (None, None))
         if x is None:
-            if sa and sb and sa != sb:
-                return mid             # odd cluster: a crossing inside, within this width
             raise UnresolvedRootError(
                 f"quartic root cluster in [{a}, {b}] cannot be resolved at precision "
-                f"{c[0].precision}: root count unknown")
+                f"{c[0].precision}")
         stack.append((x, sx, b, sb))
         stack.append((a, sa, x, sx))
     return None
