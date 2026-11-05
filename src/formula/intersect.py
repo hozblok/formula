@@ -187,7 +187,7 @@ class RaySurface:
         self.surface = Solver(expression, precision)
         if self.surface.is_complex:
             raise ValueError("the geometry is real-only: a complex surface has no "
-                             "sign, inside or normal; drop the imaginary unit")
+                             "sign, inside or normal; state a real-valued wall equation")
         self.precision = self.surface.precision
         self.numbers = NumberContext(self.precision)
 

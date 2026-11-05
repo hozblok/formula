@@ -40,8 +40,8 @@ def find_all(
     N = NumberContext(precision)
     tol, xacc = tol_half(N), tol_full(N)
     if func.g(t_min).is_complex:
-        raise NotImplementedError("the geometry is real-only: a complex g has no "
-                                  "sign and no isolated real roots")
+        raise NotImplementedError("the geometry is real-only: complex surfaces "
+                                  "are not supported")
     one = N(1)
     mid, span = (t_min + t_max) * 0.5, (t_max - t_min) * 0.5
     # bisection runs in u; dividing by span keeps the t-units accuracy at xacc
