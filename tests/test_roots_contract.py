@@ -90,6 +90,23 @@ def test_four_root_cluster_resolved_by_sturm():
         assert abs(root - (N("0.3") + N("1e-12") * k)) < N("1e-25")
 
 
+def test_four_root_cluster_chebyshev_refuses_a_partial_list():
+    # The chebyshev proxy's looser square-free fuses the cluster and the dips recover
+    # only two of four: a silent subset became a refusal (2026-11-05).
+    surface, _ = ray("(x-.3)*(x-.300000000001)*(x-.300000000002)*(x-.300000000003)")
+    with pytest.raises(UnresolvedRootError, match="fused"):
+        surface.intersect(O, D, 1, method="chebyshev")
+
+
+@pytest.mark.parametrize("method", ("sturm", "chebyshev", "auto"))
+def test_three_root_cluster_below_the_band_refuses_a_representative(method):
+    # Gaps of 1e-20: |g| between the roots stays inside the noise band, the fused
+    # candidate passes the odd-parity test — one middle root came back as the list.
+    surface, _ = ray("(x-.3)*(x-.30000000000000000001)*(x-.30000000000000000002)")
+    with pytest.raises(UnresolvedRootError):
+        surface.intersect(O, D, 1, method=method)
+
+
 @pytest.mark.parametrize("method", ("sturm", "chebyshev"))
 def test_one_endpoint_root_reported_once(method):
     # The endpoint used to come back twice from chebyshev.

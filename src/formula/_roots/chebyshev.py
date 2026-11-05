@@ -139,8 +139,10 @@ def _proxy_roots(func, proxy, q, transform, tol, gtol, xacc, noise, N: NumberCon
     one = N(1)
     roots = []
     xs = _isolate.isolate_roots(q, chain, -one, one, xacc, tol)
-    for x in _isolate.resolved(proxy, xs, -one, one, xacc, noise,
-                               where=lambda u: mid + span * u):
+    kept = _isolate.resolved(proxy, xs, -one, one, xacc, noise,
+                             where=lambda u: mid + span * u,
+                             fused=_isolate.fused_distinct(proxy, q, tol, N) if xs else 0)
+    for x in kept:
         t_root = mid + span * x
         gp = func.gprime(t_root)
         if finite(gp) and abs(gp) > gtol:
