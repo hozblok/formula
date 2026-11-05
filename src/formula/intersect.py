@@ -167,10 +167,12 @@ class RaySurfaceFunction:
 
 
 class RaySurface:
-    """All intersections of a ray with an implicit surface F=0. F is real-only:
-    a complex surface has no sign, no inside and no normal. The domain is F
-    continuous on the probed window: a pole or a jump is never returned as a
-    root, and nothing more is promised outside that domain.
+    """All intersections of a ray with an implicit surface F=0.
+
+    The caller's precondition: F real-valued and continuous on the probed
+    window. Continuity is never verified — the finite and residual checks catch
+    some discontinuities, not all, so a jump can come back as a false root. A
+    complex F is refused at construction: it has no sign, inside or normal.
 
     Example:
         rs = RaySurface("x*x + y*y - 1", precision=64)
