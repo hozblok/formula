@@ -548,10 +548,15 @@ SMALL_EXPONENTS = [
     pytest.param(expr, x, k, e, marks=WITHDRAWN) if k in withdrawn else (expr, x, k, e)
     for expr, x, values, withdrawn in SMALL_EXPONENTS for k, e in enumerate(values, 1)])
 def test_small_exponent_every_order(expr, x, k, expected):
-    at = {"x": x}
-    assert rel_near(d(expr, "x" * k, at), (Decimal(expected), Decimal(0)))
+    assert rel_near(d(expr, "x" * k, {"x": x}), (Decimal(expected), Decimal(0)))
+
+
+@pytest.mark.parametrize("expr,x,k,expected", [
+    (expr, x, k, e) for expr, x, values, _ in SMALL_EXPONENTS for k, e in enumerate(values, 1)])
+def test_small_exponent_every_order_complex(expr, x, k, expected):
     # Complex dispatch; i x adds 1 to the imaginary part of the first derivative.
-    got = d(expr + "+i*x", "x" * k, at)
+    # The binary range is wider, so every order passes without any rescue.
+    got = d(expr + "+i*x", "x" * k, {"x": x})
     assert componentwise_near(got, (Decimal(expected), Decimal(int(k == 1))))
 
 
@@ -597,16 +602,19 @@ def test_third_order_component_at_the_other_stationary_points(expr, z, slope, fu
 
 # 1.2: division at extreme magnitudes, real and complex dispatch.
 @pytest.mark.parametrize("x", ["1e40000000", "-1e40000000", "1e-40000000", "-1e-40000000"])
-@pytest.mark.parametrize("expr", [pytest.param("x/x", marks=WITHDRAWN), "x/x+0*i"])
-def test_x_over_x_has_zero_derivatives_at_extreme_magnitudes(expr, x):
+@pytest.mark.parametrize("expr,k", [
+    pytest.param("x/x", 1, marks=WITHDRAWN),      # the withdrawn first-derivative rescue
+    *[("x/x", k) for k in (2, 3, 4, 5)],          # jets: incremental quotient, no rescue
+    *[("x/x+0*i", k) for k in (1, 2, 3, 4, 5)],
+])
+def test_x_over_x_has_zero_derivatives_at_extreme_magnitudes(expr, x, k):
     # Real (decimal): the terms of the quotient rule are powers of ten and cancel exactly.
     # Complex (binary): 1e-40000000 is inexact, the zero is the terms' rounding, ~|x|^-k.
-    for k in range(1, 6):
-        got = d(expr, "x" * k, {"x": x})
-        if "i" in expr:
-            assert max(abs(v) for v in got) <= Decimal("1e-55") / abs(Decimal(x)) ** k, k
-        else:
-            assert got == (0, 0), k
+    got = d(expr, "x" * k, {"x": x})
+    if "i" in expr:
+        assert max(abs(v) for v in got) <= Decimal("1e-55") / abs(Decimal(x)) ** k
+    else:
+        assert got == (0, 0)
 
 
 @pytest.mark.parametrize("expr,names,at,expected", [
