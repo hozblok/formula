@@ -1,4 +1,4 @@
-"""Reflecting optics as event generators over exact Number geometry.
+"""Reflecting optics as event generators over exact mp geometry.
 
 One event protocol for every optic (the flat mirror uses the same wall-event
 contract): ("reflect", t, point, normal) | ("pass", t) | ("absorb", t) |
@@ -11,18 +11,27 @@ bit-equivalent to the engine:
 every run cross-checks the first hit via expr_um (`engine_hit_t`).
 """
 
-import math
+from __future__ import annotations
 
-from ..formula import Number
+import math
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
+from ..formula import NumberContext
+from .shared.coordinates import surface_coordinates
+from .shared.implicit_surface import Surface
 from .shared.nums import lift, vadd, vscale
-from .shared.types import (_EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _TCAP_TOL,
-                    HitMethod)
+from .shared.types import (_EPS_LOC, _EPS_T, _INSIDE_TOL, _ONWALL_TOL, _RAY_POSITION_TOL_M, _TCAP_TOL,
+                    HitMethod, Scalar)
 from .shared.units import m_to_um
 from .walls.wall_cylinder import CylinderWall
 from .walls.wall_funnel import FunnelWall
 from .walls.wall_polygon import PolygonWall, polygon_vertices
 from .walls.wall_revolution import RevolutionWall
 from .walls.wall_torus import TorusWall
+
+if TYPE_CHECKING:
+    from .shared.jets import _Jet
 
 
 class Mirror:
@@ -31,19 +40,42 @@ class Mirror:
     def __init__(self, z0, z1):
         self.z0, self.z1 = z0, z1
         self._z0f, self._z1f = float(z0), float(z1)
-        p = z0.precision
-        self._normal = (Number("1", p), Number("0", p), Number("0", p))
+        N = NumberContext(z0.precision)
+        self._normal = (N(1), N(0), N(0))
 
     expr_um = "x"  # surface F=0 for engine cross-checks (scale-free)
 
+    @property
+    def precision(self) -> int:
+        return self.z0.precision
+
+    def value(self, point: Sequence[int | float | Scalar | _Jet]) -> Scalar | _Jet:
+        """F=x for the reflecting plane, in world metres."""
+        return surface_coordinates(point, self.precision)[0]
+
+    def gradient(self, point: Sequence[int | float | Scalar | _Jet]) -> tuple[Scalar, Scalar, Scalar]:
+        """Constant world-coordinate gradient of the reflecting plane."""
+        surface_coordinates(point, self.precision)
+        return self._normal
+
+    def validate(
+        self, point: Sequence[int | float | Scalar], *,
+        origin: Sequence[int | float | Scalar], direction: Sequence[int | float | Scalar],
+    ) -> None:
+        """Require an interior nominal hit approached from the reflecting side."""
+        if not self._z0f + _RAY_POSITION_TOL_M < float(point[2]) < self._z1f - _RAY_POSITION_TOL_M:
+            raise ValueError("mirror hit must lie strictly inside the reflecting span")
+        if not (float(origin[0]) > 0 and float(direction[0]) < 0):
+            raise ValueError("mirror hit must approach from the reflecting side")
+
     def next_event(self, O, d):
-        if float(O[0]) <= 0.0 or float(d[0]) >= 0.0:
+        if O[0] <= 0 or d[0] >= 0:
             return ("exit", None)
         t = -O[0] / d[0]
-        zf = float(O[2]) + float(t) * float(d[2])
-        if zf > self._z1f:
+        z = O[2] + t * d[2]                # the hit's z against the span, in mp
+        if z > self.z1:
             return ("exit", None)          # crosses the plane beyond the mirror
-        if zf < self._z0f:                 # runs under the leading edge -> front face
+        if z < self.z0:                    # runs under the leading edge -> front face
             return ("absorb", (self.z0 - O[2]) / d[2])
         return ("reflect", t, vadd(O, vscale(d, t)), self._normal)
 
@@ -66,14 +98,29 @@ class ImplicitWall:
         self.rs = RaySurface(expr, p)
         self.method = method
         self._scale = lift(m_to_um(1), p)
+        self._surface = Surface(self.rs.surface, coordinate_scale=self._scale)
         self.expr_um = None            # the engine IS the hit path here
         self.probe_xy = (1.0, 0.0)
+
+    @property
+    def precision(self) -> int:
+        return self._surface.precision
+
+    def value(self, point: Sequence[int | float | Scalar | _Jet]) -> Scalar | _Jet:
+        """Evaluate the original micrometre expression at world coordinates in metres."""
+        return self._surface.value(point)
+
+    def gradient(
+        self, point: Sequence[int | float | Scalar | _Jet],
+    ) -> tuple[Scalar, ...] | tuple[_Jet, ...]:
+        """Gradient of the original expression with respect to world metres."""
+        return self._surface.gradient(point)
 
     def _f(self, xf, yf, zf) -> float:
         val = self.rs.surface.evaluate(
             {"x": repr(m_to_um(xf)), "y": repr(m_to_um(yf)),
              "z": repr(m_to_um(zf))})
-        return float(Number(val, self.rs.precision))
+        return float(val)
 
     def inside(self, xf, yf, zf):
         # slack vs the bore-center depth keeps on-wall points (F rounds to ±eps)
@@ -138,7 +185,10 @@ class CapillaryBundle:
     def __init__(self, bores, z0, z1):
         self.bores, self.z0, self.z1 = bores, z0, z1
         self._z0f, self._z1f = float(z0), float(z1)
-        self._zero = Number("0", z0.precision)
+        self._zero = NumberContext(z0.precision)(0)
+        eps = lift(_EPS_T, z0.precision)
+        self._z0e, self._z1e = z0 - eps, z1 - eps          # z0, z1 less _EPS_T, in mp
+        self._eps_loc = lift(_EPS_LOC, z0.precision)
         self.walls = []
         for bore in bores:
             wall = _make_wall(bore, z0)
@@ -146,23 +196,20 @@ class CapillaryBundle:
             self.walls.append(wall)
 
     def _locate(self, O, d):
-        """Wall of the bore containing the point nudged ahead along d: a
-        reflection at a bore-bore tangency is on two walls at once."""
-        xf, yf, zf = (float(c) for c in O)
-        dxf, dyf, dzf = (float(c) for c in d)
-        xf, yf, zf = xf + _EPS_LOC * dxf, yf + _EPS_LOC * dyf, zf + _EPS_LOC * dzf
+        """Wall of the bore containing the point nudged ahead along d, in mp and then
+        as floats: a reflection at a bore-bore tangency is on two walls at once."""
+        xf, yf, zf = (float(o + self._eps_loc * di) for o, di in zip(O, d))
         for wall in self.walls:
             if wall.inside(xf, yf, zf):
                 return wall
         return None
 
     def next_event(self, O, d):
-        if float(d[2]) <= 0.0:
+        if d[2] <= 0:
             return ("absorb", self._zero)          # backward ray: lost in the assembly
-        zf = float(O[2])
-        if zf < self._z0f - _EPS_T:
+        if O[2] < self._z0e:
             return ("pass", (self.z0 - O[2]) / d[2])
-        if zf >= self._z1f - _EPS_T:
+        if O[2] >= self._z1e:
             return ("exit", None)
         wall = self._locate(O, d)
         if wall is None:

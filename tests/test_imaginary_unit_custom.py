@@ -6,7 +6,9 @@ failed with "The required value is not found". The unit also leaked as
 a hardcoded 'i' into get() output.
 """
 
-from formula import Solver
+import pytest
+
+from formula import Formula, Solver
 
 
 def test_bare_custom_unit():
@@ -40,8 +42,27 @@ def test_unit_letter_stays_a_variable_under_other_unit():
 
 
 def test_custom_unit_derivative():
-    assert Solver("j*x^2", imaginary_unit="j")({"x": "2"}, derivative="x") == "0+j*(4)"
+    s = Solver("j*x^2", imaginary_unit="j")
+    assert s({"x": "2"}, derivative="x") == "0+j*(4)"
+    assert s.get_partial_derivative(["x"], {"x": "2"}, s.precision) == "0+j*(4)"
 
 
 def test_pair_with_custom_unit():
     assert Solver("2*j", imaginary_unit="j").pair() == ("0", "2")
+
+
+@pytest.mark.parametrize("unit", ["j", "J", "q"])
+@pytest.mark.parametrize("digits", [0, 7, 25])
+def test_custom_unit_on_higher_derivatives(unit, digits):
+    # d^5/(d alpha^3 d beta_2^2) of (unit alpha^3) (beta_2^2 / 7) is (unit 6) (2/7).
+    names = ["alpha"] * 3 + ["beta_2"] * 2
+    f = Formula(f"{unit}*alpha^3*beta_2^2/7", 24, unit)
+    got = f.get_partial_derivative(names, {"alpha": "1.5", "beta_2": "-2"}, digits)
+    assert got == Formula(f"({unit}*6)*(2/7)", 24, unit).get({}, digits)
+    assert got.startswith(f"0+{unit}*(")
+
+
+def test_letter_i_stays_a_variable_in_higher_derivatives_under_unit_j():
+    # j i^2 x^3: d^2/di^2 d^3/dx^3 = 2 * 6 j.
+    f = Formula("j*i^2*x^3", 24, "j")
+    assert f.get_partial_derivative(["i", "i", "x", "x", "x"], {"i": "5", "x": "7"}) == "0+j*(12)"

@@ -90,6 +90,29 @@ const std::map<std::string, Real (*)(Real, Real)>
         {std::string("^"), cseval<Real>::_pow2}};
 
 template <typename Real>
+const std::map<std::string, std::vector<Real> (*)(const Real &, unsigned)>
+    cseval<Real>::functionsOneArgDerivatives = {
+        {std::string("sin"), d_sin<Real>},
+        {std::string("asin"), d_asin<Real>},
+        {std::string("cos"), d_cos<Real>},
+        {std::string("acos"), d_acos<Real>},
+        {std::string("tan"), d_tan<Real>},
+        {std::string("atan"), d_atan<Real>},
+        {std::string("log"), d_log<Real>},
+        {std::string("sqrt"), d_sqrt<Real>},
+        {std::string("exp"), d_exp<Real>},
+        {std::string("sign"), d_zero<Real>},
+        {std::string("abs"), d_zero<Real>},
+        {std::string("log2"), d_log2<Real>},
+        {std::string("log10"), d_log10<Real>},
+        {std::string("sinh"), d_sinh<Real>},
+        {std::string("cosh"), d_cosh<Real>},
+        {std::string("tanh"), d_tanh<Real>},
+        {std::string("asinh"), d_asinh<Real>},
+        {std::string("acosh"), d_acosh<Real>},
+        {std::string("atanh"), d_atanh<Real>}};
+
+template <typename Real>
 cseval<Real>::cseval(const cseval<Real> &other)
     : kind_(other.kind_),
       id_(std::string(other.id_)),
@@ -444,6 +467,158 @@ Real cseval<Real>::calculate_derivative(
   return calculate_derivative(variable, values, mapFunctionTwoArgsValue,
                               mapFunctionOneArgValue, mapFunctionDerivLeft,
                               mapFunctionDerivRight);
+}
+
+template <typename Real>
+csjet<Real> cseval<Real>::apply_function(const std::string &name,
+                                         const csjet<Real> &x) {
+  auto it0 = functionsOneArg.find(name);
+  auto it1 = functionsTwoArgsDLeft.find(name);
+  auto itd = functionsOneArgDerivatives.find(name);
+  if (it0 == functionsOneArg.cend() || it1 == functionsTwoArgsDLeft.cend() ||
+      itd == functionsOneArgDerivatives.cend()) {
+    throw std::invalid_argument(
+        (boost::format("The required function is not found \
+during the calculation of the derivative, id: %s") %
+         name)
+            .str());
+  }
+  const Real &x0 = x.c[0];
+  std::vector<Real> d;
+  return compose(x, it0->second(x0), [&](unsigned k) {
+    if (k == 1) return it1->second(x0, ZERO);
+    if (d.empty()) d = itd->second(x0, x.order());
+    return d[k];
+  });
+}
+
+template <typename Real>
+csjet<Real> cseval<Real>::calculate_jet(
+    unsigned order, const std::map<std::string, unsigned> &seeds,
+    const std::map<std::string, Real> &variables_to_values) const {
+  std::map<std::string, csjet<Real>> jets;
+  for (const auto &item : variables_to_values) {
+    csjet<Real> r(order, item.second);
+    auto it = seeds.find(item.first);
+    if (it != seeds.cend()) {
+      for (unsigned e = 1; e < r.c.size(); e <<= 1) {
+        if (it->second & e) {
+          r.c[e] = ONE;
+          r.support |= 1u << e;
+        }
+      }
+    }
+    jets.emplace(item.first, std::move(r));
+  }
+  return calculate_jet(order, jets);
+}
+
+template <typename Real>
+csjet<Real> cseval<Real>::calculate_jet(
+    unsigned order,
+    const std::map<std::string, csjet<Real>> &variables_to_jets) const {
+  if (kind_ == 'n') {
+    return csjet<Real>(order, value_);
+  } else if (kind_ == 'v') {
+    auto it = variables_to_jets.find(id_);
+    if (it == variables_to_jets.cend()) {
+      throw std::invalid_argument(
+          "The required value is not found during the calculation of the expression, variable name: '" + id_ + "'");
+    }
+    return it->second;
+  } else if (kind_ == 'f') {
+    if (left_eval_ && right_eval_) {
+      auto itValue = functionsTwoArgs.find(id_);
+      auto itLeft = functionsTwoArgsDLeft.find(id_);
+      auto itRight = functionsTwoArgsDRight.find(id_);
+      if (itValue != functionsTwoArgs.cend() &&
+          itLeft != functionsTwoArgsDLeft.cend() &&
+          itRight != functionsTwoArgsDRight.cend()) {
+        csjet<Real> a =
+            left_eval_->calculate_jet(order, variables_to_jets);
+        csjet<Real> b =
+            right_eval_->calculate_jet(order, variables_to_jets);
+        Real value = itValue->second(a.c[0], b.c[0]);
+        // First-order partials, evaluated as in calculate_derivative.
+        uint32_t first = 0;
+        for (unsigned e = 1; e < a.c.size(); e <<= 1) first |= 1u << e;
+        Real fa = ZERO, fb = ZERO;
+        if (a.support & first) fa = itLeft->second(a.c[0], b.c[0]);
+        if (b.support & first) fb = itRight->second(a.c[0], b.c[0]);
+        // Comparisons and logic are piecewise constant: zero coefficients.
+        csjet<Real> r(order, value);
+        r.support = a.support | b.support;
+        if (order > 1) {
+          if (id_ == "+") {
+            r = a + b;
+          } else if (id_ == "-") {
+            r = a - b;
+          } else if (id_ == "*") {
+            r = a * b;
+          } else if (id_ == "/") {
+            r = a / b;
+          } else if (id_ == "^") {
+            const Real &a0 = a.c[0], &b0 = b.c[0];
+            if (b.is_constant()) {
+              r = compose(a, value,
+                          [&](unsigned k) { return _pow_dk(a0, b0, k); });
+            } else if (a.is_constant()) {
+              r = compose(b, value,
+                          [&](unsigned k) { return _pow_ek(a0, b0, k); });
+            } else {
+              // u^v = exp(v * log(u))
+              r = apply_function("exp", b * apply_function("log", a));
+            }
+          }
+        }
+        for (unsigned e = 1; e < r.c.size(); e <<= 1) {
+          if (!a.has(e) && !b.has(e)) continue;
+          Real t = ZERO;
+          if (a.has(e)) t = t + fa * a.c[e];
+          if (b.has(e)) t = t + fb * b.c[e];
+          r.c[e] = t;
+        }
+        r.c[0] = value;
+        return r;
+      }
+    } else if (left_eval_) {
+      return apply_function(
+          id_, left_eval_->calculate_jet(order, variables_to_jets));
+    }
+    throw std::invalid_argument(
+        (boost::format("The required function is not found \
+during the calculation of the derivative, id: %s") %
+         id_)
+            .str());
+  }
+  throw std::runtime_error(
+      (boost::format("Unknown error during the calculation of the derivative, \
+id: %s, kind: %s") %
+       id_ % kind_)
+          .str());
+}
+
+template <typename Real>
+Real cseval<Real>::calculate_partial_derivative(
+    const std::vector<std::string> &variables,
+    const std::map<std::string, std::string> &variables_to_values) const {
+  if (variables.empty() || variables.size() > kMaxDerivativeOrder) {
+    throw std::invalid_argument(
+        "The order of the partial derivative must be from 1 to 5");
+  }
+  std::map<std::string, unsigned> seeds;
+  for (size_t k = 0; k < variables.size(); ++k) {
+    seeds[variables[k]] |= 1u << k;
+  }
+  typename std::map<std::string, Real> values;
+  typename std::map<std::string, std::string>::const_iterator it;
+  for (it = variables_to_values.cbegin(); it != variables_to_values.cend();
+       ++it) {
+    validate_variable_value(it->first, it->second);
+    values[it->first] = Real(it->second);
+  }
+  unsigned order = variables.size();
+  return calculate_jet(order, seeds, values).c[(1u << order) - 1];
 }
 
 template <typename Real>

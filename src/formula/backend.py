@@ -10,19 +10,9 @@ _REAL_PREFIX = "mp_real_"
 _COMPLEX_PREFIX = "mp_complex_"
 
 
-def mp_class(precision: int, is_complex: bool = False) -> type:
-    """Return the mp_real_<P> / mp_complex_<P> backend class for this precision."""
-    prefix = _COMPLEX_PREFIX if is_complex else _REAL_PREFIX
-    return getattr(_formula, f"{prefix}{precision}")
-
-
-# Backend classes by kind, for isinstance() checks.
-REAL_TYPES = tuple(
-    getattr(_formula, n) for n in dir(_formula) if n.startswith(_REAL_PREFIX)
-)
-COMPLEX_TYPES = tuple(
-    getattr(_formula, n) for n in dir(_formula) if n.startswith(_COMPLEX_PREFIX)
-)
+# Backend classes of every precision, real then complex, for isinstance() checks.
+MP_TYPES = tuple(getattr(_formula, n) for prefix in (_REAL_PREFIX, _COMPLEX_PREFIX)
+                 for n in dir(_formula) if n.startswith(prefix))
 
 # Engine precision ceiling (csconstants::max_precision), independent of
 # which mp_real_<P> wrappers are bound.
@@ -32,21 +22,9 @@ MAX_PRECISION = _formula.MAX_PRECISION
 # precision >= the request, i.e. what a value is stored at (0 if over the max).
 round_up_precision = _formula.round_up_precision
 
-MP_TYPES = REAL_TYPES + COMPLEX_TYPES
+# A literal at this storage precision: mp_real_<P>, or mp_complex_<P> for "(re,im)".
+mp_number = _formula.mp_number
 
-def mp_precision(value) -> int:
-    if not isinstance(value, MP_TYPES):
-        raise TypeError(
-            f"expected mp_real_* or mp_complex_*, got {type(value).__name__}"
-        )
-    name = type(value).__name__
-    if name.startswith(_REAL_PREFIX):
-        suffix = name[len(_REAL_PREFIX):]
-    elif name.startswith(_COMPLEX_PREFIX):
-        suffix = name[len(_COMPLEX_PREFIX):]
-    else:
-        raise TypeError(f"unexpected mp class name: {name!r}")
-    try:
-        return int(suffix)
-    except ValueError as exc:
-        raise TypeError(f"invalid precision in mp class name: {name!r}") from exc
+# Decimal text of a Python int/float read by value, exactly as the backend's
+# arithmetic reads an operand; a subclass's __str__ never takes part.
+scalar_text = _formula.scalar_text

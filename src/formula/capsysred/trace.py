@@ -1,15 +1,15 @@
 """The one multi-bounce tracer behind every stage.
 
 Free space and capillaries run through the same loop — the optic
-only supplies wall events. Pure geometry: exact Number positions, grazing
+only supplies wall events. Pure geometry: exact mp positions, grazing
 sines per bounce, optical path length from the source point. Energy enters
 later — Fresnel amplitudes are computed from the recorded sines.
 """
 
 from collections import namedtuple
 
-from ..formula import Number
-from .shared.nums import raw, vadd, vdot, vscale, vsub
+from ..formula import NumberContext
+from .shared.nums import vadd, vdot, vscale, vsub
 from .shared.types import _EPS_T, Vec3
 
 # fate: "screen" | "absorbed" | "lost". reflections: [(point, sin_grazing), ...]
@@ -19,17 +19,20 @@ TraceResult = namedtuple(
 )
 
 
-def trace_ray(origin: Vec3, direction: Vec3, optic, screen_z: Number,
+def trace_ray(origin: Vec3, direction: Vec3, optic, screen_z,
               max_bounces: int) -> TraceResult:
     """Trace one ray from the source point to the screen plane z=screen_z.
 
-    `direction` must be unit (Number-normalized) so parameters are path lengths.
+    `direction` must be unit (mp-normalized) so parameters are path lengths.
     `max_bounces` caps the reflections; passes and the exit are free, and the
-    wall hit that would exceed the cap ends the ray there as "lost".
+    wall hit that would exceed the cap ends the ray there as "lost". A non-finite
+    component of origin, direction or screen_z raises ValueError.
     """
-    p = origin[0].precision
-    two = Number("2", p)
-    opl = Number("0", p)
+    if not all(v - v == 0 for v in (*origin, *direction, screen_z)):
+        raise ValueError(f"non-finite ray input: origin {origin}, direction {direction}, "
+                         f"screen z {screen_z}")
+    N = NumberContext(origin[0].precision)
+    opl = N(0)
     reflections = []
     O, d = origin, direction
 
@@ -54,17 +57,17 @@ def trace_ray(origin: Vec3, direction: Vec3, optic, screen_z: Number,
                 return TraceResult("lost", P, opl + t, reflections, d)
             opl = opl + t
             dot = vdot(d, normal)
-            d = vsub(d, vscale(normal, two * dot))
+            d = vsub(d, vscale(normal, 2 * dot))
             reflections.append((P, abs(dot)))
             O = P
 
-    if float(d[2]) <= 0.0:
+    if d[2] <= 0:
         return TraceResult("lost", O, opl, reflections, d)
     t = (screen_z - O[2]) / d[2]
-    zero = Number("0", p)
-    if raw(t) < raw(zero):
+    zero = N(0)
+    if t < zero:
         # Treat backward steps within the tolerance as arrival, keeping O and opl.
-        if raw(t) < raw(Number(-_EPS_T, p)):
+        if t < N(-_EPS_T):
             return TraceResult("lost", O, opl, reflections, d)
         t = zero
     P = vadd(O, vscale(d, t))

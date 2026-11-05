@@ -1,24 +1,35 @@
-"""Scalar and 3-vector kit on Number: fast float lift, cached solvers.
+"""Scalar and 3-vector kit: fast literal lift, value text, cached solvers.
 
-Precision travels inside Numbers (never as a parameter downstream): `lift` is the
-only entry that takes one, and callers derive it from a Number they already hold.
+Precision travels inside the values (never as a parameter downstream): `lift` and
+`text` are the entries that take one, and callers derive it from a value they hold.
 """
 
-from ...backend import mp_class, round_up_precision
-from ...formula import Number, Solver
+import math
+
+from ..._formula import FmtFlags
+from ...backend import MP_TYPES, mp_number, round_up_precision
+from ...formula import Solver
 
 _SOLVERS: dict = {}
 
 
-def lift(value, precision: int) -> Number:
-    """float/int/str -> Number without formula parsing (hot-path constructor)."""
+def lift(value, precision: int):
+    """float/int/str literal -> backend value at the storage precision (hot-path constructor)."""
     s = value if isinstance(value, str) else repr(value)
-    return Number(mp_class(round_up_precision(precision))(s))
+    return mp_number(round_up_precision(precision), s)
 
 
-def raw(number: Number):
-    """Number -> its backend mp value (the C++ boundary takes these)."""
-    return number._value
+def text(value, precision: int) -> str:
+    """Value text at the storage precision's significant digits; other scalars as str()."""
+    if isinstance(value, MP_TYPES):
+        return value.str(round_up_precision(precision), FmtFlags.default)
+    return str(value)
+
+
+def fsqrt(value):
+    """Correctly rounded square root of a float, or elementwise of an array."""
+    # a float's ** 0.5 goes through pow; an array's ** 0.5 is numpy's sqrt
+    return math.sqrt(value) if isinstance(value, float) else value ** 0.5
 
 
 def solver(expression: str, precision: int) -> Solver:
@@ -29,16 +40,7 @@ def solver(expression: str, precision: int) -> Solver:
     return _SOLVERS[key]
 
 
-def exp_i(x: Number) -> Number:
-    """exp(i*x) for a real Number x (unit-modulus phase factor)."""
-    return solver("exp(i*x)", x.precision).number({"x": str(x)})
-
-
-def sqrt(x: Number) -> Number:
-    return x.sqrt()
-
-
-def vdot(a, b) -> Number:
+def vdot(a, b):
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
 
@@ -50,18 +52,15 @@ def vsub(a, b):
     return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
 
 
-def vscale(a, s: Number):
+def vscale(a, s):
     return (a[0] * s, a[1] * s, a[2] * s)
 
 
-def vnorm(a) -> Number:
-    return sqrt(vdot(a, a))
+def vnorm(a):
+    return vdot(a, a).sqrt()
 
 
 def vunit(a):
     n = vnorm(a)
     return (a[0] / n, a[1] / n, a[2] / n)
 
-
-def conj(z: Number) -> Number:
-    return z.real - Number("i", z.precision) * z.imag

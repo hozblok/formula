@@ -5,6 +5,8 @@
 #include <string>
 #include <utility>
 
+#include "mp_scalar.hpp"
+
 #define STRINGIFY(x) #x
 #define MACRO_STRINGIFY(x) STRINGIFY(x)
 
@@ -43,9 +45,28 @@ PYBIND11_MODULE(_formula, m) {
   // Engine precision ceiling, independent of which mp_real_<P> wrappers are bound.
   m.attr("MAX_PRECISION") = static_cast<unsigned>(max_precision);
 
+  // A root search met a case it cannot decide at this precision; the strict
+  // contract raises instead of guessing.
+  py::register_exception<unresolved_root_error>(m, "UnresolvedRootError",
+                                                PyExc_ArithmeticError);
+
   // Storage precision for a request: smallest supported >= it, 0 if over the max.
   m.def("round_up_precision", &round_up_precision, py::arg("precision"),
         "Smallest supported precision >= the request; what a value is stored at.");
+
+  // The one rule for reading a Python number (mp_scalar.hpp, the same as the
+  // arithmetic operands): an int through __index__, a float by its double.
+  m.def(
+      "scalar_text",
+      [](py::object value) {
+        if (auto text = scalar_text(value)) {
+          return *text;
+        }
+        throw py::type_error("value must be int or float; got " +
+                             type_name(value));
+      },
+      py::arg("value"),
+      "Decimal text of a Python int/float, read as the arithmetic reads it.");
 
   py::class_<std::ios_base::fmtflags>(m, "FmtFlags")
       .def(py::self | py::self)
@@ -123,6 +144,8 @@ PYBIND11_MODULE(_formula, m) {
       .def_property("expression", &Formula::get_expression,
                     &Formula::set_expression,
                     "Formula expression that is ready for calculations.")
+      .def_property_readonly("is_complex", &Formula::is_complex,
+                             "The expression holds the imaginary unit.")
       .def("copy", &Formula::copy, py::return_value_policy::take_ownership,
            "Create copy of the Formula object.")
       .def("variables",
@@ -170,6 +193,18 @@ real or complex.",
           py::arg("variable"),
           py::arg("variables_to_values") = std::map<std::string, std::string>(),
           py::arg("digits") = 0, py::arg("format") = std::ios_base::fmtflags(0))
+      .def("get_partial_derivative", &Formula::get_partial_derivative,
+           "Calculate the value of the mixed partial derivative of the \
+formula over 1..5 variables (repeats allowed), e.g. ['x', 'x', 'y'].",
+           py::arg("variables"),
+           py::arg("variables_to_values") =
+               std::map<std::string, std::string>(),
+           py::arg("digits") = 0,
+           py::arg("format") = std::ios_base::fmtflags(0))
+      .def("_evaluate_jet", &Formula::evaluate_jet,
+           "Internal hyper-dual composition: return (coefficients, structural support).",
+           py::arg("order"), py::arg("variables_to_coefficients"),
+           py::arg("supports"))
       .def("get_from_float",
            (std::string(Formula::*)(const std::map<std::string, double> &,
                                     std::streamsize, std::ios_base::fmtflags)

@@ -10,30 +10,30 @@ scale yet far above the twins' rounding noise.
 import json
 import math
 import random
+import subprocess
+import sys
+from decimal import Decimal, localcontext
 
 import pytest
 
-from formula import _formula
+from formula import UnresolvedRootError, _formula
 from formula.capsysred.native import (compile_optic, make_tracer,
                                       trace_ray_native)
 from formula.capsysred.shared.nums import lift, vadd, vdot, vscale, vsub, vunit
+from formula.capsysred.shared.types import _INSIDE_TOL
 from formula.capsysred.surfaces import CapillaryBundle, Mirror
 from formula.capsysred.trace import trace_ray
 from formula.capsysred.walls.wall_revolution import RevolutionWall
 from formula.capsysred.walls.wall_torus import _dk_roots, _quartic_first
-from formula.formula import Number
+from formula.formula import NumberContext
 
 PRECISIONS = (16, 30)          # storage 16 and 32
 HIT_TOL = 1e-15                # single hit / root / event
 TRACE_TOL = 1e-10              # multi-bounce chains
 
 
-def num(value):
-    return value if isinstance(value, Number) else Number(value)
-
-
 def assert_close(py_val, c_val, tol):
-    a, b = num(py_val), num(c_val)
+    a, b = py_val, c_val
     fa, fb = float(a), float(b)
     scale = max(abs(fa), abs(fb))
     if scale == 0.0:
@@ -80,13 +80,13 @@ def assert_trace_equal(py_tr, c_tr, tol=TRACE_TOL):
 
 
 def raw_vec(vec):
-    return tuple(c._value for c in vec)
+    return tuple(vec)
 
 
 # ------------------------------------------------------------- geometry kit
 
 def make_bundle(kind, p):
-    N = lambda s: Number(s, p)
+    N = NumberContext(p)
     z0, z1 = N("0"), N("0.05")
     if kind == "cylinder":
         bores = [{"kind": "cylinder", "center": (N("0"), N("0")),
@@ -97,7 +97,7 @@ def make_bundle(kind, p):
     elif kind == "polygon":
         bores = [{"kind": "polygon", "center": (N("0"), N("0")),
                   "radius": N("5e-6"), "sides": 6,
-                  "rotation": Number("15*pi/180", p)}]
+                  "rotation": NumberContext(p).eval("15*pi/180")}]
     elif kind == "torus":
         bores = [{"kind": "torus", "center": (N("0"), N("0")),
                   "radius": N("6e-6"),
@@ -116,7 +116,7 @@ def make_bundle(kind, p):
 
 
 def make_revolution_bundle(r2_strs, p):
-    N = lambda s: Number(s, p)
+    N = NumberContext(p)
     bores = [{"kind": "revolution", "center": (N("0"), N("0")),
               "r2_poly": tuple(N(s) for s in r2_strs)}]
     return CapillaryBundle(bores, N("0"), N("0.05"))
@@ -163,13 +163,13 @@ def test_dk_roots_close():
 
 
 def quartic_from_roots(r_mult3, s, p):
-    """Monic (t-r)^3 (t-s) in Number — triple root stalls Newton, forcing the
+    """Monic (t-r)^3 (t-s) in mp — triple root stalls Newton, forcing the
     exact-sign bisection fallback in _quartic_first."""
     r, s = lift(r_mult3, p), lift(s, p)
-    three, one = Number("3", p), Number("1", p)
-    c3 = Number("0", p) - three * r - s
+    three, one = NumberContext(p)("3"), NumberContext(p)("1")
+    c3 = NumberContext(p)("0") - three * r - s
     c2 = three * r * r + three * r * s
-    c1 = Number("0", p) - r * r * r - three * r * r * s
+    c1 = NumberContext(p)("0") - r * r * r - three * r * r * s
     c0 = r * r * r * s
     return (one, c3, c2, c1, c0)
 
@@ -181,19 +181,230 @@ def test_quartic_first_close():
         for _ in range(60):
             cs = tuple(lift(rng.uniform(-1.0, 1.0) * 10.0 ** rng.randint(-11, -4), p)
                        for _ in range(4))
-            cases.append(((Number("1", p),) + cs, 10.0 ** rng.randint(-4, -1),
+            cases.append(((NumberContext(p)("1"),) + cs, 10.0 ** rng.randint(-4, -1),
                           HIT_TOL))
-        # Triple roots: conditioning is ~ eps^(1/3), so the twins only agree
-        # to the noise basin of the root, not to working precision.
-        cases.append((quartic_from_roots(2e-6, -1e-3, p), 1e-3, 1e-7))
-        cases.append((quartic_from_roots(4e-5, 9e-3, p), 1e-3, 1e-7))
         for c, t_capf, tol in cases:
             py = _quartic_first(c, t_capf)
-            cc = _formula.trace_dbg_quartic_first([x._value for x in c], t_capf)
+            cc = _formula.trace_dbg_quartic_first([x for x in c], t_capf)
             if py is None or cc is None:
                 assert py is None and cc is None
             else:
                 assert_close(py, cc, tol)
+        # Triple roots sit below sign resolution: both twins refuse alike (2026-11-05).
+        for roots in ((2e-6, -1e-3), (4e-5, 9e-3)):
+            c = quartic_from_roots(*roots, p)
+            with pytest.raises(UnresolvedRootError):
+                _quartic_first(c, 1e-3)
+            with pytest.raises(UnresolvedRootError):
+                _formula.trace_dbg_quartic_first(list(c), 1e-3)
+
+
+def quartic_of(roots, p):
+    """Monic quartic with these real roots, leading first."""
+    N = NumberContext(p)
+    cs = [N(1)]
+    for r in roots:
+        r = N(r)
+        cs = [a - r * b for a, b in zip(cs + [N(0)], [N(0)] + cs)]
+    return tuple(cs)
+
+
+@pytest.mark.parametrize("p, roots, first, tol", [
+    (p, *case) for p in PRECISIONS + (64,) for case in (
+        (("1", "1.0000001", "2", "2.5"), "1", "1e-15"),            # close pair first
+        (("1", "1.0000000001", "2", "2.5"), "1", "1e-15"),
+        (("0.3", "0.30000000001", "0.31", "2"), "0.3", "1e-15"),
+        (("1", "1.00000000000001", "2", "2.5"), "1", "1e-15"),     # under the former 10^-(p/2) floor
+        (("1", "2", "3", "4"), "1", "1e-15"))
+] + [
+    (64, ("1", "1.00000000000000000000000000000000001", "2", "2.5"), "1", "1e-45"),
+    (64, ("1", "1." + "0" * 59 + "1", "2", "2.5"), "1", "1e-62"),
+])
+def test_quartic_first_takes_the_first_crossing(p, roots, first, tol):
+    # Newton may polish a later root while an earlier one stalls or hides in a close pair.
+    N = NumberContext(p)
+    c = quartic_of(roots, p)
+    for t in (_quartic_first(c, 3.0), _formula.trace_dbg_quartic_first(list(c), 3.0)):
+        assert t is not None and abs(t - N(first)) < N(tol)
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+def test_quartic_first_skips_a_provably_positive_cluster(p):
+    # (t-1)^4 + 1e-30: Descartes proves the dip root-free once the cell is small enough.
+    N = NumberContext(p)
+    c = tuple(N(v) for v in ("1", "-4", "6", "-4", "1.000000000000000000000000000001"))
+    assert _quartic_first(c, 3.0) is None
+    assert _formula.trace_dbg_quartic_first(list(c), 3.0) is None
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+@pytest.mark.parametrize("roots", [
+    ("1", "1", "1", "1"),                       # exact tangencies: the count is not provable
+    ("1", "1", "2", "2"),
+    ("0.5", "0.5", "1", "2"),                   # a tangency before a real crossing hides it too
+    ("1", "1", "1", "2"),                       # odd parity proves a crossing, not its position
+])
+def test_quartic_first_raises_on_an_unresolved_cluster(p, roots):
+    # A cluster below resolution is never guessed over — even, unknown or odd count
+    # (the strict refusal of 2026-11-05).
+    c = quartic_of(roots, p)
+    with pytest.raises(UnresolvedRootError):
+        _quartic_first(c, 3.0)
+    with pytest.raises(UnresolvedRootError):
+        _formula.trace_dbg_quartic_first(list(c), 3.0)
+
+
+def test_quartic_first_raises_on_an_unresolved_pair():
+    # (t-1)(t-1-e)(t-2)(t-3) with e below resolution; the far crossing at 2
+    # must never be returned as the first one.
+    for p, e in ((16, "1e-25"), (32, "1e-40"), (64, "1e-70")):
+        N = NumberContext(p)
+        eps = N(e)
+        c = [N(1), -N(7) - eps, N(17) + 6 * eps, -N(17) - 11 * eps, N(6) + 6 * eps]
+        with pytest.raises(UnresolvedRootError):
+            _quartic_first(c, 3.0)
+        with pytest.raises(UnresolvedRootError):
+            _formula.trace_dbg_quartic_first(c, 3.0)
+
+
+def test_quartic_window_touch_on_cap_is_unresolved():
+    # (t-1)^2 (t-1-e) (t+1) — the double touch sits on the cap, the crossing at 1+e
+    # just past it. Rounded arithmetic cannot prove the touch even (the cap-shift
+    # certification was withdrawn 2026-11-02), so both twins refuse to miss it.
+    for p, e in ((16, "1e-20"), (32, "1e-30"), (64, "1e-50")):
+        N = NumberContext(p)
+        eps = N(e)
+        c = [N(1), -N(2) - eps, eps, N(2) + eps, -N(1) - eps]
+        with pytest.raises(UnresolvedRootError):
+            _quartic_first(c, 1.0)
+        with pytest.raises(UnresolvedRootError):
+            _formula.trace_dbg_quartic_first(c, 1.0)
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+@pytest.mark.parametrize("roots, first, tol", [
+    (("-3", "-2", "-1", "1.000000000000000000000000000001"), None, None),       # just past the cap
+    (("-3", "-2", "-1", "0.999999999999999999999999999999"), "0.999999999999999999999999999999",
+     "1e-20"),
+])
+def test_quartic_first_window_cap(p, roots, first, tol):
+    # The window (_EPS_T, cap] is closed at the cap: roots past it stay out; a root
+    # inside counts only off a certifying bracket that lies within the window.
+    N = NumberContext(p)
+    c = quartic_of(roots, p)
+    for t in (_quartic_first(c, 1.0), _formula.trace_dbg_quartic_first(list(c), 1.0)):
+        if first is None:
+            assert t is None
+        else:
+            assert t is not None and t <= N(1) and abs(t - N(first)) < N(tol)
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+@pytest.mark.parametrize("roots", [
+    ("-3", "-2", "-1", "1"),                    # a simple root exactly on the cap
+    ("-1", "1", "1", "1"),                      # odd multiplicity exactly on the cap
+    ("3", "1", "1", "1"),
+    ("-3", "-2", "1", "1"),                     # even multiplicity exactly on the cap
+    ("1", "1", "1", "1"),
+])
+def test_quartic_root_exactly_on_the_cap_is_unresolved(p, roots):
+    # A zero of rounded arithmetic at the cap certifies nothing, and the fast path's
+    # bracket must lie inside the window — a root exactly on the boundary has no
+    # in-window certificate: both twins raise.
+    c = quartic_of(roots, p)
+    with pytest.raises(UnresolvedRootError):
+        _quartic_first(c, 1.0)
+    with pytest.raises(UnresolvedRootError):
+        _formula.trace_dbg_quartic_first(list(c), 1.0)
+
+
+def test_quartic_outside_root_rounded_onto_the_cap_is_never_a_hit():
+    # t (t^3 - t - e) is strictly negative in (0, 1]: the nearby root sits just past
+    # the cap, Newton rounds it onto 1, and the certifying bracket used to poke past
+    # the window and accept it. Decided at 2p the window comes back clean; an e below
+    # even that band is a refusal.
+    for p, e, outcome in ((16, "1e-50", "raise"), (32, "1e-70", "raise"), (64, "1e-100", None)):
+        N = NumberContext(p)
+        c = [N(1), N(0), -N(1), -N(e), N(0)]
+        for solve in (lambda: _quartic_first(c, 1.0),
+                      lambda: _formula.trace_dbg_quartic_first(list(c), 1.0)):
+            if outcome is None:
+                assert solve() is None
+            else:
+                with pytest.raises(UnresolvedRootError):
+                    solve()
+
+
+def test_quartic_rounded_zero_at_the_cap_is_not_a_root():
+    # (t+1)(t-1)^3 - 1e-100 t^2 is strictly negative in (0, 1]; Horner at the cap
+    # rounds to zero, which used to certify a false crossing at 1. The escalated
+    # error band at 2p decides the tiny coefficient and clears the window.
+    N = NumberContext(64)
+    tiny = N("1e-100")
+    c = [N(1), -N(2), -tiny, N(2), -N(1)]
+    assert _quartic_first(c, 1.0) is None
+    assert _formula.trace_dbg_quartic_first(list(c), 1.0) is None
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+def test_quartic_first_root_below_eps_t_is_outside(p):
+    # The window (_EPS_T, t_capf] is open at 1e-12 in both twins: a root strictly
+    # below it is skipped and the first crossing inside comes back.
+    N = NumberContext(p)
+    c = quartic_of(("9.9e-13", "0.002", "-0.001", "0.05"), p)
+    for t in (_quartic_first(c, 0.1), _formula.trace_dbg_quartic_first(list(c), 0.1)):
+        assert abs(t - N("0.002")) < N("1e-20")
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+def test_quartic_first_root_exactly_at_eps_t_is_unresolved(p):
+    # A root exactly on the open end is indistinguishable in rounded arithmetic from
+    # one just inside: both twins refuse (2026-11-02) rather than silently skip it.
+    c = quartic_of(("1e-12", "0.002", "-0.001", "0.05"), p)
+    with pytest.raises(UnresolvedRootError):
+        _quartic_first(c, 0.1)
+    with pytest.raises(UnresolvedRootError):
+        _formula.trace_dbg_quartic_first(list(c), 0.1)
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+def test_torus_top_circle_tangent_is_unresolved(p):
+    # Along the tangent of the circle s = a, rho = R the quartic is exactly (t-1)^4 with
+    # the touch strictly inside the window: indistinguishable there from a sub-noise pair
+    # or a miss, so both twins raise (the strict contract of 2026-11-02).
+    N = NumberContext(p)
+    bundle = CapillaryBundle([{"kind": "torus", "center": (N(0), N(0)), "radius": N(1),
+                               "bend": {"radius": N(2), "toward": (N(1), N(0))}}], N(0), N(3))
+    O, d = (N(0), N(1), N(-1)), (N(0), N(0), N(1))
+    with pytest.raises(UnresolvedRootError):
+        bundle.walls[0].hit(O, d, N(3))
+    with pytest.raises(UnresolvedRootError):
+        _formula.trace_wall_hit(compile_optic(bundle), 0, raw_vec(O), raw_vec(d), N(3))
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+def test_quartic_first_ignores_a_complex_pair_before_the_root(p):
+    # (t^2 - t + 0.2501)(t - 1)(t - 2): the pair 0.5 +- 0.01i sits in Descartes' disk before t = 1.
+    N = NumberContext(p)
+    c = tuple(N(v) for v in ("1", "-4", "5.2501", "-2.7503", "0.5002"))
+    py, cc = _quartic_first(c, 3.0), _formula.trace_dbg_quartic_first(list(c), 3.0)
+    assert abs(py - 1) < N("1e-15") and abs(cc - 1) < N("1e-15")
+
+
+def test_torus_graze_pair_parity():
+    # A chord dipping 2.371e-21*a into a bent bore: both pair seeds stall, the first crossing of the pair wins.
+    p = 32
+    N = NumberContext(p)
+    a, R = N("6e-6"), N("0.5")
+    bundle = CapillaryBundle([{"kind": "torus", "center": (N(0), N(0)), "radius": a,
+                               "bend": {"radius": R, "toward": (N(1), N(0))}}], N(0), N("0.05"))
+    dz = (R - a - N("2.371e-21") * a) / R
+    O, d = (N(0), N(0), N(0)), ((N(1) - dz * dz).sqrt(), N(0), dz)
+    native = compile_optic(bundle)
+    for cap in ("0.1", "4e-3"):
+        py_hit = bundle.walls[0].hit(O, d, N(cap))
+        assert abs(float(py_hit[0]) - 2.4494823940579796e-3) < 1e-8
+        assert_hit_equal(py_hit, _formula.trace_wall_hit(native, 0, raw_vec(O), raw_vec(d), N(cap)))
 
 
 # ------------------------------------------------------------- walls
@@ -210,7 +421,7 @@ def test_wall_hit_parity(kind, p):
         t_exit = t_exit_of(bundle, origin, direction)
         py_hit = wall.hit(origin, direction, t_exit)
         c_hit = _formula.trace_wall_hit(native, 0, raw_vec(origin),
-                                        raw_vec(direction), t_exit._value)
+                                        raw_vec(direction), t_exit)
         assert_hit_equal(py_hit, c_hit)
 
 
@@ -223,7 +434,7 @@ def test_wall_hit_none_paths(p):
     t_exit = t_exit_of(bundle, axis, dz)
     assert bundle.walls[0].hit(axis, dz, t_exit) is None
     assert _formula.trace_wall_hit(native, 0, raw_vec(axis), raw_vec(dz),
-                                   t_exit._value) is None
+                                   t_exit) is None
 
 
 @pytest.mark.parametrize("kind", ["cylinder", "revolution", "polygon", "torus"])
@@ -251,7 +462,7 @@ def test_cylinder_equals_revolution(p):
     bundle = make_bundle("cylinder", p)
     native = compile_optic(bundle)
     cyl = bundle.walls[0]
-    zero = Number("0", p)
+    zero = NumberContext(p)("0")
     rev = RevolutionWall("revolution", cyl.center, (cyl._a2, zero, zero))
     hits = 0
     for origin, direction in rays(bundle, p, seed=503, count=25):
@@ -259,7 +470,7 @@ def test_cylinder_equals_revolution(p):
         h_cyl = cyl.hit(origin, direction, t_exit)
         h_rev = rev.hit(origin, direction, t_exit)
         h_cc = _formula.trace_wall_hit(native, 0, raw_vec(origin),
-                                       raw_vec(direction), t_exit._value)
+                                       raw_vec(direction), t_exit)
         assert_hit_equal(h_cyl, h_rev)
         assert_hit_equal(h_cyl, h_cc)
         hits += h_cyl is not None
@@ -280,7 +491,7 @@ def test_cylinder_degenerate_linear_branch(p):
     bundle = make_bundle("cylinder", p)
     native = compile_optic(bundle)
     cyl = bundle.walls[0]
-    zero = Number("0", p)
+    zero = NumberContext(p)("0")
     rev = RevolutionWall("revolution", cyl.center, (cyl._a2, zero, zero))
     O = (lift(5.9999e-6, p), lift(0.0, p), lift(0.0, p))
     d = vunit((lift(1e-16, p), lift(0.0, p), lift(1.0, p)))
@@ -289,7 +500,7 @@ def test_cylinder_degenerate_linear_branch(p):
     assert h_cyl is not None      # A ~ 1e-32 < eps, B ~ 1e-21 -> linear root
     assert_hit_equal(h_cyl, rev.hit(O, d, t_exit))
     assert_hit_equal(h_cyl, _formula.trace_wall_hit(
-        native, 0, raw_vec(O), raw_vec(d), t_exit._value))
+        native, 0, raw_vec(O), raw_vec(d), t_exit))
 
 
 R2_SHAPES = [("3.6e-11", "-4e-10", "0"),      # narrowing cone
@@ -310,7 +521,7 @@ def test_revolution_shapes_hit_parity(r2, p):
         t_exit = t_exit_of(bundle, origin, direction)
         py_hit = wall.hit(origin, direction, t_exit)
         c_hit = _formula.trace_wall_hit(native, 0, raw_vec(origin),
-                                        raw_vec(direction), t_exit._value)
+                                        raw_vec(direction), t_exit)
         assert_hit_equal(py_hit, c_hit)
         hits += py_hit is not None
     assert hits
@@ -320,7 +531,7 @@ def test_revolution_shapes_hit_parity(r2, p):
 def test_axis_parallel_branches(p):
     """d = (0,0,1): cylinder → None both sides; narrowing cone → the exact
     linear branch (A == 0, B ≠ 0) with a matching hit."""
-    N = lambda s: Number(s, p)
+    N = NumberContext(p)
     d = (N("0"), N("0"), N("1"))
     cyl_bundle = make_bundle("cylinder", p)
     native_cyl = compile_optic(cyl_bundle)
@@ -328,7 +539,7 @@ def test_axis_parallel_branches(p):
     t_exit = t_exit_of(cyl_bundle, O, d)
     assert cyl_bundle.walls[0].hit(O, d, t_exit) is None
     assert _formula.trace_wall_hit(native_cyl, 0, raw_vec(O), raw_vec(d),
-                                   t_exit._value) is None
+                                   t_exit) is None
 
     cone = make_revolution_bundle(("3.6e-11", "-4e-10", "0"), p)
     native_cone = compile_optic(cone)
@@ -337,9 +548,9 @@ def test_axis_parallel_branches(p):
     py_hit = cone.walls[0].hit(O, d, t_exit)
     assert py_hit is not None            # the wall narrows onto the ray
     c_hit = _formula.trace_wall_hit(native_cone, 0, raw_vec(O), raw_vec(d),
-                                    t_exit._value)
+                                    t_exit)
     assert_hit_equal(py_hit, c_hit)
-    screen_z = Number("0.051", p)
+    screen_z = NumberContext(p)("0.051")
     tracer = make_tracer(cone)
     assert_trace_equal(trace_ray(O, d, cone, screen_z, 50),
                        tracer(O, d, cone, screen_z, 50))
@@ -362,7 +573,7 @@ def test_polygon_tangent_rays_parity(p):
         t_exit = t_exit_of(bundle, O, d)
         py_hit = wall.hit(O, d, t_exit)
         c_hit = _formula.trace_wall_hit(native, 0, raw_vec(O), raw_vec(d),
-                                        t_exit._value)
+                                        t_exit)
         assert_hit_equal(py_hit, c_hit)
         hits += py_hit is not None
     assert hits
@@ -376,7 +587,7 @@ def test_on_wall_event_chain_parity(kind, p):
     """next_event parity at every bounce: origins land exactly on the wall."""
     bundle = make_bundle(kind, p)
     native = compile_optic(bundle)
-    two = Number("2", p)
+    two = NumberContext(p)("2")
     reflects = 0
     for origin, direction in rays(bundle, p, seed=307, count=6,
                                   slope_scale=5.0):
@@ -421,7 +632,7 @@ def test_bundle_next_event_parity(p):
 def test_bundle_tangent_bores_reflect(p):
     """Close-packed bores (pitch = 2r): a reflection at the tangency line is on
     two walls at once; the ray must reflect off the far wall, not pass through."""
-    N = lambda s: Number(s, p)
+    N = NumberContext(p)
     bores = [{"kind": "cylinder", "center": (N("0"), N("0")), "radius": N("1e-5")},
              {"kind": "cylinder", "center": (N("-2e-5"), N("0")), "radius": N("1e-5")}]
     bundle = CapillaryBundle(bores, N("0"), N("0.5"))
@@ -436,11 +647,99 @@ def test_bundle_tangent_bores_reflect(p):
     assert_trace_equal(py_tr, c_tr)
 
 
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+def test_to_double_is_float(p):
+    """The native mp -> double conversion is float(), also next to midpoints of doubles."""
+    N = NumberContext(p)
+    rng = random.Random(41)
+    values = [N(v) for v in ("0", "1e-310", "-4.9e-324", "1.7e308", "1e400")]
+    with localcontext() as ctx:
+        ctx.prec = 80
+        for _ in range(300):
+            f = rng.uniform(-1.0, 1.0) * 10.0 ** rng.randint(-25, 5)
+            mid = (Decimal(f) + Decimal(math.nextafter(f, math.inf))) / 2
+            values += [N(repr(f)), N(str(mid)), N(str(mid * Decimal("1.000000000000000000000000000001"))),
+                       N(str(mid * Decimal("0.999999999999999999999999999999")))]
+    for x in values:
+        assert _formula.trace_dbg_to_double(x) == float(x), str(x)
+
+
+LOCALE_SCRIPT = r'''
+import locale
+from formula import NumberContext, _formula
+from formula.capsysred.native import make_tracer
+from formula.capsysred.shared.nums import vunit
+from formula.capsysred.surfaces import CapillaryBundle
+N = NumberContext(64)
+bundle = CapillaryBundle([{"kind": "cylinder", "center": (N(0), N(0)), "radius": N("6e-6")}], N(0), N(".05"))
+tracer = make_tracer(bundle)
+O, d = (N(0), N(0), N(0)), vunit((N(".0003"), N(0), N(1)))
+def state():
+    tr = tracer(O, d, bundle, N(".051"), 20)
+    xs = [N(v) for v in ("1.25", "-6.5e-6", "0.05")]
+    return [_formula.trace_dbg_to_double(x) == float(x) for x in xs], tr.fate, len(tr.reflections), str(tr.point[0])
+base = state()
+for name in ("de_DE.UTF-8", "de_DE", "German_Germany.1252", "fr_FR.UTF-8", "ru_RU.UTF-8"):
+    try:
+        locale.setlocale(locale.LC_NUMERIC, name)
+    except locale.Error:
+        continue
+    if locale.localeconv()["decimal_point"] == ",":
+        print("same" if state() == base else f"differs {state()} {base}")
+        break
+else:
+    print("no comma locale")
+'''
+
+
+def test_native_to_double_ignores_numeric_locale():
+    """A decimal-comma LC_NUMERIC changes neither the native mp -> double conversion nor a
+    traced ray (a child process: the locale belongs to the whole process)."""
+    out = subprocess.run([sys.executable, "-c", LOCALE_SCRIPT], capture_output=True, text=True,
+                         timeout=300)
+    assert out.returncode == 0, out.stderr
+    if "no comma locale" in out.stdout:
+        pytest.skip("no decimal-comma locale is installed")
+    assert out.stdout.strip() == "same", out.stdout
+
+
+def boundary_x(bound):
+    """Decimal by the midpoint of the doubles lo < hi with lo*lo < bound <= hi*hi, on the side
+    its 19-digit rounding leaves: its long text and its 19-digit text round to lo and hi."""
+    lo = math.sqrt(bound)
+    while lo * lo >= bound:
+        lo = math.nextafter(lo, 0.0)
+    while math.nextafter(lo, 1.0) * math.nextafter(lo, 1.0) < bound:
+        lo = math.nextafter(lo, 1.0)
+    with localcontext() as ctx:
+        ctx.prec = 80
+        mid = (Decimal(lo) + Decimal(math.nextafter(lo, 1.0))) / 2
+        return mid + (Decimal("1e-35") if Decimal(f"{mid:.18e}") < mid else Decimal("-1e-35"))
+
+
+@pytest.mark.parametrize("p", (30, 64))
+def test_bore_membership_boundary_parity(p):
+    """An axial ray by the inside() boundary of a bore: Boost's convert_to, which parses
+    str(18, scientific), and float() put x on opposite sides; the twins take one branch."""
+    N = NumberContext(p)
+    bundle = CapillaryBundle([{"kind": "cylinder", "center": (N(0), N(0)), "radius": N("6e-6")}],
+                             N(0), N("0.05"))
+    wall = bundle.walls[0]
+    x = N(str(boundary_x(wall._a2f * (1.0 + _INSIDE_TOL))))
+    near = float(x.str(18, _formula.FmtFlags.scientific))
+    assert wall.inside(float(x), 0.0, 0.01) != wall.inside(near, 0.0, 0.01)
+    O, d = (x, N(0), N("0.01")), (N(0), N(0), N(1))
+    assert_event_equal(bundle.next_event(O, d),
+                       _formula.trace_next_event(compile_optic(bundle), raw_vec(O), raw_vec(d)))
+    assert_trace_equal(trace_ray(O, d, bundle, N("0.051"), 50),
+                       make_tracer(bundle)(O, d, bundle, N("0.051"), 50))
+
+
 @pytest.mark.parametrize("p", PRECISIONS)
 def test_mirror_branches_parity(p):
     """One deterministic ray per Mirror branch: reflect, absorb (leading
     edge), exit beyond z1, exit moving away."""
-    N = lambda s: Number(s, p)
+    N = NumberContext(p)
     mirror = Mirror(N("0"), N("0.06"))
     native = compile_optic(mirror)
     O = (N("1e-5"), N("0"), N("-0.05"))
@@ -457,7 +756,7 @@ def test_mirror_branches_parity(p):
 
 @pytest.mark.parametrize("p", PRECISIONS)
 def test_mirror_events_and_traces_parity(p):
-    N = lambda s: Number(s, p)
+    N = NumberContext(p)
     mirror = Mirror(N("0"), N("0.06"))
     native = compile_optic(mirror)
     assert native is not None and native.kind == "mirror"
@@ -487,7 +786,7 @@ def test_trace_ray_parity(kind, p):
     bundle = make_bundle(kind, p)
     tracer = make_tracer(bundle)
     assert tracer is not trace_ray          # the native path really engaged
-    screen_z = Number("0.051", p)
+    screen_z = NumberContext(p)("0.051")
     count = 8 if kind in ("torus", "mixed") else 20
     fates = set()
     for origin, direction in rays(bundle, p, seed=211, count=count,
@@ -506,7 +805,7 @@ def test_absorb_paths_parity(p):
     bundle = make_bundle("mixed", p)
     native = compile_optic(bundle)
     tracer = make_tracer(bundle)
-    screen_z = Number("0.051", p)
+    screen_z = NumberContext(p)("0.051")
     web = (lift(1e-5, p), lift(0.0, p), lift(0.01, p))
     up = vunit((lift(0.0, p), lift(0.0, p), lift(1.0, p)))
     down = vunit((lift(1e-4, p), lift(0.0, p), lift(-1.0, p)))
@@ -526,7 +825,7 @@ def test_exit_at_z1_parity(p):
     """Origin exactly at z1: immediate exit, then the free leg to the screen."""
     bundle = make_bundle("cylinder", p)
     tracer = make_tracer(bundle)
-    screen_z = Number("0.051", p)
+    screen_z = NumberContext(p)("0.051")
     O = (lift(0.0, p), lift(0.0, p), lift(0.05, p))
     d = vunit((lift(1e-4, p), lift(0.0, p), lift(1.0, p)))
     py_tr = trace_ray(O, d, bundle, screen_z, 50)
@@ -538,7 +837,7 @@ def test_exit_at_z1_parity(p):
 def test_max_bounces_lost_parity(p):
     bundle = make_bundle("cylinder", p)
     tracer = make_tracer(bundle)
-    screen_z = Number("0.051", p)
+    screen_z = NumberContext(p)("0.051")
     fates = set()
     for origin, direction in rays(bundle, p, seed=907, count=6,
                                   slope_scale=6.0):
@@ -552,7 +851,7 @@ def test_max_bounces_lost_parity(p):
 def test_trace_free_space_parity():
     p = 30
     tracer = make_tracer(None)
-    screen_z = Number("0.06", p)
+    screen_z = NumberContext(p)("0.06")
     rng = random.Random(31)
     for _ in range(20):
         origin = (lift(rng.uniform(-1e-6, 1e-6), p),
@@ -568,7 +867,7 @@ def test_trace_free_space_parity():
 def test_free_space_edges_parity():
     p = 30
     tracer = make_tracer(None)
-    N = lambda s: Number(s, p)
+    N = NumberContext(p)
     O = (N("1e-6"), N("-2e-6"), N("0"))
     cases = [
         (vunit((N("0"), N("0"), N("-1"))), N("0.05")),      # backward: lost
@@ -590,12 +889,26 @@ def test_python_trace_env_escape(monkeypatch):
     assert make_tracer(None) is not trace_ray
 
 
+@pytest.mark.parametrize("slot", range(7))
+@pytest.mark.parametrize("bad", ["nan", "inf", "-inf"])
+def test_non_finite_ray_input_is_refused(slot, bad):
+    # Every component of origin, direction and screen z, in both tracers, with and without an optic.
+    N = NumberContext(64)
+    values = [N(0), N(0), N(0), N(0), N(0), N(1), N(1)]
+    values[slot] = {"nan": N(0) / N(0), "inf": N(1) / N(0), "-inf": N(-1) / N(0)}[bad]
+    O, d, z = tuple(values[:3]), tuple(values[3:6]), values[6]
+    for optic in (None, make_bundle("cylinder", 64)):
+        for tracer in (trace_ray, make_tracer(optic)):
+            with pytest.raises(ValueError, match="non-finite ray input"):
+                tracer(O, d, optic, z, 20)
+
+
 def test_tracer_optic_mismatch_falls_back():
     p = 16
     b1 = make_bundle("cylinder", p)
     b2 = make_bundle("polygon", p)
     tracer = make_tracer(b1)
-    screen_z = Number("0.051", p)
+    screen_z = NumberContext(p)("0.051")
     (origin, direction), = list(rays(b2, p, seed=5, count=1))
     ref = trace_ray(origin, direction, b2, screen_z, 50)
     assert_trace_equal(ref, tracer(origin, direction, b2, screen_z, 50),
@@ -607,7 +920,7 @@ def test_float_screen_z_accepted():
     tracer = make_tracer(None)
     O = (lift(0.0, p), lift(0.0, p), lift(-0.08, p))
     d = vunit((lift(1e-4, p), lift(0.0, p), lift(1.0, p)))
-    assert_trace_equal(trace_ray(O, d, None, Number(0.06, p), 10),
+    assert_trace_equal(trace_ray(O, d, None, NumberContext(p)(0.06), 10),
                        tracer(O, d, None, 0.06, 10))
 
 
@@ -617,14 +930,14 @@ def test_precision_mismatch_raises():
     O30 = (lift(0.0, 30), lift(0.0, 30), lift(0.0, 30))
     d30 = vunit((lift(1e-4, 30), lift(0.0, 30), lift(1.0, 30)))
     with pytest.raises(ValueError):
-        trace_ray_native(native16, O30, d30, Number("0.051", 30), 10)
+        trace_ray_native(native16, O30, d30, NumberContext(30)("0.051"), 10)
 
 
 def test_native_deterministic():
     p = 30
     bundle = make_bundle("torus", p)
     tracer = make_tracer(bundle)
-    screen_z = Number("0.051", p)
+    screen_z = NumberContext(p)("0.051")
     (origin, direction), = list(rays(bundle, p, seed=71, count=1))
     a = tracer(origin, direction, bundle, screen_z, 50)
     b = tracer(origin, direction, bundle, screen_z, 50)
@@ -686,10 +999,10 @@ def test_simulation_native_equals_python(tmp_path, monkeypatch):
     keys = ("stage", "mode", "ray", "fate", "pixel")
     for rn, rp in zip(n_rows, p_rows):
         assert {k: rn[k] for k in keys} == {k: rp[k] for k in keys}
-        assert_close(Number(rp["opl"], p), Number(rn["opl"], p), TRACE_TOL)
+        assert_close(NumberContext(p)(rp["opl"]), NumberContext(p)(rn["opl"]), TRACE_TOL)
         assert len(rn["sins"]) == len(rp["sins"])
         for sn, sp in zip(rn["sins"], rp["sins"]):
-            assert_close(Number(sp, p), Number(sn, p), TRACE_TOL)
+            assert_close(NumberContext(p)(sp), NumberContext(p)(sn), TRACE_TOL)
     for stage in ("free", "beamlet:capillary"):
         rn, rp = sim_native.results[stage], sim_python.results[stage]
         assert rn["stats"] == rp["stats"]
@@ -698,10 +1011,30 @@ def test_simulation_native_equals_python(tmp_path, monkeypatch):
                 assert row_n == pytest.approx(row_p, rel=1e-9, abs=1e-12)
 
 
+def test_archive_sections_record_their_tracer(tmp_path, monkeypatch):
+    """A native recording topped up by the Python tracer keeps the provenance of both parts."""
+    import copy
+    import yaml
+    from formula.capsysred import rays_v3
+    from formula.capsysred.trace_v3 import trace as trace_v3
+    archive, cfg = str(tmp_path / "rays-modes"), tmp_path / "cfg.yaml"
+    cfg.write_text(yaml.safe_dump(TINY, sort_keys=False), encoding="utf-8")
+    trace_v3(str(cfg), archive, jobs=1, level=6, log=lambda m: None, scenes=["capillary"])
+    more = copy.deepcopy(TINY)
+    more["capillary"]["source"]["n_rays"] = 36
+    cfg.write_text(yaml.safe_dump(more, sort_keys=False), encoding="utf-8")
+    monkeypatch.setenv("CAPSYSRED_PYTHON_TRACE", "1")
+    trace_v3(str(cfg), archive, jobs=1, level=6, log=lambda m: None, scenes=["capillary"])
+    index = rays_v3.load_index(archive)
+    tracers = {(e.mode, e.r0): rays_v3.section_header(archive, e)["provenance"]["tracer"]
+               for e in index.entries}
+    assert tracers == {(m, r0): "native" if r0 == 0 else "python" for m in (0, 1) for r0 in (0, 24)}
+
+
 @pytest.mark.parametrize("p", PRECISIONS)
 def test_rectangle_apothems_hit_parity(p):
     """Per-face apothems: Python and native hits agree on every face of a 250 x 358.8 nm channel."""
-    N = lambda s: Number(s, p)
+    N = NumberContext(p)
     bore = {"kind": "polygon", "center": (N("0"), N("0")), "radius": N("1.25e-7"), "sides": 4,
             "rotation": N("0"), "apothems": (N("1.25e-7"), N("1.794e-7"), N("1.25e-7"), N("1.794e-7"))}
     bundle = CapillaryBundle([bore], N("0"), N("0.005"))
@@ -713,6 +1046,28 @@ def test_rectangle_apothems_hit_parity(p):
         O = (lift(2e-8, p), lift(-3e-8, p), lift(0.0, p))
         t_exit = t_exit_of(bundle, O, d)
         py_hit = wall.hit(O, d, t_exit)
-        c_hit = _formula.trace_wall_hit(native, 0, raw_vec(O), raw_vec(d), t_exit._value)
+        c_hit = _formula.trace_wall_hit(native, 0, raw_vec(O), raw_vec(d), t_exit)
         assert py_hit is not None
         assert_hit_equal(py_hit, c_hit)
+
+
+@pytest.mark.parametrize("p", PRECISIONS + (64,))
+@pytest.mark.parametrize("end, shift, kind", [
+    ("0.06", "0", None), ("0.06", "1e-20", "exit"), ("0.06", "-1e-20", "reflect"),
+    ("0.01", "0", None), ("0.01", "-1e-20", "absorb"), ("0.01", "1e-20", "reflect"),
+])
+def test_mirror_span_ends_parity(p, end, shift, kind):
+    """Hits on either end of the span and 1e-20 beside it, below double resolution:
+    both twins decide on the hit's mp z against the mp span."""
+    N = NumberContext(p)
+    mirror = Mirror(N("0.01"), N("0.06"))
+    d = (N("-0.6"), N(0), N("0.8"))
+    t = -N("0.03") / d[0]
+    O = (N("0.03"), N(0), N(end) - t * d[2] + N(shift))
+    z = O[2] + t * d[2]
+    expected = kind or ("exit" if z > mirror.z1 else "absorb" if z < mirror.z0 else "reflect")
+    ev_py = mirror.next_event(O, d)
+    assert ev_py[0] == expected
+    assert_event_equal(ev_py, _formula.trace_next_event(compile_optic(mirror), raw_vec(O), raw_vec(d)))
+    py_tr = trace_ray(O, d, mirror, N("0.08"), 10)
+    assert_trace_equal(py_tr, make_tracer(mirror)(O, d, mirror, N("0.08"), 10))

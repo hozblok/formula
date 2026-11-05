@@ -1,0 +1,321 @@
+"""End-to-end checks for the Stage-14 stream/cache/publication path."""
+
+from __future__ import annotations
+
+import gzip
+import hashlib
+import json
+import math
+from pathlib import Path
+
+import pytest
+
+from formula.capsysred import Simulation, rays_v3
+from formula.capsysred.screen import ScreenGrid
+from formula.capsysred.stages.stage14.flags import FlagThresholds, validate_pixel_row
+
+
+def _config(n_modes=10, seed=101, *, thresholds=None):
+    raw = {
+        "seed": seed,
+        "screen": {
+            "nx": 3, "ny": 1,
+            "edge_x": 3.0e-6, "edge_y": 1.0e-6,
+        },
+        "capillary": {
+            "source": {
+                "shape": "point", "size": 3.0e-7,
+                "position": [0.0, 0.0, -0.01],
+                "n_modes": n_modes, "n_rays": 20,
+            },
+            "screen": {
+                "nx": 3, "ny": 1,
+                "edge_x": 3.0e-6, "edge_y": 1.0e-6,
+            },
+        },
+    }
+    if thresholds is not None:
+        raw["stage14"] = {"flag_thresholds": thresholds}
+    return raw
+
+
+def _write_controlled_rays(write_v3_archive, path, raw, signs):
+    """Two occupied pixels with a known cross-mode phase cancellation."""
+    sim = Simulation.from_dict(raw)
+    cfg = sim.cfg
+    grid = ScreenGrid(cfg.capillary.screen)
+    ref = grid.ref_pixel(cfg.capillary.screen.reference)
+    target = ref - 1
+    x_ref, y_ref = grid.pixel_xy(ref)
+    x_target, y_target = grid.pixel_xy(target)
+    phase_flip = math.pi / float(sim.lines[0].k)
+    n_modes, n_rays = cfg.capillary.source.budget()
+    assert n_modes == len(signs) and n_rays == 20
+    modes = {}
+    for mode, sign in enumerate(signs):
+        rows = []
+        for ray in range(n_rays):
+            at_ref = ray < n_rays // 2
+            x, y = (x_ref, y_ref) if at_ref else (x_target, y_target)
+            opl = 0.0 if at_ref or sign > 0 else phase_flip
+            rows.append({
+                "stage": "capillary", "mode": mode, "ray": ray,
+                "fate": "screen",
+                # Deliberately wrong: Stage 14 and replay must re-bin x/y.
+                "pixel": ref + 1,
+                "opl": repr(opl), "sins": [],
+                "x": x, "y": y, "dx": 0.0, "dy": 0.0,
+            })
+        modes[mode] = rows
+    write_v3_archive(path, raw, {"capillary": modes})
+    return target, ref
+
+
+def _rewrite_gzip_lines(path, transform):
+    with gzip.open(path, "rt", encoding="utf-8", newline="") as fh:
+        lines = list(fh)
+    lines = transform(lines)
+    with gzip.open(path, "wt", encoding="utf-8", newline="\n") as fh:
+        fh.writelines(lines)
+
+
+def test_stage14_cache_hit_schema(tmp_path, monkeypatch, write_v3_archive):
+    raw = _config()
+    rays_dir = tmp_path / "recording"
+    rays_dir.mkdir()
+    rays = rays_dir / "rays-modes"
+    target, ref = _write_controlled_rays(
+        write_v3_archive, rays, raw, [1, 1, 1, 1, 1, 1, -1, -1, -1, -1])
+
+    modern = Simulation.from_dict(raw)
+    result = modern.replay(str(rays), str(tmp_path / "stage14"), stages=[14])
+    new = modern.results["stage14:capillary"]
+
+    assert new["cache_hits"] == 0
+    assert new["n_modes"] == 10
+    assert new["ref_pixel"] == ref
+    assert new["ref_status"] == "ok"
+    assert len(new["rows"]) == 3
+    assert new["rows"][target]["flag"] == "trusted"
+    assert new["rows"][target]["n_mu_loo_valid"] == 10
+    assert new["rows"][ref]["flag"] is None
+    assert new["rows"][ref]["mu_raw"] is None
+    assert new["rows"][ref + 1]["flag"] == "no-rays"
+    thresholds = FlagThresholds(**modern.cfg.stage14_flag_thresholds)
+    for row in new["rows"]:
+        validate_pixel_row(row, thresholds)
+
+    expected = {
+        "meta.json", "mu-jack.jsonl", "14-capillary-jack-mu.svg",
+        "14-capillary-jack-mu-map.svg", "14-capillary-jack-mu-err.svg",
+        "14-capillary-jack-mu-flags.svg",
+        "14a-capillary-jack-slice.svg", "14b-capillary-jack-intensity.svg",
+        "14b-capillary-jack-intensity-log.svg", "14b-capillary-jack-density.svg",
+        "14b-capillary-jack-intensity-slice.svg",
+        "14b-capillary-jack-intensity-log-slice.svg",
+        "14c-capillary-jack-overlay.svg", "14d-capillary-ray-scatter.svg",
+        "14e-capillary-ref-passport.svg",
+        "14f-capillary-jack-ic.svg", "14f-capillary-jack-ic-log.svg",
+        "14f-capillary-jack-ic-err.svg", "14f-capillary-jack-ic-err-log.svg",
+        "14f-capillary-jack-ic-slice.svg", "14f-capillary-jack-ic-log-slice.svg",
+    }
+    assert {path.name for path in (tmp_path / "stage14" / "stage14").iterdir()} == expected
+    rows = [json.loads(line) for line in
+            (tmp_path / "stage14" / "stage14" / "mu-jack.jsonl")
+            .read_text(encoding="utf-8").splitlines()]
+    assert rows == new["rows"]
+    assert not ({"mu", "mu_err", "solid", "dubious", "stage"} & rows[0].keys())
+
+    # Threshold-only reclassification uses the same expensive cache.  Prove
+    # the hot path does not even open a gzip section.
+    changed = _config(thresholds={"ic_n_sigma": 2.5, "ref_ic_n_sigma": 3.0,
+                                  "w_n_sigma": 3.0, "min_coherent_fraction": 0.08})
+
+    def no_gzip(*_args, **_kwargs):
+        raise AssertionError("cache hit opened the rays archive")
+
+    monkeypatch.setattr(rays_v3.gzip, "GzipFile", no_gzip)
+    hit = Simulation.from_dict(changed)
+    hit.replay(str(rays), str(tmp_path / "stage14-hit"), stages=[14])
+    hit_result = hit.results["stage14:capillary"]
+    assert hit_result["cache_hits"] == 1
+    assert hit_result["result_meta"]["performance"]["ray_archive_bytes_read"] == 0
+    with pytest.raises(ValueError, match="result already exists"):
+        hit.replay(str(rays), str(tmp_path / "stage14-hit"), stages=[14])
+    assert result["out_dir"] == str(tmp_path / "stage14")
+
+
+def test_stage14_cache_root_override(tmp_path, monkeypatch, write_v3_archive):
+    raw = _config()
+    rays_dir = tmp_path / "recording"
+    rays_dir.mkdir()
+    rays = rays_dir / "rays-modes"
+    _write_controlled_rays(
+        write_v3_archive, rays, raw, [1, 1, 1, 1, 1, 1, -1, -1, -1, -1])
+    root = tmp_path / "elsewhere" / "cache"
+    monkeypatch.setenv("CAPSYSRED_STAGE14_CACHE", str(root))
+
+    Simulation.from_dict(raw).replay(str(rays), str(tmp_path / "a"), stages=[14])
+    assert not (rays_dir / "stage14-cache").exists()
+    assert [p.name for p in root.iterdir()] and all(
+        (p / "meta.json").is_file() for p in root.iterdir())
+    hit = Simulation.from_dict(raw)
+    hit.replay(str(rays), str(tmp_path / "b"), stages=[14])
+    assert hit.results["stage14:capillary"]["cache_hits"] == 1
+
+
+def test_stage14_union_matches_monolithic_cache(tmp_path, write_v3_archive):
+    union_raw = _config(n_modes=10, seed=999)
+    signs_a = [1, 1, 1, -1, -1]
+    signs_b = [1, 1, 1, -1, -1]
+    part_paths = []
+    for index, (seed, signs) in enumerate(((11, signs_a), (22, signs_b))):
+        directory = tmp_path / f"part-{index}"
+        directory.mkdir()
+        path = directory / "rays-modes"
+        _write_controlled_rays(
+            write_v3_archive, path, _config(n_modes=5, seed=seed), signs)
+        part_paths.append(str(path))
+    mono_dir = tmp_path / "mono-recording"
+    mono_dir.mkdir()
+    mono_path = mono_dir / "rays-modes"
+    _write_controlled_rays(write_v3_archive, mono_path,
+                           _config(n_modes=10, seed=33), signs_a + signs_b)
+
+    union = Simulation.from_dict(union_raw)
+    union.replay(part_paths, str(tmp_path / "union-out"), stages=[14])
+    mono = Simulation.from_dict(union_raw)
+    mono.replay(str(mono_path), str(tmp_path / "mono-out"), stages=[14])
+    a, b = union.results["stage14:capillary"], mono.results["stage14:capillary"]
+    assert [row["flag"] for row in a["rows"]] == [row["flag"] for row in b["rows"]]
+    for key in ("I", "ic", "ic_err", "w_abs", "w_err", "mu_raw", "mu_raw_err"):
+        av = [row[key] for row in a["rows"]]
+        bv = [row[key] for row in b["rows"]]
+        for left, right in zip(av, bv):
+            if left is None or right is None:
+                assert left is right
+            else:
+                assert left == pytest.approx(right, rel=2e-12, abs=2e-12)
+    parts = a["result_meta"]["parts"]
+    assert [(part["global_mode_start"], part["global_mode_end"])
+            for part in parts] == [(0, 5), (5, 10)]
+
+    # Caller order remains explicit provenance, but compensated part totals
+    # keep the scientific result invariant under a union permutation.
+    reversed_sim = Simulation.from_dict(union_raw)
+    reversed_sim.replay(list(reversed(part_paths)),
+                        str(tmp_path / "reversed-out"), stages=[14])
+    reversed_rows = reversed_sim.results["stage14:capillary"]["rows"]
+    assert [row["flag"] for row in reversed_rows] == [
+        row["flag"] for row in a["rows"]
+    ]
+    for key in ("I", "ic", "ic_err", "w_abs", "w_err", "mu_raw",
+                "mu_raw_err"):
+        for left, right in zip(
+                (row[key] for row in reversed_rows),
+                (row[key] for row in a["rows"])):
+            if left is None or right is None:
+                assert left is right
+            else:
+                assert left == pytest.approx(right, rel=2e-12, abs=2e-12)
+
+
+def test_stage14_local_reuse_is_strict_but_explicit_replay_is_deliberate(
+        tmp_path, write_v3_archive):
+    recorded_raw = _config(seed=17)
+    run_raw = _config(seed=18)
+    local = tmp_path / "local"
+    local.mkdir()
+    rays = local / "rays-modes"
+    _write_controlled_rays(write_v3_archive, rays, recorded_raw,
+                           [1, 1, 1, 1, 1, 1, -1, -1, -1, -1])
+    with pytest.raises(ValueError, match="does not match this config"):
+        Simulation.from_dict(run_raw).run(str(local), stages=[14])
+    assert not (local / "stage14").exists()
+
+    explicit = Simulation.from_dict(run_raw)
+    explicit.replay(str(rays), str(tmp_path / "explicit"), stages=[14])
+    assert explicit.results["stage14:capillary"]["n_modes"] == 10
+
+
+def test_stage14_needs_a_recording_and_reads_v3(tmp_path, write_v3_archive):
+    import yaml
+    from formula.capsysred.trace_v3 import trace as trace_v3
+    raw = _config(n_modes=2, seed=71)
+    with pytest.raises(ValueError, match="no rays recording"):
+        Simulation.from_dict(raw).run(str(tmp_path / "empty"), stages=[14])
+    assert not (tmp_path / "empty" / "stage14").exists()
+    controlled = tmp_path / "controlled"
+    _write_controlled_rays(
+        write_v3_archive, controlled / "rays-modes", raw, [1, -1])
+    sim = Simulation.from_dict(raw)
+    result = sim.run(str(controlled), stages=[14])
+    assert "stage14:capillary" in sim.results
+    assert any(name.endswith("14d-capillary-ray-scatter.svg")
+               for name in result["files"])
+    v3 = tmp_path / "v3"
+    cfg = v3 / "cfg.yaml"
+    v3.mkdir()
+    with open(cfg, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(raw, fh, sort_keys=False)
+    trace_v3(str(cfg), str(v3 / "rays-modes"), jobs=1, level=6, log=lambda m: None)
+    other = Simulation.from_dict(raw)
+    other.run(str(v3), stages=[14])
+    assert other.results["stage14:capillary"]["n_modes"] == 2
+
+
+@pytest.mark.parametrize("damage, match", [
+    ("missing-target-field", "optical path length"),
+    ("bad-trailer", "section trailer contradicts the index"),
+    ("bad-foreign-row", "optical path length"),
+    ("bad-header", "section header contradicts the index"),
+    ("truncated", "section is truncated or corrupt"),
+])
+def test_stage14_strict_stream_rejects_corruption(
+        tmp_path, write_v3_archive, damage, match):
+    raw = _config(n_modes=2, seed=81)
+    recording = tmp_path / damage
+    recording.mkdir()
+    rays = recording / "rays-modes"
+    _write_controlled_rays(write_v3_archive, rays, raw, [1, -1])
+    index = rays_v3.load_index(rays)
+    entry = index.sections("capillary", 0)[0]
+    section = Path(rays_v3.section_path(rays, entry))
+
+    def corrupt(lines):
+        if damage == "missing-target-field":
+            row = json.loads(lines[1])
+            del row["opl"]
+            lines[1] = json.dumps(row) + "\n"
+        elif damage == "bad-trailer":
+            row = json.loads(lines[-1])
+            row["rows"] -= 1
+            lines[-1] = json.dumps(row) + "\n"
+        elif damage == "bad-header":
+            row = json.loads(lines[0])
+            row["mode"] += 1
+            lines[0] = json.dumps(row) + "\n"
+        else:
+            foreign = {
+                "stage": "free", "mode": 0, "ray": 0,
+                "fate": "lost", "pixel": None, "sins": [],
+            }
+            lines.insert(1, json.dumps(foreign) + "\n")
+        return lines
+
+    if damage == "truncated":
+        section.write_bytes(section.read_bytes()[:-8])
+    else:
+        _rewrite_gzip_lines(section, corrupt)
+    # The index matches the damaged bytes; structural validation remains active.
+    blob = section.read_bytes()
+    damaged = entry._replace(bytes=len(blob), sha256=hashlib.sha256(blob).hexdigest())
+    rays_v3.write_index(rays, [damaged, *index.entries[1:]])
+    with pytest.raises(ValueError, match=match):
+        Simulation.from_dict(raw).replay(
+            str(rays), str(tmp_path / f"out-{damage}"), stages=[14]
+        )
+    cache_root = recording / "stage14-cache"
+    assert list(cache_root.glob("*.partial"))
+    assert not [path for path in cache_root.iterdir()
+                if not path.name.endswith(".partial")]

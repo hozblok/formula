@@ -1,0 +1,122 @@
+"""Fixed polygon faces for scalar geometry and composed ray jets."""
+
+from decimal import Decimal
+import math
+
+import pytest
+
+from formula import Formula, NumberContext
+from formula.backend import MP_TYPES
+from formula.capsysred.shared.nums import text
+from formula.capsysred.shared.types import _WALL_SURFACE_TOL_M
+from formula.capsysred.stages._ray_jets import _Algebra
+from formula.capsysred.walls.wall_polygon import PolygonFace, PolygonWall
+
+
+def _square():
+    return PolygonWall((NumberContext(96)("0"), NumberContext(96)("0")), NumberContext(96)("1"),
+                       4, NumberContext(96)("0"))
+
+
+@pytest.mark.parametrize("number_inputs", [False, True])
+def test_rotated_unequal_faces_keep_the_selected_plane(number_inputs):
+    center = (NumberContext(96)("1.25"), NumberContext(96)("-0.5"))
+    apothems = tuple(NumberContext(96)(v) for v in ("0.8", "1.1", "1.4", "1.7"))
+    wall = PolygonWall(center, apothems, 4, NumberContext(96).eval("atan(4/3)"))
+    for index, ((nx, ny), apothem) in enumerate(zip(wall.faces, apothems, strict=True)):
+        point = (center[0] + apothem * nx - NumberContext(96)("0.1") * ny,
+                 center[1] + apothem * ny + NumberContext(96)("0.1") * nx, NumberContext(96)("7"))
+        if not number_inputs:
+            point = tuple(map(float, point))
+        face = wall.surface_at(point)
+        assert face.index == index
+        assert face.precision == center[0].precision
+        face.validate(point)
+        assert abs(float(face.value(point))) < 1e-14
+        angle = math.atan2(4, 3) + index * math.pi / 2
+        assert tuple(map(float, face.gradient(point))) == pytest.approx(
+            (math.cos(angle), math.sin(angle), 0))
+
+
+@pytest.mark.parametrize("index, error", [(-1, IndexError), (4, IndexError),
+                                         (0.5, TypeError), ("0", TypeError), (True, TypeError)])
+def test_face_index_is_explicit_and_validated(index, error):
+    wall = _square()
+    with pytest.raises(error):
+        wall.face(index)
+    with pytest.raises(error):
+        PolygonFace(wall, index)
+
+
+@pytest.mark.parametrize("point", [(1, 1, 0), (1, -1, 2),
+                                    (1, 1 - _WALL_SURFACE_TOL_M / 2, 0),
+                                    (1, 1 + _WALL_SURFACE_TOL_M / 2, 0),
+                                    (1, 2, 0), (0, 0, 0),
+                                    (1 + 2 * _WALL_SURFACE_TOL_M, 0, 0)])
+def test_face_selection_rejects_edges_and_points_outside_the_finite_face(point):
+    wall = _square()
+    with pytest.raises(ValueError):
+        wall.surface_at(point)
+    with pytest.raises(ValueError):
+        wall.face(0).validate(point)
+
+
+def test_explicit_face_rejects_a_hit_on_another_face():
+    wall = _square()
+    assert wall.surface_at((0, 1, 0)).index == 1
+    with pytest.raises(ValueError, match="selected polygon face"):
+        wall.face(0).validate((0, 1, 0))
+    assert wall.face(0).value((1, 2, 0)) == 0
+    assert wall.surface_at((1, 1 - 2 * _WALL_SURFACE_TOL_M, 0)).index == 0
+
+
+@pytest.mark.parametrize("jet_inputs", [False, True])
+def test_face_parameters_keep_precision_beyond_float(jet_inputs):
+    N = NumberContext(96)
+    wall = PolygonWall((N("1.000000000000000000000000000001"), N("-2")),
+                       N("1.000000000000000000000000000002"), 4, N("0"))
+    point = (N("2.000000000000000000000000000006"), N("-2"), N("0"))
+    face = wall.surface_at(point)
+    assert face.index == 0
+    if jet_inputs:
+        alg = _Algebra(4, 96)
+        point = tuple(alg.constant(value) for value in point)
+    value = face.value(point)
+    result = value.c[0] if jet_inputs else str(value)
+    assert abs(Decimal(result) - Decimal("3e-30")) < Decimal("1e-85")
+    assert all(isinstance(value, MP_TYPES) and value.precision == face.precision
+               for value in face.gradient(point))
+
+
+@pytest.mark.parametrize("order", [3, 4])
+def test_linear_face_composes_higher_derivatives_without_changing_faces(order):
+    alg = _Algebra(order, 96)
+    seeds = (0, 1, 0, 1)[:order]
+    names = tuple("uv"[axis] for axis in seeds)
+    u, v = alg.variable("0.3", seeds, 0), alg.variable("0.7", seeds, 1)
+    point = tuple(alg.evaluate(expression, u=u, v=v)
+                  for expression in ("u^3*v+u*v^2+1", "u^2*v^2-u+2", "u+v"))
+    N = NumberContext(96)
+    wall = PolygonWall((N("1.25"), N("-0.5")), N("0.8"), 4, N.eval("atan(4/3)"))
+    face = wall.face(0)
+    result = face.value(point)
+    formula = Formula("0.6*(u^3*v+u*v^2-0.25)+0.8*(u^2*v^2-u+2.5)-0.8", precision=96)
+    values = {"u": "0.3", "v": "0.7"}
+    for mask, coefficient in enumerate(result.c):
+        variables = [name for bit, name in enumerate(names) if mask & (1 << bit)]
+        expected = (formula.get_partial_derivative(variables, values)
+                    if variables else formula.get(values))
+        assert abs(Decimal(coefficient) - Decimal(expected)) < Decimal("1e-80")
+    assert abs(Decimal(result.c[-1])) > Decimal("1")
+    assert tuple(text(v, 96) for v in face.gradient(point)) == ("0.6", "0.8", "0")
+
+
+def test_surface_tolerance_is_a_backend_value_of_the_wall_precision():
+    # Residuals compare with a tolerance of their own kind, never with a float.
+    wall = _square()
+    N = NumberContext(wall.precision)
+    assert isinstance(wall._surface_tol, MP_TYPES) and wall._surface_tol.precision == N.precision
+    assert wall.surface_at((N(0), N(1), N(0))).index == 1
+    assert wall.surface_at((N(1), N(1) - 2 * wall._surface_tol, N(0))).index == 0
+    with pytest.raises(ValueError, match="too close to an edge"):
+        wall.surface_at((N(1), N(1), N(0)))

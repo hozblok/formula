@@ -7,12 +7,21 @@
 (p - c)·n_k = a_k; equal apothems give the regular polygon. Hits are plane
 intersections (exact linear)."""
 
-import math
+from __future__ import annotations
 
-from ...formula import Number
-from ..shared.nums import lift, solver, vadd, vscale
-from ..shared.types import _EPS_T, _INSIDE_TOL
+import math
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from ...formula import NumberContext
+from ..shared.coordinates import surface_coordinates
+from ..shared.nums import lift, solver, text, vadd, vscale
+from ..shared.types import _EPS_T, _INSIDE_TOL, _WALL_SURFACE_TOL_M, Scalar
 from ..shared.units import m_to_um
+
+if TYPE_CHECKING:
+    from ..shared.jets import _Jet
 
 
 def polygon_vertices(apothems, sides, rotation):
@@ -30,28 +39,118 @@ def polygon_vertices(apothems, sides, rotation):
     return out
 
 
+@dataclass(frozen=True)
+class PolygonFace:
+    """One fixed smooth face; value and gradient describe its supporting plane."""
+
+    wall: PolygonWall
+    index: int
+
+    def __post_init__(self) -> None:
+        if isinstance(self.index, bool) or not isinstance(self.index, int):
+            raise TypeError("polygon face index must be an integer")
+        if not 0 <= self.index < len(self.wall.faces):
+            raise IndexError("polygon face index out of range")
+
+    @property
+    def precision(self) -> int:
+        return self.wall.precision
+
+    def value(self, point: Sequence[int | float | Scalar | _Jet]) -> Scalar | _Jet:
+        """Signed plane residual at world coordinates in metres."""
+        x, y, _ = surface_coordinates(point, self.precision)
+        nx, ny = self.wall.faces[self.index]
+        return ((x - self.wall.center[0]) * nx + (y - self.wall.center[1]) * ny
+                - self.wall.apothems[self.index])
+
+    def gradient(self, point: Sequence[int | float | Scalar | _Jet]) -> tuple[Scalar, Scalar, Scalar]:
+        """Constant world gradient, retaining the original mp precision."""
+        surface_coordinates(point, self.precision)
+        nx, ny = self.wall.faces[self.index]
+        return nx, ny, self.wall._zero
+
+    def validate(
+        self, point: Sequence[int | float | Scalar], *,
+        origin: Sequence[int | float | Scalar] | None = None,
+        direction: Sequence[int | float | Scalar] | None = None,
+    ) -> None:
+        """Require a point on this finite face, separated from polygon edges."""
+        if self.wall.surface_at(point).index != self.index:
+            raise ValueError("hit is not on the selected polygon face")
+
+
 class PolygonWall:
+    @staticmethod
+    def gradient_hessian(nx, ny, scale=1.0):
+        """Face gradient and Hessian (xx, xy, xz, yy, yz, zz)."""
+        return (scale * nx, scale * ny, 0.0), (0.0,) * 6
+
     def __init__(self, center, apothems, sides, rotation):
         self.kind, self.center = "polygon", center
         self.apothems = tuple(apothems) if isinstance(apothems, (tuple, list)) else (apothems,) * int(sides)
         self.apothem = self.apothems[0]                   # face 0: expr_um and older consumers
         p = center[0].precision
-        self._zero = Number("0", p)
+        N = NumberContext(p)
+        self._zero = N(0)
+        # Face-selection tolerance in the residuals' own kind: a backend value, not a float.
+        self._surface_tol = N(_WALL_SURFACE_TOL_M)
         n = int(sides)
         cos_s, sin_s = solver("cos(x)", p), solver("sin(x)", p)
-        two_pi = Number("pi", p) * Number("2", p)
+        two_pi = N.pi * N(2)
         self.faces = []
         for k in range(n):
-            phi = str(rotation + two_pi * lift(k, p) / lift(n, p))
+            phi = text(rotation + two_pi * k / n, p)
             self.faces.append((cos_s.number({"x": phi}), sin_s.number({"x": phi})))
         self._facesf = [(float(mx), float(my)) for mx, my in self.faces]
         self._afs = [float(a) for a in self.apothems]
         self._cxf, self._cyf, self._af = float(center[0]), float(center[1]), self._afs[0]
         um = lift(m_to_um(1), p)
         m0x, m0y = self.faces[0]
-        self.expr_um = (f"(x-({center[0] * um}))*({m0x})"
-                        f"+(y-({center[1] * um}))*({m0y})-({self.apothem * um})")
+        t = lambda v: text(v, p)
+        self.expr_um = (f"(x-({t(center[0] * um)}))*({m0x})"
+                        f"+(y-({t(center[1] * um)}))*({m0y})-({t(self.apothem * um)})")
         self.probe_xy = self._facesf[0]
+
+    @property
+    def precision(self) -> int:
+        return self.center[0].precision
+
+    def face(self, index: int) -> PolygonFace:
+        """Fix one smooth face by its zero-based index."""
+        return PolygonFace(self, index)
+
+    def surface_at(self, point: Sequence[int | float | Scalar]) -> PolygonFace:
+        """Select one finite face at a nominal world point; reject edge ambiguity."""
+        residuals = [self.face(i).value(point) for i in range(len(self.faces))]
+        index = max(range(len(residuals)), key=residuals.__getitem__)
+        if abs(residuals[index]) >= self._surface_tol:
+            raise ValueError("hit is not on the polygon boundary")
+        if any(value >= -self._surface_tol
+               for i, value in enumerate(residuals) if i != index):
+            raise ValueError("polygon hit is too close to an edge or corner")
+        return self.face(index)
+
+    def _face_at(self, x, y):
+        """Selected face normal and signed boundary residual; ties retain the first."""
+        dx, dy = x - self._cxf, y - self._cyf
+        nx, ny = self._facesf[0]
+        best = nx * dx + ny * dy - self._afs[0]
+        for (mx, my), apothem in zip(self._facesf[1:], self._afs[1:]):
+            value = mx * dx + my * dy - apothem
+            select = value > best
+            keep = 1 - select
+            nx, ny = keep * nx + select * mx, keep * ny + select * my
+            best = keep * best + select * value
+        return nx, ny, best
+
+    def derivatives_at(self, x, y, z):
+        """Selected face's derivatives in world metres; ties retain the first face."""
+        nx, ny, _ = self._face_at(x, y)
+        return self.gradient_hessian(nx, ny)
+
+    def surface_error_at(self, x, y, z):
+        """Nonnegative maximum-face residual in metres, scalar or batched."""
+        return abs(self._face_at(x, y)[2])
 
     def inside(self, xf, yf, zf):
         dx, dy = xf - self._cxf, yf - self._cyf

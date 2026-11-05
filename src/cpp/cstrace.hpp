@@ -10,8 +10,13 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <charconv>
+#include <clocale>
 #include <cstddef>
+#include <cstdlib>
 #include <optional>
+#include <stdexcept>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -20,26 +25,38 @@
 
 namespace cstrace {
 
+// strtod of a '.'-text under any LC_NUMERIC: when the locale stops the parse
+// at the point, the point is replaced by the locale's decimal point.
+inline double c_strtod(std::string s) {
+  char *end = nullptr;
+  double v = std::strtod(s.c_str(), &end);
+  if (*end != '.') {
+    return v;
+  }
+  s.replace(static_cast<size_t>(end - s.c_str()), 1,
+            std::localeconv()->decimal_point);
+  return std::strtod(s.c_str(), nullptr);
+}
+
 // Forward-step floor for the ray parameter t (m); capsysred.types._EPS_T.
 constexpr double kEpsT = 1e-12;
 constexpr const char *kEpsTStr = "1e-12";
 
 // Bore-membership nudge along the ray (m); capsysred.types._EPS_LOC.
-constexpr double kEpsLoc = 1e-7;
+constexpr const char *kEpsLocStr = "1e-7";
 
 // On-wall inside() slack; capsysred.types._INSIDE_TOL. The probed point is a
 // reflection point lying exactly ON the wall: after mp -> double conversion
 // dx^2+dy^2 lands within a few ulp of a^2 and a strict < would randomly
 // classify it outside (ray absorbed). 1e-9 dwarfs double roundoff yet is ~fm
-// in radius for a um-scale bore, far below the kEpsLoc nudge.
+// in radius for a um-scale bore, far below the kEpsLocStr nudge.
 constexpr double kInsideTol = 1e-9;
 
 // Widening of the root-search cap past t_exit; capsysred.types._TCAP_TOL.
-// The cap is only double(t_exit), so a hit within rounding of the exit plane
-// could fall just outside the window and be lost (ray passes through the
-// wall); the caller's full-precision t_exit <= t comparison then makes the
-// actual pass/reflect call, so the slack can only recover hits.
-constexpr double kTcapTol = 1e-9;
+// A hit within rounding of the exit plane must stay in the window; the
+// caller's full-precision t_exit <= t comparison then makes the actual
+// pass/reflect call, so the slack can only recover hits.
+constexpr const char *kTcapTolStr = "1e-9";
 
 // Newton polish stop, in digits: 10^-max(24, P/2) of the root;
 // wall_torus._NEWTON_MIN_DIGITS. The final accepted step squares the error
@@ -48,11 +65,6 @@ constexpr double kTcapTol = 1e-9;
 // target would chase forever (never firing — every ray would drop to the
 // slow bisection fallback). The floor keeps the P=32 behavior.
 constexpr unsigned kNewtonMinDigits = 24;
-
-// Scale floor (m) in that stop; wall_torus._NEWTON_TFLOOR: for roots below
-// ~1 nm a purely relative test keeps tightening toward zero and may never
-// fire; under the floor the threshold goes absolute.
-constexpr double kNewtonTFloor = 1e-9;
 
 // wall_torus._dk_roots: all roots of a float polynomial (Durand-Kerner);
 // only seed material — every root is re-polished in mp or bisected exactly.
@@ -129,13 +141,20 @@ struct Tracer {
     R x, y, z;
   };
 
-  static double to_double(const R &v) {
-    return v.template convert_to<double>();
+  // float(x) of the bindings: the P-digit text, correctly rounded.
+  static double to_double(const R &v) { return c_strtod(v.str(P)); }
+
+  // nums.lift(value, p): the double's shortest round-trip decimal text, so both
+  // twins place derived constants (search nodes) on the same mp values.
+  static R from_double(double v) {
+    char buf[32];
+    auto res = std::to_chars(buf, buf + sizeof(buf), v);
+    return R(std::string(buf, res.ptr));
   }
 
-  // types._EPS_T as an interned mp constant.
+  // types._EPS_T as an interned mp constant, from its decimal text.
   static const R &eps_t() {
-    static const R v(kEpsT);
+    static const R v(kEpsTStr);
     return v;
   }
 
@@ -314,6 +333,14 @@ struct Tracer {
     return v;
   }
 
+  // Scale floor (m) in that stop; wall_torus._NEWTON_TFLOOR: for roots below
+  // ~1 nm a purely relative test keeps tightening toward zero and may never
+  // fire; under the floor the threshold goes absolute.
+  static const R &newton_tfloor() {
+    static const R v("1e-9");
+    return v;
+  }
+
   // wall_torus._newton_polish: Newton on the exact quartic from a float
   // seed. Digits double per step, so 12 iterations lift a ~13-digit double
   // seed to ~13*2^12 digits — headroom for any supported P; the rtol stop
@@ -332,68 +359,286 @@ struct Tracer {
       }
       R step = horner(c, t) / gp;
       t -= step;
-      if (abs(step) <=
-          newton_rtol() * std::max(std::fabs(to_double(t)), kNewtonTFloor)) {
+      if (abs(step) <= newton_rtol() * std::max(abs(t), newton_tfloor())) {
         return t;
       }
     }
     return std::nullopt;
   }
 
-  // wall_torus._bisect_first: first sign change of the quartic on a 48-step
-  // geometric grid over (kEpsT, t_capf], then bisection — all on the exact
-  // quartic. Rescue path for roots Newton cannot polish; an exact double
-  // root (tangent graze, no sign change) stays invisible by design. Signs
-  // are mp comparisons: near the root the residual underflows double (reads
-  // 0.0, "not negative") and would corrupt the bracket at P ~ 1024.
-  // 8 + P*log2(10) halvings shrink the bracket below 10^-P of its span.
-  static std::optional<R> bisect_first(const std::array<R, 5> &c,
-                                       double t_capf) {
-    R lo = eps_t();
-    bool lneg = horner(c, lo) < 0;
+  // wall_torus._bisect: the one sign change of the quartic in [lo, hi], lneg
+  // telling p(lo) < 0: halves at decided signs, at most 8 + P*log2(10) times
+  // (below 10^-P of the span), and stops at a midpoint of undecided sign.
+  static R bisect(const std::array<R, 5> &c, R lo, bool lneg, R hi) {
+    static const R half("0.5");
     static const int halvings = 8 + static_cast<int>(P * std::log2(10.0));
-    for (int k = 1; k < 49; ++k) {
-      R hi(kEpsT * std::pow(t_capf / kEpsT, k / 48.0));
-      bool hneg = horner(c, hi) < 0;
-      if (lneg != hneg) {
-        for (int i = 0; i < halvings; ++i) {
-          R mid = (lo + hi) / 2;
-          if (lneg != (horner(c, mid) < 0)) {
-            hi = mid;
-          } else {
-            lo = mid;
-          }
-        }
-        return (lo + hi) / 2;
+    for (int i = 0; i < halvings; ++i) {
+      R mid = (lo + hi) * half;
+      int s = decided_sign(c, mid);
+      if (!s) {
+        return mid;
       }
-      lo = hi;
-      lneg = hneg;
+      if (lneg != (s < 0)) {
+        hi = mid;
+      } else {
+        lo = mid;
+      }
+    }
+    return (lo + hi) * half;
+  }
+
+  // wall_torus._taylor_shift: coefficients of p(x + s), leading first.
+  static std::array<R, 5> taylor_shift(std::array<R, 5> d, const R &s) {
+    for (int i = 0; i < 4; ++i) {
+      for (int j = 1; j < 5 - i; ++j) {
+        d[j] = d[j] + s * d[j - 1];
+      }
+    }
+    return d;
+  }
+
+  // Smallest supported precision >= 2P, where undecided signs and Descartes
+  // counts are redone; 0 at the top.
+  static constexpr unsigned kTwice = round_up_precision(2 * P);
+
+  // wall_torus._bound: factor * u, u = 10^-(8*ceil(P/8)+8), the relative
+  // error bound of one mp product, and of one sum against its larger operand.
+  static R bound(int factor) {
+    return R(std::to_string(factor) + "e-" +
+             std::to_string(8 * ((P + 7) / 8) + 8));
+  }
+
+  // Horner's rule on |c_k| at |x|.
+  static R magnitude(const std::array<R, 5> &c, const R &x) {
+    R ax = abs(x);
+    R v = abs(c[0]);
+    for (size_t i = 1; i < 5; ++i) {
+      v *= ax;
+      v += abs(c[i]);
+    }
+    return v;
+  }
+
+  // wall_torus._sign: +1 or -1; 0 while |p(x)| <= 1024 u P(|x|).
+  static int sign(const std::array<R, 5> &c, const R &x) {
+    static const R slack = bound(1024);
+    R v = horner(c, x);
+    R e = slack * magnitude(c, x);
+    return v > e ? 1 : (v < -e ? -1 : 0);
+  }
+
+  // wall_torus._descartes: sign variations of (1+y)^4 p(a + (b-a)/(1+y)),
+  // a bound of the right parity on the open-interval roots in (a, b): 0 none,
+  // 1 exactly one. nullopt while a coefficient is within
+  // 512 u P(|a| + |b-a|/2); an exact zero sits inside that band — rounded
+  // arithmetic cannot certify it, so it is undecided, never skipped.
+  static std::optional<int> descartes(const std::array<R, 5> &c, const R &a,
+                                      const R &b) {
+    static const R slack = bound(512);
+    static const R half("0.5");
+    std::array<R, 5> d = taylor_shift(c, a);
+    R w = b - a;
+    R power = w;
+    for (int j = 3; j >= 0; --j) {
+      d[j] = d[j] * power;
+      if (j) {
+        power = power * w;
+      }
+    }
+    std::array<R, 5> h = {d[4], d[3], d[2], d[1], d[0]};
+    for (int i = 0; i < 4; ++i) {
+      for (int j = 1; j < 5 - i; ++j) {
+        h[j] = h[j] + h[j - 1];
+      }
+    }
+    R e = slack * magnitude(c, abs(a) + abs(w) * half);
+    for (const R &x : h) {
+      if (abs(x) <= e) {
+        return std::nullopt;
+      }
+    }
+    int variations = 0;
+    for (int i = 1; i < 5; ++i) {
+      if ((h[i] < 0) != (h[i - 1] < 0)) {
+        ++variations;
+      }
+    }
+    return variations;
+  }
+
+  // wall_torus._decided: the sign and the Descartes count, redone on the same
+  // values at precision kTwice while undecided at P.
+  template <unsigned Q = kTwice>
+  static std::array<mp_real<Q>, 5> lifted(const std::array<R, 5> &c) {
+    return {mp_real<Q>(c[0]), mp_real<Q>(c[1]), mp_real<Q>(c[2]),
+            mp_real<Q>(c[3]), mp_real<Q>(c[4])};
+  }
+  static int decided_sign(const std::array<R, 5> &c, const R &x) {
+    int s = sign(c, x);
+    if constexpr (kTwice != 0) {
+      if (!s) {
+        s = Tracer<kTwice>::sign(lifted(c), mp_real<kTwice>(x));
+      }
+    }
+    return s;
+  }
+  static std::optional<int> decided_count(const std::array<R, 5> &c,
+                                          const R &a, const R &b) {
+    std::optional<int> k = descartes(c, a, b);
+    if constexpr (kTwice != 0) {
+      if (!k) {
+        k = Tracer<kTwice>::descartes(lifted(c), mp_real<kTwice>(a),
+                                      mp_real<kTwice>(b));
+      }
+    }
+    return k;
+  }
+
+  // wall_torus._window_cap: t_exit (1 + _TCAP_TOL) + _EPS_T.
+  static R window_cap(const R &t_exit) {
+    static const R tol(kTcapTolStr);
+    return t_exit + t_exit * tol + eps_t();
+  }
+
+  // wall_torus._cell_crossing: first sign change in (a, b] from the decided
+  // signs at a and b (0 at an undecided window end). An interval Descartes
+  // does not settle halves at its midpoint, or else a quarter point, of
+  // decided sign. Where all three are undecided the span is a root cluster
+  // below resolution and throws unresolved_root_error — also on opposite end
+  // signs, which prove a crossing exists but not where within the span (the
+  // strict refusal of 2026-11-05).
+  static std::optional<R> cell_crossing(const std::array<R, 5> &c, const R &a,
+                                        int sa, const R &b, int sb) {
+    static const R half("0.5");
+    struct Span {
+      R a;
+      int sa;
+      R b;
+      int sb;
+    };
+    std::vector<Span> stack{{a, sa, b, sb}};
+    while (!stack.empty()) {
+      Span s = std::move(stack.back());
+      stack.pop_back();
+      std::optional<int> k = decided_count(c, s.a, s.b);
+      if (k == 0) {
+        continue;
+      }
+      if (k == 1) {
+        bool lneg = s.sa ? s.sa < 0 : (s.sb ? s.sb > 0 : horner(c, s.a) < 0);
+        return bisect(c, s.a, lneg, s.b);
+      }
+      R mid = (s.a + s.b) * half;
+      std::array<R, 3> xs = {mid, (s.a + mid) * half, (mid + s.b) * half};
+      size_t pick = 3;
+      int sx = 0;
+      for (size_t n = 0; n < 3 && pick == 3; ++n) {
+        if (s.a < xs[n] && xs[n] < s.b && (sx = decided_sign(c, xs[n])) != 0) {
+          pick = n;
+        }
+      }
+      if (pick == 3) {
+        throw unresolved_root_error(
+            "quartic root cluster in [" +
+            s.a.str(20, std::ios_base::scientific) + ", " +
+            s.b.str(20, std::ios_base::scientific) +
+            "] cannot be resolved at precision " + std::to_string(P));
+      }
+      stack.push_back({xs[pick], sx, s.b, s.sb});
+      stack.push_back({s.a, s.sa, xs[pick], sx});
     }
     return std::nullopt;
   }
 
-  // wall_torus._quartic_first: smallest real root in (_EPS_T, t_capf].
-  // Two tiers: float DK seeds polished by Newton at full precision (fast
-  // path, simple roots), exact-sign bisection when no seed polishes. As in
-  // first_forward, exact mp order replaces Python's float key.
+  // wall_torus._first_crossing: first sign change in (kEpsT, cap], or in
+  // (kEpsT, *limit]; t_capf is double(cap). A run of the 48 geometric cells
+  // (the last node is cap) Descartes does not clear halves at a node of
+  // decided sign, leftmost first; a cell, or a run without such a node, goes
+  // to cell_crossing.
+  static std::optional<R> first_crossing(const std::array<R, 5> &c,
+                                         const R &cap, double t_capf,
+                                         const R *limit) {
+    std::vector<R> nodes{eps_t()};
+    for (int k = 1; k < 49; ++k) {
+      R node = k == 48 ? cap : from_double(kEpsT * std::pow(t_capf / kEpsT, k / 48.0));
+      if (limit && node >= *limit) {
+        nodes.push_back(*limit);
+        break;
+      }
+      nodes.push_back(std::move(node));
+    }
+    std::vector<int> signs(nodes.size(), 2);
+    auto sign_of = [&](size_t i) {
+      if (signs[i] == 2) {
+        signs[i] = decided_sign(c, nodes[i]);
+      }
+      return signs[i];
+    };
+    std::vector<std::pair<size_t, size_t>> stack{{0, nodes.size() - 1}};
+    while (!stack.empty()) {
+      auto [i, j] = stack.back();
+      stack.pop_back();
+      if (j > i + 1 && decided_count(c, nodes[i], nodes[j]) == 0) {
+        continue;
+      }
+      size_t mid = (i + j) / 2, m = 0;
+      for (size_t k : {mid, mid - 1, mid + 1}) {
+        if (i < k && k < j && sign_of(k)) {
+          m = k;
+          break;
+        }
+      }
+      if (!m) {
+        std::optional<R> root =
+            cell_crossing(c, nodes[i], sign_of(i), nodes[j], sign_of(j));
+        if (root) {
+          return root;
+        }
+        continue;
+      }
+      stack.push_back({m, j});
+      stack.push_back({i, m});
+    }
+    return std::nullopt;
+  }
+
+  // wall_torus._quartic_first: smallest root in (_EPS_T, cap] where the
+  // quartic changes sign. Float DK seeds polished by Newton are the fast path:
+  // the smallest polished root counts when its rtol neighbours lie in the
+  // window with decided signs that differ, and stands unless the window
+  // before them holds a crossing (Descartes clears it, else the sign search
+  // looks there); otherwise the sign search takes the whole window.
   static std::optional<R> quartic_first(const std::array<R, 5> &c,
-                                        double t_capf) {
+                                        const R &cap) {
     std::array<R, 4> dc = {c[0] * 4, c[1] * 3, c[2] * 2, c[3]};
+    // Seed material only, so Boost's faster conversion (an ulp off float() in
+    // about one value per thousand).
     std::vector<double> cf(5);
     for (size_t i = 0; i < 5; ++i) {
-      cf[i] = to_double(c[i]);
+      cf[i] = c[i].template convert_to<double>();
     }
+    double t_capf = to_double(cap);
     std::optional<R> best;
     for (double seed : float_seeds(cf, t_capf)) {
       std::optional<R> t = newton_polish(c, dc, seed);
-      if (t && *t > eps_t() && (!best || *t < *best)) {
+      if (t && *t > eps_t() && *t <= cap && (!best || *t < *best)) {
         best = std::move(t);
       }
     }
     if (best) {
-      return best;
+      R delta = newton_rtol() * std::max(abs(*best), newton_tfloor());
+      // the certifying bracket lies in the window: the upper probe never leaves it
+      R lo = *best - delta, hi = std::min(*best + delta, cap);
+      int s = lo > eps_t() ? decided_sign(c, lo) : 0;
+      if (s && decided_sign(c, hi) == -s) {
+        if (decided_count(c, eps_t(), lo) == 0) {
+          return best;
+        }
+        std::optional<R> earlier = first_crossing(c, cap, t_capf, &lo);
+        return earlier ? earlier : best;
+      }
     }
-    return bisect_first(c, t_capf);
+    return first_crossing(c, cap, t_capf, nullptr);
   }
 
   // wall_torus.TorusWall
@@ -418,7 +663,7 @@ struct Tracer {
                           2 * u1 * u0 - 2 * w.fourR2 * (wd - s0 * sd),
                           u0 * u0 - w.fourR2 * (ws - s0 * s0)};
     std::optional<R> t =
-        quartic_first(c, to_double(t_exit) * (1.0 + kTcapTol) + kEpsT);
+        quartic_first(c, window_cap(t_exit));
     if (!t) {
       return std::nullopt;
     }
@@ -475,7 +720,7 @@ struct Tracer {
       m[i] = 0;
     }
     std::optional<R> t =
-        quartic_first(m, to_double(t_exit) * (1.0 + kTcapTol) + kEpsT);
+        quartic_first(m, window_cap(t_exit));
     if (!t) {
       return std::nullopt;
     }
@@ -511,17 +756,17 @@ struct Tracer {
   };
   using Optic = std::variant<Mirror, Bundle>;
 
-  // surfaces.Mirror.next_event
+  // surfaces.Mirror.next_event: the hit's z against the span, in mp.
   static Event next_event(const Mirror &m, const V3 &O, const V3 &d) {
     if (O.x <= 0 || d.x >= 0) {
       return {kExit, R(), {}, {}};
     }
     R t = -O.x / d.x;
-    double zf = to_double(O.z + t * d.z);
-    if (zf > m.z1f) {
+    R z = O.z + t * d.z;
+    if (z > m.z1) {
       return {kExit, R(), {}, {}};
     }
-    if (zf < m.z0f) {
+    if (z < m.z0) {
       return {kAbsorb, (m.z0 - O.z) / d.z, {}, {}};
     }
     return {kReflect, t, vadd(O, vscale(d, t)), {R(1), R(), R()}};
@@ -538,12 +783,14 @@ struct Tracer {
                       w);
   }
 
-  // surfaces.CapillaryBundle._locate: the nudge along d disambiguates
-  // bore-bore tangency points (a reflection there is on two walls at once).
+  // surfaces.CapillaryBundle._locate: the point nudged along d, in mp and then
+  // as doubles; the nudge disambiguates bore-bore tangency points (a
+  // reflection there is on two walls at once).
   static const Wall *locate(const Bundle &b, const V3 &O, const V3 &d) {
-    double xf = to_double(O.x) + kEpsLoc * to_double(d.x);
-    double yf = to_double(O.y) + kEpsLoc * to_double(d.y);
-    double zf = to_double(O.z) + kEpsLoc * to_double(d.z);
+    static const R eps_loc(kEpsLocStr);
+    double xf = to_double(O.x + eps_loc * d.x);
+    double yf = to_double(O.y + eps_loc * d.y);
+    double zf = to_double(O.z + eps_loc * d.z);
     for (const Wall &w : b.walls) {
       if (wall_inside(w, xf, yf, zf)) {
         return &w;
@@ -552,16 +799,15 @@ struct Tracer {
     return nullptr;
   }
 
-  // surfaces.CapillaryBundle.next_event
+  // surfaces.CapillaryBundle.next_event: z against z0, z1 less kEpsT, in mp.
   static Event next_event(const Bundle &b, const V3 &O, const V3 &d) {
     if (d.z <= 0) {
       return {kAbsorb, R(), {}, {}};
     }
-    double zf = to_double(O.z);
-    if (zf < b.z0f - kEpsT) {
+    if (O.z < b.z0 - eps_t()) {
       return {kPass, (b.z0 - O.z) / d.z, {}, {}};
     }
-    if (zf >= b.z1f - kEpsT) {
+    if (O.z >= b.z1 - eps_t()) {
       return {kExit, R(), {}, {}};
     }
     const Wall *wall = locate(b, O, d);
@@ -596,6 +842,13 @@ struct Tracer {
 
   static Result trace(const Optic *optic, V3 O, V3 d, const R &screen_z,
                       long max_bounces) {
+    // trace.trace_ray: a non-finite input component is refused.
+    const R *inputs[] = {&O.x, &O.y, &O.z, &d.x, &d.y, &d.z, &screen_z};
+    for (const R *v : inputs) {
+      if (!(boost::multiprecision::isfinite)(*v)) {
+        throw std::invalid_argument("non-finite ray input");
+      }
+    }
     R opl;
     std::vector<Refl> refl;
     if (optic) {

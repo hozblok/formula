@@ -155,6 +155,54 @@ std::string Formula::get_derivative(
   }
 }
 
+std::string Formula::get_partial_derivative(
+    const std::vector<std::string> &variables,
+    const std::map<std::string, std::string> &variables_to_values,
+    std::streamsize digits, std::ios_base::fmtflags format) const {
+  auto visitor = GetCalculatedDerivativeStringVisitor();
+  visitor.variables = &variables;
+  visitor.variables_to_values = &variables_to_values;
+  visitor.digits = digits;
+  visitor.format = format;
+  visitor.is_complex = is_complex_;
+  visitor.imaginary_unit = imaginary_unit_;
+  if (is_complex_) {
+    return boost::apply_visitor(visitor, eval_complex_);
+  } else {
+    return boost::apply_visitor(visitor, eval_);
+  }
+}
+
+std::pair<std::vector<std::string>, uint32_t> Formula::evaluate_jet(
+    unsigned order,
+    const std::map<std::string, std::vector<std::string>> &variables_to_coefficients,
+    const std::map<std::string, uint32_t> &supports) const {
+  if (order < 1 || order > kMaxDerivativeOrder) {
+    throw std::invalid_argument("The jet order must be from 1 to 5");
+  }
+  const unsigned size = 1u << order;
+  const uint64_t allowed = (uint64_t(1) << size) - 1;
+  if (supports.size() != variables_to_coefficients.size()) {
+    throw std::invalid_argument("Jet coefficients and supports need the same variables");
+  }
+  for (const auto &item : variables_to_coefficients) {
+    auto support = supports.find(item.first);
+    if (item.second.size() != size) {
+      throw std::invalid_argument("A jet needs exactly 2**order coefficients");
+    }
+    if (support == supports.end() || !(support->second & 1u) ||
+        (uint64_t(support->second) & ~allowed)) {
+      throw std::invalid_argument("Invalid jet structural support mask");
+    }
+  }
+  GetCalculatedJetStringVisitor visitor;
+  visitor.order = order;
+  visitor.variables_to_coefficients = &variables_to_coefficients;
+  visitor.supports = &supports;
+  visitor.imaginary_unit = imaginary_unit_;
+  return visit_value(visitor);
+}
+
 void Formula::prepare_precision(const unsigned &precision) {
   origin_precision_ = precision;
   unsigned result = round_up_precision(precision);

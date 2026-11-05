@@ -7,7 +7,7 @@ string, do arithmetic / comparison, hash, repr, and format via .str().
 
 import pytest
 
-from formula import _formula
+from formula import NumberContext, _formula
 
 # Hardcoded, not read from the extension, so the test catches an accidental
 # change to the bound set.
@@ -93,3 +93,36 @@ def test_hash_agrees_with_eq(p):
 @pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
 def test_repr_roundtrips(p):
     assert repr(cls(p)("3.5")) == f"mp_real_{p}('3.5')"
+
+
+@pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
+def test_precision_and_kind_on_class_and_value(p):
+    # Storage precision travels inside the value and survives every operation.
+    x = NumberContext(p)("1.5")
+    assert cls(p).precision == x.precision == p
+    assert cls(p).is_complex is False and x.is_complex is False
+    for y in (x + x, x * x, 2 * x, 0.5 * x, -x, abs(x), x.sqrt()):
+        assert y.precision == p and y.is_complex is False
+
+
+@pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
+def test_precision_and_kind_are_read_only(p):
+    x = NumberContext(p)("1.5")
+    for name in ("precision", "is_complex"):
+        with pytest.raises(AttributeError):
+            setattr(x, name, 7)
+        with pytest.raises(AttributeError):
+            delattr(x, name)
+    assert x.precision == p
+
+
+@pytest.mark.parametrize("p", ALLOWED_PRECISIONS)
+def test_constructor_takes_literals_only(p):
+    # Boost would read "1/3" as 1 and "3+4*i" as 3; the binding refuses them.
+    for text in ("1", "-7", "+1", "1.", ".5", "0.125", "1e-06", "-1E+16", "1.5e300", "1.e5"):
+        assert cls(p)(text) == cls(p)(text)
+    for text in ("1/3", "3+4*i", "1-2", "1+1", "--1", "+-1", "1-", "1.2.3", "1..2", "e5", ".", "1e",
+                 "1e+", "12e", "1e5e5", "1e-3-1e-4", "1,2", "(1,2)", " 1", "1 ", "", "pi", "nan", "inf"):
+        with pytest.raises(ValueError, match="not a numeric literal"):
+            cls(p)(text)
+

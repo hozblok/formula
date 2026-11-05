@@ -80,7 +80,7 @@ def test_wave_section_is_lazy_and_validated():
 
 def test_stage14_contract_ignores_wave_section():
     from formula.capsysred.rays import geometry_metadata
-    from formula.capsysred.stages.stage14 import _analysis_signature, _screen_contract
+    from formula.capsysred.stages.stage14.cache import _analysis_signature, _screen_contract
     from formula.capsysred.trace_v3 import archive_fingerprint
 
     base = Simulation.from_dict(_square("disk", 3e-7))
@@ -369,8 +369,7 @@ def test_broadband_grid_is_permutation_invariant(tmp_path):
         sim = Simulation.from_dict(raw)
         wave = sim.cfg.validate_wave_estimator()
         p = sim.cfg.precision
-        lines = [(float(ln.k), float(ln.weight), float(sim.cfg.material.delta(ln.e_kev, precision=p)),
-                  float(sim.cfg.material.beta(ln.e_kev, precision=p))) for ln in sim.lines]
+        lines = [(float(ln.k), float(ln.weight), *sim.cfg.material.optical(ln.e_kev)) for ln in sim.lines]
         (label, res), = W._capillary_scene(sim, wave, lines, None, 1, lambda _: None)
         return res
 

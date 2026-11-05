@@ -5,14 +5,32 @@
 """Straight cylinder x'²+y'² = a²; the ray intersection is an exact quadratic
 and the normal is radial with zero z-component."""
 
-from ...formula import Number
-from ..shared.nums import lift, sqrt, vadd, vscale, vunit
-from ..shared.types import _EPS_T, _INSIDE_TOL, Vec3
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, TypeVar
+
+from ..shared.coordinates import surface_coordinates
+from ..shared.nums import fsqrt, lift, text, vadd, vscale, vunit
+from ..shared.types import _EPS_T, _INSIDE_TOL, Scalar, Vec3
 from ..shared.units import m_to_um
+
+if TYPE_CHECKING:
+    from ..shared.jets import _Jet
+
+_Coordinate = TypeVar("_Coordinate")
 
 
 class CylinderWall:
-    def __init__(self, center: tuple[Number, Number], radius: Number,
+    @staticmethod
+    def _local_gradient_hessian(
+        dx: _Coordinate, dy: _Coordinate,
+    ) -> tuple[tuple[_Coordinate, _Coordinate, float],
+               tuple[float, float, float, float, float, float]]:
+        """Derivatives at offsets from the axis; Hessian: xx, xy, xz, yy, yz, zz."""
+        return (dx, dy, 0.0), (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+    def __init__(self, center: tuple[Scalar, Scalar], radius: Scalar,
                  eps: float = 1e-30):
         self.kind, self.center, self.radius = "cylinder", center, radius
         # zero threshold for the quadratic coefficients (degenerate -> linear/no hit)
@@ -21,16 +39,41 @@ class CylinderWall:
         self._p = center[0].precision
         self._cxf, self._cyf = float(center[0]), float(center[1])
         self._a2f = float(self._a2)
+        self._rf = float(radius)
         um = lift(m_to_um(1), self._p)
-        self.expr_um = (f"(x-({center[0] * um}))^2+(y-({center[1] * um}))^2"
-                        f"-({self._a2 * um * um})")
+        t = lambda v: text(v, self._p)
+        self.expr_um = (f"(x-({t(center[0] * um)}))^2+(y-({t(center[1] * um)}))^2"
+                        f"-({t(self._a2 * um * um)})")
         self.probe_xy = (1.0, 0.0)
+
+    @property
+    def precision(self) -> int:
+        return self._p
+
+    def value(self, point: Sequence[int | float | Scalar | _Jet]) -> Scalar | _Jet:
+        """F = ((x-cx)^2 + (y-cy)^2 - radius^2)/2 in world metres."""
+        dx, dy, _ = self.gradient(point)
+        return (dx * dx + dy * dy - self._a2) / 2
+
+    def gradient(self, point: Sequence[int | float | Scalar | _Jet]) -> tuple[Scalar | _Jet, Scalar | _Jet, float]:
+        """Unnormalized gradient of F at scalar or jet world coordinates in metres."""
+        x, y, _ = surface_coordinates(point, self.precision)
+        return self._local_gradient_hessian(x - self.center[0], y - self.center[1])[0]
+
+    def derivatives_at(self, x, y, z):
+        """World-metre derivatives; Hessian order: xx, xy, xz, yy, yz, zz."""
+        return self._local_gradient_hessian(x - self._cxf, y - self._cyf)
+
+    def surface_error_at(self, x, y, z):
+        """Nonnegative boundary residual in metres, scalar or batched."""
+        dx, dy = x - self._cxf, y - self._cyf
+        return abs(fsqrt(dx * dx + dy * dy) - self._rf)
 
     def inside(self, xf: float, yf: float, zf: float) -> bool:
         dx, dy = xf - self._cxf, yf - self._cyf
         return dx * dx + dy * dy < self._a2f * (1.0 + _INSIDE_TOL)
 
-    def hit(self, O: Vec3, d: Vec3, t_exit: Number):
+    def hit(self, O: Vec3, d: Vec3, t_exit: Scalar):
         """First forward parameter to the wall (exact quadratic), with point+normal."""
         rx, ry = O[0] - self.center[0], O[1] - self.center[1]
         A = d[0] * d[0] + d[1] * d[1]
@@ -42,14 +85,14 @@ class CylinderWall:
             ts = ((0 - C) / B,)
         else:
             disc = B * B - 4 * A * C
-            if float(disc) < 0.0:
+            if disc < 0:
                 return None
-            root = sqrt(disc)
+            root = disc.sqrt()
             ts = ((0 - B - root) / (2 * A),
                   (0 - B + root) / (2 * A))
-        t = min((tt for tt in ts if float(tt) > _EPS_T), key=float, default=None)
+        eps = lift(_EPS_T, self.precision)
+        t = min((tt for tt in ts if tt > eps), default=None)
         if t is None:
             return None
         P = vadd(O, vscale(d, t))
-        n = (P[0] - self.center[0], P[1] - self.center[1], 0)
-        return t, P, vunit(n)
+        return t, P, vunit(self.gradient(P))

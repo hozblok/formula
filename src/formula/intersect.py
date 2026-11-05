@@ -6,12 +6,31 @@ backends (see _roots/) locate all of them.
 """
 
 from collections import namedtuple
-from typing import List, Optional, Sequence, Tuple
+from typing import Optional, Sequence
 
+from ._formula import FmtFlags
 from ._roots import get_backend
-from .formula import Number, Solver
+from ._roots.utils import finite, tol_half, tol_third
+from .backend import MP_TYPES
+from .formula import NumberContext, Solver
 
 _AXES = ("x", "y", "z")
+
+
+def _value(v, N: NumberContext):
+    """Input scalar -> backend value at N; an expression text is evaluated."""
+    if isinstance(v, str):
+        try:
+            return N(v)
+        except ValueError:
+            return N.eval(v)
+    return N(v)
+
+
+def _text(v, precision: int) -> str:
+    """Value text at precision significant digits."""
+    return v.str(precision, FmtFlags.default) if isinstance(v, MP_TYPES) else str(v)
+
 
 # Geometry-only record of one ray's life: source point + launch direction, every
 # reflection, the screen hit + direction there, and the total geometric path length.
@@ -26,13 +45,12 @@ RayPath = namedtuple(
 Reflection = namedtuple("Reflection", ["point", "direction", "grazing"])
 
 
-def _normalize(components: Sequence[Number], zero_msg="direction must be a non-zero vector"):
-    """Unit-normalize Number components; raises on an empty or zero vector."""
+def _normalize(components, zero_msg="direction must be a non-zero vector"):
+    """Unit-normalize components; raises on an empty or zero vector."""
     if not components:
         raise ValueError(zero_msg)
-    zero = Number(0, components[0].precision)
-    norm = abs(sum((c * c for c in components), zero)) ** 0.5
-    if norm == zero:
+    norm = abs(sum((c * c for c in components), 0)).sqrt()
+    if norm == 0:
         raise ValueError(zero_msg)
     return tuple(c / norm for c in components)
 
@@ -41,25 +59,20 @@ def _with_endpoint_roots(func, roots, t0, t1, precision):
     """Backend-agnostic net: add an exact root sitting on t0/t1 if a backend
     missed it (Sturm's (a,b] convention, interior Chebyshev nodes, etc.).
 
-    |g| small alone is not enough: at grazing incidence g' is tiny, so g stays
-    small near a root without t0/t1 being one. Require the Newton step |g|/|g'|
-    within tol too (a vanishing g' means a tangential root at the endpoint)."""
-    gtol = Number(f"1e-{max(precision // 3, 4)}", precision)
-    tol = Number(f"1e-{max(precision // 2, 6)}", precision)
+    |g| small alone is not enough: at grazing incidence or for a small-scale
+    equation g' is tiny too, so g stays small without t0/t1 being a root. Require
+    the Newton step |g|/|g'| within tol (an exact zero of g passes even at g' = 0)."""
+    N = NumberContext(precision)
+    gtol, tol = tol_third(N), tol_half(N)
     out = list(roots)
     for t in (t0, t1):
-        mag = abs(func.g(t)).parts[0]  # modulus as a real string (|re,im|)
-        if "inf" in mag or "nan" in mag:
+        g = abs(func.g(t))
+        if not finite(g):
             continue
-        g = Number(mag, precision)
         if g > gtol or any(abs(t - r) <= tol for r in out):
             continue
-        gpmag = abs(func.gprime(t)).parts[0]
-        if "inf" in gpmag or "nan" in gpmag:
-            out.append(t)
-            continue
-        gp = Number(gpmag, precision)
-        if gp <= gtol or g <= tol * gp:
+        gp = abs(func.gprime(t))
+        if not finite(gp) or g <= tol * gp:
             out.append(t)
     return out
 
@@ -79,6 +92,7 @@ class RaySurfaceFunction:
     ):
         self.surface = surface
         self.precision = precision
+        self.numbers = N = NumberContext(precision)
         axes = surface.variables()
         unknown = axes - set(_AXES)
         if unknown:
@@ -87,51 +101,47 @@ class RaySurfaceFunction:
         # the full x,y,z so point_at and the arc-length normalization stay correct
         # even when the surface ignores an axis.
         self._axes = [a for a in _AXES if a in axes]
-        self.origin = {
-            a: Number(origin[_AXES.index(a)], self.precision) for a in _AXES
-        }
-        self.direction = {
-            a: c
-            for a, c in zip(
-                _AXES,
-                _normalize(
-                    [Number(direction[_AXES.index(a)], self.precision) for a in _AXES]
-                ),
-            )
-        }
+        origin = [_value(origin[_AXES.index(a)], N) for a in _AXES]
+        direction = [_value(direction[_AXES.index(a)], N) for a in _AXES]
+        # Every coordinate, on the surface's axes or not: point_at and the
+        # normalization use all three, and the evaluator never sees the others.
+        if not all(finite(c) for c in origin + direction):
+            raise ValueError("origin and direction coordinates must be finite")
+        self.origin = dict(zip(_AXES, origin))
+        self.direction = dict(zip(_AXES, _normalize(direction)))
 
-    def _point(self, t: Number) -> dict:
+    def _point(self, t) -> dict:
         """Ray coordinates (surface axes only) at parameter t, as value strings."""
-        return {a: str(self.origin[a] + t * self.direction[a]) for a in self._axes}
+        return {a: _text(self.origin[a] + t * self.direction[a], self.precision)
+                for a in self._axes}
 
-    def g(self, t: Number) -> Number:
+    def g(self, t):
         """g(t) = F(O + t*d)."""
         return self.surface.number(self._point(t))
 
-    def gprime(self, t: Number) -> Number:
+    def gprime(self, t):
         """g'(t) = grad F . d via the chain rule."""
         point = self._point(t)
-        total = Number(0, self.precision)
+        total = self.numbers(0)
         for a in self._axes:
-            partial = Number(self.surface.get_derivative(a, point, 0),
-                                    self.precision)
+            partial = self.numbers(self.surface.get_derivative(a, point, 0))
             total = total + partial * self.direction[a]
         return total
 
-    def point_at(self, t: Number) -> Tuple[Number, ...]:
+    def point_at(self, t) -> tuple:
         """The (x, y, z) point on the ray at parameter t."""
         return tuple(self.origin[a] + t * self.direction[a] for a in _AXES)
 
-    def normal_at(self, t: Number) -> Tuple[Number, Number, Number]:
+    def normal_at(self, t) -> tuple:
         """Unit surface normal grad F / |grad F| at the ray point r(t).
 
         Axes the surface does not mention contribute a zero gradient component.
         """
         point = self._point(t)
         grad = [
-            Number(self.surface.get_derivative(a, point, 0), self.precision)
+            self.numbers(self.surface.get_derivative(a, point, 0))
             if a in self._axes
-            else Number(0, self.precision)
+            else self.numbers(0)
             for a in _AXES
         ]
         return _normalize(
@@ -139,7 +149,7 @@ class RaySurfaceFunction:
             zero_msg="surface gradient vanishes; normal is undefined",
         )
 
-    def reflect_at(self, t: Number):
+    def reflect_at(self, t):
         """Specular reflection of the ray at r(t).
 
         Returns (point, reflected_unit_direction, grazing_angle); the grazing
@@ -148,19 +158,21 @@ class RaySurfaceFunction:
         """
         normal = self.normal_at(t)
         incident = tuple(self.direction[a] for a in _AXES)
-        zero = Number(0, self.precision)
-        dot = sum((incident[k] * normal[k] for k in range(3)), zero)
-        reflected = tuple(
-            incident[k] - Number(2, self.precision) * dot * normal[k] for k in range(3)
-        )
+        dot = sum((incident[k] * normal[k] for k in range(3)), 0)
+        reflected = tuple(incident[k] - 2 * dot * normal[k] for k in range(3))
         # |d.n| can round above 1 at near-normal incidence; clamp before asin.
-        sine = min(abs(dot), Number(1, self.precision))
-        grazing = Number(f"asin({sine})", self.precision)
+        sine = min(abs(dot), 1)
+        grazing = self.numbers.eval("asin(s)", s=_text(sine, self.precision))
         return self.point_at(t), reflected, grazing
 
 
 class RaySurface:
     """All intersections of a ray with an implicit surface F=0.
+
+    The caller's precondition: F real-valued and continuous on the probed
+    window. Continuity is never verified — the finite and residual checks catch
+    some discontinuities, not all, so a jump can come back as a false root. A
+    complex F is refused at construction: it has no sign, inside or normal.
 
     Example:
         rs = RaySurface("x*x + y*y - 1", precision=64)
@@ -173,7 +185,11 @@ class RaySurface:
         precision: int = 32,
     ):
         self.surface = Solver(expression, precision)
+        if self.surface.is_complex:
+            raise ValueError("the geometry is real-only: a complex surface has no "
+                             "sign, inside or normal; state a real-valued wall equation")
         self.precision = self.surface.precision
+        self.numbers = NumberContext(self.precision)
 
     def function(self, origin: Sequence, direction: Sequence) -> RaySurfaceFunction:
         """Build g(t)=F(O+t*d) for this ray."""
@@ -186,7 +202,7 @@ class RaySurface:
         t_max,
         method: str = "auto",
         **options,
-    ) -> List[Number]:
+    ) -> list:
         """Return all ray parameters t in [t_min, t_max] where the ray hits F=0.
 
         method: "auto" | "sampling" | "sturm" | "chebyshev" | "subdivision".
@@ -194,17 +210,19 @@ class RaySurface:
         """
         t_min = options.pop("t_min", 0)
         backend = get_backend(method)
-        t0 = Number(t_min, self.precision)
-        t1 = Number(t_max, self.precision)
+        t0 = _value(t_min, self.numbers)
+        t1 = _value(t_max, self.numbers)
         if t0 > t1:
             raise ValueError(f"t_min ({t_min}) must not exceed t_max ({t_max})")
         func = self.function(origin, direction)
+        if t0 == t1:                       # one point: a root by the endpoint test, or none
+            return _with_endpoint_roots(func, [], t0, t1, self.precision)
         roots = backend(func, t0, t1, self.precision, **options)
         return sorted(_with_endpoint_roots(func, roots, t0, t1, self.precision))
 
     def points(
         self, origin: Sequence, direction: Sequence, t_max, **kwargs
-    ) -> List[Tuple[Number, ...]]:
+    ) -> list:
         """Intersection points (x, y, z) on the surface, sorted by t."""
         func = self.function(origin, direction)
         return [func.point_at(t) for t in self.intersect(origin, direction, t_max, **kwargs)]
@@ -240,18 +258,18 @@ class RaySurface:
         geometry to e.g. micrometres before tracing); use `method="subdivision"`/
         `"sturm"` for grazing (near-double-root) hits.
         """
-        p = self.precision
-        source = tuple(Number(c, p) for c in origin)
-        direction = tuple(Number(c, p) for c in direction)
+        p, N = self.precision, self.numbers
+        source = tuple(_value(c, N) for c in origin)
+        direction = tuple(_value(c, N) for c in direction)
 
-        eps = (Number(t_min, p) if t_min is not None
-               else Number(t_max, p) * Number("1e-9", p))
+        eps = (_value(t_min, N) if t_min is not None
+               else _value(t_max, N) * 1e-9)
         bound = RaySurface(exit_surface, p) if exit_surface is not None else None
         screen = RaySurface(screen_surface, p) if screen_surface is not None else None
 
         d0 = _normalize(direction)
         O, d = source, d0
-        reflections, opl, exited = [], Number(0, p), False
+        reflections, opl, exited = [], N(0), False
 
         for _ in range(max_bounces):
             wall = self.intersect(O, d, t_max, method=method, t_min=eps, **options)

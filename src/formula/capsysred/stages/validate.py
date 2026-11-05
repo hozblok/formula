@@ -6,6 +6,7 @@ RaySurface engine subdivision backend (the only grazing-safe one) — and
 every hit parameter t is compared against the Python reference.
 """
 
+import math
 import time
 
 from ...intersect import RaySurface
@@ -159,6 +160,6 @@ def run_validate_stage(sim, n_rays: int):
         progress.step()
     progress.finish(f"wall hits {stats['hits']:,}")
     for st in per.values():
-        st["rms"] = (st["sum_sq"] / st["n"]) ** 0.5 if st["n"] else 0.0
+        st["rms"] = math.sqrt(st["sum_sq"] / st["n"]) if st["n"] else 0.0
     return {"stats": stats, "per": per, "rows": rows,
             "native": native is not None, "seconds": time.time() - t_start}
