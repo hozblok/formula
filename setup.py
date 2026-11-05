@@ -41,10 +41,9 @@ if sys.platform != "win32":
     # same branches as the Python reference (parity tests compare exactly).
     EXTRA_COMPILE_ARGS.append("-ffp-contract=off")
 if sys.platform == "darwin":
-    # Default deployment target for wheels built outside cibuildwheel; CI
-    # overrides this via env. 10.15 covers all currently supported macOS
-    # releases on Intel; arm64 builds bump to 11.0 automatically.
-    os.environ.setdefault("MACOSX_DEPLOYMENT_TARGET", "10.15")
+    # Default deployment target when the env does not set one; 13.3 is the
+    # libc++ floor for the float std::to_chars overloads (cstrace.hpp).
+    os.environ.setdefault("MACOSX_DEPLOYMENT_TARGET", "13.3")
     # macOS libc++ removes std::unary_function in C++17; enable compatibility
     # for bundled Boost headers.
     EXTRA_COMPILE_ARGS.append("-D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION")
