@@ -1,4 +1,4 @@
-name: Test on Windows (x86-x64)
+name: Test on Windows
 
 # Opt-in only: tests run on a PR when the `run-tests` label is applied (and
 # re-run on subsequent pushes while the label stays on), or via manual
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   test:
-    name: Test on python ${{ matrix.python }} ${{ matrix.os }} (${{ matrix.architecture }})
+    name: Test on python ${{ matrix.python }} ${{ matrix.os }}
     if: >-
       github.event_name == 'workflow_dispatch' ||
       contains(github.event.pull_request.labels.*.name, 'run-tests')
@@ -27,7 +27,6 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest]
-        architecture: [x86, x64]
         python: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v7
@@ -35,7 +34,6 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
-          architecture: ${{ matrix.architecture }}
           cache: "pip"
           cache-dependency-path: |
             setup.py

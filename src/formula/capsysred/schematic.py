@@ -17,6 +17,7 @@ from xml.sax.saxutils import escape
 from .shared.nums import lift, vunit
 from .source import Source
 from .surfaces import CapillaryBundle, ImplicitWall, entrance_disk
+from .walls.wall_polygon import polygon_vertices
 from .trace import trace_ray
 from .shared.units import m_to_mm, m_to_nm, m_to_um, rad_to_mrad
 N_RAYS = 10
@@ -106,7 +107,7 @@ def r_of_z(bore, zf):
         c0, c1, c2 = (float(v) for v in bore["r2_poly"])
         return math.sqrt(max(c0 + zf * (c1 + zf * c2), 0.0))
     if kind == "polygon":
-        return float(bore["radius"])            # apothem: y=0 faces sit here
+        return float((bore.get("apothems") or [bore["radius"]])[0])    # face-0 apothem
     if kind == "implicit":
         return float(bore["aim_radius"])        # fallback; spans use the probe
     return float(bore["radius"])
@@ -508,7 +509,8 @@ def inset(G):
         cx, cy = float(b["center"][0]), float(b["center"][1])
         r = r_of_z(b, G["z0"])
         if b.get("kind") == "polygon":
-            r = r / math.cos(math.pi / int(b["sides"]))
+            aps = b.get("apothems") or [b["radius"]] * int(b["sides"])
+            r = max(math.hypot(vx, vy) for vx, vy in polygon_vertices(aps, b["sides"], b["rotation"]))
         pts += [(cx + r, cy + r), (cx - r, cy - r)]
     if scr["ny"] > 1:                              # thin strip (ny=1) is not a transverse feature
         pts += [(scr["cx"] + scr["hx"], scr["hy"]), (scr["cx"] - scr["hx"], -scr["hy"])]
@@ -539,12 +541,8 @@ def inset(G):
         cx, cy = float(b["center"][0]), float(b["center"][1])
         r = r_of_z(b, G["z0"])
         if b.get("kind") == "polygon":
-            ns = int(b["sides"])
-            rot = float(b["rotation"])
-            rc = r / math.cos(math.pi / ns)
-            poly = [m(cx + rc * math.cos(rot + 2 * math.pi * k / ns + math.pi / ns),
-                      cy + rc * math.sin(rot + 2 * math.pi * k / ns + math.pi / ns))
-                    for k in range(ns)]
+            aps = b.get("apothems") or [b["radius"]] * int(b["sides"])
+            poly = [m(cx + vx, cy + vy) for vx, vy in polygon_vertices(aps, b["sides"], b["rotation"])]
             e.append(f'<polygon points="{" ".join(f"{x:.1f},{y:.1f}" for x,y in poly)}" '
                      f'fill="#eaf2f8" stroke="{WALL}" stroke-width="1.4"/>')
         else:
@@ -573,7 +571,12 @@ def inset(G):
     e.append(T(bx, by - 4, eng(step, "auto"), 10, "start", INK))
     b0 = bores[0]
     two = 2 * r_of_z(b0, G["z0"])
-    lab = ("across-flats " + eng(two, "auto")) if b0.get("kind") == "polygon" else ("⌀" + eng(two, "auto"))
+    if b0.get("kind") == "polygon":
+        aps = [float(a) for a in (b0.get("apothems") or [b0["radius"]])]
+        lab = "across-flats " + (eng(two, "auto") if max(aps) == min(aps)
+                                 else " × ".join(eng(2 * a, "auto") for a in aps[:2]))
+    else:
+        lab = "⌀" + eng(two, "auto")
     e.append(T(box[0] + S / 2, box[3] + 18, lab, 11, "middle", "#444"))
     if len(bores) > 1:
         c0 = bores[0]["center"]

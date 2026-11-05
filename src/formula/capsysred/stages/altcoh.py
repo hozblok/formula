@@ -27,7 +27,7 @@ from ..fresnel import FresnelAmplitude
 from ..spectrum import SpectralLine
 from ..shared.physics_constants import FRESNEL_PROBE_THETA
 from ..shared.progress import Progress
-from ..rays import scene_stream
+from ..rays import recorded_plane, rescreen, scene_stream
 from ..screen import ScreenGrid
 
 
@@ -190,10 +190,8 @@ class AltCoherence:
         return grid, lo * self.du, (hi + 1) * self.du
 
 
-def run_alt_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
-                  seed_offset: int):
-    """The alternative estimators over the scene's ray records — from the
-    shared rays file when it matches, else traced (the stage-2/6 rng stream)."""
+def run_alt_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory):
+    """The alternative estimators over the scene's recorded ray records."""
     cfg = sim.cfg
     screen = ScreenGrid(scr_cfg)
     if screen.ny != 1:
@@ -202,7 +200,9 @@ def run_alt_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
     alt = AltCoherence(sim.lines, screen, screen.ref_pixel(scr_cfg.reference))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
-                                      aim_factory, seed_offset)
+                                      aim_factory)
+    # arrivals re-projected from the recorded plane, re-binned on this grid
+    records = rescreen(records, recorded_plane(sim, scene, scr_cfg), screen)
     stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
              "off_window": 0}
     progress = Progress(label, n_modes * n_rays)

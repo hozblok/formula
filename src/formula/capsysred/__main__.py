@@ -1,6 +1,6 @@
 """CLI: python3 -m formula.capsysred config.yaml -o out/ [--stages 1,14]
-[--replay ARCHIVE...]. Stages only read rays: out/rays-modes, out/rays.jsonl.gz
-or the --replay paths; recordings come from python -m formula.capsysred.trace_v3."""
+[--replay ARCHIVE...]. Stages only read rays: out/rays-modes or the --replay
+archives; recordings come from python -m formula.capsysred.trace_v3."""
 
 import argparse
 import sys
@@ -20,17 +20,18 @@ def main(argv=None) -> int:
     parser.add_argument("--stages", default=None,
                         help="which stages to run, e.g. 1,2,3 (default: 1, "
                              "2+3 for a free scene, 14 for a capillary scene; "
-                             "3 requires 2, which is added automatically)")
+                             "3 requires 2, which is added automatically); "
+                             "17: experimental archive phase checks or canonical coherence map; "
+                             "18: experimental archive contour coherence map")
     parser.add_argument("--replay", metavar="ARCHIVE", default=None,
                         nargs="+",
                         help="rays recording(s) to re-evaluate with the spectrum and "
                              "material from the config (no tracing). ARCHIVE is a "
-                             "v3 per-mode directory (trace_v3 / convert_rays_v3) or "
-                             "a v2 rays.jsonl.gz; several archives are read as one "
-                             "recording whose n_modes is their sum (Stage 14 keeps "
-                             "one disk cache per archive). Without --replay the run "
-                             "reads out/rays-modes or out/rays.jsonl.gz; it never "
-                             "traces")
+                             "v3 per-mode directory written by trace_v3; several "
+                             "archives are read as one recording whose n_modes is "
+                             "their sum (Stage 14 keeps one disk cache per archive). "
+                             "Without --replay the run reads out/rays-modes; it "
+                             "never traces")
     args = parser.parse_args(argv)
 
     stages = None

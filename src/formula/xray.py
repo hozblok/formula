@@ -15,7 +15,7 @@ from typing import Callable, Union
 
 from .formula import Number
 from .intersect import RaySurface
-from .henke import silica_electron_density
+from .henke import silica_electron_density, silicon_electron_density
 from .physical_constants import ANGSTROM, HC_KEV_ANGSTROM, R_E
 
 
@@ -86,6 +86,13 @@ class GlassMaterial:
 FUSED_SILICA = GlassMaterial(
     name="fused silica",
     electron_density=silica_electron_density,
+)
+
+
+# Silicon channel walls (2.33 g/cm^3): tabulated Henke n_eff(E).
+SILICON = GlassMaterial(
+    name="silicon",
+    electron_density=silicon_electron_density,
 )
 
 
