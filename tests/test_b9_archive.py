@@ -203,7 +203,8 @@ def test_tube_flux_matches_each_patch_and_preserves_phase_geometry_and_original(
     ids = mesh["ray_indices"]
     pin = _p1_triangle_power(nodes["fresnel"][ids]*np.sqrt(nodes["uz0"][ids])/nodes["source_distance"][ids], mesh["entrance_area"])
     pout = _p1_triangle_power(corrected["vertex_amplitude"]*np.sqrt(nodes["uzexit"][ids]), mesh["exit_area"])
-    np.testing.assert_allclose(pin, pout, rtol=8e-16, atol=0)
+    # 9 ulp: the scale roundtrip reaches 8.05e-16 on arm64 libm, 8e-16 on x64.
+    np.testing.assert_allclose(pin, pout, rtol=2e-15, atol=0)
     np.testing.assert_array_equal(mesh["vertex_amplitude"], original)
     for name in ("phase", "vertex_phase", "gradient", "triangles", "entrance_triangles", "ray_indices"):
         np.testing.assert_array_equal(corrected[name], mesh[name])
