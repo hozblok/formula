@@ -22,7 +22,7 @@ WALLS = ("x-", "x+", "y-", "y+")
 
 
 def rough_series(n, dz, sigma, lc, rng):
-    """Gaussian series, rms sigma, Lorentzian spectrum 1/(1 + (k_z l_c)^2) (exp(-|z|/l_c) correlation)."""
+    """Gaussian series, rms sigma: white noise filtered by 1/(1 + (k_z l_c)^2), correlation (1 + |z|/l_c) exp(-|z|/l_c)."""
     white = rng.standard_normal(n)
     kz = 2.0 * np.pi * sfft.fftfreq(n, dz)
     h = np.real(sfft.ifft(sfft.fft(white) / (1.0 + (kz * lc) ** 2)))

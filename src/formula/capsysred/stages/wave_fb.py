@@ -214,7 +214,8 @@ class Disc:
 class WallFigure:
     """Radial wall displacement dr(phi, z) [m]: harmonic terms amp mod(z) cos(q (phi - angle - rate z)),
     mod = cos(2 pi z / period + phase) or 1, plus an optional random field sum_q a_q(z) cos q phi + b_q(z) sin q phi
-    (gaussian z-correlation of length lc, equal power per listed q, total rms sigma). coeffs(z) -> dr_hat[p],
+    (white noise smoothed by exp(-z^2 / 2 lc^2), correlation exp(-dz^2 / 4 lc^2), equal power per listed q, total rms
+    sigma). coeffs(z) -> dr_hat[p],
     p = -Q..Q, with dr = sum_p dr_hat[p] e^{i p phi}."""
 
     def __init__(self, terms=(), noise=None, length=0.0, axis=True):
