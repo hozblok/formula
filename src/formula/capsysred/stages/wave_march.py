@@ -183,10 +183,8 @@ class MarchSolver:
         if self.spot is None:
             lam = 2.0 * np.pi / k
             return np.exp(1j * k * ((X - xi[0]) ** 2 + (Y - xi[1]) ** 2) / (2.0 * self.z_in)) / (1j * lam * self.z_in)
-        s = self.spot["fwhm"] / math.sqrt(8.0 * math.log(2.0))
-        (cx, cy), (tx, ty) = self.spot["center"], self.spot["tilt"]
-        return (np.exp(-((X - cx) ** 2 + (Y - cy) ** 2) / (4.0 * s * s)) * np.exp(1j * k * (tx * X + ty * Y))
-                / math.sqrt(2.0 * math.pi * s * s))
+        from .wave import spot_profile
+        return spot_profile(self.spot, k, X, Y)
 
     def exit_field(self, xi, k, delta, beta, workers):
         """Kirchhoff entrance, n_steps of free propagation + medium factor, exit window times the exit mask."""
