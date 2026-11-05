@@ -56,10 +56,11 @@ def find_all(
     if _poly.deg(q, tol) == 0:
         return []
     chain = _isolate.sturm_chain(q, tol, N)
-    roots = _isolate.isolate_roots(q, chain, -one, one, xacc, tol)
+    candidates = _isolate.isolate_roots(q, chain, -one, one, xacc, tol)
     # the square-free gcd is approximate: judge the roots on p itself
-    roots = _isolate.resolved(p, roots, -one, one, xacc, _isolate.noise(p, N),
-                              where=lambda u: mid + span * u)
+    roots = _isolate.resolved(p, candidates, -one, one, xacc, _isolate.noise(p, N),
+                              where=lambda u: mid + span * u,
+                              fused=_isolate.fused_distinct(p, q, tol, N) if candidates else 0)
     t_acc = tol_full(N)
     return sorted(t for t in (mid + span * u for u in roots)
                   if t_min - t_acc <= t <= t_max + t_acc)

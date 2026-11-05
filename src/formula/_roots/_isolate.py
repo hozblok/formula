@@ -6,7 +6,7 @@ roots by sign variations, and bisect a square-free polynomial to precision.
 
 from ..formula import NumberContext
 from . import _poly
-from .utils import UnresolvedRootError, sign
+from .utils import UnresolvedRootError, sign, tol_full
 
 
 def sturm_chain(p, tol, N: NumberContext):
@@ -63,6 +63,20 @@ def isolate_roots(q, chain, lo, hi, xacc, tol):
     return [r for i, r in enumerate(roots) if not i or r - roots[i - 1] > 4 * xacc]
 
 
+def fused_distinct(p, q, tol, N: NumberContext):
+    """Roots the tol-level square-free part q fused beyond what the rounding-level gcd
+    fuses: distinct-at-resolution roots hidden under one representative of q. Counted
+    only for small algebraic p (degree <= 16, the interpolation range): the degree of a
+    long spectral proxy is fit structure, not a root count."""
+    dp = _poly.deg(p, tol)
+    if dp > 16 or _poly.deg(q, tol) >= dp:
+        return 0
+    # 4 orders above the rounding scale: interpolation noise of an exact multiple root
+    # stays "repeated", a cluster with gaps above ~10^(3-p/2) stays distinct.
+    strict = tol_full(N) * N(10) ** 4
+    return max(0, _poly.deg(_poly.square_free(p, strict, N), strict) - _poly.deg(q, tol))
+
+
 def noise(p, N: NumberContext):
     """Bound on the rounding of p at x: 100 * 1e-(prec-2) * sum |p_k| |x|^k."""
     scale = N(100) * N(f"1e-{N.precision - 2}")
@@ -96,7 +110,7 @@ def _decided_point(p, r, bound, xacc, rounding):
     return None, None
 
 
-def resolved(p, roots, lo, hi, xacc, rounding, where=None):
+def resolved(p, roots, lo, hi, xacc, rounding, where=None, fused=0):
     """Candidate roots of an approximate square-free part, judged on p itself.
 
     An exactly zero p(r) is a root. Otherwise the first decided-|p| probes on both sides
@@ -109,6 +123,12 @@ def resolved(p, roots, lo, hi, xacc, rounding, where=None):
     nearby announces itself by a sign dip toward a neighbour (a fused close pair) — each
     side with a dip is bisected on p, no dip means no root. `where` maps a backend
     coordinate to the caller's t for the error message.
+
+    `fused` is the count of distinct-at-resolution roots the square-free step merged
+    (fused_distinct). They are accounted for by extra dip roots (one per dipped
+    candidate is the candidate itself) or by dismissed candidates (a dismissal's decided
+    no-root evidence vouches for one fused complex pair); any remainder may hide inside
+    a kept candidate's opaque basin — UnresolvedRootError rather than a partial list.
     """
     ordered = []
     for r in sorted(roots):
@@ -119,6 +139,7 @@ def resolved(p, roots, lo, hi, xacc, rounding, where=None):
             continue
         ordered.append(r)
     out = []
+    dips = dip_candidates = dismissed = 0
     margin = (hi - lo) * 0.5
     for k, r in enumerate(ordered):
         v = _poly.peval(p, r)
@@ -137,10 +158,21 @@ def resolved(p, roots, lo, hi, xacc, rounding, where=None):
                 f"a root candidate at t = {where(r) if where else r} cannot be resolved "
                 "at this precision: a tangency and a near-miss lie inside the same "
                 "noise band")
+        found = 0
         for edge in (left, right):
             x = _beside(p, r, edge, v, xacc, rounding)
             if x is not None:
                 out.append(bisect(p, min(x, r), max(x, r), xacc))
+                found += 1
+        dips += found
+        dip_candidates += found > 0
+        dismissed += found == 0
+    if fused > (dips - dip_candidates) + 2 * dismissed:
+        r = ordered[0] if ordered else lo
+        raise UnresolvedRootError(
+            f"{fused} root(s) fused below the working tolerance near "
+            f"t = {where(r) if where else r} cannot all be recovered: the root count "
+            "in the cluster is unproven")
     return out
 
 
