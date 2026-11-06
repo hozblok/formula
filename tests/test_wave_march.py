@@ -101,6 +101,8 @@ def test_roughness_is_reproducible_and_a_step_moves_the_field():
     _, ideal = _solver(_tiny(), WM.MarchSolver)
     u0 = ideal.exit_field((-1.0e-6, 0.0), K, sim.delta_f, sim.beta_f, -1)
     ua = a.exit_field((-1.0e-6, 0.0), K, sim.delta_f, sim.beta_f, -1)
+    i, j = np.searchsorted(a.xs, ideal.xs[0]), np.searchsorted(a.ys, ideal.ys[0])   # the ideal window inside the rough one
+    ua = ua[i:i + ideal.xs.size, j:j + ideal.ys.size]
     assert np.abs(ua - u0).max() > 1e-3 * np.abs(u0).max()
     _, st = _solver(_tiny(march={"defects": [{"type": "step", "z": 5e-4, "dw": [2e-7, 0.0]}]}), WM.MarchSolver)
     xl, xr, yl, yr = st._walls(st.n_steps)
@@ -124,6 +126,16 @@ def test_shapes_fill_fractions():
     _, ell = _solver(_tiny(bores=[{"center": [0.0, 0.0], "radius": 1.0e-6}],
                            march={"defects": [{"type": "ellipse", "ratio": 0.5}]}), WM.MarchSolver)
     assert float(ell.fill(0).sum()) * ell.h * ell.h == pytest.approx(0.5 * math.pi * 1e-12, rel=2e-3)
+
+
+def test_exit_window_holds_the_whole_exit_section():
+    """A sloped sidewall widens the section beyond the nominal square: the exit window must keep all of it."""
+    _, sl = _solver(_tiny(march={"defects": [{"type": "slope", "deg": 3}]}), WM.MarchSolver)
+    assert float(sl.exit_mask.sum()) == pytest.approx(float(sl.exit_mask_full.sum()), rel=1e-12)
+    assert sl.exit_mask.shape == (sl.xs.size, sl.ys.size) and sl.xs.size > sl.ys.size
+    _, ideal = _solver(_tiny(), WM.MarchSolver)
+    assert ideal.xs.size == ideal.ys.size
+    assert float(ideal.exit_mask.sum()) == pytest.approx(float(ideal.exit_mask_full.sum()), rel=1e-12)
 
 
 def test_run_writes_far_field_and_dump(tmp_path):
