@@ -175,3 +175,17 @@ def test_run_circular_bore(tmp_path):
     sim.run(str(tmp_path), stages=[16])
     meta = json.load(open(tmp_path / "stage16" / "meta.json", encoding="utf-8"))
     assert meta["model_class"] == "paraxial-medium" and (tmp_path / "stage16" / "field-capillary.npz").exists()
+
+def test_funnel_scales_centre_and_radius_with_g():
+    """Conformal funnel: centre and radius times G(z) = 1 + g0 z + g1 z^2 at every step plane (the vertex, not the chord)."""
+    L, a, c = 1.0e-3, 0.5e-6, 1.0e-6
+    bore = [{"center": [c, 0.0], "radius": a, "funnel": {"g": [3.0 / L, -1.0 / L ** 2]}}]     # G(L/2) = 2.25, G(L) = 3
+    _, s = _solver(_tiny(bores=bore, length=L, march={"dx": 1.0e-8, "dz": 1.0e-5}), WM.MarchSolver)
+    assert s.z_dependent and s.lx[0] < 0.5e-6 and s.lx[-1] > 4.5e-6
+    for i, g in ((0, 1.0), (s.n_steps // 2, 2.25), (s.n_steps, 3.0)):
+        f = s.fill(i)
+        assert float(f.sum()) * s.h ** 2 == pytest.approx(math.pi * (g * a) ** 2, rel=3e-3)
+        assert float((f * s.lx[:, None]).sum() / f.sum()) == pytest.approx(g * c, abs=1e-10)
+    assert float(s.exit_mask.sum()) == pytest.approx(float(s.exit_mask_full.sum()), rel=1e-12)
+    with pytest.raises(ValueError, match="f = g"):
+        _solver(_tiny(bores=[dict(bore[0], funnel={"g": [3.0 / L, -1.0 / L ** 2], "f": [1.0 / L, 0.0]})], length=L), WM.MarchSolver)

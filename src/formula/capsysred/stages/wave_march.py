@@ -1,8 +1,9 @@
 """Stage 16 provider `march`: scalar paraxial split-step propagation through the bore with the
 wall as a medium n = 1 - delta + i beta on the lattice (fractional cell filling), so the cross
 section may change along z: wall roughness, width steps, tapers, sidewall slope, rounded corners,
-elliptic, oval (rotating along z) or drifting circular bores. Kirchhoff entrance mask; exit field on the same window as
-`images` / `uisk`. Section `march` of wave_estimator: dx, dz, box, sponge, defects."""
+elliptic, oval (rotating along z) or drifting circular bores, and conformal funnels (centre and radius times
+G(z) = 1 + g0 z + g1 z^2). Kirchhoff entrance mask; exit field on the same window as `images` / `uisk`.
+Section `march` of wave_estimator: dx, dz, box, sponge, defects."""
 
 import math
 
@@ -48,6 +49,14 @@ class MarchSolver:
         self.dz = self.length / self.n_steps
         self.S = int(wave["mask_supersample"])
         self.circular = bore.get("sides") is None
+        self.funnel = None
+        if bore.get("kind") == "funnel":
+            g, f = tuple(float(v) for v in bore["g"]), tuple(float(v) for v in bore["f"])
+            if g != f:
+                raise ValueError("wave_estimator.march: a funnel needs f = g (centre and radius on one parabola G)")
+            if m["defects"]:
+                raise ValueError("wave_estimator.march: a funnel takes no defects")
+            self.funnel = g
         if self.circular:
             self.c = np.array([float(bore["center"][0]), float(bore["center"][1])])
             self.half = np.array([float(bore["radius"])] * 2)
@@ -61,9 +70,11 @@ class MarchSolver:
         margin = float(m["box"])
         self.reach, self.theta_cut = margin, lam_h / (2.0 * self.h)
         self.grid, self.xs, self.ys = [], [], []
+        gs = (1.0, 1.0) if self.funnel is None else self._g_range()
         for c, a in zip(self.c, self.half):
-            i0 = math.floor((c - a - margin) / self.h)
-            n = _fast_len(math.ceil((c + a + margin) / self.h) - i0 + 1)
+            lo, hi = min(g * (c - a) for g in gs), max(g * (c + a) for g in gs)      # a funnel sweeps G(z) (c -+ a)
+            i0 = math.floor((lo - margin) / self.h)
+            n = _fast_len(math.ceil((hi + margin) / self.h) - i0 + 1)
             self.grid.append((i0, i0 + n))
         self.lx = np.arange(self.grid[0][0], self.grid[0][1]) * self.h       # full lattice
         self.ly = np.arange(self.grid[1][0], self.grid[1][1]) * self.h
@@ -111,6 +122,18 @@ class MarchSolver:
 
     # ------------------------------------------------------------- geometry along z
 
+    def _g(self, z):
+        """Funnel scale G(z) = 1 + g0 z + g1 z^2 of the centre and the radius (1 without a funnel)."""
+        return 1.0 if self.funnel is None else 1.0 + self.funnel[0] * z + self.funnel[1] * z * z
+
+    def _g_range(self):
+        """Smallest and largest G on [0, L] (ends and the vertex of the parabola)."""
+        g0, g1 = self.funnel
+        vals = [self._g(0.0), self._g(self.length)]
+        if g1 != 0.0 and 0.0 < -g0 / (2.0 * g1) < self.length:
+            vals.append(self._g(-g0 / (2.0 * g1)))
+        return min(vals), max(vals)
+
     def _defects(self, defects, seed):
         n = self.n_steps
         self.offsets = np.zeros((4, n + 1))              # wall offsets (x-, x+, y-, y+) at every step plane
@@ -149,15 +172,17 @@ class MarchSolver:
         if self.oval is not None and self.ratio != 1.0:
             raise ValueError("wave_estimator.march: defects ellipse and ovality exclude each other")
         self.z_dependent = bool(np.any(self.offsets != 0.0) or np.any(self.center_shift != 0.0)
-                                or (self.oval is not None and self.oval[1] != 0.0))
+                                or (self.oval is not None and self.oval[1] != 0.0) or self.funnel is not None)
         self.separable = self.axis_rect and self.slope == 0.0 and self.rc == 0.0
         self._static = None if (self.z_dependent or self.separable) else self._mask2d(0)
 
     def _walls(self, i):
-        """(xl, xr, yl, yr) of the rectangle or ellipse box at step plane i."""
-        cx, cy = self.c + self.center_shift[:, i]
+        """(xl, xr, yl, yr) of the rectangle or ellipse box at step plane i (a funnel scales centre and half-widths by G)."""
+        g = self._g(i * self.dz)
+        cx, cy = g * (self.c + self.center_shift[:, i])
+        hx, hy = g * self.half
         o = self.offsets[:, i]
-        return cx - self.half[0] + o[0], cx + self.half[0] + o[1], cy - self.half[1] + o[2], cy + self.half[1] + o[3]
+        return cx - hx + o[0], cx + hx + o[1], cy - hy + o[2], cy + hy + o[3]
 
     def _mask2d(self, i):
         """S x S supersampled inside fraction for polygons with slope / rounding and for ellipses."""
