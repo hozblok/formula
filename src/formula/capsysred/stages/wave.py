@@ -688,8 +688,8 @@ def capillary_provider(cap, wave):
         if not polygonal or any(axis_rectangle(b) is None for b in cap.bores):
             raise ValueError("wave_estimator: provider images supports rectangles with faces along "
                              f"the lattice axes only (sides: 4, rotation 0 or 90 degrees); got kinds {sorted(kinds)}")
-    if prov == "march" and not kinds <= {"polygon", "cylinder"}:
-        raise ValueError("wave_estimator: provider march supports straight polygon and circular bores "
+    if prov == "march" and not kinds <= {"polygon", "cylinder", "funnel"}:
+        raise ValueError("wave_estimator: provider march supports straight polygon, circular and funnel bores "
                          f"only; got kinds {sorted(kinds)}")
     if prov == "fb" and not circular:
         raise ValueError("wave_estimator: provider fb supports circular bores (radius, optional "
