@@ -136,3 +136,12 @@ def test_run_writes_far_field_and_dump(tmp_path):
     assert meta["provider"] == "march" and meta["model_class"] == "paraxial-medium" and meta["march"]["n_steps"] == 1000
     ff = json.load(open(out / "far-field.json", encoding="utf-8"))
     assert ff["weighted"]["x"]["centroid_rad"] is not None and 0.5 < ff["weighted"]["power_in_window"] <= 1.0
+
+
+def test_run_circular_bore(tmp_path):
+    raw = _tiny(bores=[{"center": [0.0, 0.0], "radius": 1.0e-6}], length=2.0e-4, march={"dx": 1.0e-8},
+                far_field={"theta_max": 2e-3, "pad": 512}, dump_field=True)
+    sim = Simulation.from_dict(raw)
+    sim.run(str(tmp_path), stages=[16])
+    meta = json.load(open(tmp_path / "stage16" / "meta.json", encoding="utf-8"))
+    assert meta["model_class"] == "paraxial-medium" and (tmp_path / "stage16" / "field-capillary.npz").exists()
