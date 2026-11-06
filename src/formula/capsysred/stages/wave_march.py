@@ -1,7 +1,7 @@
 """Stage 16 provider `march`: scalar paraxial split-step propagation through the bore with the
 wall as a medium n = 1 - delta + i beta on the lattice (fractional cell filling), so the cross
 section may change along z: wall roughness, width steps, tapers, sidewall slope, rounded corners,
-elliptic or drifting circular bores. Kirchhoff entrance mask; exit field on the same window as
+elliptic, oval (rotating along z) or drifting circular bores. Kirchhoff entrance mask; exit field on the same window as
 `images` / `uisk`. Section `march` of wave_estimator: dx, dz, box, sponge, defects."""
 
 import math
@@ -16,6 +16,7 @@ DEFECT_KEYS = {
     "slope": {"deg"},
     "rounded": {"rc"},
     "ellipse": {"ratio"},
+    "ovality": {"amp", "rate", "angle"},
     "drift": {"dxy"},
 }
 WALLS = ("x-", "x+", "y-", "y+")
@@ -76,9 +77,9 @@ class MarchSolver:
         self.xs, self.ys = self.lx[self.slices[0]], self.ly[self.slices[1]]    # exit window
         self.off = sub_offsets(self.h, self.S)
         kinds = {d["type"] for d in m["defects"]}
-        if self.circular and kinds - {"ellipse", "taper", "drift"}:
-            raise ValueError("wave_estimator.march: a circular bore takes defects ellipse, taper, drift only")
-        if not self.circular and (not self.axis_rect and kinds or "ellipse" in kinds):
+        if self.circular and kinds - {"ellipse", "taper", "drift", "ovality"}:
+            raise ValueError("wave_estimator.march: a circular bore takes defects ellipse, ovality, taper, drift only")
+        if not self.circular and (not self.axis_rect and kinds or kinds & {"ellipse", "ovality"}):
             raise ValueError("wave_estimator.march: wall defects need a rectangle with faces along the lattice axes")
         self._defects(m["defects"], m.get("seed"))
         self.kx = 2.0 * np.pi * sfft.fftfreq(self.lx.size, self.h)
@@ -116,6 +117,7 @@ class MarchSolver:
         self.center_shift = np.zeros((2, n + 1))
         self.slope = self.rc = 0.0
         self.ratio = 1.0
+        self.oval = None                                 # (amp, rate, angle): dr = amp cos 2 (phi - angle - rate z)
         z = np.arange(n + 1) * self.dz
         for d in defects:
             t = d["type"]
@@ -139,10 +141,15 @@ class MarchSolver:
                 self.rc = float(d["rc"])
             elif t == "ellipse":
                 self.ratio = float(d["ratio"])
+            elif t == "ovality":
+                self.oval = (float(d["amp"]), float(d.get("rate", 0.0)), float(d.get("angle", 0.0)))
             elif t == "drift":
                 for ax in range(2):
                     self.center_shift[ax] += float(d["dxy"][ax]) * z / self.length
-        self.z_dependent = bool(np.any(self.offsets != 0.0) or np.any(self.center_shift != 0.0))
+        if self.oval is not None and self.ratio != 1.0:
+            raise ValueError("wave_estimator.march: defects ellipse and ovality exclude each other")
+        self.z_dependent = bool(np.any(self.offsets != 0.0) or np.any(self.center_shift != 0.0)
+                                or (self.oval is not None and self.oval[1] != 0.0))
         self.separable = self.axis_rect and self.slope == 0.0 and self.rc == 0.0
         self._static = None if (self.z_dependent or self.separable) else self._mask2d(0)
 
@@ -158,7 +165,13 @@ class MarchSolver:
         X = (self.lx[:, None] + self.off[None, :]).reshape(-1)
         Y = (self.ly[:, None] + self.off[None, :]).reshape(-1)
         cx, cy, ax, ay = (xl + xr) / 2.0, (yl + yr) / 2.0, (xr - xl) / 2.0, (yr - yl) / 2.0
-        if self.circular:
+        if self.circular and self.oval is not None:
+            amp, rate, angle = self.oval
+            psi = angle + rate * i * self.dz
+            u = (X[:, None] - cx) * math.cos(psi) + (Y[None, :] - cy) * math.sin(psi)
+            v = -(X[:, None] - cx) * math.sin(psi) + (Y[None, :] - cy) * math.cos(psi)
+            inside = (u / (ax + amp)) ** 2 + (v / (ax - amp)) ** 2 < 1.0
+        elif self.circular:
             inside = ((X[:, None] - cx) / ax) ** 2 + ((Y[None, :] - cy) / (ay * self.ratio)) ** 2 < 1.0
         elif self.axis_rect:
             hx = ax + (Y[None, :] - cy) * self.slope                 # sidewall slope: wider at +y
@@ -183,12 +196,30 @@ class MarchSolver:
         if self.circular:                                    # row-wise chord of the ellipse
             xl, xr, yl, yr = self._walls(i)
             cx, cy, ax, ay = (xl + xr) / 2.0, (yl + yr) / 2.0, (xr - xl) / 2.0, (yr - yl) / 2.0 * self.ratio
-            t = np.clip(1.0 - ((self.ly - cy) / ay) ** 2, 0.0, None)
-            w = ax * np.sqrt(t)
-            lo, hi = cx - w[None, :], cx + w[None, :]
+            if self.oval is not None:
+                lo, hi = self._oval_chord(i, cx, cy, ax)
+            else:
+                t = np.clip(1.0 - ((self.ly - cy) / ay) ** 2, 0.0, None)
+                w = ax * np.sqrt(t)
+                lo, hi = cx - w[None, :], cx + w[None, :]
             x = self.lx[:, None]
             return np.clip((np.minimum(x + self.h / 2.0, hi) - np.maximum(x - self.h / 2.0, lo)) / self.h, 0.0, 1.0)
         return self._mask2d(i)
+
+    def _oval_chord(self, i, cx, cy, a):
+        """x interval of every lattice row inside the ellipse of semi-axes a + amp (along psi) and a - amp at plane i."""
+        amp, rate, angle = self.oval
+        psi = angle + rate * i * self.dz
+        c, s = math.cos(psi), math.sin(psi)
+        y = self.ly - cy
+        qa = c * c / (a + amp) ** 2 + s * s / (a - amp) ** 2
+        qb = 2.0 * y * c * s * (1.0 / (a + amp) ** 2 - 1.0 / (a - amp) ** 2)
+        qc = y * y * (s * s / (a + amp) ** 2 + c * c / (a - amp) ** 2) - 1.0
+        disc = qb * qb - 4.0 * qa * qc
+        r = np.sqrt(np.clip(disc, 0.0, None))
+        lo = np.where(disc > 0.0, cx + (-qb - r) / (2.0 * qa), cx)
+        hi = np.where(disc > 0.0, cx + (-qb + r) / (2.0 * qa), cx)
+        return lo[None, :], hi[None, :]
 
     # ------------------------------------------------------------- propagation
 

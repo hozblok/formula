@@ -746,7 +746,7 @@ class Config:
                     raise ValueError(f"wave_estimator.march.defects: bad entry {d!r}; types {sorted(DEFECT_KEYS)}")
                 t = d["type"]
                 need = {"roughness": {"sigma", "lc", "seed"}, "step": {"z", "dw"}, "taper": {"dw"}, "slope": {"deg"},
-                        "rounded": {"rc"}, "ellipse": {"ratio"}, "drift": {"dxy"}}[t]
+                        "rounded": {"rc"}, "ellipse": {"ratio"}, "ovality": {"amp"}, "drift": {"dxy"}}[t]
                 if not need <= set(d):
                     raise ValueError(f"wave_estimator.march.defects: {t} needs {sorted(need)}")
                 if t == "roughness" and any(wl not in WALLS for wl in d.get("walls") or []):
