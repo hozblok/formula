@@ -128,6 +128,24 @@ def test_shapes_fill_fractions():
     assert float(ell.fill(0).sum()) * ell.h * ell.h == pytest.approx(0.5 * math.pi * 1e-12, rel=2e-3)
 
 
+def test_ovality_rotates_along_the_bore():
+    """dr = amp cos 2 (phi - angle - rate z): semi-axes a +- amp, the long axis turns by rate z."""
+    a, amp = 1.0e-6, 1.0e-7
+    rate = 0.5 * math.pi / 1.0e-3                                 # a quarter turn over the 1 mm length
+    bore = [{"center": [0.0, 0.0], "radius": a}]
+    _, st = _solver(_tiny(bores=bore, march={"defects": [{"type": "ovality", "amp": amp}]}), WM.MarchSolver)
+    assert not st.z_dependent and float(st.fill(0).sum()) * st.h ** 2 == pytest.approx(math.pi * (a + amp) * (a - amp), rel=3e-3)
+    _, rot = _solver(_tiny(bores=bore, march={"defects": [{"type": "ovality", "amp": amp, "rate": rate}]}), WM.MarchSolver)
+    assert rot.z_dependent
+    row = int(np.argmin(np.abs(rot.ly)))
+    for i, half_x in ((0, a + amp), (rot.n_steps, a - amp)):     # chord along x at y = 0: long axis, then short axis
+        f = rot.fill(i)
+        assert float(f[:, row].sum()) * rot.h == pytest.approx(2.0 * half_x, abs=2.0 * rot.h)
+    with pytest.raises(ValueError, match="exclude"):
+        _solver(_tiny(bores=bore, march={"defects": [{"type": "ovality", "amp": amp}, {"type": "ellipse", "ratio": 0.9}]}),
+                WM.MarchSolver)
+
+
 def test_exit_window_holds_the_whole_exit_section():
     """A sloped sidewall widens the section beyond the nominal square: the exit window must keep all of it."""
     _, sl = _solver(_tiny(march={"defects": [{"type": "slope", "deg": 3}]}), WM.MarchSolver)
