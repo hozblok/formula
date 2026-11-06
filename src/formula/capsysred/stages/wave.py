@@ -925,8 +925,8 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log, dump_dir=None, 
     far_files = _emit_far_field(far_dir, far, lines, ff, wave) if ff is not None else []
     a = float(cap.bores[0]["radius"])
     lam0 = float(sim.lam)
-    model = MODEL_CLASS[provider] + ("" if provider == "images" or all(int(b["sides"]) == 4 for b in cap.bores)
-                                     else ",first-order-polygon")
+    model = MODEL_CLASS[provider] + ("" if provider == "images" or all(b.get("sides") is None or int(b["sides"]) == 4
+                                                                       for b in cap.bores) else ",first-order-polygon")
     for label, g, acc, d in zip(labels, samplers, accs, dists):
         nf = {"entrance": a * a / (lam0 * length), "source": a * a / (lam0 * z_in),
               "exit": a * a / (lam0 * d) if d > 0.0 else None}   # None: screen on the exit plane
