@@ -88,8 +88,25 @@ class MarchSolver:
         self.sponge = (ramp(self.lx, self.lx[0], self.lx[-1])[:, None] + ramp(self.ly, self.ly[0], self.ly[-1])[None, :])
         self.families, self.pruned = [], 0
         self.exit_mask_full = self.fill(self.n_steps)
-        self.exit_mask = self.exit_mask_full[self.slices[0], self.slices[1]]
+        self._cover_exit()
         self.n_images, self.line_points = [], []
+
+    def _cover_exit(self):
+        """Grow the exit window to every core cell of the exit section (slope, wall offsets) with 2 cells of margin."""
+        from .wave import _fast_len
+        win = list(self.win)
+        for ax in range(2):
+            cells = np.nonzero(self.exit_mask_full.sum(axis=1 - ax) > 0.0)[0]
+            sl, g0 = self.slices[ax], self.grid[ax][0]
+            lo, hi = min(sl.start, int(cells[0]) - 2), max(sl.stop, int(cells[-1]) + 3)
+            if (lo, hi) != (sl.start, sl.stop):
+                lo = max(lo, 0)
+                n = min(_fast_len(hi - lo), self.exit_mask_full.shape[ax] - lo)
+                self.slices[ax] = slice(lo, lo + n)
+                win[2 * ax], win[2 * ax + 1] = g0 + lo, g0 + lo + n
+        self.win = tuple(win)
+        self.xs, self.ys = self.lx[self.slices[0]], self.ly[self.slices[1]]
+        self.exit_mask = self.exit_mask_full[self.slices[0], self.slices[1]]
 
     # ------------------------------------------------------------- geometry along z
 
