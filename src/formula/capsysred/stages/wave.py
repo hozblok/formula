@@ -665,11 +665,11 @@ def _polygon_circumradius(bore):
 
 def capillary_provider(cap, wave):
     """Provider for the capillary scene; `auto` picks by geometry: images for rectangles with
-    faces along the lattice axes, march for other polygons, fb for circular / torus bores.
-    An explicit choice must match the geometry (no fallback)."""
+    faces along the lattice axes, march for other polygons, fb for circular / torus bores and for
+    conformal funnels. An explicit choice must match the geometry (no fallback)."""
     kinds = {bore.get("kind", "cylinder") for bore in cap.bores}
     polygonal = kinds <= {"polygon"}
-    circular = kinds <= {"cylinder", "torus"}
+    circular = kinds <= {"cylinder", "torus"} or kinds == {"funnel"}
     prov = wave["provider"]
     if prov == "auto":
         if polygonal:
@@ -693,7 +693,9 @@ def capillary_provider(cap, wave):
                          f"only; got kinds {sorted(kinds)}")
     if prov == "fb" and not circular:
         raise ValueError("wave_estimator: provider fb supports circular bores (radius, optional "
-                         f"bend) only; got kinds {sorted(kinds)}")
+                         f"bend) or conformal funnels only; got kinds {sorted(kinds)}")
+    if prov == "fb" and kinds == {"funnel"} and wave.get("fb_wall") != "exact":
+        raise ValueError("wave_estimator: provider fb on funnel bores needs fb_wall: exact")
     if prov is None:
         raise ValueError(f"wave_estimator: no provider for bore kinds {sorted(kinds)} "
                          "(uisk: polygons; fb: circular / torus)")
@@ -768,6 +770,10 @@ def _run(sim, out_dir, partial, wave, rays_paths, log):
                 files.append(FIELD_DUMP)
             if wave["far_field"] is not None:
                 files += scenes[0][1]["far_field_files"]
+        elif all(b.get("kind") == "funnel" for b in cap.bores):
+            from . import wave_funnel
+            scenes = wave_funnel.funnel_scene(sim, wave, lines, log, out_dir=partial)
+            files += scenes[0][1].get("fb_files", [])
         else:
             from . import wave_fb
             scenes = wave_fb.fb_capillary_scene(sim, wave, lines, rays_paths, log, out_dir=partial)

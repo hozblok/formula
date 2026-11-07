@@ -153,3 +153,4 @@ test_wave_march.py::test_ideal_channel_converges_to_the_image_sum
 test_wave_march.py::test_roughness_is_reproducible_and_a_step_moves_the_field
 test_wave_march.py::test_run_circular_bore
 test_wave_march.py::test_run_writes_far_field_and_dump
+test_wave_funnel.py::test_agrees_with_the_march_funnel
