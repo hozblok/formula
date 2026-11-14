@@ -52,6 +52,30 @@ def fresnel_r(theta, delta, beta):
     return (theta - q) / (theta + q)
 
 
+def spot_axis(spot, k, x, axis):
+    """One axis of the coherent entrance spot: gaussian of intensity FWHM `fwhm` at its waist, unit power,
+    tilt exp(i k t x), waist at z = focus: exp(i k (x - c)^2 / 2q), q = -focus - i z_R (carrier e^{+ikz}),
+    z_R = 2 k s^2, s = FWHM / sqrt(8 ln 2); c is the beam centre on the entrance plane."""
+    s = spot["fwhm"] / math.sqrt(8.0 * math.log(2.0))
+    c, t = spot["center"][axis], spot["tilt"][axis]
+    if not spot.get("focus"):
+        return (2.0 * math.pi * s * s) ** -0.25 * np.exp(-(x - c) ** 2 / (4.0 * s * s)) * np.exp(1j * k * t * x)
+    zr = 2.0 * k * s * s
+    q = complex(-spot["focus"], -zr)
+    return ((2.0 * math.pi * s * s) ** -0.25 * np.sqrt(-1j * zr / q)
+            * np.exp(1j * k * (x - c) ** 2 / (2.0 * q)) * np.exp(1j * k * t * x))
+
+
+def spot_profile(spot, k, X, Y):
+    """Coherent entrance spot on (X, Y): unit power; the waist form of the former providers when focus is 0."""
+    if not spot.get("focus"):
+        s = spot["fwhm"] / math.sqrt(8.0 * math.log(2.0))
+        (cx, cy), (tx, ty) = spot["center"], spot["tilt"]
+        return (np.exp(-((X - cx) ** 2 + (Y - cy) ** 2) / (4.0 * s * s)) * np.exp(1j * k * (tx * X + ty * Y))
+                / math.sqrt(2.0 * math.pi * s * s))
+    return spot_axis(spot, k, X, 0) * spot_axis(spot, k, Y, 1)
+
+
 def cell_kernel(edges_lo, edges_hi, xs, k, d):
     """int_lo^hi exp(ik (P - x)^2 / 2d) dP for every (cell, x): Fresnel integrals."""
     s = math.sqrt(k / (math.pi * d))
@@ -616,8 +640,15 @@ def preflight_wave_inputs(sim, wave):
                     raise ValueError(f"wave_estimator: capillary screen {i} at z = {float(scr.z)} "
                                      f"lies before the exit z1 = {float(cap.z1)}; {prov} screens sit "
                                      "on the exit plane or behind it")
-        if wave["far_field"] is not None and (prov not in ("uisk", "images", "march") or len(cap.bores) != 1):
-            raise ValueError("wave_estimator: far_field needs provider uisk, images or march and a single bore")
+        ff = wave["far_field"]
+        if ff is not None and len(cap.bores) != 1:
+            raise ValueError("wave_estimator: far_field needs a single bore")
+        if ff is not None and prov != "fb" and any(ff.get(key) is not None for key in ("n_theta", "n_phi", "ring")):
+            raise ValueError("wave_estimator.far_field: n_theta, n_phi and ring belong to provider fb (pad to the others)")
+        if wave.get("hard_wall") and prov != "images":
+            raise ValueError("wave_estimator: hard_wall is implemented for provider images only")
+        if prov != "fb" and (wave.get("fb_figure") or wave.get("fb_figure_noise")):
+            raise ValueError("wave_estimator: fb_figure and fb_figure_noise belong to provider fb")
         scenes.append(cap.all_screens)
     for screens in scenes:
         for scr in screens:
@@ -634,11 +665,11 @@ def _polygon_circumradius(bore):
 
 def capillary_provider(cap, wave):
     """Provider for the capillary scene; `auto` picks by geometry: images for rectangles with
-    faces along the lattice axes, march for other polygons, fb for circular / torus bores.
-    An explicit choice must match the geometry (no fallback)."""
+    faces along the lattice axes, march for other polygons, fb for circular / torus bores and for
+    conformal funnels. An explicit choice must match the geometry (no fallback)."""
     kinds = {bore.get("kind", "cylinder") for bore in cap.bores}
     polygonal = kinds <= {"polygon"}
-    circular = kinds <= {"cylinder", "torus"}
+    circular = kinds <= {"cylinder", "torus"} or kinds == {"funnel"}
     prov = wave["provider"]
     if prov == "auto":
         if polygonal:
@@ -657,12 +688,14 @@ def capillary_provider(cap, wave):
         if not polygonal or any(axis_rectangle(b) is None for b in cap.bores):
             raise ValueError("wave_estimator: provider images supports rectangles with faces along "
                              f"the lattice axes only (sides: 4, rotation 0 or 90 degrees); got kinds {sorted(kinds)}")
-    if prov == "march" and not kinds <= {"polygon", "cylinder"}:
-        raise ValueError("wave_estimator: provider march supports straight polygon and circular bores "
+    if prov == "march" and not kinds <= {"polygon", "cylinder", "funnel"}:
+        raise ValueError("wave_estimator: provider march supports straight polygon, circular and funnel bores "
                          f"only; got kinds {sorted(kinds)}")
     if prov == "fb" and not circular:
         raise ValueError("wave_estimator: provider fb supports circular bores (radius, optional "
-                         f"bend) only; got kinds {sorted(kinds)}")
+                         f"bend) or conformal funnels only; got kinds {sorted(kinds)}")
+    if prov == "fb" and kinds == {"funnel"} and wave.get("fb_wall") != "exact":
+        raise ValueError("wave_estimator: provider fb on funnel bores needs fb_wall: exact")
     if prov is None:
         raise ValueError(f"wave_estimator: no provider for bore kinds {sorted(kinds)} "
                          "(uisk: polygons; fb: circular / torus)")
@@ -727,8 +760,6 @@ def _run(sim, out_dir, partial, wave, rays_paths, log):
     cap = cfg.capillary
     if cap is not None and wave["provider"] in ("auto", "uisk", "images", "march", "fb"):
         prov = capillary_provider(cap, wave)
-        if wave["dump_field"] and prov not in ("uisk", "images", "march"):
-            raise ValueError("wave_estimator: dump_field is implemented for provider uisk, images or march only")
         if wave["entrance_spot"] and prov not in ("fb", "images", "march"):
             raise ValueError("wave_estimator: entrance_spot is implemented for provider fb, images or march only")
         if prov in ("uisk", "images", "march"):
@@ -739,9 +770,14 @@ def _run(sim, out_dir, partial, wave, rays_paths, log):
                 files.append(FIELD_DUMP)
             if wave["far_field"] is not None:
                 files += scenes[0][1]["far_field_files"]
+        elif all(b.get("kind") == "funnel" for b in cap.bores):
+            from . import wave_funnel
+            scenes = wave_funnel.funnel_scene(sim, wave, lines, log, out_dir=partial)
+            files += scenes[0][1].get("fb_files", [])
         else:
             from . import wave_fb
-            scenes = wave_fb.fb_capillary_scene(sim, wave, lines, rays_paths, log)
+            scenes = wave_fb.fb_capillary_scene(sim, wave, lines, rays_paths, log, out_dir=partial)
+            files += scenes[0][1].get("fb_files", [])
         for label, res in scenes:
             results[label] = res
             sub = "" if label == "capillary" else "screen-" + label.rsplit("-s", 1)[1]
@@ -895,8 +931,8 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log, dump_dir=None, 
     far_files = _emit_far_field(far_dir, far, lines, ff, wave) if ff is not None else []
     a = float(cap.bores[0]["radius"])
     lam0 = float(sim.lam)
-    model = MODEL_CLASS[provider] + ("" if provider == "images" or all(int(b["sides"]) == 4 for b in cap.bores)
-                                     else ",first-order-polygon")
+    model = MODEL_CLASS[provider] + ("" if provider == "images" or all(b.get("sides") is None or int(b["sides"]) == 4
+                                                                       for b in cap.bores) else ",first-order-polygon")
     for label, g, acc, d in zip(labels, samplers, accs, dists):
         nf = {"entrance": a * a / (lam0 * length), "source": a * a / (lam0 * z_in),
               "exit": a * a / (lam0 * d) if d > 0.0 else None}   # None: screen on the exit plane

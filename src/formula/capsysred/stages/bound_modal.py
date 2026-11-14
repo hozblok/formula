@@ -116,7 +116,7 @@ def disc_for(a_w: float, k: float, L: float, n_sections: int, phase_step: float 
     """The Dirichlet basis whose fastest mode phase kappa^2 L / 2k advances at most
     `phase_step` rad per section: jmax = a_w sqrt(2k phase_step n_sections / L)."""
     kappa_max = math.sqrt(2.0 * k * phase_step * n_sections / L)
-    return Disc(a_w, max(8.0, kappa_max * a_w))
+    return Disc(aw=a_w, jmax=max(8.0, kappa_max * a_w))
 
 
 def frame_ring(chan: FBChannel, z: float):
