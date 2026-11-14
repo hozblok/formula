@@ -29,7 +29,7 @@ from numpy.polynomial.legendre import leggauss
 from scipy.linalg.blas import dgemm as _gemm, zaxpy as _axpy
 from scipy.special import jv, jvp
 
-from .wave_fb import Disc, newton_kappa, wall_offset
+from .wave_fb import CHEB_TOL, Disc, newton_kappa, wall_offset
 
 
 _C1, _C2 = 0.5 - math.sqrt(3.0) / 6.0, 0.5 + math.sqrt(3.0) / 6.0      # Gauss points of a step
@@ -237,7 +237,7 @@ class FunnelChannel:
                 deg += n
         return z, deg
 
-    def propagate(self, c, L, dz_max, tol=1e-12):
+    def propagate(self, c, L, dz_max, tol=CHEB_TOL):
         """Exit coefficients (signed layout) of the entrance coefficients c, steps of at most dz_max; with the power
         fraction left in the absorbing layer at the exit, per node."""
         n_steps = max(1, int(math.ceil(L / dz_max - 1e-9)))

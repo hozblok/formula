@@ -88,7 +88,7 @@ def test_free_space_point_source_sphere():
     c0 = ch.entrance_modes((0.0, 0.0), z_in)
     cL, _ = ch.propagate_chebyshev(c0, L)
     x = np.arange(-8e-6, 8e-6, 0.2e-6)
-    E = ch.lab_field(cL, L, x, x, 20e-9)
+    E = ch.lab_field(c=cL, z=L, xg=x, yg=x, dr=20e-9)
     X, Y = np.meshgrid(x, x)
     z = z_in + L
     Ex = np.exp(1j * K * (X ** 2 + Y ** 2) / (2 * z)) / (1j * LAM * z)
@@ -111,7 +111,7 @@ def test_gaussian_beam_q_law():
     c0 = d.to_modes(np.exp(1j * K * (xi ** 2 + eta ** 2) / (2 * q0)))
     cL, _ = ch.propagate_chebyshev(c0, L)
     x = np.arange(-6e-6, 6e-6, 0.2e-6)
-    E = ch.lab_field(cL, L, x, x, 20e-9)
+    E = ch.lab_field(c=cL, z=L, xg=x, yg=x, dr=20e-9)
     X, Y = np.meshgrid(x, x)
     qL = q0 + L
     Ex = (q0 / qL) * np.exp(1j * K * (X ** 2 + Y ** 2) / (2 * qL))
@@ -160,7 +160,7 @@ def test_chebyshev_matches_dense_exponential():
 
 def _lab_exit(ch, cL, L, x):
     cz = ch.axis(L)
-    return ch.lab_field(cL, L, cz[0] + x, cz[1] + x, 20e-9)
+    return ch.lab_field(c=cL, z=L, xg=cz[0] + x, yg=cz[1] + x, dr=20e-9)
 
 
 def test_bend_limit_and_mirror_symmetry():
@@ -196,7 +196,7 @@ def test_bend_frame_against_free_gaussian_beam():
     cL, _ = ch.propagate_chebyshev(c0, L)
     x = np.arange(20e-6 - 5e-6, 20e-6 + 5e-6, 0.2e-6)
     y = np.arange(-5e-6, 5e-6, 0.2e-6)
-    E = ch.lab_field(cL, L, x, y, 20e-9)
+    E = ch.lab_field(c=cL, z=L, xg=x, yg=y, dr=20e-9)
     X, Y = np.meshgrid(x, y)
     qL = q0 + L
     Ex = (q0 / qL) * np.exp(1j * K * ((X - 20e-6) ** 2 + Y ** 2) / (2 * qL))

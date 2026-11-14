@@ -136,7 +136,7 @@ def test_far_field_from_modes_parseval_and_fft():
     ch = FB.FBChannel(c0=(0, 0), t=None, rbend=None, disc=d, k=K)
     h = 4e-9
     xs = (np.arange(-300, 300) + 0.5) * h
-    F = sfft.fft2(ch.lab_field(c, 0.0, xs, xs, 2e-9), s=(8192, 8192)) * h * h
+    F = sfft.fft2(ch.lab_field(c=c, z=0.0, xg=xs, yg=xs, dr=2e-9), s=(8192, 8192)) * h * h
     fq = sfft.fftfreq(8192, h) * 2 * math.pi
     for i in (186, 280):                                             # ky = 0, kx = q: phi = 0
         a_mod = FB.far_field_amplitude(d, c, K, [fq[i] / K], nphi)[0, 0]

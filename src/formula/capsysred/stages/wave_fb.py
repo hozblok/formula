@@ -29,6 +29,7 @@ from ..screen import ScreenGrid
 from ..shared.units import m_to_um
 
 MODEL_CLASS_FB = "dir-ell"
+CHEB_TOL = 1e-12        # default cut |J_n(t)| <= CHEB_TOL of the Chebyshev series of exp(-iHL)
 
 
 # ----------------------------------------------------------------- wall
@@ -497,7 +498,7 @@ class FBChannel:
         hr = self.h0.real[self.disc.valid]
         return min(0.0, float(hr.min())) - vmax, float(hr.max()) + vmax
 
-    def propagate(self, c: np.ndarray, L: float, tol: float = 1e-12, z0: float = 0.0) -> tuple[np.ndarray, int]:
+    def propagate(self, c: np.ndarray, L: float, tol: float = CHEB_TOL, z0: float = 0.0) -> tuple[np.ndarray, int]:
         """exp(-iHL) c: diagonal for a straight bore without figure; otherwise the Chebyshev series in
         sub-steps short enough that the damping stays small on the scaled spectrum (gamma_max dL <= 1.6)
         and, for a z-dependent figure, no longer than dz (figure taken at each sub-step midpoint).
@@ -522,7 +523,7 @@ class FBChannel:
             self._cpp = np.zeros(2)
         return c, total
 
-    def propagate_chebyshev(self, c: np.ndarray, L: float, tol: float = 1e-12) -> tuple[np.ndarray, int]:
+    def propagate_chebyshev(self, c: np.ndarray, L: float, tol: float = CHEB_TOL) -> tuple[np.ndarray, int]:
         """exp(-iHL) c as a Chebyshev series (Tal-Ezer & Kosloff): exp(-i t x) =
         sum_n (2 - delta_n0) (-i)^n J_n(t) T_n(x) on the spectrum scaled to [-1, 1].
         c: mode coefficients (2M+1, nmax); L: length [m]; tol: Chebyshev cut |J_n| <= tol."""
@@ -540,7 +541,7 @@ class FBChannel:
             phi0, phi1 = phi1, phi2
         return res * np.exp(-1j * ec * L), n_max
 
-    def lab_field(self, c: np.ndarray, z: float, xg: np.ndarray, yg: np.ndarray, dr: float) -> np.ndarray:
+    def lab_field(self, *, c: np.ndarray, z: float, xg: np.ndarray, yg: np.ndarray, dr: float) -> np.ndarray:
         """Modes at z -> lab field on the Cartesian mesh (xg, yg) inside the disc with the
         lab-frame phase exp(i k c'(z).x' + i g).
         c: mode coefficients (2M+1, nmax) at z [m]; xg, yg: 1-D lab mesh axes [m]; dr: fine radial step [m]."""
@@ -839,7 +840,7 @@ def _node_fields(spec, k, chans, lat, xi, per_bore=True):
         lo = np.searchsorted(lat.x, cz - ch.disc.aw - 2 * lat.h)
         hi = np.searchsorted(lat.x, cz + ch.disc.aw + 2 * lat.h)
         xg, yg = lat.x[lo[0]:hi[0]], lat.x[lo[1]:hi[1]]
-        block = ch.lab_field(cL, spec["length"], xg, yg, spec["dr"]).astype(lat.dtype)
+        block = ch.lab_field(c=cL, z=spec["length"], xg=xg, yg=yg, dr=spec["dr"]).astype(lat.dtype)
         if per_bore or not out:
             out.append(np.zeros((lat.n, lat.n), lat.dtype))
         out[-1][lo[1]:hi[1], lo[0]:hi[0]] += block
