@@ -21,7 +21,7 @@ Development plan:
 -   [x] Deploy new version with complex numbers support. (v4.0)
 -   [x] Deploy prebuilt wheels for Linux, macOS (Intel + Apple Silicon), and Windows via [cibuildwheel](https://cibuildwheel.pypa.io/).
 -   [x] Add per-function regression tests covering all built-in math functions (see [tests/functions/](tests/functions/)).
--   [x] Support `sign()`, `abs()` and a Pythonic `Number` wrapper class.
+-   [x] Support `sign()`, `abs()` and fixed-precision `NumberContext` values.
 -   [ ] Complex numbers tests and examples. (Character `i` is reserved for this by default.)
 -   [ ] Formatting documentation. Limits and caveats.
 -   [ ] Support `rand` for random number in [0.0 - 1.0].
@@ -222,45 +222,51 @@ And it is enough to call the `formula` object to calculate the value of the expr
 '9.0000000000000000000000000000009e-20'
 ```
 
-### Using `Number` as a multiprecision Python value
+### Multiprecision values: `NumberContext`
 
-`Number` is a small Pythonic wrapper around `Solver` that lets you compose
-expressions with the standard arithmetic and comparison operators while
-keeping multiprecision throughout:
+`NumberContext` makes `mp_real` / `mp_complex` values at one storage precision.
+The values carry that precision through the standard arithmetic and comparison
+operators, so no precision argument travels with them:
 
 ```python
->>> from formula import Number
->>> a = Number("1.0000000000000000000000000001", precision=64)
->>> b = Number("2", precision=64)
+>>> from formula import NumberContext
+>>> N = NumberContext(64)
+>>> a, b = N("1.0000000000000000000000000001"), N("2")
 >>> str(a + b)
 '3.0000000000000000000000000001'
 >>> str(a * b)
 '2.0000000000000000000000000002'
->>> str(abs(Number("-3.14", precision=32)))
-'3.14'
 >>> a > b
 False
->>> a == Number("1.0000000000000000000000000001", precision=64)
-True
+>>> str(abs(N("(3,-4)")))
+'5'
 ```
 
-Equality compares the `(real, imag)` strings from `pair` — exact complex
-identities compare equal, but expressions with drift do not:
+The factory takes literals only: a real number, or the `"(re,im)"` text of a
+complex one. An expression goes through `N.eval`, a cached `Solver` at the
+same precision:
 
 ```python
->>> Number("i*i") == Number("-1")   # exact — no drift
-True
->>> Number("i^4") == Number("1")    # drift in complex ^ → False
-False
+>>> N("1/3")
+Traceback (most recent call last):
+  ...
+ValueError: not a numeric literal: '1/3'
+>>> N.eval("x^2", x=a)
+mp_real_64('1.00000000000000000000000000020000000000000000000000000001')
+>>> N.i * N.i == -1, N.eval("i^4") == 1
+(True, True)
 ```
+
+Comparisons are exact. `str()` prints every stored digit, guard digits included;
+`value.str(p, FmtFlags.default)` prints `p` significant digits. A real and a
+complex value do not compare with each other (`TypeError`).
 
 `Solver.pair(values, format_digits, format_flags)` returns a
 `(real_str, imag_str)` tuple formatted consistently — real-only results
-get `(value, "0")` so pairs are byte-comparable. Used internally
-by `Number.__eq__` and `Number.__hash__`.
+get `(value, "0")` so pairs are byte-comparable.
 
 Supported operators: `+`, `-`, `*`, `/`, `**` (also written as `^` inside
-expressions), `abs()`, `==`, `<`, `<=`, `>`, `>=`.
+expressions), `abs()`, `.sqrt()`, `==`, and for real values `<`, `<=`, `>`, `>=`.
 
 ### Finding all ray–surface intersections
 

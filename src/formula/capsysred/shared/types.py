@@ -3,9 +3,12 @@
 from collections import namedtuple
 from enum import StrEnum
 
-from ...formula import Number
+from typing import Union
 
-Vec3 = tuple[Number, Number, Number]
+from ...backend import MP_TYPES
+
+Scalar = Union[*MP_TYPES]
+Vec3 = tuple[Scalar, Scalar, Scalar]
 
 
 class HitMethod(StrEnum):
@@ -20,7 +23,7 @@ class HitMethod(StrEnum):
 # One traced ray as every estimator consumes it (protocol: new_mode ->
 # add_ray(rec, amps) -> fold_mode -> finalize). Pure geometry — amplitudes
 # are physics and stay a separate add_ray argument. opl/sins/point/direction
-# are Number; float estimators convert at the point of use.
+# are mp values; float estimators convert at the point of use.
 RayRecord = namedtuple("RayRecord", [
     "mode", "ray", "fate", "pixel",   # fate is post-amplitude_min
     "point", "direction",             # arrival on the screen plane
@@ -59,10 +62,56 @@ _EPS_LOC = 1e-7
 _TCAP_TOL = 1e-9
 
 # Relative slack on r^2 in inside(): the probed point is a reflection point,
-# i.e. exactly ON the wall, so after Number->double conversion dx^2+dy^2 lands
+# i.e. exactly ON the wall, so after mp->double conversion dx^2+dy^2 lands
 # on either side of a^2 within a few ulp (~1e-15 relative); a strict < would
 # randomly classify on-wall points as outside and _locate would absorb the
 # ray. 1e-9 covers double roundoff with ~6 orders of margin, yet is ~fm in
 # radius for a um-scale bore and stays far below the _EPS_LOC nudge, which
 # makes the actual inside/outside decision.
 _INSIDE_TOL = 1e-9
+
+# Absolute tolerance for the geometric residual of a point on a side wall (m).
+# A point passes a surface-residual check only when
+# wall.surface_error_at(x, y, z) is strictly below this value.
+# The 1 nm threshold preserves the existing geometry-consistency criterion;
+# it is a numerical acceptance tolerance, not an analytically derived error bound.
+# Unlike _INSIDE_TOL and _TCAP_TOL, this is an absolute length, independent
+# of the bore radius, surface-equation scaling and gradient magnitude.
+_WALL_SURFACE_TOL_M = 1e-9
+
+# Absolute Euclidean tolerance for comparing ray positions (m).
+# Reconstructed and reference points must differ by strictly less than 1 nm.
+# This checks the mutual placement of ray endpoints, independently of the
+# wall-surface residual and the dimensionless direction error.
+_RAY_POSITION_TOL_M = 1e-9
+
+# Absolute Euclidean tolerance for differences of unit-direction components
+# (dimensionless). Apply it to transverse components when those are recorded.
+# The numeric value matches other tolerances, but the criterion and units
+# are distinct; keep this constant independently adjustable.
+_RAY_DIRECTION_TOL = 1e-9
+
+# Minimum permitted abs(u dot N) for unit ray direction u and wall normal N
+# (dimensionless): the sine of the grazing angle measured from the wall.
+# Hit-time derivatives divide by u dot N; values at or below this threshold
+# mark a grazing trajectory as numerically unreliable.
+_GRAZING_SIN_MIN = 1e-9
+
+# Maximum relative Lagrangian defect (dimensionless), tested with strict <:
+# ||Q.T P - P.T Q||_F / max(||Q||_F ||P||_F, _FLOAT64_SCALE_FLOOR).
+# The 1e-9 threshold checks numerical consistency of position/direction
+# variations; it is not a bound on the reconstructed field error.
+_LAGRANGIAN_DEFECT_TOL = 1e-9
+
+# Positive binary64 scale floor for relative normalization and near-zero scales.
+# It has the units of the guarded quantity, rather than a fixed physical unit.
+# The existing 1e-300 value is retained to preserve behavior at vanishing scales;
+# it is a numerical guard, separate from geometry acceptance tolerances.
+_FLOAT64_SCALE_FLOOR = 1e-300
+
+# Relative slack for assigning points to entrance apertures (dimensionless).
+# Circular radii are multiplied by 1 + tol; polygon face residuals may be
+# at most tol * max(apothems). Keep the existing transport value of 1e-8.
+# A bore is assigned only when exactly one aperture contains the point;
+# overlaps, including tolerance-band overlaps, remain unassigned.
+_APERTURE_REL_TOL = 1e-8

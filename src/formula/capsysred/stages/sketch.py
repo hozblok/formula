@@ -19,7 +19,7 @@ dependency-free.
 import math
 import time
 
-from .altcoh import FloatLineAmplitudes
+from ..fresnel import FloatLineAmplitudes
 from ..shared.progress import Progress
 from ..rays import recorded_plane, rescreen, scene_stream
 from ..screen import ScreenGrid
@@ -85,7 +85,7 @@ class SketchCoherence:
     def _mu(self, col):
         np = self.np
         # float |e^{iθ}|²-1 ~ 1e-16 leaves a fake positive Ic on 1-ray pixels
-        # where the Number engine gets an exact 0: gate Ic against I.
+        # where the mp engine gets an exact 0: gate Ic against I.
         mu = np.zeros(self.M)
         if self.Ic[self.ref] <= 1e-12 * self.I[self.ref]:
             return mu
@@ -131,7 +131,7 @@ def run_sketch_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory):
     cfg = sim.cfg
     screen = ScreenGrid(scr_cfg)
     n_modes, n_rays = src_cfg.budget()
-    amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
+    amps_of = FloatLineAmplitudes(cfg.material, sim.lines, sim.numbers)
     acc = SketchCoherence(sim.lines, screen.nx * screen.ny,
                           screen.ref_pixel(scr_cfg.reference),
                           cfg.sketch_rank, cfg.seed)

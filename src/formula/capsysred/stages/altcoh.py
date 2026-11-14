@@ -12,47 +12,19 @@ differences are estimator effects, not statistics:
               carries no intra-mode ray phases (the radiometric limit).
 
 All three run in float64: the maps are statistical estimators with noise
-floors far above 1e-15 (doc/mu28_capsysred.py: the float mirror of the Number
+floors far above 1e-15 (doc/mu28_capsysred.py: the float mirror of the mp
 estimator lands on the same maps). 1D screens only (ny = 1).
 """
 
 import cmath
 import math
 import time
-from typing import Sequence
 
-from ...formula import Number
-from ...xray import GlassMaterial
-from ..fresnel import FresnelAmplitude
-from ..spectrum import SpectralLine
+from ..fresnel import FloatLineAmplitudes, FresnelAmplitude
 from ..shared.physics_constants import FRESNEL_PROBE_THETA
 from ..shared.progress import Progress
 from ..rays import recorded_plane, rescreen, scene_stream
 from ..screen import ScreenGrid
-
-
-class FloatLineAmplitudes:
-    """prod_j r(sin θ_j; E_m) per line in float64, constants from the exact
-    material model; cross-checked against the Number Fresnel via check()."""
-
-    def __init__(self, material: GlassMaterial, lines: Sequence[SpectralLine],
-                 precision: int):
-        # (2*delta, 2*beta) per line: the root is sqrt(sin^2 - 2d + 2ib)
-        self.two_delta_beta: list[tuple[float, float]] = [
-            (2.0 * float(material.delta(l.e_kev, precision=precision)),
-             2.0 * float(material.beta(l.e_kev, precision=precision)))
-            for l in lines]
-
-    def __call__(self, sins: Sequence[float]) -> list[complex]:
-        out = []
-        for d2, b2 in self.two_delta_beta:
-            a = 1.0 + 0.0j
-            for s in sins:
-                root = cmath.sqrt(s * s - d2 + 1j * b2)
-                a *= (s - root) / (s + root)
-            out.append(a)
-        return out
-
 
 
 class AltCoherence:
@@ -197,7 +169,7 @@ def run_alt_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory):
     if screen.ny != 1:
         raise ValueError("stage 7 supports 1D screens (ny = 1) only")
     n_modes, n_rays = src_cfg.budget()
-    amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
+    amps_of = FloatLineAmplitudes(cfg.material, sim.lines, sim.numbers)
     alt = AltCoherence(sim.lines, screen, screen.ref_pixel(scr_cfg.reference))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
                                       aim_factory)
@@ -234,10 +206,10 @@ def run_alt_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory):
         alt.fold_mode()
     progress.finish(f"on screen {stats['screen']:,}")
     mid = len(sim.lines) // 2
-    r_num = FresnelAmplitude(cfg.material, sim.lines[mid].e_kev)
+    r_num = FresnelAmplitude(cfg.material, sim.lines[mid].e_kev, sim.numbers)
     s_probe = math.sin(float(FRESNEL_PROBE_THETA))
     check = abs(amps_of([s_probe])[mid]
-                - complex(r_num(Number(repr(s_probe), cfg.precision))))
+                - complex(r_num(sim.numbers(repr(s_probe)))))
     return {"maps": alt.finalize(), "alt": alt, "screen": screen,
             "stats": stats, "rays_from": rays_from, "n_modes": n_modes,
             "n_rays": n_rays, "seconds": time.time() - t0,

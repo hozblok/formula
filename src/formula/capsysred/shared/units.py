@@ -1,6 +1,6 @@
 """Unit conversions (all return float).
 
-Display uses these directly. The geometry path lifts m_to_um(1) to a Number at
+Display uses these directly. The geometry path lifts m_to_um(1) to an mp value at
 precision p: the RaySurface cross-check equation is written in micrometre
 coordinates because in metres the coefficients are ~a^2 ~ 1e-12 and the
 subdivision root finder is badly conditioned; in micrometres they are ~1. 1e6

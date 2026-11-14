@@ -15,6 +15,9 @@ from formula.capsysred import Simulation, rays_v3
 from formula.capsysred.screen import ScreenGrid
 from formula.capsysred.source import Source
 from formula.capsysred.trace_v3 import AIM_DRAWS, SCENES, trace as trace_v3, verify
+from formula import FmtFlags, Solver
+from formula.capsysred.rays import archive_text, row_of
+from formula.capsysred.shared.types import RayRecord
 
 
 def _raw(n_modes=6, n_rays=60, seed=77, shape="disk"):
@@ -283,3 +286,16 @@ def test_trace_v3_all_scenes_equals_parallel_and_completed_archive(tmp_path):
     before = open(rays_v3.index_path(only_cap), "rb").read()
     trace_v3(cfg, only_cap, jobs=1, level=6, log=lambda m: None)   # both scenes: no-op
     assert open(rays_v3.index_path(only_cap), "rb").read() == before
+
+
+def test_archive_text_is_the_stored_digits_without_guard_digits():
+    # The digits every archive carries: the storage precision's, not the guard digits.
+    for p in (64, 96):
+        v = Solver("1/3", p).evaluate()
+        assert archive_text(v) == v.str(v.precision, FmtFlags.default)
+        assert len(archive_text(v)) == v.precision + 2 < len(str(v))
+    v, w = Solver("1/3", 64).evaluate(), Solver("1/7", 64).evaluate()
+    rec = RayRecord(0, 0, "lost", None, None, None, v, (v, w), None)
+    row = row_of("capillary", rec, lean=False)
+    assert row["opl"] == v.str(64, FmtFlags.default)
+    assert row["sins"] == [v.str(64, FmtFlags.default), w.str(64, FmtFlags.default)]

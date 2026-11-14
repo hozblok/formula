@@ -1,8 +1,10 @@
 """YAML/dict -> typed simulation config.
 
-The single Number boundary: every physical scalar becomes Number(precision) here;
-downstream code reads precision from the Numbers it receives, never as a parameter.
-Counts stay int, spectral weights stay float (not phase-critical).
+The single numeric boundary: every physical scalar is a numeric literal (a number,
+a decimal text or a ready backend value) and becomes a backend value of cfg.numbers
+here; downstream code reads precision from the values it receives, never as a
+parameter. Expressions are refused at this boundary; a formula belongs only in a
+bore's `surface`. Counts stay int, spectral weights stay float (not phase-critical).
 """
 
 import copy
@@ -11,7 +13,7 @@ import os
 import warnings
 
 from .._roots import get_backend
-from ..formula import Number
+from ..formula import NumberContext
 from ..xray import FUSED_SILICA, OE2012_GLASS, SILICON
 from .spectrum import spectral_lines
 from .shared.types import HitMethod
@@ -79,8 +81,10 @@ DEFAULTS = {
     # source->screen flight, or an explicit number. waist_z [m]: the launch
     # beam's free-space waist lies waist_z - z_source along the ray past the
     # source (the plane z = waist_z when walls before it are flat), null = at
-    # the source.
-    "beamlet": {"w0": 5.0e-7, "w0_t": None, "window_sigmas": 3.0},
+    # the source. self_pairs: "keep" (honest |E|^2) or "subtract" (ray
+    # self-pairs off, U-statistic n/(n-1)).
+    "beamlet": {"w0": 5.0e-7, "w0_t": None, "window_sigmas": 3.0,
+                "self_pairs": "keep"},
     # stage 14: exact disk-backed delete-one-mode jackknife taxonomy.
     "stage14": {"flag_thresholds": {
         "ic_n_sigma": 3.0, "ref_ic_n_sigma": 3.0, "w_n_sigma": 3.0,
@@ -143,6 +147,8 @@ B5_DEFAULTS = {
     "map_jobs": 1,
     "map_ray_budgets": [],
     "map_snapshots": [],
+    "branch": "maslov",            # archive_canonical prefactor root: maslov | continuous (exact caustics kept)
+    "exit_propagation": False,     # windows on the capillary exit plane, propagated exactly to the screen
 }
 
 B9_DEFAULTS = {
@@ -191,18 +197,18 @@ def _merge(base: dict, override: dict) -> dict:
 
 
 class SourceCfg:
-    def __init__(self, raw: dict, p: int):
+    def __init__(self, raw: dict, N: NumberContext):
         self.shape = raw["shape"]
         if self.shape not in ("point", "gaussian", "disk", "grid"):
             raise ValueError(f"unknown source shape: {self.shape!r}")
-        self.size = Number(str(raw["size"]), p)
-        self.position = tuple(Number(str(c), p) for c in raw["position"])
+        self.size = N(raw["size"], label="source size")
+        self.position = tuple(N(c, label="source position") for c in raw["position"])
         self.n_modes = int(raw["n_modes"])
         self.n_rays = int(raw["n_rays"])
         if self.shape == "grid":
             # deterministic anode lattice: grid_n x grid_n nodes, gaussian weights
             self.grid_n = int(raw["grid_n"])
-            self.grid_step = Number(str(raw["grid_step"]), p)
+            self.grid_step = N(raw["grid_step"], label="source grid_step")
             # lattice orientation about the axis, degrees (45 = diamond)
             self.grid_rot_deg = float(raw.get("grid_rot_deg", 0.0))
             # optional disc trim: keep nodes with r <= grid_r_max (m)
@@ -214,7 +220,7 @@ class SourceCfg:
         return self.n_modes, self.n_rays
 
 
-def _required_source(raw: object, scene: str, p: int) -> SourceCfg:
+def _required_source(raw: object, scene: str, N: NumberContext) -> SourceCfg:
     """Parse one explicit scene source; no values inherit across scenes."""
     if not isinstance(raw, dict):
         raise ValueError(f"{scene}.source must be a mapping")
@@ -225,23 +231,23 @@ def _required_source(raw: object, scene: str, p: int) -> SourceCfg:
         raise ValueError(
             f"{scene}.source is missing required fields: {sorted(missing)}"
         )
-    return SourceCfg(raw, p)
+    return SourceCfg(raw, N)
 
 
 class ScreenCfg:
-    def __init__(self, raw: dict, p: int):
-        self.z = Number(str(raw["z"]), p)
-        self.center = tuple(Number(str(c), p) for c in raw["center"])
-        self.edge_x = Number(str(raw["edge_x"]), p)
-        self.edge_y = Number(str(raw["edge_y"]), p)
+    def __init__(self, raw: dict, N: NumberContext):
+        self.z = N(raw["z"], label="screen z")
+        self.center = tuple(N(c, label="screen center") for c in raw["center"])
+        self.edge_x = N(raw["edge_x"], label="screen edge_x")
+        self.edge_y = N(raw["edge_y"], label="screen edge_y")
         self.nx = int(raw["nx"])
         self.ny = int(raw["ny"])
         ref = raw.get("reference")
         self.reference = tuple(float(c) for c in ref) if ref else None
 
 
-def _bore(raw: dict, p: int, idx: int) -> dict:
-    """One bore -> typed wall spec; scalars become Number, `kind` selects the wall.
+def _bore(raw: dict, N: NumberContext, idx: int) -> dict:
+    """One bore -> typed wall spec; scalars become backend values, `kind` selects the wall.
 
     Exactly one geometry: radius (cylinder), radius+bend (torus arc),
     radius+sides (polygon, radius = apothem; apothems = per-face list), r2_poly (surface of
@@ -252,7 +258,7 @@ def _bore(raw: dict, p: int, idx: int) -> dict:
             if raw.get(k) is not None]
     if len(mods) > 1:
         raise ValueError(f"bore {idx}: {' + '.join(mods)} cannot be combined")
-    out = {"center": tuple(Number(str(c), p) for c in raw.get("center", [0.0, 0.0]))}
+    out = {"center": tuple(N(c, label=f"bore {idx}: center") for c in raw.get("center", [0.0, 0.0]))}
     if raw.get("surface") is not None:
         if raw.get("radius") is not None:
             raise ValueError(f"bore {idx}: surface bore takes aim_radius, not radius")
@@ -268,7 +274,7 @@ def _bore(raw: dict, p: int, idx: int) -> dict:
                 f"bore {idx}: invalid engine_method {raw['engine_method']!r}"
             ) from exc
         out.update(kind="implicit", surface=str(raw["surface"]),
-                   aim_radius=Number(str(raw["aim_radius"]), p),
+                   aim_radius=N(raw["aim_radius"], label=f"bore {idx}: aim_radius"),
                    engine_method=engine_method)
         return out
     if "engine_method" in raw:
@@ -281,20 +287,20 @@ def _bore(raw: dict, p: int, idx: int) -> dict:
             raise ValueError(f"bore {idx}: r2_poly takes 1-3 coefficients")
         cs += [0.0] * (3 - len(cs))
         out.update(kind="revolution",
-                   r2_poly=tuple(Number(str(c), p) for c in cs))
+                   r2_poly=tuple(N(c, label=f"bore {idx}: r2_poly") for c in cs))
         return out
     if raw.get("apothems") is not None and raw.get("sides") is None:
         raise ValueError(f"bore {idx}: apothems needs sides")
     if raw.get("radius") is None:
         raise ValueError(f"bore {idx}: needs radius, r2_poly or surface")
-    out["radius"] = Number(str(raw["radius"]), p)
+    out["radius"] = N(raw["radius"], label=f"bore {idx}: radius")
     if raw.get("bend") is not None:
         bend = raw["bend"]
         if bend.get("radius") is None or bend.get("toward") is None:
             raise ValueError(f"bore {idx}: bend needs radius and toward [ux, uy]")
         out.update(kind="torus", bend={
-            "radius": Number(str(bend["radius"]), p),
-            "toward": tuple(Number(str(c), p) for c in bend["toward"]),
+            "radius": N(bend["radius"], label=f"bore {idx}: bend radius"),
+            "toward": tuple(N(c, label=f"bore {idx}: bend toward") for c in bend["toward"]),
         })
     elif raw.get("sides") is not None:
         n = int(raw["sides"])
@@ -303,10 +309,11 @@ def _bore(raw: dict, p: int, idx: int) -> dict:
         aps = raw.get("apothems")
         if aps is None:
             aps = [raw["radius"]] * n
-        elif len(aps) != n or any(float(a) <= 0.0 for a in aps):
+        aps = tuple(N(a, label=f"bore {idx}: apothems") for a in aps)
+        if len(aps) != n or any(a <= 0 for a in aps):
             raise ValueError(f"bore {idx}: apothems needs {n} positive values, one per face")
-        out.update(kind="polygon", sides=n, apothems=tuple(Number(str(a), p) for a in aps),
-                   rotation=Number(f"({raw.get('rotation_deg', 0)})*pi/180", p))
+        degrees = N(raw.get("rotation_deg", 0), label=f"bore {idx}: rotation_deg")
+        out.update(kind="polygon", sides=n, apothems=aps, rotation=N.eval("d*pi/180", d=degrees))
     elif raw.get("funnel") is not None:
         fn = raw["funnel"]
         g = list(fn.get("g", ()))
@@ -316,8 +323,8 @@ def _bore(raw: dict, p: int, idx: int) -> dict:
         if len(f) != 2:
             raise ValueError(f"bore {idx}: funnel f takes [a, b]")
         out.update(kind="funnel",
-                   g=tuple(Number(str(c), p) for c in g),
-                   f=tuple(Number(str(c), p) for c in f))
+                   g=tuple(N(c, label=f"bore {idx}: funnel g") for c in g),
+                   f=tuple(N(c, label=f"bore {idx}: funnel f") for c in f))
     else:
         out["kind"] = "cylinder"
     return out
@@ -381,13 +388,13 @@ def _precision_target(raw, p: int, bores, theta_c: float, z_span: float = 0.0):
 
 
 class CapillaryCfg:
-    def __init__(self, raw: dict, base_screen: dict, p: int):
-        self.z0 = Number(str(raw["z0"]), p)
-        self.z1 = Number(str(raw["z1"]), p)
-        self.bores = [_bore(b, p, i) for i, b in enumerate(raw["bores"])]
-        self.source = _required_source(raw.get("source"), "capillary", p)
+    def __init__(self, raw: dict, base_screen: dict, N: NumberContext):
+        self.z0 = N(raw["z0"], label="capillary z0")
+        self.z1 = N(raw["z1"], label="capillary z1")
+        self.bores = [_bore(b, N, i) for i, b in enumerate(raw["bores"])]
+        self.source = _required_source(raw.get("source"), "capillary", N)
         base = _merge(base_screen, raw.get("screen", {}))
-        self.screen = ScreenCfg(base, p)
+        self.screen = ScreenCfg(base, N)
         # straight-flight invariant: source.z < z0 < z1 <= screen.z
         if not float(self.source.position[2]) < float(self.z0) < float(self.z1):
             raise ValueError(
@@ -399,11 +406,16 @@ class CapillaryCfg:
                              f"is inside the optic (z1 = {float(self.z1)})")
         # extra screens (stages 11, 14): re-binned from the same trace, each merged
         # onto the main capillary screen; must sit past the exit (straight flight)
-        self.screens = [ScreenCfg(_merge(base, s), p) for s in raw.get("screens", ())]
+        self.screens = [ScreenCfg(_merge(base, s), N) for s in raw.get("screens", ())]
         for i, s in enumerate(self.screens):
             if float(s.z) < float(self.z1):
                 raise ValueError(f"capillary screens[{i}]: z = {float(s.z)} "
                                  f"is inside the optic (z1 = {float(self.z1)})")
+
+    @property
+    def all_screens(self) -> list[ScreenCfg]:
+        """Main screen followed by extra screens in configured order."""
+        return [self.screen, *self.screens]
 
 
 class Config:
@@ -444,28 +456,29 @@ class Config:
         self.yaml_file = yaml_file
         p = int(cfg["precision"])
         self.precision = p
+        self.numbers = N = NumberContext(p)
         self.seed = int(cfg["seed"])
-        self.energy_kev = Number(str(cfg["energy_kev"]), p)
+        self.energy_kev = N(cfg["energy_kev"], label="energy_kev")
         self.spectrum = cfg["spectrum"]
         mat = str(cfg["material"])
         if mat not in MATERIALS:
             raise ValueError(f"unknown material: {mat!r}; "
                              f"available {sorted(MATERIALS)}")
         self.material = MATERIALS[mat]
-        self.screen = ScreenCfg(cfg["screen"], p)
+        self.screen = ScreenCfg(cfg["screen"], N)
         free = cfg.get("free")
-        self.free_source = (_required_source(free.get("source"), "free", p)
+        self.free_source = (_required_source(free.get("source"), "free", N)
                             if free is not None else None)
-        self.free_screen = (ScreenCfg(_merge(cfg["screen"], free.get("screen", {})), p)
+        self.free_screen = (ScreenCfg(_merge(cfg["screen"], free.get("screen", {})), N)
                             if free is not None else None)
         capillary = cfg.get("capillary")
-        self.capillary = (CapillaryCfg(capillary, cfg["screen"], p)
+        self.capillary = (CapillaryCfg(capillary, cfg["screen"], N)
                           if capillary is not None else None)
         # theta_c of the hardest spectral line (theta_c ~ 1/E): the smallest
         # critical angle bounds the grazing term of the conditioning loss
         e_max = max((ln.e_kev for ln in spectral_lines(cfg["spectrum"], self.energy_kev)),
                     key=float)
-        theta_c = float(self.material.critical_angle(e_max, precision=p))
+        theta_c = self.material.critical_angle(e_max)
         (self.precision_target, self.precision_target_auto,
          self.precision_target_loss) = _precision_target(
             cfg["precision_target"], p,
@@ -511,6 +524,7 @@ class Config:
         self.beamlet_w0_t = float(w0t) if isinstance(w0t, (int, float)) else w0t
         self.beamlet_ns = float(cfg["beamlet"]["window_sigmas"])
         self.beamlet_waist_z = cfg["beamlet"].get("waist_z")
+        self.beamlet_self_pairs = str(cfg["beamlet"].get("self_pairs", "keep"))
         stage14 = cfg.get("stage14")
         if not isinstance(stage14, dict):
             raise ValueError("stage14 must be a mapping")
@@ -571,6 +585,15 @@ class Config:
         if not (wz is None or finite(wz)):
             raise ValueError(f"beamlet waist_z: null or a number, got {wz!r}")
         self.beamlet_waist_z = None if wz is None else float(wz)
+        sp = beamlet.get("self_pairs", "keep")
+        if sp not in ("keep", "subtract"):
+            raise ValueError(f"beamlet self_pairs: \"keep\" or \"subtract\", got {sp!r}")
+        if sp == "subtract":
+            for src in (getattr(self.capillary, "source", None), getattr(self, "free_source", None)):
+                if src is not None and src.n_rays < 2:
+                    raise ValueError("beamlet self_pairs: subtract pairs distinct rays — needs at least "
+                                     f"two rays per mode, the source has {src.n_rays}")
+        self.beamlet_self_pairs = sp
 
     def validate_wave_estimator(self) -> dict:
         """Stage-16-only checks; returns the `wave_estimator` section merged with WAVE_DEFAULTS."""
@@ -702,7 +725,8 @@ class Config:
         b5 = _merge(B5_DEFAULTS, raw)
         for key, choices in (("provider", ("archive_phase", "archive_canonical")),
                              ("patch_space", ("entrance", "screen")),
-                             ("charts", ("screen", "adaptive"))):
+                             ("charts", ("screen", "adaptive")),
+                             ("branch", ("maslov", "continuous"))):
             if b5[key] not in choices:
                 raise ValueError(f"b5_estimator.{key}: expected one of {choices}")
         for key, minimum in (("max_modes", 1), ("rays_per_mode", 1), ("degree", 2),
@@ -714,6 +738,8 @@ class Config:
                 raise ValueError(f"b5_estimator.{key}: expected an integer >= {minimum}")
         if b5["degree"] > 5:
             raise ValueError("b5_estimator.degree must be from 2 through 5")
+        if not isinstance(b5["exit_propagation"], bool):
+            raise ValueError("b5_estimator.exit_propagation must be true or false")
         if b5["min_neighbors"] > b5["neighbors"]:
             raise ValueError("b5_estimator.min_neighbors must not exceed neighbors")
         widths = b5["widths_m"]

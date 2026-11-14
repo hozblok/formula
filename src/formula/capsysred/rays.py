@@ -21,7 +21,8 @@ import json
 import math
 import random
 
-from ..formula import Number
+from .._formula import FmtFlags
+from ..formula import NumberContext
 from . import rays_v3
 from .shared.types import RayRecord
 
@@ -110,7 +111,8 @@ def recorded_screen_z_text(geometry: dict, scene: str) -> str | None:
         return None
     try:
         # numbers are exact at any precision; 32 covers recordings without one
-        return str(Number(str(screen["z"]), int(geometry.get("precision", 32))))
+        N = NumberContext(int(geometry.get("precision", 32)))
+        return N.eval(str(screen["z"])).str(N.precision, FmtFlags.default)
     except Exception as exc:
         raise ValueError(f"invalid recorded screen z {screen['z']!r}") from exc
 
@@ -219,6 +221,11 @@ class MultiRaysReader:
         pass
 
 
+def archive_text(x) -> str:
+    """The stored digits without the guard digits: the text every archive carries."""
+    return x.str(x.precision)
+
+
 def row_of(scene: str, rec: RayRecord, lean: bool) -> dict:
     """The row of one record: key order is part of the file contract."""
     row = {"stage": scene, "mode": rec.mode, "ray": rec.ray,
@@ -227,8 +234,8 @@ def row_of(scene: str, rec: RayRecord, lean: bool) -> dict:
         row["opl"] = float(rec.opl)
         row["sins"] = [float(s) for s in rec.sins]
     else:
-        row["opl"] = str(rec.opl)
-        row["sins"] = [str(s) for s in rec.sins]
+        row["opl"] = archive_text(rec.opl)
+        row["sins"] = [archive_text(s) for s in rec.sins]
     if rec.fate == "screen":
         row["x"], row["y"] = float(rec.point[0]), float(rec.point[1])
         row["dx"] = float(rec.direction[0])

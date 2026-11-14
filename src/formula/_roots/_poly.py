@@ -1,25 +1,18 @@
-"""Multiprecision univariate polynomial utilities over Number.
+"""Multiprecision univariate polynomial utilities.
 
-A polynomial is a list of Number coefficients, index = power:
-p[0] + p[1]*t + ... + p[n]*t**n. Used by the Sturm backend.
+A polynomial is a list of mp coefficients, index = power:
+p[0] + p[1]*t + ... + p[n]*t**n. Used by the Sturm backend. N is the
+NumberContext the zero coefficients come from.
 """
 
-from typing import List, Tuple
-
-from ..formula import Number
-
-Poly = List[Number]
+from ..formula import NumberContext
 
 
-def _zero(prec: int) -> Number:
-    return Number(0, prec)
-
-
-def _is_zero(x: Number, tol: Number) -> bool:
+def _is_zero(x, tol) -> bool:
     return abs(x) <= tol
 
 
-def deg(p: Poly, tol: Number) -> int:
+def deg(p, tol) -> int:
     """Degree ignoring trailing (high-order) coefficients below tol."""
     i = len(p) - 1
     while i > 0 and _is_zero(p[i], tol):
@@ -27,12 +20,18 @@ def deg(p: Poly, tol: Number) -> int:
     return i
 
 
-def trim(p: Poly, tol: Number) -> Poly:
+def trim(p, tol):
     """Drop high-order coefficients below tol."""
     return p[: deg(p, tol) + 1]
 
 
-def peval(p: Poly, t: Number) -> Number:
+def unit_scaled(values):
+    """The values divided by their largest magnitude, and that magnitude; zeros stay."""
+    scale = max((abs(v) for v in values), default=0)
+    return ([v / scale for v in values] if scale else list(values)), scale
+
+
+def peval(p, t):
     """Evaluate p at t (Horner)."""
     acc = p[-1]
     for c in reversed(p[:-1]):
@@ -40,31 +39,28 @@ def peval(p: Poly, t: Number) -> Number:
     return acc
 
 
-def pderiv(p: Poly) -> Poly:
+def pderiv(p, N: NumberContext):
     """Derivative polynomial."""
-    prec = p[0].precision
     if len(p) == 1:
-        return [_zero(prec)]
-    return [p[k] * Number(k, prec) for k in range(1, len(p))]
+        return [N(0)]
+    return [p[k] * k for k in range(1, len(p))]
 
 
-def pmul(a: Poly, b: Poly) -> Poly:
+def pmul(a, b, N: NumberContext):
     """Polynomial product."""
-    prec = a[0].precision
-    out = [_zero(prec) for _ in range(len(a) + len(b) - 1)]
+    out = [N(0) for _ in range(len(a) + len(b) - 1)]
     for i, ai in enumerate(a):
         for j, bj in enumerate(b):
             out[i + j] = out[i + j] + ai * bj
     return out
 
 
-def pdivmod(u: Poly, v: Poly, tol: Number) -> Tuple[Poly, Poly]:
+def pdivmod(u, v, tol, N: NumberContext):
     """Polynomial long division: u = q*v + r, deg(r) < deg(v)."""
-    prec = u[0].precision
     r = list(u)
     dv = deg(v, tol)
     lead = v[dv]
-    q = [_zero(prec) for _ in range(max(len(u) - dv, 1))]
+    q = [N(0) for _ in range(max(len(u) - dv, 1))]
     dr = deg(r, tol)
     while dr >= dv and not (dr == 0 and _is_zero(r[0], tol)):
         shift = dr - dv
@@ -72,48 +68,47 @@ def pdivmod(u: Poly, v: Poly, tol: Number) -> Tuple[Poly, Poly]:
         q[shift] = factor
         for i in range(dv + 1):
             r[i + shift] = r[i + shift] - factor * v[i]
-        r = r[:dr] or [_zero(prec)]  # drop the now-zero leading term
+        r = r[:dr] or [N(0)]  # drop the now-zero leading term
         dr = deg(r, tol)
     return q, trim(r, tol)
 
 
-def pgcd(a: Poly, b: Poly, tol: Number) -> Poly:
+def pgcd(a, b, tol, N: NumberContext):
     """Monic gcd of a and b (Euclidean remainder chain)."""
     a, b = trim(a, tol), trim(b, tol)
     while deg(b, tol) > 0 or not _is_zero(b[0], tol):
-        _, r = pdivmod(a, b, tol)
+        _, r = pdivmod(a, b, tol, N)
         a, b = b, r
     return _monic(a, tol)
 
 
-def _monic(p: Poly, tol: Number) -> Poly:
+def _monic(p, tol):
     """Scale so the leading coefficient is 1."""
     d = deg(p, tol)
     lead = p[d]
     return [p[i] / lead for i in range(d + 1)]
 
 
-def square_free(p: Poly, tol: Number) -> Poly:
+def square_free(p, tol, N: NumberContext):
     """p divided by gcd(p, p'): same roots, all simple."""
-    g = pgcd(p, pderiv(p), tol)
+    g = pgcd(p, pderiv(p, N), tol, N)
     if deg(g, tol) == 0:
         return _monic(p, tol)
-    q, _ = pdivmod(p, g, tol)
+    q, _ = pdivmod(p, g, tol, N)
     return _monic(trim(q, tol), tol)
 
 
-def interpolate(xs: List[Number], ys: List[Number], tol: Number, max_degree: int) -> Poly:
+def interpolate(xs, ys, tol, max_degree: int, N: NumberContext):
     """Newton divided differences -> monomial coefficients; detects true degree."""
-    prec = ys[0].precision
     c = list(ys)
     n = len(xs)
     for j in range(1, n):
         for i in range(n - 1, j - 1, -1):
             c[i] = (c[i] - c[i - 1]) / (xs[i] - xs[i - j])
-    scale = _zero(prec)
+    scale = 0
     for ck in c:
         scale = max(scale, abs(ck))
-    cutoff = scale * tol if scale > _zero(prec) else tol
+    cutoff = scale * tol if scale > 0 else tol
     degree = 0
     for k in range(n - 1, -1, -1):
         if abs(c[k]) > cutoff:
@@ -124,6 +119,6 @@ def interpolate(xs: List[Number], ys: List[Number], tol: Number, max_degree: int
         raise ValueError("polynomial degree exceeds max_degree; not a low-degree polynomial")
     poly = [c[degree]]
     for k in range(degree - 1, -1, -1):
-        poly = pmul(poly, [-xs[k], Number(1, prec)])
+        poly = pmul(poly, [-xs[k], 1], N)
         poly[0] = poly[0] + c[k]
     return poly

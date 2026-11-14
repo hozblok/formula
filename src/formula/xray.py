@@ -10,18 +10,21 @@ silica). This is the building block for tracing X-rays down a glass capillary
 (see XRAY.md).
 """
 
+import math
 from collections import namedtuple
-from typing import Callable, Union
+from typing import Callable
 
-from .formula import Number
+from ._formula import FmtFlags
+from .backend import MP_TYPES
+from .formula import NumberContext
 from .intersect import RaySurface
 from .henke import silica_electron_density, silicon_electron_density
 from .physical_constants import ANGSTROM, HC_KEV_ANGSTROM, R_E
 
 
-def wavelength_angstrom(energy_kev, *, precision: int) -> Number:
+def wavelength_angstrom(energy_kev, *, precision: int):
     """Photon wavelength (angstrom) for an energy in keV."""
-    return Number(f"({HC_KEV_ANGSTROM})/({_s(energy_kev)})", precision)
+    return NumberContext(precision).eval(f"({HC_KEV_ANGSTROM})/({_s(energy_kev)})")
 
 
 class GlassMaterial:
@@ -53,33 +56,28 @@ class GlassMaterial:
         self.energy_ref_kev = energy_ref_kev
         self.name = name
 
-    def _optical(self, n_eff_part: float, energy_kev_value, precision: int) -> Number:
-        lam_m = f"({HC_KEV_ANGSTROM})/({_s(energy_kev_value)})*({ANGSTROM})"
-        expr = f"({R_E})*({lam_m})^2*({repr(n_eff_part)})/(2*pi)"
-        return Number(expr, precision)
+    def optical(self, energy_kev_value) -> tuple[float, float]:
+        """(delta, beta) at E in float64: the tabulated n_eff(E) carries no more digits."""
+        e = float(str(energy_kev_value))
+        if self.electron_density is None:
+            ratio = float(self.energy_ref_kev) / e
+            return self.delta_beta_ref.real * ratio ** 2, self.delta_beta_ref.imag * ratio ** 4
+        n_eff = self.electron_density(e)
+        lam_m = float(HC_KEV_ANGSTROM) / e * float(ANGSTROM)
+        prefactor = float(R_E) * lam_m ** 2 / (2 * math.pi)
+        return prefactor * n_eff.real, prefactor * n_eff.imag
 
-    def delta(self, energy_kev_value, *, precision: int) -> Number:
+    def delta(self, energy_kev_value) -> float:
         """delta(E): prefactor * Re n_eff(E), or the empirical anchor * 1/E^2."""
-        if self.electron_density is None:
-            ratio = float(self.energy_ref_kev) / float(str(energy_kev_value))
-            return Number(repr(self.delta_beta_ref.real * ratio ** 2), precision)
-        else:
-            n_eff = self.electron_density(float(str(energy_kev_value)))
-            return self._optical(n_eff.real, energy_kev_value, precision)
+        return self.optical(energy_kev_value)[0]
 
-    def beta(self, energy_kev_value, *, precision: int) -> Number:
+    def beta(self, energy_kev_value) -> float:
         """beta(E): prefactor * Im n_eff(E), or the empirical anchor * 1/E^4."""
-        if self.electron_density is None:
-            ratio = float(self.energy_ref_kev) / float(str(energy_kev_value))
-            return Number(repr(self.delta_beta_ref.imag * ratio ** 4), precision)
-        else:
-            n_eff = self.electron_density(float(str(energy_kev_value)))
-            return self._optical(n_eff.imag, energy_kev_value, precision)
+        return self.optical(energy_kev_value)[1]
 
-    def critical_angle(self, energy_kev_value, *, precision: int) -> Number:
+    def critical_angle(self, energy_kev_value) -> float:
         """Critical grazing angle theta_c = sqrt(2*delta) (radians)."""
-        d = self.delta(energy_kev_value, precision=precision)
-        return Number(f"sqrt(2*({d}))", precision)
+        return math.sqrt(2 * self.delta(energy_kev_value))
 
 
 # Fused silica (SiO2, ~2.20 g/cm^3): tabulated Henke n_eff(E).
@@ -116,16 +114,17 @@ def reflect_amplitude(
     material: GlassMaterial = FUSED_SILICA,
     *,
     precision: int,
-) -> Number:
+):
     """Complex amplitude reflection coefficient r (s-polarization).
 
     r = (s - sqrt(s^2 - 2*delta + 2i*beta)) / (s + sqrt(...)), s = sin(theta).
     Carries magnitude and phase; coherent tracing must multiply r, not sqrt(R).
     """
-    s = Number(f"sin({_s(grazing_angle)})", precision)
-    d2 = material.delta(energy_kev_value, precision=precision) * 2
-    b2 = material.beta(energy_kev_value, precision=precision) * 2
-    root = (s * s - d2 + b2 * Number("i", precision)) ** Number("0.5", precision)
+    N = NumberContext(precision)
+    s = N.eval("sin(g)", g=_s(grazing_angle))
+    delta, beta = material.optical(energy_kev_value)
+    d2, b2 = 2.0 * delta, 2.0 * beta
+    root = (s * s - d2 + b2 * N.i).sqrt()
     return (s - root) / (s + root)
 
 
@@ -135,13 +134,13 @@ def reflectivity(
     material: GlassMaterial = FUSED_SILICA,
     *,
     precision: int,
-) -> Number:
+):
     """Fresnel reflectivity R = |r|^2 at a grazing angle for a photon energy.
 
     At grazing incidence s and p polarization are indistinguishable.
     """
     r = reflect_amplitude(grazing_angle, energy_kev_value, material, precision=precision)
-    return abs(r) ** Number("2", precision)
+    return abs(r) ** 2
 
 
 def reflect_ray(
@@ -173,6 +172,6 @@ def reflect_ray(
     return ReflectionEvent(point, refl_dir, grazing, reflec, t)
 
 
-def _s(value: Union[Number, str, int, float]) -> str:
-    """Render a scalar for embedding in a formula expression."""
-    return str(value)
+def _s(value) -> str:
+    """Scalar text for a formula expression; a backend value prints its precision's digits."""
+    return value.str(value.precision, FmtFlags.default) if isinstance(value, MP_TYPES) else str(value)

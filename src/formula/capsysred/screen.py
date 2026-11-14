@@ -1,7 +1,7 @@
 """Pixel grid on the screen plane z=const.
 
 Binning is an integer decision, so it runs on floats; positions and phases stay
-Number upstream. Pixel index = iy*nx + ix, row-major from the window corner.
+mp upstream. Pixel index = iy*nx + ix, row-major from the window corner.
 """
 
 

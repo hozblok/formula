@@ -1,13 +1,13 @@
 """Regression: round_up_precision is the engine's single rounding rule.
 
 The C++ engine picks the smallest supported mp precision >= the request; Python
-must call that exact rule (not reimplement it), so precision reported by Number
-never drifts from the mp type its value is actually stored in.
+must call that exact rule (not reimplement it), so the precision a context reports
+never drifts from the mp type its values are actually stored in.
 """
 
 import pytest
 
-from formula import Number, _formula
+from formula import NumberContext, Solver, _formula
 from formula.backend import MAX_PRECISION, round_up_precision
 
 
@@ -19,7 +19,9 @@ def test_python_uses_the_cpp_binding_directly():
 @pytest.mark.parametrize("request_p", list(range(1, 130)) + [200, 500, 1000, 4096])
 def test_matches_the_precision_values_are_stored_at(request_p):
     # The rounded value must equal the precision the engine actually stores in.
-    assert round_up_precision(request_p) == Number("1", precision=request_p).precision
+    N = NumberContext(request_p)
+    assert round_up_precision(request_p) == N.precision == N("1").precision
+    assert Solver("1", request_p).evaluate().precision == N.precision
 
 
 @pytest.mark.parametrize(

@@ -22,15 +22,15 @@ def test_wavelength_angstrom():
 
 
 def test_critical_angle_fused_silica_10kev():
-    theta_c = FUSED_SILICA.critical_angle(10.0, precision=32)
+    theta_c = FUSED_SILICA.critical_angle(10.0)
     # ~3 mrad for fused silica at 10 keV.
     assert 2.9e-3 < _f(theta_c) < 3.1e-3
 
 
 def test_delta_scales_as_inverse_energy_squared():
     # 1/E^2 up to the tabulated f1 dispersion (+1.15 % between 5 and 10 keV).
-    d5 = _f(FUSED_SILICA.delta(5.0, precision=32))
-    d10 = _f(FUSED_SILICA.delta(10.0, precision=32))
+    d5 = _f(FUSED_SILICA.delta(5.0))
+    d10 = _f(FUSED_SILICA.delta(10.0))
     assert math.isclose(d5 / d10, 4.0, rel_tol=0.02)
 
 
@@ -54,8 +54,8 @@ def test_reflect_amplitude_lags_below_critical_angle():
 
 
 def test_soft_xray_has_larger_critical_angle():
-    soft = _f(FUSED_SILICA.critical_angle(0.5, precision=32))
-    hard = _f(FUSED_SILICA.critical_angle(10.0, precision=32))
+    soft = _f(FUSED_SILICA.critical_angle(0.5))
+    hard = _f(FUSED_SILICA.critical_angle(10.0))
     assert soft > hard
 
 

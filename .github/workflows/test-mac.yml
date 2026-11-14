@@ -16,7 +16,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  MACOSX_DEPLOYMENT_TARGET: "10.15"
+  # 13.3 is the libc++ floor for the float std::to_chars in cstrace.hpp.
+  MACOSX_DEPLOYMENT_TARGET: "13.3"
 
 jobs:
   test:

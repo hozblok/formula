@@ -3,6 +3,7 @@
 import pytest
 
 from formula import Formula, Solver
+from tests.derivatives import first_derivative
 
 
 def test_log2_eight():
@@ -15,11 +16,11 @@ def test_log2_one_is_zero():
 
 def test_log2_derivative():
     # d/dx[log_2(x)] = 1 / (x * ln(2)); at x=2 → 1/(2 ln 2) ≈ 0.7213475204
-    result = Solver("log2(x)").get_derivative("x", {"x": "2"})
+    result = first_derivative(Solver("log2(x)"), "x", {"x": "2"})
     assert result.startswith("0.7213475204")
 
 
 def test_log2_derivative_at_zero_diverges():
     # log_2'(x) = 1/(x ln 2); diverges at x=0.
     with pytest.raises(ValueError, match="log2"):
-        Solver("log2(x)").get_derivative("x", {"x": "0"})
+        first_derivative(Solver("log2(x)"), "x", {"x": "0"})

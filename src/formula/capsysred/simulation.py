@@ -1,9 +1,9 @@
-"""CAPSYSred stages on the Number engine.
+"""CAPSYSred stages on the multiprecision engine.
 
 Stage 2 (free space) pushes the ray stream through the jackknife estimator
 (optic = None); stage 3 is the deterministic free-space reference; stage 14
 is the disk-backed jackknife of the capillary scene. Every optical stage
-cross-checks its analytic Number hit against the RaySurface root-finding
+cross-checks its analytic mp hit against the RaySurface root-finding
 engine and the Fresnel factor against xray.reflect_amplitude.
 """
 
@@ -15,14 +15,14 @@ import time
 import zlib
 
 from .. import __version__
-from ..formula import Number
+from ..formula import NumberContext
 from .. import xray
 from . import render, schematic
 from .stages import analytic
 from .stages.altcoh import run_alt_stage
-from .stages.beamlet import (STAGING_PREFIX, PeakSampler, _peak_rss,
-                             preflight_stage11, publish_stage11, recorded_plane,
-                             refuse_stage11_leftovers, run_beamlet_stage)
+from .stages.beamlets.publication import STAGING_PREFIX, publish_stage11, refuse_stage11_leftovers
+from .stages.beamlets.workers import PeakSampler, _peak_rss, preflight_stage11
+from .stages.beamlets.runner import run_beamlet_stage
 from .env import Env
 from .shared.common import log as _log
 from .stages.jackknife import run_jack_stage
@@ -38,7 +38,7 @@ from .symbolic import LineAmplitudes, ampl_template
 from .fresnel import FresnelAmplitude
 from . import rays_v3
 from .rays import (RNG_SCHEME, MultiRaysReader, RaysReader, geometry_core,
-                   geometry_metadata, metadata_equal)
+                   geometry_metadata, metadata_equal, recorded_plane)
 from .shared.types import HitMethod
 from .shared.utils import flat as _flat
 from .shared import format
@@ -66,7 +66,7 @@ def _wave_backend():
 def _b5_backend():
     """Load optional dependencies only for an explicitly selected Stage 17."""
     try:
-        from .stages import stage17
+        from .stages.method_safe import runner as stage17
     except ModuleNotFoundError as exc:
         if exc.name not in {"numpy", "scipy"}:
             raise
@@ -79,7 +79,7 @@ def _b5_backend():
 def _b9_backend():
     """Load optional dependencies only for an explicitly selected Stage 18."""
     try:
-        from .stages import stage18
+        from .stages.ray_mesh import runner as stage18
     except ModuleNotFoundError as exc:
         if exc.name not in {"numpy", "scipy"}:
             raise
@@ -102,16 +102,15 @@ def _make_sampler():
 class Simulation:
     def __init__(self, cfg: Config):
         self.cfg = cfg
+        self.numbers = cfg.numbers
         self.lines = spectral_lines(cfg.spectrum, cfg.energy_kev)
-        self.fresnel = FresnelAmplitude(cfg.material, cfg.energy_kev)
+        self.fresnel = FresnelAmplitude(cfg.material, cfg.energy_kev, self.numbers)
         # per_line: energy-dependent r(E_m) per spectral line via the symbolic template
         self.per_line = cfg.per_line_fresnel and len(self.lines) > 1
-        self.line_amps = LineAmplitudes(cfg.material, self.lines, cfg.precision)
+        self.line_amps = LineAmplitudes(cfg.material, self.lines, self.numbers)
         self.lam = wavelength_m(cfg.energy_kev)
-        p = cfg.precision
-        self.theta_c = float(cfg.material.critical_angle(cfg.energy_kev, precision=p))
-        self.delta_f = float(cfg.material.delta(cfg.energy_kev, precision=p))
-        self.beta_f = float(cfg.material.beta(cfg.energy_kev, precision=p))
+        self.theta_c = cfg.material.critical_angle(cfg.energy_kev)
+        self.delta_f, self.beta_f = cfg.material.optical(cfg.energy_kev)
         self.report = []
         self.files = []
         self.results = {}   # stage name -> MC result dict (maps, stats, ...)
@@ -150,11 +149,9 @@ class Simulation:
         r_fast = self.fresnel(s)
         r_ref = xray.reflect_amplitude(theta, str(self.cfg.energy_kev),
                                        self.cfg.material, precision=p)
-        two = Number("2", p)
-        mat, e0 = self.cfg.material, self.cfg.energy_kev
+        delta, beta = self.cfg.material.optical(self.cfg.energy_kev)
         r_sym = ampl_template(1, p).number(
-            {"s1": str(s), "dd": str(mat.delta(e0, precision=p) * two),
-             "bb": str(mat.beta(e0, precision=p) * two)})
+            {"s1": str(s), "dd": repr(2.0 * delta), "bb": repr(2.0 * beta)})
         diff = float(abs(r_fast - r_ref))
         diff_sym = float(abs(r_sym - r_ref))
         return (f"Fresnel r(θ={rad_to_mrad(theta):g} mrad): "
@@ -293,7 +290,7 @@ class Simulation:
                 f"Energy E = {float(cfg.energy_kev):g} keV,  λ = {m_to_angstrom(self.lam):.4f} Å;  spectrum: {self._spectrum_note()}.",
                 f"Wall material: {cfg.material.name};  δ = {self.delta_f:.3e},  β = {self.beta_f:.3e},  θ_c = {rad_to_mrad(self.theta_c):.2f} mrad.",
                 f"Source — a set of mutually incoherent point modes (van Cittert–Zernike method from a Monte-Carlo ensemble).",
-                f"Engine precision: {cfg.precision} digits (Number/Solver, no float64 in the physics path);  seed = {cfg.seed}.",
+                f"Engine precision: {cfg.precision} digits (NumberContext/Solver geometry and path lengths; δ, β float64 from the tables);  seed = {cfg.seed}.",
                 "Pipeline: |μ| and intensity behind the capillary.",
             ],
         }
@@ -445,7 +442,7 @@ class Simulation:
                 f"- rays: {'reused from the rays file' if res['rays_from'] == 'file' else 'traced'}",
                 f"- RMS(|μ|_pair − |μ|_fullW_col) = {rms_full:.2e} (must be ~0: same sums)",
                 f"- RMS(|μ|_pair − |μ|_Wigner) = {rms_wig:.4f}; RMS(I_pair − I_Wigner, normalized) = {rms_int:.2e}",
-                f"- Fresnel float64 mirror vs Number (center line): |Δr| = {res['fresnel_check']:.1e}",
+                f"- Fresnel float64 mirror vs mp (center line): |Δr| = {res['fresnel_check']:.1e}",
                 f"- Wigner u bin: {rad_to_urad(res['alt'].du):.3f} µrad",
                 f"- time: {res['seconds']:.1f} s",
             ]
@@ -927,8 +924,10 @@ class Simulation:
                   + ("" if self.cfg.beamlet_waist_z is None else
                      f", waist at z = {mm(self.cfg.beamlet_waist_z)}")
                   + f"; mean spot width on screen "
-                  f"= {m_to_um(maps['w_mean']):.2f} µm; Γ-tensor deposit; honest |μ| "
-                  "(no self-pair subtraction)"]
+                  f"= {m_to_um(maps['w_mean']):.2f} µm; Γ-tensor deposit; "
+                  + ("U-statistic |μ| (ray self-pairs subtracted, n/(n-1))"
+                     if self.cfg.beamlet_self_pairs == "subtract" else
+                     "honest |μ| (no self-pair subtraction)")]
         if note:
             report.append(note)
         report += list(extra)

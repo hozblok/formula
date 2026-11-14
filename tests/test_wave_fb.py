@@ -11,7 +11,7 @@ import pytest
 from scipy.linalg import expm
 
 from formula.capsysred import Simulation
-from formula.formula import Number
+from formula.formula import NumberContext
 from formula.capsysred.stages import wave as W
 from formula.capsysred.stages import wave_fb as FB
 from formula.capsysred.walls.wall_torus import TorusWall
@@ -212,15 +212,16 @@ def test_bend_axis_matches_tracer_torus():
     c(z) = c0 + toward z^2/(2R) of the wave frame, both walls."""
     p = 32
     a, R, z0 = 3e-6, 50.0, 0.0
-    center = (Number("1e-6", p), Number("-2e-6", p))
-    toward = (Number("0.6", p), Number("0.8", p))
-    wall = TorusWall(center, Number(str(a), p), Number(str(R), p), toward, Number(str(z0), p))
+    N = NumberContext(p)
+    center = (N("1e-6"), N("-2e-6"))
+    toward = (N("0.6"), N("0.8"))
+    wall = TorusWall(center, N(str(a)), N(str(R)), toward, N(str(z0)))
     for sign in (+1.0, -1.0):
         theta = 5e-4
         ux, uy = 0.6, 0.8
-        O = (center[0], center[1], Number("0", p))
-        dvec = (Number(str(sign * theta * ux), p), Number(str(sign * theta * uy), p), Number("1", p))
-        t, P, n = wall.hit(O, dvec, Number("0.1", p))
+        O = (center[0], center[1], N("0"))
+        dvec = (N(str(sign * theta * ux)), N(str(sign * theta * uy)), N("1"))
+        t, P, n = wall.hit(O, dvec, N("0.1"))
         z_hit = float(P[2])
         # parabolic model: axis displacement toward +u is z^2/(2R); ray x = c0 +- u theta z
         disc = theta ** 2 - sign * 2 * a / R

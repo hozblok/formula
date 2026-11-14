@@ -1,0 +1,289 @@
+"""Experimental archive-based canonical field and coherence maps."""
+
+from concurrent.futures import ProcessPoolExecutor
+import os
+from pathlib import Path
+import shutil
+import time
+from types import SimpleNamespace
+
+from ..variational_transport import bore_area
+
+import numpy as np
+
+from ... import rays_v3
+from .._archive_common import _archive_contract, _dump, _fresnel_product
+from .._map_common import (
+    _array_counts,
+    _atomic_npz,
+    _hash,
+    _jackknife,
+    _map_grid,
+    matched_ray_field,
+    normalized_coherence,
+)
+
+
+def _implementation_hashes():
+    base = Path(__file__).parent.parent
+    return {name: _hash(base/name) for name in
+            ("method_safe/map.py", "method_safe/field.py", "variational_transport.py",
+             "archive_samples.py", "method_safe/runner.py", "method_safe/phase_audit.py",
+             "_map_common.py", "_archive_common.py",
+             "../shared/apertures.py", "../shared/types.py")}
+
+
+def debiased_observables(field, self_intensity, self_cross, prefix_n, reference):
+    if prefix_n < 2:
+        raise ValueError("canonical map needs at least two emitted rays per source mode")
+    plugin_i = abs(field)**2
+    plugin_w = field*field[reference].conjugate()
+    factor = prefix_n/(prefix_n-1)
+    return dict(I=factor*(plugin_i-self_intensity), W=factor*(plugin_w-self_cross),
+                pluginI=plugin_i, pluginW=plugin_w, selfI=self_intensity)
+
+
+def _mode_job(job):
+    from ..archive_samples import read_sample
+    from .field import reconstruct_field
+    from ..variational_transport import count_free_caustics, det_phase_increment, transport_mode
+
+    start = time.perf_counter()
+    if _implementation_hashes() != job["implementation_hashes"]:
+        raise ValueError("stage17 implementation changed after the map run started")
+    samples, archive_meta = read_sample(job["archive"], max_modes=1, mode_start=job["mode"],
+                                        max_rays_per_mode=job["max_rays"], target_z=job["target_z"], k=job["k"])
+    for name in ("fingerprint_sha256", "index_sha256"):
+        if archive_meta[name] != job[name]:
+            raise ValueError(f"archive {name} changed after stage17 preflight")
+    if len(samples) != 1:
+        raise ValueError("archive mode disappeared while stage17 was running")
+    mode = samples[0]
+    prefix_rows = archive_meta["modes"][0]["prefix_rows"]
+    if prefix_rows < job["max_rays"]:
+        raise ValueError("archive ray budget is smaller than the requested canonical map budget")
+    cap = SimpleNamespace(**job["cap"])
+    gamma_ref = 1.0/(job["k"]*min(job["widths"])**2)
+    transport = transport_mode(mode, cap, job["target_z"], gamma_ref) if len(mode["points"]) else None
+    fresnel = _fresnel_product(mode["sins"], job["delta"], job["beta"])
+    origin = np.asarray(mode["origin"])
+    source_distance = float(cap.z0)-origin[2]
+    if source_distance <= 0:
+        raise ValueError("canonical map source must precede the entrance plane")
+    if transport is not None:
+        entrance_distance = np.sqrt(np.sum((transport["entrance"]-origin[:2])**2, axis=1)+source_distance**2)
+        uz0 = source_distance/entrance_distance
+        uzout = np.sqrt(1-np.sum(mode["directions"]**2, axis=1))
+        source_amplitude = np.sqrt(uz0/uzout)/entrance_distance
+        # windows on the exit plane (exit_propagation): Q and the root's branch moved back
+        # along the final free flight; the window centres stay on the target plane
+        spread = job["exit_propagation_m"]
+        Q, P, maslov = transport["Q"], transport["P"], transport["maslov"]
+        continuous = job["branch"] == "continuous"
+        phase = transport["phase"] if continuous else None
+        usable = transport["continuous_valid"] if continuous else transport["valid"]
+        if spread > 0:
+            V = transport["V"]
+            with np.errstate(invalid="ignore"):
+                Q = Q-spread*V
+                if continuous:
+                    back, hit = det_phase_increment(Q, P, V, spread, gamma_ref)
+                    phase = phase-back
+                    usable = usable & ~hit
+                else:
+                    crosses, ambiguous = count_free_caustics(Q, V, np.full(len(Q), spread))
+                    maslov = maslov-crosses
+                    usable = usable & ~ambiguous
+    grid = job["grid"]
+    shape = (len(grid["y"]), len(grid["x"]))
+    variants, matched = {}, {}
+    for budget in job["budgets"]:
+        prefix = mode["ray_ids"] < budget
+        matched[budget] = matched_ray_field(mode["points"][prefix], mode["phase_opl"][prefix], fresnel[prefix], grid)
+        valid = prefix & usable if transport is not None else prefix
+        valid_ids = np.flatnonzero(valid)
+        for width in job["widths"]:
+            if len(valid_ids):
+                result = reconstruct_field(mode["points"][valid], mode["directions"][valid], mode["phase_opl"][valid],
+                    fresnel[valid], Q[valid], P[valid], maslov[valid],
+                    area_weights=job["entrance_area"]/budget, source_amplitude=source_amplitude[valid],
+                    k=job["k"], width=width, x=grid["x"], y=grid["y"], cell_width=grid["cell_width"],
+                    reference=grid["reference"], branch_phase=None if phase is None else phase[valid],
+                    gamma_ref=gamma_ref, spread=spread)
+            else:
+                result = dict(field=np.zeros(shape, complex), self_intensity=np.zeros(shape), self_cross=np.zeros(shape, complex),
+                              ref_index=grid["ref_index"], metadata={"rays": 0, "contributing_rays": 0})
+            if tuple(result["ref_index"]) != tuple(grid["ref_index"]):
+                raise ValueError("canonical field reference differs from the native stage14 reference")
+            result["metadata"].update(emitted_prefix_rays=budget, screen_prefix_rays=int(prefix.sum()),
+                                       transport_valid_prefix_rays=int(valid.sum()),
+                                       excluded_transport_prefix_rays=int(prefix.sum()-valid.sum()),
+                                       emitted_non_screen_prefix_rays=int(budget-prefix.sum()))
+            variants[(budget, width)] = result
+    if _implementation_hashes() != job["implementation_hashes"]:
+        raise ValueError("stage17 implementation changed during a map worker")
+    return dict(mode=int(mode["mode"]), origin=origin.tolist(), origin_decimal=mode["source_origin_decimal"],
+                variants=variants, matched=matched, archive=archive_meta,
+                transport=transport["diagnostics"] if transport is not None else {"ray_count": 0, "valid_count": 0},
+                seconds=time.perf_counter()-start)
+
+
+def _snapshot(partial, accumulators, matched_accumulators, grid, count):
+    output = []
+    for (budget, width), state in accumulators.items():
+        intensity = state["sumI"]/count
+        cross = state["sumW"]/count
+        plugin_i, plugin_w = state["pluginI"]/count, state["pluginW"]/count
+        mu = normalized_coherence(intensity, cross, grid["ref_index"])
+        plugin_mu = normalized_coherence(plugin_i, plugin_w, grid["ref_index"])
+        error, valid_loo = _jackknife(state["rowsI"], state["rowsW"], grid["ref_index"])
+        matched = matched_accumulators[budget]
+        matched_i, matched_w = matched["I"]/count, matched["W"]/count
+        matched_mu = normalized_coherence(matched_i, matched_w, grid["ref_index"])
+        filename = f"map-b{budget}-w{width*1e6:g}um-m{count}.npz"
+        _atomic_npz(partial/filename, x=grid["x"], y=grid["y"], I=intensity, W=cross, mu=mu,
+                    mu_err=error, jackknife_valid_modes=valid_loo, pluginI=plugin_i, pluginW=plugin_w, mu_plugin=plugin_mu,
+                    selfI=state["selfI"]/count, matched_stage14_I=matched_i, matched_stage14_W=matched_w,
+                    matched_stage14_mu=matched_mu, matched_stage14_rays=matched["ray_count"],
+                    n_modes=np.array(count), emitted_rays_per_mode=np.array(budget), width_m=np.array(width),
+                    receiver_width_m=np.array(grid["cell_width"]), ref_index=np.array(grid["ref_index"]))
+        output.append(dict(file=filename, source_modes=count, rays_per_mode=budget, width_m=width,
+                           counts=_array_counts(intensity, mu), plugin_counts=_array_counts(plugin_i, plugin_mu),
+                           matched_stage14_counts=_array_counts(matched_i, matched_mu),
+                           reference_intensity=float(intensity[grid["ref_index"]]),
+                           reference_plugin_intensity=float(plugin_i[grid["ref_index"]]),
+                           reference_matched_stage14_intensity=float(matched_i[grid["ref_index"]]),
+                           sha256=_hash(partial/filename)))
+    return output
+
+
+def run_canonical_map(sim, out_dir, options, *, rays_paths, log=None):
+    from .runner import preflight_b5_inputs, preflight_b5_output
+
+    preflight_b5_inputs(sim, options)
+    preflight_b5_output(out_dir)
+    if not rays_paths or len(rays_paths) != 1:
+        raise ValueError("stage17 archive_canonical needs exactly one complete v3 rays archive")
+    archive = str(Path(rays_paths[0]).resolve())
+    fingerprint_hash = _archive_contract(sim, archive)
+    index_path = Path(rays_v3.index_path(archive))
+    index_hash = _hash(index_path)
+    index = rays_v3.load_index(archive)
+    if _hash(index_path) != index_hash:
+        raise ValueError("archive index changed during canonical map preflight")
+    archive_modes, archive_rays = index.budgets.get("capillary", (0, 0))
+    modes = min(options["max_modes"], archive_modes)
+    if modes < 1:
+        raise ValueError("stage17 archive contains no capillary source modes")
+    budgets = sorted(set(options.get("map_ray_budgets") or [options["rays_per_mode"]]))
+    if min(budgets) < 2 or max(budgets) > min(options["rays_per_mode"], archive_rays):
+        raise ValueError("canonical map ray budgets must be >=2 and fit the configured/archive ray prefix")
+    widths = sorted(set(options["widths_m"]))
+    cap = sim.cfg.capillary
+    screen = cap.all_screens[options["screen_index"]]
+    grid = _map_grid(screen, options["map_stride"])
+    cap_data = {"z0": float(cap.z0), "bores": sim.cfg.raw["capillary"]["bores"]}
+    area = sum(bore_area(bore) for bore in cap.bores)
+    implementation = _implementation_hashes()
+    spread = float(screen.z)-float(cap.z1) if options["exit_propagation"] else 0.0
+    if spread < 0:
+        raise ValueError("b5_estimator.exit_propagation needs the screen at or after the capillary exit")
+    base_job = dict(archive=archive, cap=cap_data, max_rays=max(budgets), target_z=float(screen.z),
+                    k=float(sim.lines[0].k), delta=sim.delta_f, beta=sim.beta_f,
+                    branch=options["branch"], exit_propagation_m=spread,
+                    fingerprint_sha256=fingerprint_hash, index_sha256=index_hash,
+                    implementation_hashes=implementation, grid=grid, widths=widths, budgets=budgets, entrance_area=area)
+    jobs = [dict(base_job, mode=mode) for mode in range(modes)]
+    shape = (len(grid["y"]), len(grid["x"]))
+    accumulators = {(budget, width): dict(rowsI=[], rowsW=[], sumI=np.zeros(shape), sumW=np.zeros(shape, complex),
+                       pluginI=np.zeros(shape), pluginW=np.zeros(shape, complex), selfI=np.zeros(shape))
+                    for budget in budgets for width in widths}
+    matched_accumulators = {budget: dict(I=np.zeros(shape), W=np.zeros(shape, complex), ray_count=np.zeros(shape, np.int64))
+                            for budget in budgets}
+    partial, final = Path(out_dir)/"stage17.partial", Path(out_dir)/"stage17"
+    partial.mkdir(parents=True, exist_ok=False)
+    start = time.perf_counter()
+    result = dict(provider="archive_canonical", status="experimental-semiclassical-coherence-map",
+                  full_coherence_computed=True, accuracy_validated=False, options=options,
+                  source_mode_count=modes, archive_mode_count=archive_modes, archive_rays_per_mode=archive_rays,
+                  screen_z_m=float(screen.z), distance_after_exit_m=float(screen.z)-float(cap.z1),
+                  k_per_m=base_job["k"], delta=sim.delta_f, beta=sim.beta_f, entrance_area_m2=area,
+                  screen_grid={key: value for key, value in grid.items() if key not in ("x", "y")},
+                  source_sampling="first archived source modes, equal empirical weights; not exact Gaussian source quadrature",
+                  source_amplitude="(1 / geometric source-to-entrance distance) * sqrt(uz_entrance / uz_target)",
+                  ray_quadrature="uniform entrance-area sampling: each emitted ray has weight total entrance area / full prefix N; lost and invalid transport rays contribute zero",
+                  estimator="per-mode U-statistic N/(N-1) times field outer product minus identical-ray diagonal, then equal source-mode mean",
+                  branch=("continuous determinant argument along each path; exact caustics kept" if options["branch"] == "continuous"
+                          else "principal root, sign(det Q) and Maslov count; exact caustics excluded"),
+                  exit_propagation_m=spread,
+                  matched_stage14="same archived ray prefix and native screen cells; raw Fresnel-ray units, no geometry correction, self-pairs removed; arithmetic mean over modes",
+                  plugin_diagnostic="positive field outer-product estimator without self-pair subtraction; finite-ray quadrature bias remains",
+                  jackknife="delete-one-source-mode standard error of |mu|; available only with >=3 modes and all positive leave-one intensities; does not estimate model bias",
+                  limitations=["Leading semiclassical canonical Gaussian reconstruction; no verified full-wave error bound.",
+                               "Finite width regularizes caustics and smooths sharp aperture boundaries; width and ray-density convergence must be tested separately.",
+                               "Invalid transport rays are excluded with zero contribution, not redistributed; recorded diagnostics bound only their frequency, not field error.",
+                               "Unbiased diagonal subtraction can produce nonpositive intensity or |mu|>1 at insufficient ray/source counts; these are retained and flagged, never clipped.",
+                               "Gaussian source averaging uses the finite archived empirical ensemble; comparing to 5000 modes mixes estimator and source-sampling effects."],
+                  implementation_sha256=implementation, archive=archive, fingerprint_sha256=fingerprint_hash,
+                  index_sha256=index_hash, modes=[], outputs=[])
+    executor = None
+    try:
+        if options["map_jobs"] > 1:
+            executor = ProcessPoolExecutor(max_workers=options["map_jobs"])
+            stream = executor.map(_mode_job, jobs, chunksize=1)
+        else:
+            stream = map(_mode_job, jobs)
+        for count, completed in enumerate(stream, 1):
+            mode_record = {name: completed[name] for name in ("mode", "origin", "origin_decimal", "archive", "transport", "seconds")}
+            mode_record["variants"] = []
+            for key, field_result in completed["variants"].items():
+                budget, width = key
+                observations = debiased_observables(field_result["field"], field_result["self_intensity"],
+                                                   field_result["self_cross"], budget, grid["ref_index"])
+                state = accumulators[key]
+                state["rowsI"].append(observations["I"])
+                state["rowsW"].append(observations["W"])
+                state["sumI"] += observations["I"]
+                state["sumW"] += observations["W"]
+                for name in ("pluginI", "pluginW", "selfI"):
+                    state[name] += observations[name]
+                mode_record["variants"].append(dict(budget=budget, width_m=width, field=field_result["metadata"]))
+            for budget, data in completed["matched"].items():
+                for name in ("I", "W", "ray_count"):
+                    matched_accumulators[budget][name] += data[name]
+            result["modes"].append(mode_record)
+            result["completed_source_modes"] = count
+            if log:
+                tr = completed["transport"]
+                log(f"  Stage17 mode {completed['mode']}: {tr['valid_count']}/{tr['ray_count']} valid transport rays; "
+                    f"{len(completed['variants'])} map variants, worker {completed['seconds']:.1f}s")
+            if count in options.get("map_snapshots", []) or count == modes:
+                result["outputs"].extend(_snapshot(partial, accumulators, matched_accumulators, grid, count))
+                result["seconds"] = time.perf_counter()-start
+                _dump(partial/"meta.json", result)
+                if log:
+                    log(f"  Stage17 saved {len(accumulators)} map snapshots at {count} source modes")
+        if executor is not None:
+            executor.shutdown(wait=True)
+            executor = None
+        if (_hash(index_path) != index_hash or _hash(rays_v3.fingerprint_path(archive)) != fingerprint_hash
+                or _implementation_hashes() != implementation):
+            raise ValueError("archive metadata or stage17 implementation changed during the map run")
+        result["seconds"] = time.perf_counter()-start
+        _dump(partial/"meta.json", result)
+        if final.exists():
+            raise ValueError("stage17 appeared concurrently; refusing to replace it")
+        os.rename(partial, final)
+    except BaseException:
+        if executor is not None:
+            executor.shutdown(wait=True, cancel_futures=True)
+        shutil.rmtree(partial)
+        raise
+    files = ["stage17/meta.json", *(f"stage17/{row['file']}" for row in result["outputs"])]
+    return {"results": result, "files": files,
+            "report": ["## Stage 17 — experimental B5 canonical coherence map", "",
+                       f"- screen z={float(screen.z):g} m; {modes} empirical source modes; {len(accumulators)} width/ray-budget variants",
+                       f"- branch {options['branch']}; windows "
+                       + (f"on the exit plane, propagated exactly over {spread:g} m" if spread > 0 else "frozen on the screen"),
+                       "- full_coherence_computed=true; accuracy_validated=false; semiclassical Gaussian reconstruction",
+                       "- same-ray stage14 baseline, unbiased and positive plugin maps, source-mode jackknife and transport diagnostics saved", ""]}

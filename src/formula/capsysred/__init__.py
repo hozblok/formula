@@ -1,4 +1,4 @@
-"""Capillary X-ray coherence simulator on the Number/Solver engine (no numpy).
+"""Capillary X-ray coherence simulator on the NumberContext/Solver engine (no numpy).
 
 trace_v3 records rays; the stages consume the recording:
 
@@ -8,5 +8,6 @@ trace_v3 records rays; the stages consume the recording:
 
 from .config import Config, load
 from .simulation import KNOWN_STAGES, Simulation
+from .stages.beamlets import gamma
 
 __all__ = ["KNOWN_STAGES", "Config", "Simulation", "load"]

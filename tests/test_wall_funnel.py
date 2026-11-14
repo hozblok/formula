@@ -1,6 +1,6 @@
 """FunnelWall closed form: judge cross-check and the cylinder degeneracy."""
 
-from formula.formula import Number
+from formula.formula import NumberContext
 from formula.capsysred.shared.nums import vunit
 from formula.capsysred.surfaces import engine_hit_t
 from formula.capsysred.walls.wall_cylinder import CylinderWall
@@ -11,7 +11,7 @@ AG, BG = 1.0 / 0.03, -1.0 / (2 * 0.03 * 0.23)   # OE 20:3975 collimating conditi
 
 
 def _n(v):
-    return Number(repr(float(v)), P)
+    return NumberContext(P)(repr(float(v)))
 
 
 def _funnel(cx, f_coeffs, g_coeffs=None):
