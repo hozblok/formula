@@ -639,6 +639,7 @@ def mode_job(job):
     w_fin, _, _ = beam_width(seg, np.flatnonzero(seg.final), job["z_exit"], job["k"])
     depth_out = (job["window"] + 2.0) * float(np.max(w_fin[np.isfinite(w_fin)], initial=0.0))
     area_out = len(cap.bores) * math.pi * ((job["a_w"] + depth_out) ** 2 - job["a_w"] ** 2)
+    gg_full = gg_shot = None
     if job["glass"]:
         gg_full, gg_shot = wall_trace(seg, bores, job["a"], zs, job["k"], origin[2], job["ring_step"], job["window"],
                                       fresnel=job["fresnel"])

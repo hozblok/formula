@@ -338,7 +338,7 @@ class Simulation:
             xi = lam_f * dist / (2.0 * math.pi * float(src.size))
             note = f"ξ = λD/(2πσ) = {m_to_um(xi):.3f} µm;  "
         else:
-            note = ""
+            xi, note = None, ""
         sub = (f"{note}RMS(MC − analytics) = {rms:.3f};  source: {src.shape}, "
                f"{um(src.size)}, D = {mm(dist)}")
         series = [{"xs": xs_um, "ys": mu_row, "label": "MC |μ| ± σ_jack",

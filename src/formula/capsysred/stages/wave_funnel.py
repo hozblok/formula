@@ -369,6 +369,7 @@ def funnel_scene(sim, wave, lines, log, out_dir=None):
     if out_dir is not None and wave["dump_field"]:
         dump_dir = os.path.join(out_dir, "funnel-exit")
         os.makedirs(dump_dir, exist_ok=True)
+    basis = dr = None
     for li, (k, wl, delta, beta) in enumerate(lines):
         basis = FunnelBasis(a, g, k, delta, beta, jmax, layer=layer)
         dr = min(float(wave["fb_dr"]), basis.disc.aw / 1500.0)

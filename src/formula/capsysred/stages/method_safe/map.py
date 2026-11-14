@@ -70,6 +70,7 @@ def _mode_job(job):
     source_distance = float(cap.z0)-origin[2]
     if source_distance <= 0:
         raise ValueError("canonical map source must precede the entrance plane")
+    source_amplitude = spread = Q = P = maslov = phase = usable = None
     if transport is not None:
         entrance_distance = np.sqrt(np.sum((transport["entrance"]-origin[:2])**2, axis=1)+source_distance**2)
         uz0 = source_distance/entrance_distance
