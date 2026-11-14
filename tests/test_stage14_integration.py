@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import math
+from pathlib import Path
 
 import pytest
 
-from formula.capsysred import Simulation
-from formula.capsysred.rays import sidecar_metadata, write_metadata
+from formula.capsysred import Simulation, rays_v3
 from formula.capsysred.screen import ScreenGrid
 from formula.capsysred.stages.stage14_flags import FlagThresholds, validate_pixel_row
 
@@ -38,7 +39,7 @@ def _config(n_modes=10, seed=101, *, thresholds=None):
     return raw
 
 
-def _write_controlled_rays(path, raw, signs):
+def _write_controlled_rays(write_v3_archive, path, raw, signs):
     """Two occupied pixels with a known cross-mode phase cancellation."""
     sim = Simulation.from_dict(raw)
     cfg = sim.cfg
@@ -50,27 +51,23 @@ def _write_controlled_rays(path, raw, signs):
     phase_flip = math.pi / float(sim.lines[0].k)
     n_modes, n_rays = cfg.capillary.source.budget()
     assert n_modes == len(signs) and n_rays == 20
-    with gzip.open(path, "xt", encoding="utf-8", newline="\n") as fh:
-        # The preamble is deliberately neither {} nor legacy metadata.  It is
-        # an ignored framing record under the current rays contract.
-        fh.write(json.dumps(["ignored", {"geometry": "contradictory"}]) + "\n")
-        for mode, sign in enumerate(signs):
-            for ray in range(n_rays):
-                at_ref = ray < n_rays // 2
-                x, y = (x_ref, y_ref) if at_ref else (x_target, y_target)
-                opl = 0.0 if at_ref or sign > 0 else phase_flip
-                fh.write(json.dumps({
-                    "stage": "capillary", "mode": mode, "ray": ray,
-                    "fate": "screen",
-                    # Deliberately wrong: Stage 14 and replay must re-bin x/y.
-                    "pixel": ref + 1,
-                    "opl": repr(opl), "sins": [],
-                    "x": x, "y": y, "dx": 0.0, "dy": 0.0,
-                }) + "\n")
-        fh.write(json.dumps({
-            "scene_end": "capillary", "rows": n_modes * n_rays,
-        }) + "\n")
-    write_metadata(path, sidecar_metadata(cfg))
+    modes = {}
+    for mode, sign in enumerate(signs):
+        rows = []
+        for ray in range(n_rays):
+            at_ref = ray < n_rays // 2
+            x, y = (x_ref, y_ref) if at_ref else (x_target, y_target)
+            opl = 0.0 if at_ref or sign > 0 else phase_flip
+            rows.append({
+                "stage": "capillary", "mode": mode, "ray": ray,
+                "fate": "screen",
+                # Deliberately wrong: Stage 14 and replay must re-bin x/y.
+                "pixel": ref + 1,
+                "opl": repr(opl), "sins": [],
+                "x": x, "y": y, "dx": 0.0, "dy": 0.0,
+            })
+        modes[mode] = rows
+    write_v3_archive(path, raw, {"capillary": modes})
     return target, ref
 
 
@@ -82,13 +79,13 @@ def _rewrite_gzip_lines(path, transform):
         fh.writelines(lines)
 
 
-def test_stage14_cache_hit_schema(tmp_path, monkeypatch):
+def test_stage14_cache_hit_schema(tmp_path, monkeypatch, write_v3_archive):
     raw = _config()
     rays_dir = tmp_path / "recording"
     rays_dir.mkdir()
-    rays = rays_dir / "rays.jsonl.gz"
+    rays = rays_dir / "rays-modes"
     target, ref = _write_controlled_rays(
-        rays, raw, [1, 1, 1, 1, 1, 1, -1, -1, -1, -1])
+        write_v3_archive, rays, raw, [1, 1, 1, 1, 1, 1, -1, -1, -1, -1])
 
     modern = Simulation.from_dict(raw)
     result = modern.replay(str(rays), str(tmp_path / "stage14"), stages=[14])
@@ -130,14 +127,14 @@ def test_stage14_cache_hit_schema(tmp_path, monkeypatch):
     assert not ({"mu", "mu_err", "solid", "dubious", "stage"} & rows[0].keys())
 
     # Threshold-only reclassification uses the same expensive cache.  Prove
-    # the hot path does not even call gzip.open.
+    # the hot path does not even open a gzip section.
     changed = _config(thresholds={"ic_n_sigma": 2.5, "ref_ic_n_sigma": 3.0,
                                   "w_n_sigma": 3.0, "min_coherent_fraction": 0.08})
 
     def no_gzip(*_args, **_kwargs):
         raise AssertionError("cache hit opened the rays archive")
 
-    monkeypatch.setattr("formula.capsysred.stages.stage14.gzip.open", no_gzip)
+    monkeypatch.setattr(rays_v3.gzip, "GzipFile", no_gzip)
     hit = Simulation.from_dict(changed)
     hit.replay(str(rays), str(tmp_path / "stage14-hit"), stages=[14])
     hit_result = hit.results["stage14:capillary"]
@@ -148,12 +145,13 @@ def test_stage14_cache_hit_schema(tmp_path, monkeypatch):
     assert result["out_dir"] == str(tmp_path / "stage14")
 
 
-def test_stage14_cache_root_override(tmp_path, monkeypatch):
+def test_stage14_cache_root_override(tmp_path, monkeypatch, write_v3_archive):
     raw = _config()
     rays_dir = tmp_path / "recording"
     rays_dir.mkdir()
-    rays = rays_dir / "rays.jsonl.gz"
-    _write_controlled_rays(rays, raw, [1, 1, 1, 1, 1, 1, -1, -1, -1, -1])
+    rays = rays_dir / "rays-modes"
+    _write_controlled_rays(
+        write_v3_archive, rays, raw, [1, 1, 1, 1, 1, 1, -1, -1, -1, -1])
     root = tmp_path / "elsewhere" / "cache"
     monkeypatch.setenv("CAPSYSRED_STAGE14_CACHE", str(root))
 
@@ -166,7 +164,7 @@ def test_stage14_cache_root_override(tmp_path, monkeypatch):
     assert hit.results["stage14:capillary"]["cache_hits"] == 1
 
 
-def test_stage14_union_matches_monolithic_cache(tmp_path):
+def test_stage14_union_matches_monolithic_cache(tmp_path, write_v3_archive):
     union_raw = _config(n_modes=10, seed=999)
     signs_a = [1, 1, 1, -1, -1]
     signs_b = [1, 1, 1, -1, -1]
@@ -174,14 +172,15 @@ def test_stage14_union_matches_monolithic_cache(tmp_path):
     for index, (seed, signs) in enumerate(((11, signs_a), (22, signs_b))):
         directory = tmp_path / f"part-{index}"
         directory.mkdir()
-        path = directory / "rays.jsonl.gz"
-        _write_controlled_rays(path, _config(n_modes=5, seed=seed), signs)
+        path = directory / "rays-modes"
+        _write_controlled_rays(
+            write_v3_archive, path, _config(n_modes=5, seed=seed), signs)
         part_paths.append(str(path))
     mono_dir = tmp_path / "mono-recording"
     mono_dir.mkdir()
-    mono_path = mono_dir / "rays.jsonl.gz"
-    _write_controlled_rays(mono_path, _config(n_modes=10, seed=33),
-                           signs_a + signs_b)
+    mono_path = mono_dir / "rays-modes"
+    _write_controlled_rays(write_v3_archive, mono_path,
+                           _config(n_modes=10, seed=33), signs_a + signs_b)
 
     union = Simulation.from_dict(union_raw)
     union.replay(part_paths, str(tmp_path / "union-out"), stages=[14])
@@ -221,13 +220,14 @@ def test_stage14_union_matches_monolithic_cache(tmp_path):
                 assert left == pytest.approx(right, rel=2e-12, abs=2e-12)
 
 
-def test_stage14_local_reuse_is_strict_but_explicit_replay_is_deliberate(tmp_path):
+def test_stage14_local_reuse_is_strict_but_explicit_replay_is_deliberate(
+        tmp_path, write_v3_archive):
     recorded_raw = _config(seed=17)
     run_raw = _config(seed=18)
     local = tmp_path / "local"
     local.mkdir()
-    rays = local / "rays.jsonl.gz"
-    _write_controlled_rays(rays, recorded_raw,
+    rays = local / "rays-modes"
+    _write_controlled_rays(write_v3_archive, rays, recorded_raw,
                            [1, 1, 1, 1, 1, 1, -1, -1, -1, -1])
     with pytest.raises(ValueError, match="does not match this config"):
         Simulation.from_dict(run_raw).run(str(local), stages=[14])
@@ -238,18 +238,18 @@ def test_stage14_local_reuse_is_strict_but_explicit_replay_is_deliberate(tmp_pat
     assert explicit.results["stage14:capillary"]["n_modes"] == 10
 
 
-def test_stage14_needs_a_recording_and_reads_v2_or_v3(tmp_path):
+def test_stage14_needs_a_recording_and_reads_v3(tmp_path, write_v3_archive):
     import yaml
     from formula.capsysred.trace_v3 import trace as trace_v3
     raw = _config(n_modes=2, seed=71)
     with pytest.raises(ValueError, match="no rays recording"):
         Simulation.from_dict(raw).run(str(tmp_path / "empty"), stages=[14])
     assert not (tmp_path / "empty" / "stage14").exists()
-    v2 = tmp_path / "v2"
-    v2.mkdir()
-    _write_controlled_rays(v2 / "rays.jsonl.gz", raw, [1, -1])
+    controlled = tmp_path / "controlled"
+    _write_controlled_rays(
+        write_v3_archive, controlled / "rays-modes", raw, [1, -1])
     sim = Simulation.from_dict(raw)
-    result = sim.run(str(v2), stages=[14])
+    result = sim.run(str(controlled), stages=[14])
     assert "stage14:capillary" in sim.results
     assert any(name.endswith("14d-capillary-ray-scatter.svg")
                for name in result["files"])
@@ -266,15 +266,21 @@ def test_stage14_needs_a_recording_and_reads_v2_or_v3(tmp_path):
 
 @pytest.mark.parametrize("damage, match", [
     ("missing-target-field", "optical path length"),
-    ("bad-trailer", "capillary trailer"),
+    ("bad-trailer", "section trailer contradicts the index"),
     ("bad-foreign-row", "optical path length"),
+    ("bad-header", "section header contradicts the index"),
+    ("truncated", "section is truncated or corrupt"),
 ])
-def test_stage14_strict_stream_rejects_corruption(tmp_path, damage, match):
+def test_stage14_strict_stream_rejects_corruption(
+        tmp_path, write_v3_archive, damage, match):
     raw = _config(n_modes=2, seed=81)
     recording = tmp_path / damage
     recording.mkdir()
-    rays = recording / "rays.jsonl.gz"
-    _write_controlled_rays(rays, raw, [1, -1])
+    rays = recording / "rays-modes"
+    _write_controlled_rays(write_v3_archive, rays, raw, [1, -1])
+    index = rays_v3.load_index(rays)
+    entry = index.sections("capillary", 0)[0]
+    section = Path(rays_v3.section_path(rays, entry))
 
     def corrupt(lines):
         if damage == "missing-target-field":
@@ -285,6 +291,10 @@ def test_stage14_strict_stream_rejects_corruption(tmp_path, damage, match):
             row = json.loads(lines[-1])
             row["rows"] -= 1
             lines[-1] = json.dumps(row) + "\n"
+        elif damage == "bad-header":
+            row = json.loads(lines[0])
+            row["mode"] += 1
+            lines[0] = json.dumps(row) + "\n"
         else:
             foreign = {
                 "stage": "free", "mode": 0, "ray": 0,
@@ -293,7 +303,14 @@ def test_stage14_strict_stream_rejects_corruption(tmp_path, damage, match):
             lines.insert(1, json.dumps(foreign) + "\n")
         return lines
 
-    _rewrite_gzip_lines(rays, corrupt)
+    if damage == "truncated":
+        section.write_bytes(section.read_bytes()[:-8])
+    else:
+        _rewrite_gzip_lines(section, corrupt)
+    # The index matches the damaged bytes; structural validation remains active.
+    blob = section.read_bytes()
+    damaged = entry._replace(bytes=len(blob), sha256=hashlib.sha256(blob).hexdigest())
+    rays_v3.write_index(rays, [damaged, *index.entries[1:]])
     with pytest.raises(ValueError, match=match):
         Simulation.from_dict(raw).replay(
             str(rays), str(tmp_path / f"out-{damage}"), stages=[14]

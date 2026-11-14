@@ -658,20 +658,21 @@ def test_stage14_union_lattice_parts(tmp_path, monkeypatch):
     assert _mu_rows(tmp_path / "out")
 
 
-def test_stage14_union_requires_lattice_provenance(tmp_path):
-    """Sequential shard seeds are base+k: distinct top-level seeds do not
-    prove disjoint streams, so a non-lattice part must fail the union."""
+def test_stage14_rejects_any_scheme_but_lattice(tmp_path):
+    """lattice-v1 is the only recorded provenance the jackknife accepts:
+    a part declaring another scheme fails before any cache is built."""
     union, archives = _union_scene(tmp_path)
     _set_fingerprint_rng(tmp_path / "arch1",
                          {"scheme": "sequential-v2", "shards": [{"seed": 1403}]})
-    with pytest.raises(ValueError, match="lattice-v1 provenance"):
+    with pytest.raises(ValueError, match="known rng scheme"):
         Simulation.from_dict(union).replay(
             archives, str(tmp_path / "out"), stages=[14])
+    assert not (tmp_path / "out").exists() or not list((tmp_path / "out").glob("stage14*"))
 
 
-def test_stage14_jobs_reject_v2_archive():
+def test_stage14_rejects_a_file_path(tmp_path):
     from formula.capsysred.stages import stage14
-    part = stage14.InputPart("r.jsonl.gz", {}, 4, 20, 0.0, "", None, "", "",
-                             {}, 0, None)
-    with pytest.raises(ValueError, match="needs a v3 rays archive"):
-        stage14._build_fanout_parallel(None, part, [], 2, print)
+    path = tmp_path / "rays.jsonl.gz"
+    path.write_bytes(b"")
+    with pytest.raises(ValueError, match="not a v3 rays archive directory"):
+        stage14._prepare_inputs(Simulation.from_dict(_config()), [str(path)], {})

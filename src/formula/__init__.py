@@ -11,6 +11,7 @@ from .intersect import RayPath, RaySurface, RaySurfaceFunction, Reflection
 
 from .xray import (
     FUSED_SILICA,
+    SILICON,
     GlassMaterial,
     ReflectionEvent,
     reflect_amplitude,

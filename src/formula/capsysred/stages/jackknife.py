@@ -21,7 +21,7 @@ import time
 
 from .altcoh import FloatLineAmplitudes
 from ..shared.progress import Progress
-from ..rays import rescreen, scene_stream
+from ..rays import recorded_plane, rescreen, scene_stream
 from ..screen import ScatterRaster, ScreenGrid
 from ..shared.utils import zeros
 
@@ -145,10 +145,8 @@ class JackknifeCoherence:
                 "n_modes": n_modes}
 
 
-def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
-                   seed_offset: int):
-    """The jackknife estimator over the scene's ray records from the rays
-    file."""
+def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory):
+    """The jackknife estimator over the scene's recorded ray records."""
     cfg = sim.cfg
     screen = ScreenGrid(scr_cfg)
     scat = ScatterRaster(scr_cfg)
@@ -156,10 +154,9 @@ def run_jack_stage(sim, label, scene, src_cfg, scr_cfg, optic, aim_factory,
     amps_of = FloatLineAmplitudes(cfg.material, sim.lines, cfg.precision)
     jack = JackknifeCoherence(sim.lines, screen.ref_pixel(scr_cfg.reference))
     records, rays_from = scene_stream(sim, scene, src_cfg, scr_cfg, optic,
-                                      aim_factory, seed_offset)
-    if getattr(sim.rays, "readonly", False):
-        # --replay records may carry pixel ids of a different grid — re-bin
-        records = rescreen(records, float(scr_cfg.z), screen)
+                                      aim_factory)
+    # arrivals re-projected from the recorded plane, re-binned on this grid
+    records = rescreen(records, recorded_plane(sim, scene, scr_cfg), screen)
     stats = {"emitted": 0, "screen": 0, "absorbed": 0, "lost": 0,
              "off_window": 0, "reflected_rays": 0, "reflections": 0,
              "bounce_hist": {}}

@@ -35,8 +35,8 @@ def full_expr_um(wall):
     um = lift(m_to_um(1), wall.center[0].precision)
     return "*".join(
         f"((x-({wall.center[0] * um}))*({mx})"
-        f"+(y-({wall.center[1] * um}))*({my})-({wall.apothem * um}))"
-        for mx, my in wall.faces)
+        f"+(y-({wall.center[1] * um}))*({my})-({a * um}))"
+        for (mx, my), a in zip(wall.faces, wall.apothems))
 
 
 def _engine_t(rs, scale, O, d, t_exit, method):
