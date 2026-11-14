@@ -30,8 +30,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macos-14 = arm64 (Apple Silicon).
-        os: [macos-14]
+        # macos-15 = arm64 (Apple Silicon); the macos-14 image was retired.
+        os: [macos-15]
         python: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v7
