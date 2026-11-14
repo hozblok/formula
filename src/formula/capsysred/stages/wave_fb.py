@@ -54,6 +54,31 @@ def mode_damping(disc, k, delta, beta):
     return disc.kap2 * ell.imag / (disc.aw * k) * factor
 
 
+def newton_kappa(mm: np.ndarray, kap: np.ndarray, a: float, k2: complex, iters: int = 40,
+                 rtol: float = 1e-13) -> tuple[np.ndarray, np.ndarray]:
+    """Damped Newton (|step| <= 0.2 / a) on p = s of the scalar characteristic equation (exact_kappa) from the
+    guesses kap of the orders mm, k2 = k^2 (1 - n^2). Returns (kappa, converged)."""
+    cap = 0.2 / a
+    ok = np.zeros(kap.shape, bool)
+    for _ in range(iters):
+        x = kap * a
+        Q = np.sqrt(k2 - kap * kap)
+        Q = np.where(Q.real < 0.0, -Q, Q)
+        z = Q * a
+        p = kap * (jv(mm - 1.0, x) / jv(mm, x) - mm / x)
+        s = Q * (-kve(mm - 1.0, z) / kve(mm, z) - mm / z)
+        dp = -(x - mm * mm / x) - a * p * p / kap
+        ds = -kap / Q * (z + mm * mm / z) + a * kap * s * s / (Q * Q)
+        step = (p - s) / (dp - ds)
+        big = np.abs(step) > cap
+        step = np.where(big, step * cap / np.where(big, np.abs(step), 1.0), step)
+        kap = kap - step
+        ok = (np.abs(step) <= rtol * np.abs(kap)) & ~big
+        if ok.all():
+            break
+    return kap, ok
+
+
 def exact_kappa(disc: "Disc", *, a: float, k: float, delta: float, beta: float, iters: int = 40,
                 rtol: float = 1e-13) -> tuple[np.ndarray, np.ndarray]:
     """Complex wavenumbers kappa_mn of the hollow circular bore of radius a in the wall n = 1 - delta + i beta:
@@ -65,32 +90,8 @@ def exact_kappa(disc: "Disc", *, a: float, k: float, delta: float, beta: float, 
     k2 = k * k * (1.0 - (1.0 - delta + 1j * beta) ** 2)
     ell = wall_offset(k, delta, beta)
     rows, cols = np.nonzero(disc.validp)
-    mm = rows.astype(float)
-    kap = disc.zp[rows, cols] / (a + ell)
-
-    def g_and_slope(kap):
-        x = kap * a
-        Q = np.sqrt(k2 - kap * kap)
-        Q = np.where(Q.real < 0.0, -Q, Q)
-        z = Q * a
-        p = kap * (jv(mm - 1.0, x) / jv(mm, x) - mm / x)
-        s = Q * (-kve(mm - 1.0, z) / kve(mm, z) - mm / z)
-        dp = -(x - mm * mm / x) - a * p * p / kap
-        ds = -kap / Q * (z + mm * mm / z) + a * kap * s * s / (Q * Q)
-        return p - s, dp - ds
-
-    guess = kap.copy()
-    ok = np.zeros(kap.shape, bool)
-    cap = 0.2 / a
-    for _ in range(iters):
-        g, s = g_and_slope(kap)
-        step = g / s
-        big = np.abs(step) > cap
-        step = np.where(big, step * cap / np.where(big, np.abs(step), 1.0), step)
-        kap = kap - step
-        ok = (np.abs(step) <= rtol * np.abs(kap)) & ~big
-        if ok.all():
-            break
+    guess = disc.zp[rows, cols] / (a + ell)
+    kap, ok = newton_kappa(rows.astype(float), guess, a, k2, iters, rtol)
     out = np.zeros(disc.validp.shape, complex)
     conv = np.zeros(disc.validp.shape, bool)
     out[rows, cols] = kap

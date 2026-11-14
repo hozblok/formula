@@ -27,32 +27,9 @@ from types import SimpleNamespace
 import numpy as np
 from numpy.polynomial.legendre import leggauss
 from scipy.linalg.blas import dgemm as _gemm, zaxpy as _axpy
-from scipy.special import jv, jvp, kve
+from scipy.special import jv, jvp
 
-from .wave_fb import Disc, wall_offset
-
-
-def _roots(mm, kap, a, k2, iters=40, rtol=1e-13):
-    """Damped Newton on p = s of the scalar characteristic equation (as wave_fb.exact_kappa) from the guesses kap."""
-    cap = 0.2 / a
-    ok = np.zeros(kap.shape, bool)
-    for _ in range(iters):
-        x = kap * a
-        Q = np.sqrt(k2 - kap * kap)
-        Q = np.where(Q.real < 0.0, -Q, Q)
-        z = Q * a
-        p = kap * (jv(mm - 1.0, x) / jv(mm, x) - mm / x)
-        s = Q * (-kve(mm - 1.0, z) / kve(mm, z) - mm / z)
-        dp = -(x - mm * mm / x) - a * p * p / kap
-        ds = -kap / Q * (z + mm * mm / z) + a * kap * s * s / (Q * Q)
-        step = (p - s) / (dp - ds)
-        big = np.abs(step) > cap
-        step = np.where(big, step * cap / np.where(big, np.abs(step), 1.0), step)
-        kap = kap - step
-        ok = (np.abs(step) <= rtol * np.abs(kap)) & ~big
-        if ok.all():
-            break
-    return kap, ok
+from .wave_fb import Disc, newton_kappa, wall_offset
 
 
 _C1, _C2 = 0.5 - math.sqrt(3.0) / 6.0, 0.5 + math.sqrt(3.0) / 6.0      # Gauss points of a step
@@ -128,7 +105,7 @@ class FunnelBasis:
 
             def run(ix):
                 with np.errstate(invalid="ignore", divide="ignore", over="ignore"):
-                    return _roots(mr[ix], guess[ix], ag, k2)
+                    return newton_kappa(mr[ix], guess[ix], ag, k2)
             nt = os.cpu_count() or 1
             with ThreadPoolExecutor(nt) as ex:                 # the Bessel ufuncs release the GIL
                 parts = list(ex.map(run, np.array_split(np.arange(mr.size), 4 * nt)))
