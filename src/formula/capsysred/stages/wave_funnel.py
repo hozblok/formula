@@ -84,7 +84,7 @@ class FunnelBasis:
         self.k, self.delta, self.beta = float(k), float(delta), float(beta)
         self.ell = wall_offset(k, delta, beta)
         self.A0 = self.a + self.ell.real
-        self.disc = d = Disc(self.A0, jmax, nr=8)                # zeros, norms and index maps; blocks on their own quadrature
+        self.disc = d = Disc(aw=self.A0, jmax=jmax, nr=8)                # zeros, norms and index maps; blocks on their own quadrature
         # blocks=False: only the evaluation of stored coefficients (points, centre values)
         self.R, self.S, self.T = _galerkin(d, nr or int(1.2 * jmax) + 40) if blocks else (None, None, None)
         self.cnt = np.array([z.size for z in d.zeros])

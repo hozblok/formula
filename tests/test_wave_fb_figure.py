@@ -26,7 +26,7 @@ DELTA, BETA = FUSED_SILICA.optical(E_KEV)
 def _disc(a, theta_cut=4.5e-3, cut=True):
     aw = a + FB.wall_offset(K, DELTA, BETA).real
     J = K * aw * math.sqrt(2.0 * DELTA)
-    return FB.Disc(aw, int(math.ceil(K * aw * theta_cut)), wall_cut=J if cut else None)
+    return FB.Disc(aw=aw, jmax=int(math.ceil(K * aw * theta_cut)), wall_cut=J if cut else None)
 
 
 # ---------------------------------------------------------------- exact dispersion
@@ -59,7 +59,7 @@ def test_exact_kappa_roots_and_the_angular_talbot_length():
 
 def test_hadamard_term_is_the_translation_generator():
     """A rigid shift dr = d cos phi: V_ij = -d (h_j - h_i) <psi_i | d_x psi_j> / <psi_i|psi_i> for the code's V."""
-    d = FB.Disc(1.0e-6, 60)
+    d = FB.Disc(aw=1.0e-6, jmax=60)
     ch = FB.FBChannel((0.0, 0.0), None, None, d, K)
     shift = 1e-10
     ch._dr = FB.WallFigure([{"q": 1, "amp": shift}], None, 1.0, axis=False).coeffs(0.0)

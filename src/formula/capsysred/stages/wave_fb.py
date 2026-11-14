@@ -103,7 +103,8 @@ class Disc:
     """Dirichlet disc basis J_|m|(j_mn r / aw) e^{i m phi}, all zeros j_mn < jmax, with wall_cut J only
     the guided ones (j_mn^2 - m^2 < J^2); Gauss-Legendre radial quadrature, FFT in phi; padded arrays over |m|."""
 
-    def __init__(self, aw, jmax, nr=None, nphi=None, wall_cut=None):
+    def __init__(self, *, aw: float, jmax: float, nr: int | None = None, nphi: int | None = None,
+                 wall_cut: float | None = None) -> None:
         self.aw, self.jmax, self.wall_cut = float(aw), int(jmax), wall_cut
         zeros, m = [], 0
         while True:
@@ -672,7 +673,7 @@ class Lattice:
 
 # ----------------------------------------------------------------- scene spec (picklable)
 
-def fb_jmax_rule(k, aw, theta_cut):
+def fb_jmax_rule(*, k: float, aw: float, theta_cut: float) -> int:
     return int(math.ceil(k * aw * theta_cut))
 
 
@@ -702,7 +703,7 @@ def build_spec(sim, wave, lines):
     ells = [wall_offset(k, delta, beta) for k, _, delta, beta in lines]
     aw = a_max + max(e.real for e in ells)
     theta_cut = float(wave["fb_theta_cut"])
-    jmax = int(wave["fb_jmax"]) if wave["fb_jmax"] else fb_jmax_rule(k_max, aw, theta_cut)
+    jmax = int(wave["fb_jmax"]) if wave["fb_jmax"] else fb_jmax_rule(k=k_max, aw=aw, theta_cut=theta_cut)
     theta_modal = jmax / (k_max * aw)
     wall_cut = max(k * aw * math.sqrt(2.0 * delta) for k, _, delta, _ in lines) if wave["fb_wall_cut"] else None
     tilt = max((length / b["rbend"]) if b["rbend"] else 0.0 for b in bores)
@@ -760,7 +761,7 @@ def _init_worker(spec):
     from .wave import ScreenSampler, Accumulator
     t0 = time.time()
     dtype = np.complex64 if spec["dtype"] == "complex64" else np.complex128
-    disc = Disc(spec["aw"], spec["jmax"], wall_cut=spec["wall_cut"])
+    disc = Disc(aw=spec["aw"], jmax=spec["jmax"], wall_cut=spec["wall_cut"])
     disc.fine_table(spec["dr"], dtype=np.float32)
     figure = WallFigure(spec["figure"]["terms"], spec["figure"]["noise"], spec["length"])
     chans, fallback = {}, {}

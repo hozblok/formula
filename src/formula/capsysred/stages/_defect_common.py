@@ -41,7 +41,7 @@ def _stretch(shape, phis):
 def _disc(a_w, jmax):
     key = (round(float(a_w), 15), float(jmax))
     if key not in _DISCS:
-        _DISCS[key] = Disc(a_w, jmax)
+        _DISCS[key] = Disc(aw=a_w, jmax=jmax)
     return _DISCS[key]
 
 
