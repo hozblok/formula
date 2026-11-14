@@ -345,7 +345,11 @@ class FBChannel:
     """One circular bore: axis c(z) = c0 + t z^2/(2R) (t toward the bend centre; R None =
     straight); frame coordinates xi along t, eta along t_perp; potential k xi / R."""
 
-    def __init__(self, c0, t, rbend, disc, k, gamma=None, h0=None, figure=None, dz=None):
+    def __init__(self, *, c0: np.ndarray | tuple[float, float], t: np.ndarray | tuple[float, float] | None,
+                 rbend: float | None, disc: Disc, k: float, gamma: np.ndarray | None = None,
+                 h0: np.ndarray | None = None, figure: WallFigure | None = None, dz: float | None = None) -> None:
+        """c0: entrance centre (x, y) [m]; t: toward the bend centre; rbend [m], None = straight; k [rad/m]; gamma: mode
+        damping (2M+1, nmax) [1/m]; h0: H diagonal instead of kap2/2k - i gamma; dz: z step of a z-dependent figure [m]."""
         self.c0 = np.asarray(c0, float)
         self.t = None if t is None else np.asarray(t, float) / np.linalg.norm(t)
         self.rb = None if rbend is None else float(rbend)
@@ -370,34 +374,39 @@ class FBChannel:
             s2 = np.array([float(np.sum(self.slope_frame(z) ** 2)) for z in zg])
             self._g = (zg, np.concatenate([[0.0], np.cumsum(0.5 * (s2[1:] + s2[:-1]) * np.diff(zg))]) * self.k / 2.0)
 
-    def slope_frame(self, z):
-        """Axis slope c'(z) in the frame (xi, eta): the bend t z / R along xi plus the axis path."""
+    def slope_frame(self, z: float) -> np.ndarray:
+        """Axis slope c'(z) in the frame (xi, eta): the bend t z / R along xi plus the axis path.
+        z: distance from the entrance [m]."""
         s = np.array([0.0 if self.rb is None else z / self.rb, 0.0])
         return s + (self.path.derivs(z)[1] if self.path is not None else 0.0)
 
-    def to_lab(self, v):
+    def to_lab(self, v: np.ndarray) -> np.ndarray:
+        """v: 2-vector in the frame (xi, eta)."""
         t, tp = self.frame_axes()
         return v[0] * t + v[1] * tp
 
-    def frame_axes(self):
+    def frame_axes(self) -> tuple[np.ndarray, np.ndarray]:
         t = self.t if self.t is not None else np.array([1.0, 0.0])
         return t, np.array([-t[1], t[0]])
 
-    def axis(self, z):
+    def axis(self, z: float) -> np.ndarray:
+        """z: distance from the entrance [m]."""
         c = self.c0 if self.rb is None else self.c0 + self.t * z * z / (2.0 * self.rb)
         return c if self.path is None else c + self.to_lab(self.path.derivs(z)[0])
 
-    def slope(self, z):
+    def slope(self, z: float) -> np.ndarray:
+        """z: distance from the entrance [m]."""
         if self.path is None:
             return np.zeros(2) if self.rb is None else self.t * z / self.rb
         return self.to_lab(self.slope_frame(z))
 
-    def lab_phase_g(self, z):
+    def lab_phase_g(self, z: float) -> float:
+        """z: distance from the entrance [m]."""
         if self._g is not None:
             return float(np.interp(z, *self._g))
         return 0.0 if self.rb is None else self.k / 2.0 * (z ** 3 / (3.0 * self.rb ** 2))
 
-    def _entrance_grid(self):
+    def _entrance_grid(self) -> tuple[np.ndarray, np.ndarray, np.ndarray | float]:
         """Lab coordinates of the polar quadrature points at z = 0 and the frame gauge exp(-i k c'(0).x')."""
         t, tp = self.frame_axes()
         d = self.disc
@@ -411,30 +420,35 @@ class FBChannel:
         s = self.slope_frame(0.0)
         return X, Y, np.exp(-1j * self.k * (s[0] * xi + s[1] * eta))
 
-    def entrance_field(self, src_xy, z_in):
+    def entrance_field(self, src_xy: np.ndarray | tuple[float, float], z_in: float) -> np.ndarray:
         """Paraxial point source at (src_xy, -z_in) on the entrance disc (polar grid),
-        amplitude 1/(i lambda z_in) like the stage's free-space Fresnel step."""
+        amplitude 1/(i lambda z_in) like the stage's free-space Fresnel step.
+        src_xy: source (x, y) [m]; z_in: source distance before the entrance [m]."""
         X, Y, gauge = self._entrance_grid()
         lam = 2.0 * math.pi / self.k
         return (gauge * np.exp(1j * self.k * ((X - src_xy[0]) ** 2 + (Y - src_xy[1]) ** 2) / (2.0 * z_in))
                 / (1j * lam * z_in))
 
-    def entrance_modes(self, src_xy, z_in):
+    def entrance_modes(self, src_xy: np.ndarray | tuple[float, float], z_in: float) -> np.ndarray:
+        """src_xy: source (x, y) [m]; z_in: source distance before the entrance [m]."""
         return self.disc.to_modes(self.entrance_field(src_xy, z_in))
 
-    def spot_field(self, spot):
+    def spot_field(self, spot: dict) -> np.ndarray:
         """Coherent gaussian on the entrance disc: FWHM in intensity at the waist, unit power, plane-wave tilt
-        (tx, ty); waist at z = focus (0: on the entrance, < 0: before it), q = -focus + i z_R per axis."""
+        (tx, ty); waist at z = focus (0: on the entrance, < 0: before it), q = -focus + i z_R per axis.
+        spot: the wave spot config (fwhm, center, tilt, focus)."""
         from .wave import spot_profile
         X, Y, gauge = self._entrance_grid()
         return gauge * spot_profile(spot, self.k, X, Y)
 
-    def spot_modes(self, spot):
+    def spot_modes(self, spot: dict) -> np.ndarray:
+        """spot: the wave spot config (fwhm, center, tilt, focus)."""
         return self.disc.to_modes(self.spot_field(spot))
 
-    def apply_v(self, c):
+    def apply_v(self, c: np.ndarray) -> np.ndarray:
         """Galerkin V c: the bend through the block-tridiagonal m -> m +- 1 matrices, the wall figure
-        through its Hadamard form -(1/k aw^3) v_i sum_j dr_hat[m_i - m_j] u_j c_j (a convolution over m)."""
+        through its Hadamard form -(1/k aw^3) v_i sum_j dr_hat[m_i - m_j] u_j c_j (a convolution over m).
+        c: mode coefficients (2M+1, nmax)."""
         out = np.zeros_like(c)
         if self.path is None and self.vscale != 0.0:     # bend alone: V = (k/R) xi
             up, dn = self.disc.shift_blocks()
@@ -454,16 +468,19 @@ class FBChannel:
             out += self.fig_scale * d.wall_v * np.convolve(b, self._dr)[q:q + b.size, None]
         return out
 
-    def apply_h(self, c):
-        """H c = (kappa^2/2k - i gamma) c + V c (Galerkin blocks)."""
+    def apply_h(self, c: np.ndarray) -> np.ndarray:
+        """H c = (kappa^2/2k - i gamma) c + V c (Galerkin blocks).
+        c: mode coefficients (2M+1, nmax)."""
         return self.h0 * c + self.apply_v(c)
 
-    def apply_h_grid(self, c):
-        """Same operator with V applied pointwise on the polar grid and projected (check)."""
+    def apply_h_grid(self, c: np.ndarray) -> np.ndarray:
+        """Same operator with V applied pointwise on the polar grid and projected (check).
+        c: mode coefficients (2M+1, nmax)."""
         d = self.disc
         return self.h0 * c + d.to_modes(d.to_grid(c) * self.pot)
 
-    def chebyshev_degree(self, L, tol):
+    def chebyshev_degree(self, L: float, tol: float) -> tuple[int, float, float, float]:
+        """L: step length [m]; tol: the series stops where |J_n(t)| <= tol."""
         emin, emax = self._spectral_bounds()
         dE = 0.5 * (emax - emin) * (1.0 + 0.02)
         t = dE * L
@@ -472,7 +489,7 @@ class FBChannel:
             n += 8
         return n, t, 0.5 * (emax + emin), dE
 
-    def _spectral_bounds(self):
+    def _spectral_bounds(self) -> tuple[float, float]:
         vmax = float(np.max(np.abs(self.pot))) if self.rb is not None else 0.0
         vmax += self.k * float(np.hypot(*self._cpp)) * self.disc.aw
         if self._dr is not None:            # Hadamard term: |V| <= |scale| max_m sum_n j^2 sum_p |dr_hat|
@@ -480,10 +497,11 @@ class FBChannel:
         hr = self.h0.real[self.disc.valid]
         return min(0.0, float(hr.min())) - vmax, float(hr.max()) + vmax
 
-    def propagate(self, c, L, tol=1e-12, z0=0.0):
+    def propagate(self, c: np.ndarray, L: float, tol: float = 1e-12, z0: float = 0.0) -> tuple[np.ndarray, int]:
         """exp(-iHL) c: diagonal for a straight bore without figure; otherwise the Chebyshev series in
         sub-steps short enough that the damping stays small on the scaled spectrum (gamma_max dL <= 1.6)
-        and, for a z-dependent figure, no longer than dz (figure taken at each sub-step midpoint)."""
+        and, for a z-dependent figure, no longer than dz (figure taken at each sub-step midpoint).
+        c: mode coefficients (2M+1, nmax); L: length [m]; tol: Chebyshev cut |J_n| <= tol; z0: start z [m]."""
         if self.rb is None and self.figure is None and self.path is None:
             return c * np.exp(-1j * self.h0 * L), 0
         steps = max(1, int(math.ceil(float(np.max(-self.h0.imag)) * L / 1.6)))
@@ -504,9 +522,10 @@ class FBChannel:
             self._cpp = np.zeros(2)
         return c, total
 
-    def propagate_chebyshev(self, c, L, tol=1e-12):
+    def propagate_chebyshev(self, c: np.ndarray, L: float, tol: float = 1e-12) -> tuple[np.ndarray, int]:
         """exp(-iHL) c as a Chebyshev series (Tal-Ezer & Kosloff): exp(-i t x) =
-        sum_n (2 - delta_n0) (-i)^n J_n(t) T_n(x) on the spectrum scaled to [-1, 1]."""
+        sum_n (2 - delta_n0) (-i)^n J_n(t) T_n(x) on the spectrum scaled to [-1, 1].
+        c: mode coefficients (2M+1, nmax); L: length [m]; tol: Chebyshev cut |J_n| <= tol."""
         n_max, t, ec, dE = self.chebyshev_degree(L, tol)
 
         def hs(v):
@@ -521,9 +540,10 @@ class FBChannel:
             phi0, phi1 = phi1, phi2
         return res * np.exp(-1j * ec * L), n_max
 
-    def lab_field(self, c, z, xg, yg, dr):
+    def lab_field(self, c: np.ndarray, z: float, xg: np.ndarray, yg: np.ndarray, dr: float) -> np.ndarray:
         """Modes at z -> lab field on the Cartesian mesh (xg, yg) inside the disc with the
-        lab-frame phase exp(i k c'(z).x' + i g)."""
+        lab-frame phase exp(i k c'(z).x' + i g).
+        c: mode coefficients (2M+1, nmax) at z [m]; xg, yg: 1-D lab mesh axes [m]; dr: fine radial step [m]."""
         d = self.disc
         t, tp = self.frame_axes()
         cz, sl, g = self.axis(z), self.slope(z), self.lab_phase_g(z)
@@ -781,11 +801,11 @@ def _init_worker(spec):
                 dirl = disc.kap2 / (2.0 * k) - 1j * mode_damping(disc, k, delta, beta)
                 h0 = np.where(disc.valid, np.where(ok[disc.am], (kap * kap)[disc.am] / (2.0 * k), dirl), 0.0)
                 fallback[k] = fallback.get(k, 0) + int(np.sum(disc.validp & ~ok))
-                row.append(FBChannel(b["center"], b["toward"], b["rbend"], disc, k, h0=h0, figure=figure, dz=spec["dz"]))
+                row.append(FBChannel(c0=b["center"], t=b["toward"], rbend=b["rbend"], disc=disc, k=k, h0=h0, figure=figure, dz=spec["dz"]))
             chans[k] = row
         else:
             gamma = mode_damping(disc, k, delta, beta) if spec["wall"] == "dir-ell" else None
-            chans[k] = [FBChannel(b["center"], b["toward"], b["rbend"], disc, k, gamma, figure=figure, dz=spec["dz"])
+            chans[k] = [FBChannel(c0=b["center"], t=b["toward"], rbend=b["rbend"], disc=disc, k=k, gamma=gamma, figure=figure, dz=spec["dz"])
                         for b in spec["bores"]]
     lat = Lattice(spec["half"], spec["h"], dtype=dtype, workers=spec["workers"], edge0=spec["screens"][0]["center"][0] - spec["screens"][0]["edge_x"] / 2,
                   cache_bytes=spec["cache_gb"] * 2 ** 30)

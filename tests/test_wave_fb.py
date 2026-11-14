@@ -84,7 +84,7 @@ def test_free_space_point_source_sphere():
     aw, z_in, L = 20e-6, 0.5, 0.02
     d = FB.Disc(aw=aw, jmax=120)
     d.fine_table(20e-9)
-    ch = FB.FBChannel((0.0, 0.0), None, None, d, K)
+    ch = FB.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K)
     c0 = ch.entrance_modes((0.0, 0.0), z_in)
     cL, _ = ch.propagate_chebyshev(c0, L)
     x = np.arange(-8e-6, 8e-6, 0.2e-6)
@@ -104,7 +104,7 @@ def test_gaussian_beam_q_law():
     aw, L, w0 = 15e-6, 0.02, 2.5e-6
     d = FB.Disc(aw=aw, jmax=100)
     d.fine_table(20e-9)
-    ch = FB.FBChannel((0.0, 0.0), None, None, d, K)
+    ch = FB.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K)
     xi = d.r[:, None] * np.cos(d.phi)[None, :]
     eta = d.r[:, None] * np.sin(d.phi)[None, :]
     q0 = -1j * math.pi * w0 ** 2 / LAM
@@ -123,11 +123,11 @@ def test_unitarity_and_wall_damping():
     d = FB.Disc(aw=aw, jmax=30)
     ell = FB.wall_offset(K, DELTA, BETA)
     gamma = d.kap2 * ell.imag / (aw * K)
-    c0 = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 500.0, d, K).entrance_modes((0.2e-6, 0.0), 0.05)
-    lossless = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 500.0, d, K)
+    c0 = FB.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=500.0, disc=d, k=K).entrance_modes((0.2e-6, 0.0), 0.05)
+    lossless = FB.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=500.0, disc=d, k=K)
     assert d.norm(lossless.propagate_chebyshev(c0, 0.02)[0]) / d.norm(c0) == pytest.approx(1.0, abs=1e-12)
     # straight bore: every mode decays as exp(-2 gamma L) in norm
-    lossy = FB.FBChannel((0.0, 0.0), None, None, d, K, gamma)
+    lossy = FB.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K, gamma=gamma)
     e = np.zeros(d.kap2.shape, complex)
     e[d.M + 2, 1] = 1.0                       # one valid mode (m = 2, n = 2)
     expected = math.exp(-2.0 * gamma[d.M + 2, 1] * 0.02)
@@ -140,7 +140,7 @@ def test_chebyshev_matches_dense_exponential():
     d = FB.Disc(aw=aw, jmax=20)
     ell = FB.wall_offset(K, DELTA, BETA)
     gamma = d.kap2 * ell.imag / (aw * K)
-    ch = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 2000.0, d, K, gamma)
+    ch = FB.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=2000.0, disc=d, k=K, gamma=gamma)
     c0 = ch.entrance_modes((0.3e-6, 0.1e-6), 0.05)
     assert np.linalg.norm(ch.apply_h(c0) - ch.apply_h_grid(c0)) < 1e-13 * np.linalg.norm(ch.apply_h_grid(c0))
     n = c0.size
@@ -168,14 +168,14 @@ def test_bend_limit_and_mirror_symmetry():
     d = FB.Disc(aw=aw, jmax=40)
     d.fine_table(20e-9)
     x = np.arange(-2.8e-6, 2.81e-6, 0.1e-6)
-    straight = FB.FBChannel((0.0, 0.0), None, None, d, K)
-    far = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 1e12, d, K)
+    straight = FB.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K)
+    far = FB.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=1e12, disc=d, k=K)
     c0 = straight.entrance_modes((0.0, 0.0), 0.05)
     Es = _lab_exit(straight, straight.propagate_chebyshev(c0, L)[0], L, x)
     Ef = _lab_exit(far, far.propagate_chebyshev(c0, L)[0], L, x)
     assert np.max(np.abs(Ef - Es)) < 1e-8 * np.max(np.abs(Es))          # (a) R -> infinity
-    plus = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 50.0, d, K)
-    minus = FB.FBChannel((0.0, 0.0), (-1.0, 0.0), 50.0, d, K)
+    plus = FB.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=50.0, disc=d, k=K)
+    minus = FB.FBChannel(c0=(0.0, 0.0), t=(-1.0, 0.0), rbend=50.0, disc=d, k=K)
     Ep = _lab_exit(plus, plus.propagate_chebyshev(c0, L)[0], L, x)
     Em = _lab_exit(minus, minus.propagate_chebyshev(c0, L)[0], L, x)
     assert np.max(np.abs(Ep - Em[:, ::-1])) < 1e-9 * np.max(np.abs(Ep))  # (b) mirror x -> -x
@@ -188,7 +188,7 @@ def test_bend_frame_against_free_gaussian_beam():
     aw, L, R, w0 = 10e-6, 0.01, 50.0, 3e-6
     d = FB.Disc(aw=aw, jmax=110)
     d.fine_table(20e-9)
-    ch = FB.FBChannel((20e-6, 0.0), (-1.0, 0.0), R, d, K)
+    ch = FB.FBChannel(c0=(20e-6, 0.0), t=(-1.0, 0.0), rbend=R, disc=d, k=K)
     xi = d.r[:, None] * np.cos(d.phi)[None, :]
     eta = d.r[:, None] * np.sin(d.phi)[None, :]
     q0 = -1j * math.pi * w0 ** 2 / LAM
@@ -346,7 +346,7 @@ def test_entrance_spot_modes_and_stage(tmp_path):
     aw = 1e-6 + FB.wall_offset(K, DELTA, BETA).real
     thc = math.sqrt(2 * DELTA)
     d = FB.Disc(aw=aw, jmax=int(K * aw * 1.15 * thc), wall_cut=K * aw * thc)
-    ch = FB.FBChannel((0.0, 0.0), None, None, d, K)
+    ch = FB.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K)
     r0, tilt = aw - 51e-9, 2.31e-3
     spot = {"center": [r0, 0.0], "fwhm": 100e-9, "tilt": [0.0, tilt]}
     c = ch.spot_modes(spot)
@@ -381,13 +381,13 @@ def test_propagate_is_exact_for_straight_bores_and_substeps_strong_damping():
     g = FB.mode_damping(d, K, DELTA, BETA)
     spot = {"center": [aw - 51e-9, 0.0], "fwhm": 100e-9, "tilt": [0.0, 2.31e-3]}
     L = 0.03
-    straight = FB.FBChannel((0.0, 0.0), None, None, d, K, g)
+    straight = FB.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K, gamma=g)
     c0 = straight.spot_modes(spot)
     out, deg = straight.propagate(c0, L)
     assert deg == 0 and np.allclose(out, c0 * np.exp(-1j * straight.h0 * L), rtol=0, atol=0)
     T = d.norm(out) / d.norm(c0)
     assert 0.4 < T < 0.75                                                 # whispering-gallery launch, 30 mm
-    bent = FB.FBChannel((0.0, 0.0), (1.0, 0.0), 100.0, d, K, g)
+    bent = FB.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=100.0, disc=d, k=K, gamma=g)
     one, deg1 = bent.propagate(c0, L)
     two_a, _ = bent.propagate(c0, L / 2)
     two, deg2 = bent.propagate(two_a, L / 2)

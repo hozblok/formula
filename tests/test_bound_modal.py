@@ -39,7 +39,7 @@ def test_modal_evolution_reproduces_a_gaussian_beam(rbend, n_sec, L, jmax):
     (each mode evolves exactly), 12 sections (0.6 rad per section) to 1e-3; in a bent bore
     the Galerkin coupling truncated to the Disc leaves ~1e-2 (a lab-straight beam is tilted
     in the bend frame), still far below the error without the boundary part."""
-    chan0 = FBChannel(np.zeros(2), np.array([1.0, 0.0]) if rbend else None, rbend, Disc(aw=AW, jmax=jmax), K)
+    chan0 = FBChannel(c0=np.zeros(2), t=np.array([1.0, 0.0]) if rbend else None, rbend=rbend, disc=Disc(aw=AW, jmax=jmax), k=K)
     disc = chan0.disc
     seg = _beam(4.0e-6, 18.0e-6, 0.0)
     seg.z1[0] = L
@@ -77,7 +77,7 @@ def test_modal_evolution_reproduces_a_gaussian_beam(rbend, n_sec, L, jmax):
 
 def test_zero_trace_leaves_the_initial_norm():
     """A beam far from the wall: no trace, the modal evolution is unitary."""
-    chan0 = FBChannel(np.zeros(2), None, None, Disc(aw=AW, jmax=60.0), K)
+    chan0 = FBChannel(c0=np.zeros(2), t=None, rbend=None, disc=Disc(aw=AW, jmax=60.0), k=K)
     disc = chan0.disc
     seg = _beam(2.0e-6, 0.0, 0.0)
     zs = np.linspace(0.0, L, 101)
@@ -198,7 +198,7 @@ def test_bound_covers_the_error_of_a_wrong_method_field(wrong):
     16 um, amplitude x1.3).  B must cover ||E(L) - method(L)|| within the Disc and stay within
     x1.6 of it (x2.5 for the leakage alone, where the mode tail is comparable); a wrong input
     raises both."""
-    chan = FBChannel(np.zeros(2), None, None, Disc(aw=AW, jmax=80.0), K)
+    chan = FBChannel(c0=np.zeros(2), t=None, rbend=None, disc=Disc(aw=AW, jmax=80.0), k=K)
     disc, mb = chan.disc, B.ModalBound(chan)
     L = 0.05
     zs = np.linspace(0.0, L, 201)
@@ -251,7 +251,7 @@ def test_square_tail_covers_the_infinite_normal_index():
 def test_fan_scale_from_the_deposit_norm_flags_an_amplitude_defect():
     """Method field = 2 x the lowest Disc mode: with the deposit-unit norm of E_in fixing the
     scale, the doubled amplitude is error (B ~ 1); the least-squares scale alone hides it."""
-    chan = FBChannel(np.zeros(2), None, None, Disc(aw=AW, jmax=20.0), K)
+    chan = FBChannel(c0=np.zeros(2), t=None, rbend=None, disc=Disc(aw=AW, jmax=20.0), k=K)
     disc = chan.disc
     c = np.zeros(disc.valid.shape, complex)
     c[list(disc.ms).index(0), 0] = 1.0
@@ -268,7 +268,7 @@ def test_fan_scale_from_the_deposit_norm_flags_an_amplitude_defect():
 def test_rescale_matches_a_direct_bound_at_that_scale():
     """The parts re-assembled for another fan magnitude equal a direct bound computed with that
     magnitude fixed; the least-squares magnitude reproduces the provisional result."""
-    chan = FBChannel(np.zeros(2), None, None, Disc(aw=AW, jmax=40.0), K)
+    chan = FBChannel(c0=np.zeros(2), t=None, rbend=None, disc=Disc(aw=AW, jmax=40.0), k=K)
     disc = chan.disc
     seg = _beam(4.0e-6, 15.0e-6, 2.0e-6)
     L = 0.02
@@ -299,7 +299,7 @@ def test_rescale_matches_a_direct_bound_at_that_scale():
 
 def test_common_scale_survives_a_vanishing_fan():
     """No beams at all: the fan is zero, the scale falls back to 1 and e(0) = E_in (B_e0 = 1)."""
-    chan = FBChannel(np.zeros(2), None, None, Disc(aw=AW, jmax=30.0), K)
+    chan = FBChannel(c0=np.zeros(2), t=None, rbend=None, disc=Disc(aw=AW, jmax=30.0), k=K)
     disc = chan.disc
     zero = lambda b, zr, radii, phis, cx, cy: np.zeros((radii.size, disc.nphi), complex)
     res = B.bores_bound([chan], 0.02, zero, lambda ch: ch.entrance_field(np.zeros(2), 0.5), 0.7, 0.0)
@@ -366,12 +366,12 @@ def test_bent_bore_weights_match_the_straight_filon_and_the_substep_scheme():
     ghat = rng.standard_normal((len(zs), nm)) + 1j * rng.standard_normal((len(zs), nm))
     ghat *= np.exp(-0.5 * (np.arange(len(zs)) - 20.0) ** 2 / 36.0)[:, None]      # a smooth pulse in z
     L = zs[-1]
-    straight = B.ModalBound(FBChannel(np.zeros(2), None, None, disc, K))
-    flat = B.ModalBound(FBChannel(np.zeros(2), np.array([1.0, 0.0]), 1e16, disc, K))     # V L ~ 1e-12
+    straight = B.ModalBound(FBChannel(c0=np.zeros(2), t=None, rbend=None, disc=disc, k=K))
+    flat = B.ModalBound(FBChannel(c0=np.zeros(2), t=np.array([1.0, 0.0]), rbend=1e16, disc=disc, k=K))     # V L ~ 1e-12
     b_s, b_f = straight.boundary_part(zs, ghat, L), flat.boundary_part(zs, ghat, L)
     assert straight.norm(b_s) > 0.0
     assert straight.norm(b_s - b_f) <= 1e-10 * straight.norm(b_s)
-    bent = B.ModalBound(FBChannel(np.zeros(2), np.array([1.0, 0.0]), 2156.25, disc, K))
+    bent = B.ModalBound(FBChannel(c0=np.zeros(2), t=np.array([1.0, 0.0]), rbend=2156.25, disc=disc, k=K))
     b_b = bent.boundary_part(zs, ghat, L)
     s = bent.forcing(ghat)
     h = np.diff(zs)
@@ -388,4 +388,4 @@ def test_bent_bore_weights_match_the_straight_filon_and_the_substep_scheme():
     assert bent.norm(b_b - c) <= 1e-4 * bent.norm(b_b)
     assert bent.norm(b_b - b_s) > 1e-2 * bent.norm(b_s)
     with pytest.raises(ValueError):
-        B.ModalBound(FBChannel(np.zeros(2), None, None, disc, K, gamma=np.full(disc.kap2.shape, 1.0)))
+        B.ModalBound(FBChannel(c0=np.zeros(2), t=None, rbend=None, disc=disc, k=K, gamma=np.full(disc.kap2.shape, 1.0)))

@@ -60,7 +60,7 @@ def test_exact_kappa_roots_and_the_angular_talbot_length():
 def test_hadamard_term_is_the_translation_generator():
     """A rigid shift dr = d cos phi: V_ij = -d (h_j - h_i) <psi_i | d_x psi_j> / <psi_i|psi_i> for the code's V."""
     d = FB.Disc(aw=1.0e-6, jmax=60)
-    ch = FB.FBChannel((0.0, 0.0), None, None, d, K)
+    ch = FB.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K)
     shift = 1e-10
     ch._dr = FB.WallFigure([{"q": 1, "amp": shift}], None, 1.0, axis=False).coeffs(0.0)
     mj, nj, M = 20, 1, d.M
@@ -87,12 +87,12 @@ def test_axis_path_against_hadamard_first_order():
     for cut in (True, False):
         d = _disc(a, theta_cut=4.5e-3 if cut else 1.5 * math.sqrt(2 * DELTA), cut=cut)
         g = FB.mode_damping(d, K, DELTA, BETA)
-        ch0 = FB.FBChannel((0, 0), None, None, d, K, g)
+        ch0 = FB.FBChannel(c0=(0, 0), t=None, rbend=None, disc=d, k=K, gamma=g)
         c0 = ch0.spot_modes(spot)
         cu = ch0.propagate(c0, L)[0]
         for A in (0.1e-9, 0.03e-9):
             terms = [{"q": 1, "amp": A, "angle": 0.3}, {"q": 1, "amp": -A, "angle": 0.3, "period": P}]
-            c = {ax: FB.FBChannel((0, 0), None, None, d, K, g, figure=FB.WallFigure(terms, None, L, axis=ax),
+            c = {ax: FB.FBChannel(c0=(0, 0), t=None, rbend=None, disc=d, k=K, gamma=g, figure=FB.WallFigure(terms, None, L, axis=ax),
                                   dz=P / 64).propagate(c0, L)[0] for ax in (True, False)}
             eff = math.sqrt(d.norm(c[True] - cu) / d.norm(cu))
             res[cut, A] = (eff, math.sqrt(d.norm(c[False] - c[True]) / d.norm(c[True] - cu)))
@@ -109,8 +109,8 @@ def test_axis_path_lab_frame_and_static_shift():
     spot = {"center": [0.1e-6, 0.05e-6], "fwhm": 150e-9, "tilt": [0.8e-3, 0.4e-3]}
     s = 3e-9
     fig = FB.WallFigure([{"q": 1, "amp": s, "angle": 0.0}], None, 2e-3)
-    ch = FB.FBChannel((0, 0), None, None, d, K, figure=fig, dz=1e-4)
-    ch0 = FB.FBChannel((0, 0), None, None, d, K)
+    ch = FB.FBChannel(c0=(0, 0), t=None, rbend=None, disc=d, k=K, figure=fig, dz=1e-4)
+    ch0 = FB.FBChannel(c0=(0, 0), t=None, rbend=None, disc=d, k=K)
     assert np.allclose(ch.axis(1e-3), [s, 0.0]) and np.allclose(ch.slope(1e-3), 0.0) and ch.lab_phase_g(1e-3) == 0.0
     sp = dict(spot, center=[spot["center"][0] - s, spot["center"][1]])
     c1 = ch.propagate(ch.spot_modes(spot), 2e-3)[0]
@@ -133,7 +133,7 @@ def test_far_field_from_modes_parseval_and_fft():
     ring, _ = FB.far_field_profiles(np.abs(A) ** 2, th, K, (0.0, 1.0))
     assert ring.sum() * 2 * math.pi / nphi == pytest.approx(d.norm(c), rel=1e-4)
     d.fine_table(2e-9)
-    ch = FB.FBChannel((0, 0), None, None, d, K)
+    ch = FB.FBChannel(c0=(0, 0), t=None, rbend=None, disc=d, k=K)
     h = 4e-9
     xs = (np.arange(-300, 300) + 0.5) * h
     F = sfft.fft2(ch.lab_field(c, 0.0, xs, xs, 2e-9), s=(8192, 8192)) * h * h
