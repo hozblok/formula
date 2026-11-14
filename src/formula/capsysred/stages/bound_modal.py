@@ -24,7 +24,7 @@ import numpy as np
 from numpy.polynomial.legendre import leggauss
 from scipy.special import jv
 
-from .wave_fb import Disc, FBChannel, wall_offset
+from .wave_fb import CHEB_MARGIN, Disc, FBChannel, wall_offset
 
 
 def _interp_error(zs, s_at, norm):
@@ -248,7 +248,7 @@ class ModalBound:
         key = round(float(h), 15)
         if key not in self._cheb:
             emin, emax = self.chan._spectral_bounds()
-            ec, dE = 0.5 * (emax + emin), 0.5 * (emax - emin) * 1.02
+            ec, dE = 0.5 * (emax + emin), 0.5 * (emax - emin) * CHEB_MARGIN
             n = int(dE * h) + 8
             while True:
                 th = math.pi * (np.arange(n + 1) + 0.5) / (n + 1)                 # nodes cos(th)

@@ -29,7 +29,7 @@ from numpy.polynomial.legendre import leggauss
 from scipy.linalg.blas import dgemm as _gemm, zaxpy as _axpy
 from scipy.special import jv, jvp
 
-from .wave_fb import CHEB_TOL, Disc, newton_kappa, wall_offset
+from .wave_fb import CHEB_DAMP, CHEB_MARGIN, CHEB_TOL, Disc, newton_kappa, radial_nodes, wall_offset
 
 
 _C1, _C2 = 0.5 - math.sqrt(3.0) / 6.0, 0.5 + math.sqrt(3.0) / 6.0      # Gauss points of a step
@@ -63,7 +63,7 @@ class FunnelBasis:
         self.A0 = self.a + self.ell.real
         self.disc = d = Disc(aw=self.A0, jmax=jmax, nr=8)                # zeros, norms and index maps; blocks on their own quadrature
         # blocks=False: only the evaluation of stored coefficients (points, centre values)
-        self.R, self.S, self.T = _galerkin(d, nr or int(1.2 * jmax) + 40) if blocks else (None, None, None)
+        self.R, self.S, self.T = _galerkin(d, nr or radial_nodes(jmax)) if blocks else (None, None, None)
         self.cnt = np.array([z.size for z in d.zeros])
         self.off = np.concatenate([[0], np.cumsum(self.cnt)])
         self.mr = np.repeat(np.arange(d.M + 1), self.cnt)
@@ -207,7 +207,7 @@ class FunnelChannel:
         """exp(-i A L) c for apply(z, alpha, shift) = alpha (A - shift) z with the spectrum of A inside bounds
         (Tal-Ezer & Kosloff): T_{i+1} = 2 X T_i - T_{i-1}, X = (A - ec) / dE."""
         emin, emax = bounds
-        dE, ec = 0.5 * (emax - emin) * 1.02, 0.5 * (emax + emin)
+        dE, ec = 0.5 * (emax - emin) * CHEB_MARGIN, 0.5 * (emax + emin)
         t = dE * L
         n = int(t) + 8
         while abs(jv(n, t)) > tol:
@@ -226,12 +226,12 @@ class FunnelChannel:
     def step(self, z, z0, dz, tol):
         """One CF4 step: exp(-i dz (w+ H1 + w- H2)) then exp(-i dz (w- H1 + w+ H2)), H1, H2 at the Gauss points,
         w+- = 1/4 +- sqrt(3)/6; each as exp(-i (dz/2) (2 A)) in sub-steps that keep the damping small on the scaled
-        spectrum (2 g_max (dz/2) / n_sub <= 1.6)."""
+        spectrum (2 g_max (dz/2) / n_sub <= CHEB_DAMP)."""
         z1, z2 = z0 + _C1 * dz, z0 + _C2 * dz
         deg = 0
         for wa, wb in ((_WP, _WM), (_WM, _WP)):
             apply, bounds, g_max = self.operator(z1, z2, wa, wb, scale=2.0)
-            n_sub = max(1, int(math.ceil(0.5 * g_max * dz / 1.6)))
+            n_sub = max(1, int(math.ceil(0.5 * g_max * dz / CHEB_DAMP)))
             for _ in range(n_sub):
                 z, n = self._chebyshev(apply, bounds, z, 0.5 * dz / n_sub, tol)
                 deg += n
@@ -260,7 +260,7 @@ class FunnelChannel:
         (the aperture edge is the end of the interval), FFT over phi."""
         from scipy import fft as sfft
         b, d = self.b, self.b.disc
-        n_r = nr or int(1.2 * d.jmax) + 40
+        n_r = nr or radial_nodes(d.jmax)
         tq, wq = leggauss(n_r)
         r = 0.5 * b.a * (tq + 1.0)
         wr = 0.5 * b.a * wq

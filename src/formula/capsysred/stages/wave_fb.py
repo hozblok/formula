@@ -30,6 +30,51 @@ from ..shared.units import m_to_um
 
 MODEL_CLASS_FB = "dir-ell"
 CHEB_TOL = 1e-12        # default cut |J_n(t)| <= CHEB_TOL of the Chebyshev series of exp(-iHL)
+CHEB_MARGIN = 1.02      # widening of the spectrum half-width of H scaled to [-1, 1]
+CHEB_DAMP = 1.6         # max damping gamma_max dL of one Chebyshev sub-step
+NEWTON_ITERS = 40       # default iterations of the damped Newton on the characteristic equation
+NEWTON_RTOL = 1e-13     # default convergence |step| <= NEWTON_RTOL |kappa|
+NEWTON_STEP = 0.2       # step cap |step| <= NEWTON_STEP / a
+
+
+def radial_nodes(jmax: float) -> int:
+    """Default number of Gauss-Legendre radial nodes on [0, aw] for the zeros below jmax: int(1.2 jmax) + 40.
+
+    Need. The nodes project a field onto the modes J_|m|(j r / aw), j < jmax = k aw theta_cut. For a field of tilt
+    T = k aw theta_in, exp(i T (r / aw) cos phi) with theta_in the incidence angle on the bore, the projection is
+    exact to 1e-10 of the field norm with
+
+        N = (T + jmax) / 4 + 3 (T + jmax)^(1/3)
+
+    (measured for jmax 8..640 and T from 0 to 4 jmax: the coefficient of the cube root is 2.9..3.3; tilt-only
+    field, eight azimuthal orders per jmax; a chirp of the same edge frequency needs fewer nodes).
+
+    Reason. With r = aw (t + 1) / 2 the integrand field x mode oscillates on t in [-1, 1] as exp(i w t),
+    w = (T + jmax) / 2. N nodes are exact through the polynomial degree 2 N - 1, and a polynomial follows
+    exp(i w t) once its degree passes w by a transition zone ~ w^(1/3) (the coefficients J_n(w) of its Chebyshev
+    series decay beyond it), so N = w / 2 + margin. T = jmax is a mode of the basis projected onto the basis.
+
+    Rule. The factor 1.2 sets how far the field may exceed the cut of the basis: (T + jmax) / 4 = 1.2 jmax gives
+    T = 3.8 jmax, an incidence up to 3.8 theta_cut. The term + 40 covers the cube root, which equals 40 at
+    jmax ~ 500. The basis does not represent such a field; too few nodes alias it into the kept modes.
+
+    Largest tilt T_max projected to 1e-10, against the alternative max(int(1.2 jmax), 100):
+
+                 int(1.2 jmax) + 40      max(int(1.2 jmax), 100)
+        jmax     nodes   T_max / jmax    nodes   T_max / jmax
+           8        49       15.8          100       38.8
+          20        64        8.4          100       14.9
+          40        88        5.9          100        7.0
+          80       136        4.7          100        3.0
+         160       232        4.1          192        3.2
+         320       424        3.9          384        3.4
+         640       808        3.8          768        3.5
+
+    Conclusion. int(1.2 jmax) + 40 keeps T_max >= 3.8 jmax up to jmax ~ 500 and loses it slowly beyond (the exact
+    margin is 5 jmax^(1/3): 27 at jmax 160, 44 at 640, 66 at 2200). The floor of 100 nodes gains only below
+    jmax 50, dips to 3.0 near jmax 80 and stays at 3.2..3.5 in the working range, for a saving of 40 nodes
+    (17 % at jmax 160, 5 % at 640). The rule stays."""
+    return int(1.2 * jmax) + 40
 
 
 # ----------------------------------------------------------------- wall
@@ -55,11 +100,11 @@ def mode_damping(disc, k, delta, beta):
     return disc.kap2 * ell.imag / (disc.aw * k) * factor
 
 
-def newton_kappa(mm: np.ndarray, kap: np.ndarray, a: float, k2: complex, iters: int = 40,
-                 rtol: float = 1e-13) -> tuple[np.ndarray, np.ndarray]:
-    """Damped Newton (|step| <= 0.2 / a) on p = s of the scalar characteristic equation (exact_kappa) from the
+def newton_kappa(mm: np.ndarray, kap: np.ndarray, a: float, k2: complex, iters: int = NEWTON_ITERS,
+                 rtol: float = NEWTON_RTOL) -> tuple[np.ndarray, np.ndarray]:
+    """Damped Newton (|step| <= NEWTON_STEP / a) on p = s of the scalar characteristic equation (exact_kappa) from the
     guesses kap of the orders mm, k2 = k^2 (1 - n^2). Returns (kappa, converged)."""
-    cap = 0.2 / a
+    cap = NEWTON_STEP / a
     ok = np.zeros(kap.shape, bool)
     for _ in range(iters):
         x = kap * a
@@ -80,11 +125,11 @@ def newton_kappa(mm: np.ndarray, kap: np.ndarray, a: float, k2: complex, iters: 
     return kap, ok
 
 
-def exact_kappa(disc: "Disc", *, a: float, k: float, delta: float, beta: float, iters: int = 40,
-                rtol: float = 1e-13) -> tuple[np.ndarray, np.ndarray]:
+def exact_kappa(disc: "Disc", *, a: float, k: float, delta: float, beta: float, iters: int = NEWTON_ITERS,
+                rtol: float = NEWTON_RTOL) -> tuple[np.ndarray, np.ndarray]:
     """Complex wavenumbers kappa_mn of the hollow circular bore of radius a in the wall n = 1 - delta + i beta:
     p = s with p = kappa J_m'(kappa a) / J_m(kappa a), s = Q K_m'(Q a) / K_m(Q a), Q^2 = k^2 (1 - n^2) - kappa^2,
-    Re Q > 0 (scalar continuity of psi and psi'); damped Newton (|step| <= 0.2 / a) from the DIR-ell guess
+    Re Q > 0 (scalar continuity of psi and psi'); damped Newton (|step| <= NEWTON_STEP / a) from the DIR-ell guess
     j_mn / (a + ell) with the analytic derivative p' - s' (Bessel equations). Returns (kappa, converged) on the
     padded |m| x n grid; invalid entries are zero; a root is accepted only if it converged, decays
     (Im kappa <= 0) and stays within 1 / a of the guess."""
@@ -123,7 +168,7 @@ class Disc:
         self.M = len(zeros) - 1
         self.zeros = zeros
         self.nmodes = sum(2 * z.size for z in zeros) - zeros[0].size
-        self.nr = nr or int(1.2 * jmax) + 40
+        self.nr = nr or radial_nodes(jmax)
         self.nphi = nphi or (2 * self.M + 3 + 7) // 8 * 8
         t, w = leggauss(self.nr)
         self.r = 0.5 * self.aw * (t + 1.0)
@@ -483,7 +528,7 @@ class FBChannel:
     def chebyshev_degree(self, L: float, tol: float) -> tuple[int, float, float, float]:
         """L: step length [m]; tol: the series stops where |J_n(t)| <= tol."""
         emin, emax = self._spectral_bounds()
-        dE = 0.5 * (emax - emin) * (1.0 + 0.02)
+        dE = 0.5 * (emax - emin) * CHEB_MARGIN
         t = dE * L
         n = int(t) + 8
         while abs(jv(n, t)) > tol:
@@ -500,12 +545,12 @@ class FBChannel:
 
     def propagate(self, c: np.ndarray, L: float, tol: float = CHEB_TOL, z0: float = 0.0) -> tuple[np.ndarray, int]:
         """exp(-iHL) c: diagonal for a straight bore without figure; otherwise the Chebyshev series in
-        sub-steps short enough that the damping stays small on the scaled spectrum (gamma_max dL <= 1.6)
+        sub-steps short enough that the damping stays small on the scaled spectrum (gamma_max dL <= CHEB_DAMP)
         and, for a z-dependent figure, no longer than dz (figure taken at each sub-step midpoint).
         c: mode coefficients (2M+1, nmax); L: length [m]; tol: Chebyshev cut |J_n| <= tol; z0: start z [m]."""
         if self.rb is None and self.figure is None and self.path is None:
             return c * np.exp(-1j * self.h0 * L), 0
-        steps = max(1, int(math.ceil(float(np.max(-self.h0.imag)) * L / 1.6)))
+        steps = max(1, int(math.ceil(float(np.max(-self.h0.imag)) * L / CHEB_DAMP)))
         if (self.figure is not None and self.figure.z_dependent) or self.path is not None:
             steps = max(steps, int(math.ceil(L / self.dz - 1e-9)))
         dl, total = L / steps, 0
