@@ -3,11 +3,8 @@
 from collections import namedtuple
 from enum import StrEnum
 
-from typing import Union
+from ...backend import Scalar
 
-from ...backend import MP_TYPES
-
-Scalar = Union[*MP_TYPES]
 Vec3 = tuple[Scalar, Scalar, Scalar]
 
 

@@ -15,7 +15,7 @@ from collections import namedtuple
 from typing import Callable
 
 from ._formula import FmtFlags
-from .backend import MP_TYPES
+from .backend import MP_TYPES, Scalar
 from .formula import NumberContext
 from .intersect import RaySurface
 from .henke import silica_electron_density, silicon_electron_density
@@ -56,7 +56,7 @@ class GlassMaterial:
         self.energy_ref_kev = energy_ref_kev
         self.name = name
 
-    def optical(self, energy_kev_value) -> tuple[float, float]:
+    def optical(self, energy_kev_value: float | Scalar) -> tuple[float, float]:
         """(delta, beta) at E in float64: the tabulated n_eff(E) carries no more digits."""
         e = float(str(energy_kev_value))
         if self.electron_density is None:
@@ -67,15 +67,15 @@ class GlassMaterial:
         prefactor = float(R_E) * lam_m ** 2 / (2 * math.pi)
         return prefactor * n_eff.real, prefactor * n_eff.imag
 
-    def delta(self, energy_kev_value) -> float:
+    def delta(self, energy_kev_value: float | Scalar) -> float:
         """delta(E): prefactor * Re n_eff(E), or the empirical anchor * 1/E^2."""
         return self.optical(energy_kev_value)[0]
 
-    def beta(self, energy_kev_value) -> float:
+    def beta(self, energy_kev_value: float | Scalar) -> float:
         """beta(E): prefactor * Im n_eff(E), or the empirical anchor * 1/E^4."""
         return self.optical(energy_kev_value)[1]
 
-    def critical_angle(self, energy_kev_value) -> float:
+    def critical_angle(self, energy_kev_value: float | Scalar) -> float:
         """Critical grazing angle theta_c = sqrt(2*delta) (radians)."""
         return math.sqrt(2 * self.delta(energy_kev_value))
 

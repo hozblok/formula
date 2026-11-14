@@ -33,7 +33,7 @@ MODEL_CLASS_FB = "dir-ell"
 
 # ----------------------------------------------------------------- wall
 
-def wall_offset(k, delta, beta):
+def wall_offset(k: float, delta: float, beta: float) -> complex:
     """Complex DIR-ell offset ell = i/(k q0), q0 = sqrt(-2 delta + 2 i beta), Im q0 >= 0."""
     q0 = np.sqrt(complex(-2.0 * delta, 2.0 * beta))
     if q0.imag < 0.0:
