@@ -34,7 +34,7 @@ def _disc(a, theta_cut=4.5e-3, cut=True):
 def test_exact_kappa_roots_and_the_angular_talbot_length():
     a = 1.0e-6
     d = _disc(a)
-    kap, ok = FB.exact_kappa(d, a, K, DELTA, BETA)
+    kap, ok = FB.exact_kappa(d, a=a, k=K, delta=DELTA, beta=BETA)
     assert ok[d.validp].all()
     # independent script values (J_m / K_m continuity, numeric Newton), kappa * a
     for (m, n), (re, im) in {(0, 1): (2.3893, -9.962e-05), (90, 1): (97.9037, -4.225e-03),

@@ -54,7 +54,8 @@ def mode_damping(disc, k, delta, beta):
     return disc.kap2 * ell.imag / (disc.aw * k) * factor
 
 
-def exact_kappa(disc, a, k, delta, beta, iters=40, rtol=1e-13):
+def exact_kappa(disc: "Disc", *, a: float, k: float, delta: float, beta: float, iters: int = 40,
+                rtol: float = 1e-13) -> tuple[np.ndarray, np.ndarray]:
     """Complex wavenumbers kappa_mn of the hollow circular bore of radius a in the wall n = 1 - delta + i beta:
     p = s with p = kappa J_m'(kappa a) / J_m(kappa a), s = Q K_m'(Q a) / K_m(Q a), Q^2 = k^2 (1 - n^2) - kappa^2,
     Re Q > 0 (scalar continuity of psi and psi'); damped Newton (|step| <= 0.2 / a) from the DIR-ell guess
@@ -105,7 +106,8 @@ class Disc:
 
     def __init__(self, *, aw: float, jmax: float, nr: int | None = None, nphi: int | None = None,
                  wall_cut: float | None = None) -> None:
-        self.aw, self.jmax, self.wall_cut = float(aw), int(jmax), wall_cut
+        """aw: disc radius [m]; jmax: zeros cut j_mn < jmax; nr, nphi: radial / azimuthal nodes (None: auto); wall_cut: J or None."""
+        self.aw, self.jmax, self.wall_cut = float(aw), float(jmax), wall_cut
         zeros, m = [], 0
         while True:
             z = jn_zeros(m, max(8, int(jmax / math.pi) + 4))
@@ -162,7 +164,7 @@ class Disc:
         self._fine = None
         self._blocks = None
 
-    def shift_blocks(self):
+    def shift_blocks(self) -> tuple[np.ndarray, np.ndarray]:
         """Galerkin blocks of r e^{+i phi} (m -> m+1) and r e^{-i phi} (m -> m-1) over signed m:
         A_up[m] = P_{|m+1|} diag(r) B_{|m|}, A_dn[m] = P_{|m-1|} diag(r) B_{|m|}; zero rows beyond M."""
         if self._blocks is None:
@@ -177,22 +179,26 @@ class Disc:
             self._blocks = (up, dn)
         return self._blocks
 
-    def empty(self):
+    def empty(self) -> np.ndarray:
         return np.zeros((2 * self.M + 1, self.nmax), complex)
 
-    def to_grid(self, c):
+    def to_grid(self, c: np.ndarray) -> np.ndarray:
+        """c: mode coefficients (2M+1, nmax), row i is signed m = i - M."""
         F = np.zeros((self.nr, self.nphi), complex)
         F[:, self.col] = np.einsum("mrn,mn->rm", self.B, c)
         return self.nphi * sfft.ifft(F, axis=1)
 
-    def to_modes(self, G):
+    def to_modes(self, G: np.ndarray) -> np.ndarray:
+        """G: field at the (r, phi) nodes, (nr, nphi)."""
         F = sfft.fft(G, axis=1) / self.nphi
         return np.einsum("mnr,rm->mn", self.P, F[:, self.col])
 
-    def norm(self, c):
+    def norm(self, c: np.ndarray) -> float:
+        """c: mode coefficients (2M+1, nmax)."""
         return float(np.sum(np.abs(c) ** 2 * self.mnorm))
 
-    def fine_table(self, dr, dtype=np.float32):
+    def fine_table(self, dr: float, dtype: type[np.floating] = np.float32) -> tuple[np.ndarray, np.ndarray]:
+        """dr: fine radial step [m]; dtype of the J table; both are fixed by the first call."""
         if self._fine is None:
             rf = np.arange(0.0, self.aw + dr, dr)
             J = np.zeros((self.M + 1, rf.size, self.nmax), dtype)
@@ -201,8 +207,9 @@ class Disc:
             self._fine = (rf, J)
         return self._fine
 
-    def radial_table(self, c, dr):
-        """R_m(r) on the fine radial grid for each signed m: (2M+1, nf)."""
+    def radial_table(self, c: np.ndarray, dr: float) -> tuple[np.ndarray, np.ndarray]:
+        """R_m(r) on the fine radial grid for each signed m: (2M+1, nf).
+        c: mode coefficients (2M+1, nmax); dr: fine radial step [m]."""
         rf, J = self.fine_table(dr)
         M = self.M
         pos = np.einsum("mrn,mn->mr", J, c[M:])
@@ -769,7 +776,7 @@ def _init_worker(spec):
         if spec["wall"] == "exact":
             row = []
             for b in spec["bores"]:
-                kap, ok = exact_kappa(disc, b["radius"], k, delta, beta)
+                kap, ok = exact_kappa(disc, a=b["radius"], k=k, delta=delta, beta=beta)
                 dirl = disc.kap2 / (2.0 * k) - 1j * mode_damping(disc, k, delta, beta)
                 h0 = np.where(disc.valid, np.where(ok[disc.am], (kap * kap)[disc.am] / (2.0 * k), dirl), 0.0)
                 fallback[k] = fallback.get(k, 0) + int(np.sum(disc.validp & ~ok))
