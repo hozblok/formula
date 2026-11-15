@@ -115,16 +115,20 @@ WAVE_DEFAULTS = {
     "fb_theta_cut": 3.6e-4,         # modal angular cut [rad] behind the jmax rule
     "fb_chebyshev_tol": 1.0e-12,    # Bessel-coefficient cutoff of the Chebyshev series of exp(-iHL)
     "fb_dr": 2.0e-8,                # fine radial table step [m] for the exit-field synthesis
-    "fb_wall": "dir-ell",           # dir-ell (complex offset: phase + absorption) | dir-ell-real (no absorption)
+    "fb_wall": "dir-ell",           # dir-ell (complex offset: phase + absorption) | dir-ell-real (no absorption) | exact (J/K roots per mode)
     "fb_wall_cut": True,            # keep only guided modes: j_mn^2 - m^2 < (k a_w theta_c)^2
+    "fb_figure": None,              # fb: [{q, amp, angle, rate, period, phase}] wall dr = amp mod(z) cos(q (phi - angle - rate z)); q = 1 moves the axis
+    "fb_figure_noise": None,        # fb: {sigma, lc, q: [...], seed} random figure, gaussian z-correlation lc, equal power per q
+    "fb_dz": 1.0e-3,                # fb: z step [m] of a z-dependent figure or axis (capped by its shortest scale / 16)
     "fb_angle_margin": 1.1,         # lattice h = lambda / (2 (theta_modal + tilt) margin), rounded to pixel / b
     "fb_lattice_half": None,        # lattice half-width [m]; null -> windows + spread + Fresnel tails
     "fb_grid_dtype": "complex128",  # complex64 | complex128 lattice arrays
     "fb_jobs": 1,                   # processes over source nodes (each builds its own basis)
     "fb_per_bore_maps": None,       # per-bore drifts for I_bores / Gamma_12; null -> only for <= 2 bores
-    "dump_field": False,            # uisk / images: write the complex exit field per line / node / bore (npz)
-    "entrance_spot": None,          # fb / images: {center: [x, y], fwhm, tilt: [tx, ty]} coherent gaussian on the entrance plane
-    "far_field": None,              # uisk / images / march, one bore: {theta_max, pad} angular power of the exit field
+    "dump_field": False,            # uisk / images / march: the complex exit field; fb: entrance and exit mode coefficients (npz)
+    "entrance_spot": None,          # fb / images / march: {center: [x, y], fwhm, tilt: [tx, ty], focus} coherent gaussian, waist at z = focus
+    "hard_wall": False,             # images: perfect Dirichlet faces at the geometric width (r = -1)
+    "far_field": None,              # one bore: {theta_max, pad} (uisk / images / march, FFT) | {theta_max, n_theta, n_phi, ring} (fb, from the modes)
     "march": None,                  # march: {dx, dz, box, sponge, defects: [{type, ...}]} split-step lattice and defects
 }
 
@@ -194,6 +198,43 @@ def _merge(base: dict, override: dict) -> dict:
         else:
             out[key] = copy.deepcopy(value)
     return out
+
+
+def _finite(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _fb_figure(raw):
+    """wave_estimator.fb_figure: list of {q >= 0, amp [m], angle [rad], rate [rad/m], period [m] > 0, phase [rad]}."""
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ValueError("wave_estimator.fb_figure: expected a list of {q, amp, angle, rate, period, phase}")
+    out = []
+    for t in raw:
+        ok = (isinstance(t, dict) and not set(t) - {"q", "amp", "angle", "rate", "period", "phase"}
+              and {"q", "amp"} <= set(t) and isinstance(t["q"], int) and not isinstance(t["q"], bool) and t["q"] >= 0
+              and all(_finite(t[key]) for key in ("amp", "angle", "rate", "phase") if key in t)
+              and (t.get("period") is None or (_finite(t["period"]) and t["period"] > 0.0)))
+        if not ok:
+            raise ValueError(f"wave_estimator.fb_figure: bad term {t!r}; q integer >= 0, amp, angle, rate, phase finite, period > 0")
+        out.append({"q": int(t["q"]), "amp": float(t["amp"]), "angle": float(t.get("angle", 0.0)),
+                    "rate": float(t.get("rate", 0.0)), "period": None if t.get("period") is None else float(t["period"]),
+                    "phase": float(t.get("phase", 0.0))})
+    return out
+
+
+def _fb_figure_noise(raw):
+    """wave_estimator.fb_figure_noise: {sigma [m], lc [m] > 0, q: [integers >= 0], seed}."""
+    if raw is None:
+        return None
+    if (not isinstance(raw, dict) or set(raw) != {"sigma", "lc", "q", "seed"}
+            or not _finite(raw["sigma"]) or raw["sigma"] < 0.0 or not _finite(raw["lc"]) or not raw["lc"] > 0.0
+            or not isinstance(raw["q"], list) or not raw["q"] or len(set(raw["q"])) != len(raw["q"])
+            or not all(isinstance(q, int) and not isinstance(q, bool) and q >= 0 for q in raw["q"])
+            or not isinstance(raw["seed"], int) or isinstance(raw["seed"], bool)):
+        raise ValueError("wave_estimator.fb_figure_noise: expected {sigma >= 0, lc > 0, q: [distinct integers >= 0], seed}")
+    return {"sigma": float(raw["sigma"]), "lc": float(raw["lc"]), "q": [int(q) for q in raw["q"]], "seed": int(raw["seed"])}
 
 
 class SourceCfg:
@@ -627,7 +668,7 @@ class Config:
         for key, choices in (("provider", ("auto", "uisk", "images", "march", "fb", "free")),
                              ("observable", ("coherent_cell", "point")),
                              ("source_mode", ("quadrature", "recorded_origins")),
-                             ("fb_wall", ("dir-ell", "dir-ell-real")),
+                             ("fb_wall", ("dir-ell", "dir-ell-real", "exact")),
                              ("fb_grid_dtype", ("complex64", "complex128"))):
             if w[key] not in choices:
                 raise ValueError(
@@ -654,18 +695,33 @@ class Config:
             raise ValueError(f"wave_estimator.fb_per_bore_maps: expected true, false or null, got {w['fb_per_bore_maps']!r}")
         if not isinstance(w["fb_wall_cut"], bool):
             raise ValueError(f"wave_estimator.fb_wall_cut: expected true or false, got {w['fb_wall_cut']!r}")
-        if not isinstance(w["dump_field"], bool):
-            raise ValueError(f"wave_estimator.dump_field: expected true or false, got {w['dump_field']!r}")
+        for key in ("dump_field", "hard_wall"):
+            if not isinstance(w[key], bool):
+                raise ValueError(f"wave_estimator.{key}: expected true or false, got {w[key]!r}")
         w["images"] = num("images", lo=0, integer=True, optional=True)
+        w["fb_dz"] = num("fb_dz", lo=0.0, strict=True)
+        w["fb_figure"] = _fb_figure(w["fb_figure"])
+        w["fb_figure_noise"] = _fb_figure_noise(w["fb_figure_noise"])
         ff = w["far_field"]
         if ff is not None:
-            if not isinstance(ff, dict) or set(ff) - {"theta_max", "pad"} or "theta_max" not in ff:
-                raise ValueError("wave_estimator.far_field: expected {theta_max, pad}")
+            if not isinstance(ff, dict) or set(ff) - {"theta_max", "pad", "n_theta", "n_phi", "ring"} or "theta_max" not in ff:
+                raise ValueError("wave_estimator.far_field: expected {theta_max, pad} or {theta_max, n_theta, n_phi, ring}")
             tm, pad = ff["theta_max"], ff.get("pad", 2048)
             if (not isinstance(tm, (int, float)) or isinstance(tm, bool) or not tm > 0.0
                     or not isinstance(pad, int) or isinstance(pad, bool) or pad < 64):
                 raise ValueError("wave_estimator.far_field: theta_max > 0 [rad], pad >= 64")
+            nt, nphi, ring = ff.get("n_theta"), ff.get("n_phi"), ff.get("ring")
+            for key, v in (("n_theta", nt), ("n_phi", nphi)):
+                if v is not None and (not isinstance(v, int) or isinstance(v, bool) or v < 8):
+                    raise ValueError(f"wave_estimator.far_field.{key}: an integer >= 8")
+            if ring is not None:
+                if (not isinstance(ring, (list, tuple)) or len(ring) != 2
+                        or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in ring)
+                        or not 0.0 <= ring[0] < ring[1] <= tm):
+                    raise ValueError("wave_estimator.far_field.ring: [lo, hi] with 0 <= lo < hi <= theta_max [rad]")
+                ring = [float(ring[0]), float(ring[1])]
             w["far_field"] = {"theta_max": float(tm), "pad": int(pad)}
+            w["far_field"].update({key: v for key, v in (("n_theta", nt), ("n_phi", nphi), ("ring", ring)) if v is not None})
         mc = w["march"]
         if w["provider"] == "march" and mc is None:
             raise ValueError("wave_estimator.march: provider march needs the march section {dz, box, ...}")
@@ -690,7 +746,7 @@ class Config:
                     raise ValueError(f"wave_estimator.march.defects: bad entry {d!r}; types {sorted(DEFECT_KEYS)}")
                 t = d["type"]
                 need = {"roughness": {"sigma", "lc", "seed"}, "step": {"z", "dw"}, "taper": {"dw"}, "slope": {"deg"},
-                        "rounded": {"rc"}, "ellipse": {"ratio"}, "drift": {"dxy"}}[t]
+                        "rounded": {"rc"}, "ellipse": {"ratio"}, "ovality": {"amp"}, "drift": {"dxy"}}[t]
                 if not need <= set(d):
                     raise ValueError(f"wave_estimator.march.defects: {t} needs {sorted(need)}")
                 if t == "roughness" and any(wl not in WALLS for wl in d.get("walls") or []):
@@ -701,14 +757,18 @@ class Config:
             w["march"] = out
         spot = w["entrance_spot"]
         if spot is not None:
-            if (not isinstance(spot, dict) or set(spot) - {"center", "fwhm", "tilt"}
+            if (not isinstance(spot, dict) or set(spot) - {"center", "fwhm", "tilt", "focus"}
                     or not {"center", "fwhm"} <= set(spot)):
-                raise ValueError("wave_estimator.entrance_spot: expected {center: [x, y], fwhm, tilt: [tx, ty]}")
+                raise ValueError("wave_estimator.entrance_spot: expected {center: [x, y], fwhm, tilt: [tx, ty], focus}")
             c, t = list(spot["center"]), list(spot.get("tilt", [0.0, 0.0]))
-            if len(c) != 2 or len(t) != 2 or not float(spot["fwhm"]) > 0.0:
-                raise ValueError("wave_estimator.entrance_spot: center and tilt take two numbers, fwhm > 0")
+            focus = spot.get("focus", 0.0)
+            if (len(c) != 2 or len(t) != 2 or not float(spot["fwhm"]) > 0.0
+                    or not isinstance(focus, (int, float)) or isinstance(focus, bool) or not math.isfinite(focus)):
+                raise ValueError("wave_estimator.entrance_spot: center and tilt take two numbers, fwhm > 0, focus finite")
             w["entrance_spot"] = {"center": [float(c[0]), float(c[1])], "fwhm": float(spot["fwhm"]),
                                   "tilt": [float(t[0]), float(t[1])]}
+            if focus:
+                w["entrance_spot"]["focus"] = float(focus)
         self.wave = w
         return w
 

@@ -41,7 +41,7 @@ def _stretch(shape, phis):
 def _disc(a_w, jmax):
     key = (round(float(a_w), 15), float(jmax))
     if key not in _DISCS:
-        _DISCS[key] = Disc(a_w, jmax)
+        _DISCS[key] = Disc(aw=a_w, jmax=jmax)
     return _DISCS[key]
 
 
@@ -52,8 +52,9 @@ def _channel(bore, a_w, disc, k, fresnel=None):
     gamma = None if fresnel is None else mode_damping(disc, k, 0.5 * fresnel[0], 0.5 * fresnel[1])
     bend = bore.get("bend")
     if not bend:
-        return FBChannel(c0, None, None, disc, k, gamma)
-    return FBChannel(c0, np.array([float(bend["toward"][0]), float(bend["toward"][1])]), float(bend["radius"]), disc, k, gamma)
+        return FBChannel(c0=c0, t=None, rbend=None, disc=disc, k=k, gamma=gamma)
+    return FBChannel(c0=c0, t=np.array([float(bend["toward"][0]), float(bend["toward"][1])]), rbend=float(bend["radius"]),
+                     disc=disc, k=k, gamma=gamma)
 
 
 def bore_axis(bore, z):

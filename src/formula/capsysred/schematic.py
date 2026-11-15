@@ -233,7 +233,7 @@ def trace_rays(G, p, n=N_RAYS, seed=7):
                 [entrance_disk(b, z0f) for b in G["bores"]]
         mb = int(G["cfg"].max_bounces)
     else:
-        mb = 4
+        disks, mb = [], 4
     # rays fly on to the farthest screen so every plane is crossed on the scheme
     screen_z = lift(max([scr["z"]] + [s["z"] for s in G["scr_extra"]]), p)
     grid_source = Source(G["cfg_src"], rng) if src["shape"] == "grid" else None

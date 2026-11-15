@@ -106,7 +106,7 @@ def read_sample(archive, *, scene="capillary", max_modes=4,
     for sections in sections_by_mode[mode_start:mode_start+max_modes]:
         mode_id = sections[0].mode
         stop = min(max_rays_per_mode, sections[-1].r1)
-        origins = None
+        origins = origin_float = None
         points, directions, phases, reflections, sines, ray_ids = [], [], [], [], [], []
         fates = Counter()
         for section in sections:

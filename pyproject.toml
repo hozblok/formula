@@ -9,18 +9,19 @@ build = "cp311-* cp312-* cp313-*"
 #   templates (18 precisions x variant visitors) blow compiler memory even
 #   with clang. Alpine users can `pip install --no-binary formula` to build
 #   from the sdist instead.
-# CPython Windows x86 (cp*-win32) IS built.
 skip = "*-musllinux_*"
 build-verbosity = 1
-test-requires = ["pytest"]
+test-extras = ["test"]
 test-command = "python -m pytest --verbose {project}/tests"
 
 [tool.cibuildwheel.macos]
 archs = ["x86_64", "arm64"]
-environment = { MACOSX_DEPLOYMENT_TARGET = "10.15" }
+# 13.3 is the libc++ floor for the float std::to_chars in cstrace.hpp.
+environment = { MACOSX_DEPLOYMENT_TARGET = "13.3" }
 
 [tool.cibuildwheel.linux]
 archs = ["x86_64"]
 
 [tool.cibuildwheel.windows]
-archs = ["AMD64", "x86"]
+# 64-bit only: the tests need scipy and finufft, which ship no 32-bit wheels.
+archs = ["AMD64"]

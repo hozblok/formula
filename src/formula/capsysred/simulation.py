@@ -80,11 +80,12 @@ def _b9_backend():
     """Load optional dependencies only for an explicitly selected Stage 18."""
     try:
         from .stages.ray_mesh import runner as stage18
+        import finufft                     # the NUFFT paths import it mid-run
     except ModuleNotFoundError as exc:
-        if exc.name not in {"numpy", "scipy"}:
+        if exc.name not in {"numpy", "scipy", "finufft"}:
             raise
         raise ValueError(
-            f"Stage 18 requires NumPy and SciPy; missing dependency: {exc.name}"
+            f"Stage 18 requires NumPy, SciPy and FINUFFT; missing dependency: {exc.name}"
         ) from exc
     return stage18
 
@@ -338,7 +339,7 @@ class Simulation:
             xi = lam_f * dist / (2.0 * math.pi * float(src.size))
             note = f"ξ = λD/(2πσ) = {m_to_um(xi):.3f} µm;  "
         else:
-            note = ""
+            xi, note = None, ""
         sub = (f"{note}RMS(MC − analytics) = {rms:.3f};  source: {src.shape}, "
                f"{um(src.size)}, D = {mm(dist)}")
         series = [{"xs": xs_um, "ys": mu_row, "label": "MC |μ| ± σ_jack",

@@ -156,12 +156,11 @@ def test_channel_parity_state_and_far_field(tmp_path):
     assert ffm["weighted"]["x"]["centroid_rad"] / 0.6e-3 == pytest.approx(-0.925, abs=0.012)
 
 
-def test_far_field_needs_one_rectangular_bore_and_rejects_fb(tmp_path):
+def test_far_field_needs_one_bore_and_the_fft_keys(tmp_path):
     raw = _square(far_field={"theta_max": 1e-3})
     raw["capillary"]["bores"].append({"center": [60e-6, 0.0], "radius": 24e-6, "sides": 4, "rotation_deg": 0})
     with pytest.raises(ValueError, match="far_field"):
         Simulation.from_dict(raw).run(str(tmp_path / "two"), stages=[16])
-    raw = _square(provider="fb", far_field={"theta_max": 1e-3})
-    raw["capillary"]["bores"] = [{"center": [0.0, 0.0], "radius": 24e-6}]
+    raw = _square(far_field={"theta_max": 1e-3, "n_phi": 512})          # modal keys belong to fb
     with pytest.raises(ValueError, match="far_field"):
-        Simulation.from_dict(raw).run(str(tmp_path / "fb"), stages=[16])
+        Simulation.from_dict(raw).run(str(tmp_path / "modal"), stages=[16])

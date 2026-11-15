@@ -85,8 +85,8 @@ EXT_MODULES = [
 ]
 
 CAPSYSRED_DEPS = ["PyYAML"]
-CAPSYSRED_B9_DEPS = CAPSYSRED_DEPS + ["numpy", "scipy", "finufft>=2.5,<3"]
-TEST_DEPS = ["pytest"] + CAPSYSRED_B9_DEPS
+CAPSYSRED_NUMERIC_DEPS = CAPSYSRED_DEPS + ["numpy", "scipy", "finufft>=2.5,<3"]
+TEST_DEPS = ["pytest"] + CAPSYSRED_NUMERIC_DEPS
 
 README_PATH = os.path.join(CURRENT_DIR, "README.md")
 if os.path.exists(README_PATH):
@@ -118,7 +118,8 @@ setup(
     ext_modules=EXT_MODULES,
     extras_require={
         "capsysred": CAPSYSRED_DEPS,
-        "capsysred-b9": CAPSYSRED_B9_DEPS,
+        # stages 16, 17, 18 and the stage-11 defect scan
+        "capsysred-numeric": CAPSYSRED_NUMERIC_DEPS,
         "test": TEST_DEPS,
         "dev": TEST_DEPS,
     },

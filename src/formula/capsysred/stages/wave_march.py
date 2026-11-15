@@ -1,8 +1,9 @@
 """Stage 16 provider `march`: scalar paraxial split-step propagation through the bore with the
 wall as a medium n = 1 - delta + i beta on the lattice (fractional cell filling), so the cross
 section may change along z: wall roughness, width steps, tapers, sidewall slope, rounded corners,
-elliptic or drifting circular bores. Kirchhoff entrance mask; exit field on the same window as
-`images` / `uisk`. Section `march` of wave_estimator: dx, dz, box, sponge, defects."""
+elliptic, oval (rotating along z) or drifting circular bores, and conformal funnels (centre and radius times
+G(z) = 1 + g0 z + g1 z^2). Kirchhoff entrance mask; exit field on the same window as `images` / `uisk`.
+Section `march` of wave_estimator: dx, dz, box, sponge, defects."""
 
 import math
 
@@ -16,13 +17,14 @@ DEFECT_KEYS = {
     "slope": {"deg"},
     "rounded": {"rc"},
     "ellipse": {"ratio"},
+    "ovality": {"amp", "rate", "angle"},
     "drift": {"dxy"},
 }
 WALLS = ("x-", "x+", "y-", "y+")
 
 
 def rough_series(n, dz, sigma, lc, rng):
-    """Gaussian series, rms sigma, Lorentzian spectrum 1/(1 + (k_z l_c)^2) (exp(-|z|/l_c) correlation)."""
+    """Gaussian series, rms sigma: white noise filtered by 1/(1 + (k_z l_c)^2), correlation (1 + |z|/l_c) exp(-|z|/l_c)."""
     white = rng.standard_normal(n)
     kz = 2.0 * np.pi * sfft.fftfreq(n, dz)
     h = np.real(sfft.ifft(sfft.fft(white) / (1.0 + (kz * lc) ** 2)))
@@ -47,6 +49,14 @@ class MarchSolver:
         self.dz = self.length / self.n_steps
         self.S = int(wave["mask_supersample"])
         self.circular = bore.get("sides") is None
+        self.funnel = None
+        if bore.get("kind") == "funnel":
+            g, f = tuple(float(v) for v in bore["g"]), tuple(float(v) for v in bore["f"])
+            if g != f:
+                raise ValueError("wave_estimator.march: a funnel needs f = g (centre and radius on one parabola G)")
+            if m["defects"]:
+                raise ValueError("wave_estimator.march: a funnel takes no defects")
+            self.funnel = g
         if self.circular:
             self.c = np.array([float(bore["center"][0]), float(bore["center"][1])])
             self.half = np.array([float(bore["radius"])] * 2)
@@ -60,9 +70,11 @@ class MarchSolver:
         margin = float(m["box"])
         self.reach, self.theta_cut = margin, lam_h / (2.0 * self.h)
         self.grid, self.xs, self.ys = [], [], []
+        gs = (1.0, 1.0) if self.funnel is None else self._g_range()
         for c, a in zip(self.c, self.half):
-            i0 = math.floor((c - a - margin) / self.h)
-            n = _fast_len(math.ceil((c + a + margin) / self.h) - i0 + 1)
+            lo, hi = min(g * (c - a) for g in gs), max(g * (c + a) for g in gs)      # a funnel sweeps G(z) (c -+ a)
+            i0 = math.floor((lo - margin) / self.h)
+            n = _fast_len(math.ceil((hi + margin) / self.h) - i0 + 1)
             self.grid.append((i0, i0 + n))
         self.lx = np.arange(self.grid[0][0], self.grid[0][1]) * self.h       # full lattice
         self.ly = np.arange(self.grid[1][0], self.grid[1][1]) * self.h
@@ -76,9 +88,9 @@ class MarchSolver:
         self.xs, self.ys = self.lx[self.slices[0]], self.ly[self.slices[1]]    # exit window
         self.off = sub_offsets(self.h, self.S)
         kinds = {d["type"] for d in m["defects"]}
-        if self.circular and kinds - {"ellipse", "taper", "drift"}:
-            raise ValueError("wave_estimator.march: a circular bore takes defects ellipse, taper, drift only")
-        if not self.circular and (not self.axis_rect and kinds or "ellipse" in kinds):
+        if self.circular and kinds - {"ellipse", "taper", "drift", "ovality"}:
+            raise ValueError("wave_estimator.march: a circular bore takes defects ellipse, ovality, taper, drift only")
+        if not self.circular and (not self.axis_rect and kinds or kinds & {"ellipse", "ovality"}):
             raise ValueError("wave_estimator.march: wall defects need a rectangle with faces along the lattice axes")
         self._defects(m["defects"], m.get("seed"))
         self.kx = 2.0 * np.pi * sfft.fftfreq(self.lx.size, self.h)
@@ -88,10 +100,39 @@ class MarchSolver:
         self.sponge = (ramp(self.lx, self.lx[0], self.lx[-1])[:, None] + ramp(self.ly, self.ly[0], self.ly[-1])[None, :])
         self.families, self.pruned = [], 0
         self.exit_mask_full = self.fill(self.n_steps)
-        self.exit_mask = self.exit_mask_full[self.slices[0], self.slices[1]]
+        self._cover_exit()
         self.n_images, self.line_points = [], []
 
+    def _cover_exit(self):
+        """Grow the exit window to every core cell of the exit section (slope, wall offsets) with 2 cells of margin."""
+        from .wave import _fast_len
+        win = list(self.win)
+        for ax in range(2):
+            cells = np.nonzero(self.exit_mask_full.sum(axis=1 - ax) > 0.0)[0]
+            sl, g0 = self.slices[ax], self.grid[ax][0]
+            lo, hi = min(sl.start, int(cells[0]) - 2), max(sl.stop, int(cells[-1]) + 3)
+            if (lo, hi) != (sl.start, sl.stop):
+                lo = max(lo, 0)
+                n = min(_fast_len(hi - lo), self.exit_mask_full.shape[ax] - lo)
+                self.slices[ax] = slice(lo, lo + n)
+                win[2 * ax], win[2 * ax + 1] = g0 + lo, g0 + lo + n
+        self.win = tuple(win)
+        self.xs, self.ys = self.lx[self.slices[0]], self.ly[self.slices[1]]
+        self.exit_mask = self.exit_mask_full[self.slices[0], self.slices[1]]
+
     # ------------------------------------------------------------- geometry along z
+
+    def _g(self, z):
+        """Funnel scale G(z) = 1 + g0 z + g1 z^2 of the centre and the radius (1 without a funnel)."""
+        return 1.0 if self.funnel is None else 1.0 + self.funnel[0] * z + self.funnel[1] * z * z
+
+    def _g_range(self):
+        """Smallest and largest G on [0, L] (ends and the vertex of the parabola)."""
+        g0, g1 = self.funnel
+        vals = [self._g(0.0), self._g(self.length)]
+        if g1 != 0.0 and 0.0 < -g0 / (2.0 * g1) < self.length:
+            vals.append(self._g(-g0 / (2.0 * g1)))
+        return min(vals), max(vals)
 
     def _defects(self, defects, seed):
         n = self.n_steps
@@ -99,6 +140,7 @@ class MarchSolver:
         self.center_shift = np.zeros((2, n + 1))
         self.slope = self.rc = 0.0
         self.ratio = 1.0
+        self.oval = None                                 # (amp, rate, angle): dr = amp cos 2 (phi - angle - rate z)
         z = np.arange(n + 1) * self.dz
         for d in defects:
             t = d["type"]
@@ -122,18 +164,25 @@ class MarchSolver:
                 self.rc = float(d["rc"])
             elif t == "ellipse":
                 self.ratio = float(d["ratio"])
+            elif t == "ovality":
+                self.oval = (float(d["amp"]), float(d.get("rate", 0.0)), float(d.get("angle", 0.0)))
             elif t == "drift":
                 for ax in range(2):
                     self.center_shift[ax] += float(d["dxy"][ax]) * z / self.length
-        self.z_dependent = bool(np.any(self.offsets != 0.0) or np.any(self.center_shift != 0.0))
+        if self.oval is not None and self.ratio != 1.0:
+            raise ValueError("wave_estimator.march: defects ellipse and ovality exclude each other")
+        self.z_dependent = bool(np.any(self.offsets != 0.0) or np.any(self.center_shift != 0.0)
+                                or (self.oval is not None and self.oval[1] != 0.0) or self.funnel is not None)
         self.separable = self.axis_rect and self.slope == 0.0 and self.rc == 0.0
         self._static = None if (self.z_dependent or self.separable) else self._mask2d(0)
 
     def _walls(self, i):
-        """(xl, xr, yl, yr) of the rectangle or ellipse box at step plane i."""
-        cx, cy = self.c + self.center_shift[:, i]
+        """(xl, xr, yl, yr) of the rectangle or ellipse box at step plane i (a funnel scales centre and half-widths by G)."""
+        g = self._g(i * self.dz)
+        cx, cy = g * (self.c + self.center_shift[:, i])
+        hx, hy = g * self.half
         o = self.offsets[:, i]
-        return cx - self.half[0] + o[0], cx + self.half[0] + o[1], cy - self.half[1] + o[2], cy + self.half[1] + o[3]
+        return cx - hx + o[0], cx + hx + o[1], cy - hy + o[2], cy + hy + o[3]
 
     def _mask2d(self, i):
         """S x S supersampled inside fraction for polygons with slope / rounding and for ellipses."""
@@ -141,7 +190,13 @@ class MarchSolver:
         X = (self.lx[:, None] + self.off[None, :]).reshape(-1)
         Y = (self.ly[:, None] + self.off[None, :]).reshape(-1)
         cx, cy, ax, ay = (xl + xr) / 2.0, (yl + yr) / 2.0, (xr - xl) / 2.0, (yr - yl) / 2.0
-        if self.circular:
+        if self.circular and self.oval is not None:
+            amp, rate, angle = self.oval
+            psi = angle + rate * i * self.dz
+            u = (X[:, None] - cx) * math.cos(psi) + (Y[None, :] - cy) * math.sin(psi)
+            v = -(X[:, None] - cx) * math.sin(psi) + (Y[None, :] - cy) * math.cos(psi)
+            inside = (u / (ax + amp)) ** 2 + (v / (ax - amp)) ** 2 < 1.0
+        elif self.circular:
             inside = ((X[:, None] - cx) / ax) ** 2 + ((Y[None, :] - cy) / (ay * self.ratio)) ** 2 < 1.0
         elif self.axis_rect:
             hx = ax + (Y[None, :] - cy) * self.slope                 # sidewall slope: wider at +y
@@ -166,12 +221,30 @@ class MarchSolver:
         if self.circular:                                    # row-wise chord of the ellipse
             xl, xr, yl, yr = self._walls(i)
             cx, cy, ax, ay = (xl + xr) / 2.0, (yl + yr) / 2.0, (xr - xl) / 2.0, (yr - yl) / 2.0 * self.ratio
-            t = np.clip(1.0 - ((self.ly - cy) / ay) ** 2, 0.0, None)
-            w = ax * np.sqrt(t)
-            lo, hi = cx - w[None, :], cx + w[None, :]
+            if self.oval is not None:
+                lo, hi = self._oval_chord(i, cx, cy, ax)
+            else:
+                t = np.clip(1.0 - ((self.ly - cy) / ay) ** 2, 0.0, None)
+                w = ax * np.sqrt(t)
+                lo, hi = cx - w[None, :], cx + w[None, :]
             x = self.lx[:, None]
             return np.clip((np.minimum(x + self.h / 2.0, hi) - np.maximum(x - self.h / 2.0, lo)) / self.h, 0.0, 1.0)
         return self._mask2d(i)
+
+    def _oval_chord(self, i, cx, cy, a):
+        """x interval of every lattice row inside the ellipse of semi-axes a + amp (along psi) and a - amp at plane i."""
+        amp, rate, angle = self.oval
+        psi = angle + rate * i * self.dz
+        c, s = math.cos(psi), math.sin(psi)
+        y = self.ly - cy
+        qa = c * c / (a + amp) ** 2 + s * s / (a - amp) ** 2
+        qb = 2.0 * y * c * s * (1.0 / (a + amp) ** 2 - 1.0 / (a - amp) ** 2)
+        qc = y * y * (s * s / (a + amp) ** 2 + c * c / (a - amp) ** 2) - 1.0
+        disc = qb * qb - 4.0 * qa * qc
+        r = np.sqrt(np.clip(disc, 0.0, None))
+        lo = np.where(disc > 0.0, cx + (-qb - r) / (2.0 * qa), cx)
+        hi = np.where(disc > 0.0, cx + (-qb + r) / (2.0 * qa), cx)
+        return lo[None, :], hi[None, :]
 
     # ------------------------------------------------------------- propagation
 
@@ -183,10 +256,8 @@ class MarchSolver:
         if self.spot is None:
             lam = 2.0 * np.pi / k
             return np.exp(1j * k * ((X - xi[0]) ** 2 + (Y - xi[1]) ** 2) / (2.0 * self.z_in)) / (1j * lam * self.z_in)
-        s = self.spot["fwhm"] / math.sqrt(8.0 * math.log(2.0))
-        (cx, cy), (tx, ty) = self.spot["center"], self.spot["tilt"]
-        return (np.exp(-((X - cx) ** 2 + (Y - cy) ** 2) / (4.0 * s * s)) * np.exp(1j * k * (tx * X + ty * Y))
-                / math.sqrt(2.0 * math.pi * s * s))
+        from .wave import spot_profile
+        return spot_profile(self.spot, k, X, Y)
 
     def exit_field(self, xi, k, delta, beta, workers):
         """Kirchhoff entrance, n_steps of free propagation + medium factor, exit window times the exit mask."""

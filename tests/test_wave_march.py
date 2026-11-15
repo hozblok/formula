@@ -101,6 +101,8 @@ def test_roughness_is_reproducible_and_a_step_moves_the_field():
     _, ideal = _solver(_tiny(), WM.MarchSolver)
     u0 = ideal.exit_field((-1.0e-6, 0.0), K, sim.delta_f, sim.beta_f, -1)
     ua = a.exit_field((-1.0e-6, 0.0), K, sim.delta_f, sim.beta_f, -1)
+    i, j = np.searchsorted(a.xs, ideal.xs[0]), np.searchsorted(a.ys, ideal.ys[0])   # the ideal window inside the rough one
+    ua = ua[i:i + ideal.xs.size, j:j + ideal.ys.size]
     assert np.abs(ua - u0).max() > 1e-3 * np.abs(u0).max()
     _, st = _solver(_tiny(march={"defects": [{"type": "step", "z": 5e-4, "dw": [2e-7, 0.0]}]}), WM.MarchSolver)
     xl, xr, yl, yr = st._walls(st.n_steps)
@@ -126,6 +128,34 @@ def test_shapes_fill_fractions():
     assert float(ell.fill(0).sum()) * ell.h * ell.h == pytest.approx(0.5 * math.pi * 1e-12, rel=2e-3)
 
 
+def test_ovality_rotates_along_the_bore():
+    """dr = amp cos 2 (phi - angle - rate z): semi-axes a +- amp, the long axis turns by rate z."""
+    a, amp = 1.0e-6, 1.0e-7
+    rate = 0.5 * math.pi / 1.0e-3                                 # a quarter turn over the 1 mm length
+    bore = [{"center": [0.0, 0.0], "radius": a}]
+    _, st = _solver(_tiny(bores=bore, march={"defects": [{"type": "ovality", "amp": amp}]}), WM.MarchSolver)
+    assert not st.z_dependent and float(st.fill(0).sum()) * st.h ** 2 == pytest.approx(math.pi * (a + amp) * (a - amp), rel=3e-3)
+    _, rot = _solver(_tiny(bores=bore, march={"defects": [{"type": "ovality", "amp": amp, "rate": rate}]}), WM.MarchSolver)
+    assert rot.z_dependent
+    row = int(np.argmin(np.abs(rot.ly)))
+    for i, half_x in ((0, a + amp), (rot.n_steps, a - amp)):     # chord along x at y = 0: long axis, then short axis
+        f = rot.fill(i)
+        assert float(f[:, row].sum()) * rot.h == pytest.approx(2.0 * half_x, abs=2.0 * rot.h)
+    with pytest.raises(ValueError, match="exclude"):
+        _solver(_tiny(bores=bore, march={"defects": [{"type": "ovality", "amp": amp}, {"type": "ellipse", "ratio": 0.9}]}),
+                WM.MarchSolver)
+
+
+def test_exit_window_holds_the_whole_exit_section():
+    """A sloped sidewall widens the section beyond the nominal square: the exit window must keep all of it."""
+    _, sl = _solver(_tiny(march={"defects": [{"type": "slope", "deg": 3}]}), WM.MarchSolver)
+    assert float(sl.exit_mask.sum()) == pytest.approx(float(sl.exit_mask_full.sum()), rel=1e-12)
+    assert sl.exit_mask.shape == (sl.xs.size, sl.ys.size) and sl.xs.size > sl.ys.size
+    _, ideal = _solver(_tiny(), WM.MarchSolver)
+    assert ideal.xs.size == ideal.ys.size
+    assert float(ideal.exit_mask.sum()) == pytest.approx(float(ideal.exit_mask_full.sum()), rel=1e-12)
+
+
 def test_run_writes_far_field_and_dump(tmp_path):
     raw = _tiny(far_field={"theta_max": 2e-3, "pad": 1024}, dump_field=True)
     sim = Simulation.from_dict(raw)
@@ -136,3 +166,26 @@ def test_run_writes_far_field_and_dump(tmp_path):
     assert meta["provider"] == "march" and meta["model_class"] == "paraxial-medium" and meta["march"]["n_steps"] == 1000
     ff = json.load(open(out / "far-field.json", encoding="utf-8"))
     assert ff["weighted"]["x"]["centroid_rad"] is not None and 0.5 < ff["weighted"]["power_in_window"] <= 1.0
+
+
+def test_run_circular_bore(tmp_path):
+    raw = _tiny(bores=[{"center": [0.0, 0.0], "radius": 1.0e-6}], length=2.0e-4, march={"dx": 1.0e-8},
+                far_field={"theta_max": 2e-3, "pad": 512}, dump_field=True)
+    sim = Simulation.from_dict(raw)
+    sim.run(str(tmp_path), stages=[16])
+    meta = json.load(open(tmp_path / "stage16" / "meta.json", encoding="utf-8"))
+    assert meta["model_class"] == "paraxial-medium" and (tmp_path / "stage16" / "field-capillary.npz").exists()
+
+def test_funnel_scales_centre_and_radius_with_g():
+    """Conformal funnel: centre and radius times G(z) = 1 + g0 z + g1 z^2 at every step plane (the vertex, not the chord)."""
+    L, a, c = 1.0e-3, 0.5e-6, 1.0e-6
+    bore = [{"center": [c, 0.0], "radius": a, "funnel": {"g": [3.0 / L, -1.0 / L ** 2]}}]     # G(L/2) = 2.25, G(L) = 3
+    _, s = _solver(_tiny(bores=bore, length=L, march={"dx": 1.0e-8, "dz": 1.0e-5}), WM.MarchSolver)
+    assert s.z_dependent and s.lx[0] < 0.5e-6 and s.lx[-1] > 4.5e-6
+    for i, g in ((0, 1.0), (s.n_steps // 2, 2.25), (s.n_steps, 3.0)):
+        f = s.fill(i)
+        assert float(f.sum()) * s.h ** 2 == pytest.approx(math.pi * (g * a) ** 2, rel=3e-3)
+        assert float((f * s.lx[:, None]).sum() / f.sum()) == pytest.approx(g * c, abs=1e-10)
+    assert float(s.exit_mask.sum()) == pytest.approx(float(s.exit_mask_full.sum()), rel=1e-12)
+    with pytest.raises(ValueError, match="f = g"):
+        _solver(_tiny(bores=[dict(bore[0], funnel={"g": [3.0 / L, -1.0 / L ** 2], "f": [1.0 / L, 0.0]})], length=L), WM.MarchSolver)

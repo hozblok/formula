@@ -55,10 +55,11 @@ class AxisSolver:
         X = self.xs[:, None] + self.off[None, :]
         return X - n * 2.0 * self.a if n % 2 == 0 else 2.0 * self.c + n * 2.0 * self.a - X
 
-    def exit_line(self, entrance, k, delta, beta):
-        """Exit samples on the window for a 1D entrance factor `entrance(x)` given in the aperture frame."""
+    def exit_line(self, entrance, k, delta, beta, hard=False):
+        """Exit samples on the window for a 1D entrance factor `entrance(x)` given in the aperture frame;
+        hard: a perfect Dirichlet wall at the geometric face (r = -1, no penetration)."""
         from .wave import fresnel_r
-        r = fresnel_r(np.abs(self.kap) / k, delta, beta)
+        r = -np.ones(self.kap.size) if hard else fresnel_r(np.abs(self.kap) / k, delta, beta)
         prop = np.exp(-1j * self.kap ** 2 * self.L / (2.0 * k))
         S = np.zeros(self.xs.size, dtype=complex)
         for n in range(-self.n_img, self.n_img + 1):
@@ -80,6 +81,7 @@ class ImageSolver:
             raise ValueError("wave_estimator: provider images needs a rectangle with faces along the lattice axes")
         cx, ax, cy, ay = rect
         self.z_in, self.length, self.spot = float(z_in), float(length), spot
+        self.hard = bool(wave.get("hard_wall"))
         self.h = wave["grid_dx"] or lam_h / (2.0 * theta_max * wave["angle_margin"])
         self.theta_max = theta_max
         thc = float(theta_c_max) if theta_c_max else theta_max
@@ -108,17 +110,14 @@ class ImageSolver:
             return ([lambda x, s=float(xi[0]): np.exp(1j * k * (x - s) ** 2 / (2.0 * z)),
                      lambda y, s=float(xi[1]): np.exp(1j * k * (y - s) ** 2 / (2.0 * z))],
                     1.0 / (1j * (2.0 * np.pi / k) * z))
-        s = self.spot["fwhm"] / math.sqrt(8.0 * math.log(2.0))
-        (cx, cy), (tx, ty) = self.spot["center"], self.spot["tilt"]
-        norm = (2.0 * math.pi * s * s) ** -0.25
-        return ([lambda x: norm * np.exp(-(x - cx) ** 2 / (4.0 * s * s)) * np.exp(1j * k * tx * x),
-                 lambda y: norm * np.exp(-(y - cy) ** 2 / (4.0 * s * s)) * np.exp(1j * k * ty * y)], 1.0)
+        from .wave import spot_axis
+        return ([lambda x: spot_axis(self.spot, k, x, 0), lambda y: spot_axis(self.spot, k, y, 1)], 1.0)
 
     def exit_field(self, xi, k, delta, beta, workers):
         """Field on the real exit window: product of the two axis sums times the exit mask."""
         factors, pref = self.entrance_factors(xi, k)
-        ux = self.axes[0].exit_line(factors[0], k, delta, beta)
-        uy = self.axes[1].exit_line(factors[1], k, delta, beta)
+        ux = self.axes[0].exit_line(factors[0], k, delta, beta, self.hard)
+        uy = self.axes[1].exit_line(factors[1], k, delta, beta, self.hard)
         return pref * np.outer(ux, uy) * self.exit_mask
 
 

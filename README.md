@@ -37,8 +37,8 @@ pip install formula
 Prebuilt wheels are published to PyPI for **Python 3.11 – 3.13** on:
 
 -   **Linux** — `manylinux_2_28` x86_64 (glibc ≥ 2.28)
--   **macOS** — x86_64 and arm64 (Apple Silicon)
--   **Windows** — AMD64 and x86
+-   **macOS** — x86_64 and arm64 (Apple Silicon), macOS 13.3 or newer
+-   **Windows** — AMD64
 
 If a wheel is unavailable for your platform, `pip` will fall back to
 building from the source distribution; in that case a working C++
