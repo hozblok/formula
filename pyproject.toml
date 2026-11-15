@@ -15,7 +15,8 @@ test-extras = ["test"]
 test-command = "python -m pytest --verbose {project}/tests"
 
 [tool.cibuildwheel.macos]
-archs = ["x86_64", "arm64"]
+# arm64 only: finufft publishes no macOS x86_64 wheel, so the tests cannot run there.
+archs = ["arm64"]
 # 13.3 is the libc++ floor for the float std::to_chars in cstrace.hpp.
 environment = { MACOSX_DEPLOYMENT_TARGET = "13.3" }
 
