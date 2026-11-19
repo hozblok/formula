@@ -132,6 +132,19 @@ WAVE_DEFAULTS = {
     "march": None,                  # march: {dx, dz, box, sponge, defects: [{type, ...}]} split-step lattice and defects
 }
 
+# stage 20 (`wave_packet`): merged lazily by Config.validate_wave_packet(); the basis, the wall model, the bore figure and
+# the entrance spot come from `wave_estimator` (provider fb).
+PACKET_DEFAULTS = {
+    "z_step": None,                 # ladder step along the bore [m]; null -> z_max / 200
+    "z_max": None,                  # last ladder point [m]; null -> the bore length
+    "slices": [],                   # z [m] of the cross-section fields and mode coefficients kept in packet.npz
+    "slice_pixel": 1.0e-8,          # pixel of the cross-section fields [m], bore frame
+    "carpet_pixel": 5.0e-9,         # radial step of the diameter carpet [m]
+    "far_field_at": [],             # z [m] of far fields from the modes (needs wave_estimator.far_field)
+    "dephasing_from": 0.5,          # F(z) is averaged from this fraction of z_max to z_max: the dephased level
+    "loss": "boundary",             # dir-ell wall: boundary (first-order boundary operator of i Im ell, non-diagonal) | diagonal (per mode, as stage 16)
+}
+
 B5_DEFAULTS = {
     "provider": "archive_phase",
     "patch_space": "entrance",
@@ -770,6 +783,35 @@ class Config:
             if focus:
                 w["entrance_spot"]["focus"] = float(focus)
         self.wave = w
+        return w
+
+    def validate_wave_packet(self) -> dict:
+        """Stage-20-only checks; returns the `wave_packet` section merged with PACKET_DEFAULTS."""
+        raw = self.raw.get("wave_packet")
+        if raw is None:
+            raw = {}
+        if not isinstance(raw, dict):
+            raise ValueError("wave_packet must be a mapping")
+        unknown = raw.keys() - PACKET_DEFAULTS.keys()
+        if unknown:
+            raise ValueError(f"wave_packet has unknown keys {sorted(unknown)}")
+        w = _merge(PACKET_DEFAULTS, raw)
+        if w["loss"] not in ("boundary", "diagonal"):
+            raise ValueError(f"wave_packet.loss: expected boundary or diagonal, got {w['loss']!r}")
+        for key, lo, strict, optional in (("z_step", 0.0, True, True), ("z_max", 0.0, True, True), ("slice_pixel", 0.0, True, False),
+                                          ("carpet_pixel", 0.0, True, False), ("dephasing_from", 0.0, False, False)):
+            v = w[key]
+            if v is None and optional:
+                continue
+            if not _finite(v) or (v <= lo if strict else v < lo) or (key == "dephasing_from" and v >= 1.0):
+                raise ValueError(f"wave_packet.{key}: invalid value {v!r}")
+            w[key] = float(v)
+        for key in ("slices", "far_field_at"):
+            v = w[key]
+            if not isinstance(v, (list, tuple)) or not all(_finite(z) and z >= 0.0 for z in v):
+                raise ValueError(f"wave_packet.{key}: expected a list of finite z >= 0 [m], got {v!r}")
+            w[key] = sorted(float(z) for z in v)
+        self.packet = w
         return w
 
     def validate_b5_estimator(self) -> dict:

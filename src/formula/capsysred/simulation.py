@@ -47,7 +47,7 @@ from .shared.physics_constants import FRESNEL_PROBE_THETA
 from .shared.units import (
     m_to_angstrom, m_to_um, rad_to_mrad, rad_to_urad)
 
-KNOWN_STAGES = (1, 2, 3, 7, 8, 9, 11, 14, 16, 17, 18)
+KNOWN_STAGES = (1, 2, 3, 7, 8, 9, 11, 14, 16, 17, 18, 20)
 
 
 def _wave_backend():
@@ -74,6 +74,19 @@ def _b5_backend():
             f"Stage 17 requires NumPy and SciPy; missing dependency: {exc.name}"
         ) from exc
     return stage17
+
+
+def _packet_backend():
+    """Load optional dependencies only for an explicitly selected Stage 20."""
+    try:
+        from .stages import wave_packet
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"numpy", "scipy"}:
+            raise
+        raise ValueError(
+            f"Stage 20 requires NumPy and SciPy; missing dependency: {exc.name}"
+        ) from exc
+    return wave_packet
 
 
 def _b9_backend():
@@ -1066,6 +1079,15 @@ class Simulation:
         self.files += res["files"]
         self.report += res["report"]
 
+    def _stage20(self, out_dir):
+        """Wave packet along one bore; `wave_estimator` (basis, spot) and `wave_packet` are validated here only."""
+        wave = self.cfg.validate_wave_estimator()
+        packet = self.cfg.validate_wave_packet()
+        res = _packet_backend().run_packet_stage(self, out_dir, wave, packet, log=_log)
+        self.results["packet"] = res["results"]
+        self.files += res["files"]
+        self.report += res["report"]
+
     def _capillary_engine_check(self, bundle) -> str:
         cap = self.cfg.capillary
         p = self.cfg.precision
@@ -1110,7 +1132,7 @@ class Simulation:
             raise ValueError(
                 f"stages {free_stages} require a configured free.source"
             )
-        capillary_stages = sorted(wanted & {9, 14, 17, 18})
+        capillary_stages = sorted(wanted & {9, 14, 17, 18, 20})
         if capillary_stages and self.cfg.capillary is None:
             raise ValueError(
                 f"stages {capillary_stages} require a configured "
@@ -1181,6 +1203,10 @@ class Simulation:
             backend = _b9_backend()
             backend.preflight_b9_inputs(self, self.cfg.validate_b9_estimator())
             backend.preflight_b9_output(out_dir)
+        if 20 in wanted:
+            backend = _packet_backend()
+            backend.preflight_packet_inputs(self, self.cfg.validate_wave_estimator(), self.cfg.validate_wave_packet())
+            backend.preflight_packet_output(out_dir)
         os.makedirs(out_dir, exist_ok=True)
         if 14 in wanted:
             # Fail before a fresh trace or a many-hour cache build.
@@ -1336,6 +1362,9 @@ class Simulation:
         if 18 in wanted:
             _log("Stage 18: experimental archive B9 contour reconstruction")
             self._stage18(out_dir, rays_src, stage14_paths)
+        if 20 in wanted:
+            _log("Stage 20: wave packet along the bore — return fidelity, carpets, far field")
+            self._stage20(out_dir)
         report_name = format.report_name(out_dir, "report")
         self.report += ["", "## Files", ""]
         self.report += [f"- {name}" for name in self.files + [report_name]]
@@ -1385,7 +1414,9 @@ class Simulation:
             _b5_backend()
         if 18 in wanted:
             _b9_backend()
-        if wanted <= {14, 16, 17, 18}:
+        if 20 in wanted:
+            _packet_backend()
+        if wanted <= {14, 16, 17, 18, 20}:
             # No RaysReader: the
             # Stage-14 builder validates/deposits in one strict pass, while a
             # cache hit does not open the ray archive at all; Stage 16 reads
