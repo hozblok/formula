@@ -142,6 +142,7 @@ PACKET_DEFAULTS = {
     "carpet_pixel": 5.0e-9,         # radial step of the diameter carpet [m]
     "far_field_at": [],             # z [m] of far fields from the modes (needs wave_estimator.far_field)
     "dephasing_from": 0.5,          # F(z) is averaged from this fraction of z_max to z_max: the dephased level
+    "loss": "boundary",             # dir-ell wall: boundary (first-order boundary operator of i Im ell, non-diagonal) | diagonal (per mode, as stage 16)
 }
 
 B5_DEFAULTS = {
@@ -795,6 +796,8 @@ class Config:
         if unknown:
             raise ValueError(f"wave_packet has unknown keys {sorted(unknown)}")
         w = _merge(PACKET_DEFAULTS, raw)
+        if w["loss"] not in ("boundary", "diagonal"):
+            raise ValueError(f"wave_packet.loss: expected boundary or diagonal, got {w['loss']!r}")
         for key, lo, strict, optional in (("z_step", 0.0, True, True), ("z_max", 0.0, True, True), ("slice_pixel", 0.0, True, False),
                                           ("carpet_pixel", 0.0, True, False), ("dephasing_from", 0.0, False, False)):
             v = w[key]

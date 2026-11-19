@@ -108,7 +108,8 @@ def build_packet_spec(sim, wave, packet, lines):
             "ells": [(e.real, e.imag) for e in ells], "cheb_tol": float(wave["fb_chebyshev_tol"]), "wall": wave["fb_wall"],
             "spot": wave["entrance_spot"], "figure": figure, "dz": dz, "ladder": ladder, "z_step": z_max / n, "z_max": z_max,
             "slices": sorted(float(z) for z in packet["slices"]), "slice_pixel": float(packet["slice_pixel"]),
-            "carpet_pixel": float(packet["carpet_pixel"]), "far": far, "dephasing_from": float(packet["dephasing_from"])}
+            "carpet_pixel": float(packet["carpet_pixel"]), "far": far, "dephasing_from": float(packet["dephasing_from"]),
+            "loss": packet["loss"]}
 
 
 # ----------------------------------------------------------------- synthesis in the bore frame
@@ -172,7 +173,13 @@ def return_peaks(z, F, n=3):
 # ----------------------------------------------------------------- driver
 
 def _channel(spec, disc, figure, k, delta, beta, fallback):
+    """Channel of one line: wall dir-ell with the loss as the boundary operator (wall_loss = i Im ell) or as the diagonal
+    damping of stage 16; dir-ell-real without loss; exact roots as the complex diagonal."""
     b = spec["bore"]
+    if spec["wall"] == "dir-ell" and spec["loss"] == "boundary":
+        ell = wall_offset(k, delta, beta)
+        return FBChannel(c0=b["center"], t=b["toward"], rbend=b["rbend"], disc=disc, k=k, figure=figure, dz=spec["dz"],
+                         wall_loss=1j * ell.imag)
     if spec["wall"] == "exact":
         kap, ok = exact_kappa(disc, a=b["radius"], k=k, delta=delta, beta=beta)
         dirl = disc.kap2 / (2.0 * k) - 1j * mode_damping(disc, k, delta, beta)
@@ -299,7 +306,8 @@ def _run(sim, partial, wave, packet, log):
                       ff_ring=ff_ring, ff_radial=ff_radial)
     np.savez(os.path.join(partial, NPZ), **arrays)
     files = [NPZ]
-    wall_label = {"dir-ell": "dir-ell", "dir-ell-real": "dir-ell,no-absorption", "exact": "exact-jk"}[spec["wall"]]
+    wall_label = {"dir-ell": "dir-ell," + ("boundary-loss" if spec["loss"] == "boundary" else "diagonal-loss"),
+                  "dir-ell-real": "dir-ell,no-absorption", "exact": "exact-jk"}[spec["wall"]]
     seconds = time.time() - t0
     meta = {"scene": "capillary", "stage": 20, "provider": "fb",
             "model_class": wall_label + (",parabolic-axis" if bent else "") + (",hadamard-figure" if figure.has_wall else "")
@@ -307,11 +315,12 @@ def _run(sim, partial, wave, packet, log):
             "bore": b, "length_m": spec["length"], "entrance_spot": sp, "spot_frame": {"xi_m": xi_s, "eta_m": eta_s, "phi_rad": phi_s},
             "basis": {"aw_m": disc.aw, "jmax": spec["jmax"], "wall_cut": spec["wall_cut"], "n_modes": int(disc.nmodes), "m_max": int(disc.M),
                       "theta_cut_rad": spec["theta_cut"], "theta_modal_rad": spec["theta_modal"], "nr": int(disc.nr), "nphi": int(disc.nphi)},
-            "wall": spec["wall"], "wall_offset_nm": [[e[0] * 1e9, e[1] * 1e9] for e in spec["ells"]],
+            "wall": spec["wall"], "loss": spec["loss"] if spec["wall"] == "dir-ell" else ("none" if spec["wall"] == "dir-ell-real" else "diagonal"),
+            "wall_offset_nm": [[e[0] * 1e9, e[1] * 1e9] for e in spec["ells"]],
             "exact_fallback_modes": ({f"{float(HC_KEV_ANGSTROM) * k / (2.0e10 * math.pi):.6f}": n for k, n in sorted(fallback.items())}
                                      if spec["wall"] == "exact" else None),
-            "propagator": "chebyshev" if (bent or figure.has_wall or figure.has_axis) else "diagonal",
-            "chebyshev_degree_median": int(np.median(degrees)) if degrees and (bent or figure.has_wall or figure.has_axis) else None,
+            "propagator": "chebyshev" if degrees else "diagonal",
+            "chebyshev_degree_median": int(np.median(degrees)) if degrees else None,
             "chebyshev_tol": spec["cheb_tol"], "figure": spec["figure"],
             "figure_dz_m": spec["dz"] if (figure.z_dependent or figure.has_axis) else None,
             "ladder": {"n": int(nz), "z_step_m": spec["z_step"], "z_max_m": spec["z_max"]},
@@ -323,6 +332,8 @@ def _run(sim, partial, wave, packet, log):
                                      "a straight bore uses the lab x, y; the frame co-moves with the parabolic axis c0 + t z^2 / (2R)",
                             "F": "|<E(0), E(z)>|^2 / (P(0) P(z)) over the mode coefficients (orthogonal basis)",
                             "T": "P(z) / P(0), P in the guided basis",
+                            "loss": "boundary: the DIR-ell loss as the first-order boundary operator of the complex wall offset "
+                                    "(non-diagonal in the disc modes); diagonal: the per-mode damping of stage 16",
                             "carpet_I": "intensity on the diameter through the spot centre; carpet_u signed from the bore centre, "
                                         "positive toward the spot; lines summed with their weights",
                             "azimuth_I": "dP/dphi = int |E|^2 r dr over the whole radius at the azimuths phi; phi counted from xi",
@@ -356,7 +367,7 @@ def _run(sim, partial, wave, packet, log):
               f"tilt ({sp['tilt'][0] * 1e3:.3f}, {sp['tilt'][1] * 1e3:.3f}) mrad",
               f"- basis j_max = {spec['jmax']} ({disc.nmodes} modes, |m| ≤ {disc.M}, θ_cut {spec['theta_cut'] * 1e3:.3f} mrad)"
               + (f", guided cut j² − m² < {spec['wall_cut']:.1f}²" if spec["wall_cut"] else "")
-              + f"; wall {spec['wall']}, ℓ = {spec['ells'][0][0] * 1e9:.3f} + {spec['ells'][0][1] * 1e9:.3f}i nm; "
+              + f"; wall {spec['wall']} (loss {meta['loss']}), ℓ = {spec['ells'][0][0] * 1e9:.3f} + {spec['ells'][0][1] * 1e9:.3f}i nm; "
               + (f"chebyshev propagator, degree ≈ {meta['chebyshev_degree_median']}" if meta["propagator"] == "chebyshev" else "diagonal propagator"),
               f"- ladder {nz} points to {spec['z_max'] * 1e3:.3f} mm (step {spec['z_step'] * 1e6:.1f} µm); diameter carpet "
               f"{u_line.size} points of {spec['carpet_pixel'] * 1e9:.1f} nm, {disc.nphi} azimuths"

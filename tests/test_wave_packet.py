@@ -154,6 +154,40 @@ def test_far_field_and_return_peaks(tmp_path):
         assert d["F"][0, i] == pytest.approx(p["F"]) and d["T"][0, i] == pytest.approx(p["T"])
 
 
+def test_boundary_loss_operator_matches_the_diagonal_damping_and_the_bouncer_law(tmp_path):
+    """Straight bore, one disc mode: the boundary form of i Im ell damps it as mode_damping without its Fresnel factor.
+    Bent bore, a packet at the outer wall: every Airy mode loses 2 k Im ell / R per unit length, so T(z) = exp(-2 k Im ell z / R)."""
+    a, delta, beta = 2.0e-6, 4.5575e-6, 5.725e-8
+    ell = FB.wall_offset(K, delta, beta)
+    d = FB.Disc(aw=a + ell.real, jmax=60)
+    ch = FB.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K, wall_loss=1j * ell.imag)
+    c = d.empty()
+    c[d.M + 7, 2] = 1.0                                           # m = 7, n = 3
+    out, _ = ch.propagate(c, 2.0e-3)
+    gamma = d.kap2[d.M + 7, 2] * ell.imag / (d.aw * K)
+    assert abs(out[d.M + 7, 2]) == pytest.approx(math.exp(-gamma * 2.0e-3), rel=1e-6)
+    assert d.norm(out) == pytest.approx(d.norm(c) * math.exp(-2 * gamma * 2.0e-3), rel=1e-5)   # no leak into other modes
+    R = 1.0
+    raw = _scene(a=a, length=6.0e-3, bend={"radius": R, "toward": [1.0, 0.0]},
+                 spot={"center": [-(a - 2.5e-7), 0.0], "fwhm": 1.2e-7, "tilt": [0.0, 0.0]},
+                 packet={"z_step": 5.0e-4}, wave={"fb_jmax": 120, "fb_theta_cut": 1.5e-3, "fb_wall": "dir-ell"})
+    sim = Simulation.from_dict(raw)
+    sim.run(str(tmp_path), stages=[20])
+    dd = np.load(tmp_path / "stage20" / "packet.npz")
+    z, T = dd["z"], dd["T"][0]
+    law = np.exp(-2.0 * K * ell.imag * z / R)
+    assert np.max(np.abs(T - law)) < 0.05 * (1.0 - law[-1])        # within 5 % of the loss
+    meta = json.load(open(tmp_path / "stage20" / "meta.json", encoding="utf-8"))
+    assert meta["loss"] == "boundary" and meta["model_class"].startswith("dir-ell,boundary-loss")
+    # the diagonal damping of stage 16 misses the coherent wall concentration of the packet: far less loss
+    raw["wave_packet"]["loss"] = "diagonal"
+    Simulation.from_dict(raw).run(str(tmp_path / "diag"), stages=[20])
+    Td = np.load(tmp_path / "diag" / "stage20" / "packet.npz")["T"][0]
+    assert 1.0 - Td[-1] < 0.3 * (1.0 - T[-1])
+    with pytest.raises(ValueError, match="wave_packet.loss"):
+        Simulation.from_dict(_scene(packet={"loss": "none"})).cfg.validate_wave_packet()
+
+
 def test_return_peaks_helper():
     z = np.linspace(0.0, 1.0, 101)
     F = 0.5 + 0.5 * np.cos(2 * math.pi * z * 2)                   # minima at 0.25, 0.75; maxima at 0.5, 1.0

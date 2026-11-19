@@ -393,9 +393,13 @@ class FBChannel:
 
     def __init__(self, *, c0: np.ndarray | tuple[float, float], t: np.ndarray | tuple[float, float] | None,
                  rbend: float | None, disc: Disc, k: float, gamma: np.ndarray | None = None,
-                 h0: np.ndarray | None = None, figure: WallFigure | None = None, dz: float | None = None) -> None:
+                 h0: np.ndarray | None = None, figure: WallFigure | None = None, dz: float | None = None,
+                 wall_loss: complex | None = None) -> None:
         """c0: entrance centre (x, y) [m]; t: toward the bend centre; rbend [m], None = straight; k [rad/m]; gamma: mode
-        damping (2M+1, nmax) [1/m]; h0: H diagonal instead of kap2/2k - i gamma; dz: z step of a z-dependent figure [m]."""
+        damping (2M+1, nmax) [1/m]; h0: H diagonal instead of kap2/2k - i gamma; dz: z step of a z-dependent figure [m];
+        wall_loss: a uniform complex wall displacement [m] (i Im ell for the DIR-ell wall) applied through the boundary
+        (Hadamard) form at every step: the non-diagonal first-order loss operator whose diagonal is the gamma of
+        mode_damping without its Fresnel factor."""
         self.c0 = np.asarray(c0, float)
         self.t = None if t is None else np.asarray(t, float) / np.linalg.norm(t)
         self.rb = None if rbend is None else float(rbend)
@@ -410,6 +414,7 @@ class FBChannel:
         self.path = AxisPath(figure) if figure is not None and figure.has_axis else None
         self.dz = dz                                                 # z step of a z-dependent figure or axis
         self.fig_scale = -1.0 / (self.k * disc.aw ** 3)
+        self.wall_loss = None if wall_loss is None else complex(wall_loss)
         self._dr = None                                              # figure coefficients of the current step
         self._cpp = np.zeros(2)                                      # axis curvature c'' of the current step (frame)
         self._g = None
@@ -548,7 +553,7 @@ class FBChannel:
         sub-steps short enough that the damping stays small on the scaled spectrum (gamma_max dL <= CHEB_DAMP)
         and, for a z-dependent figure, no longer than dz (figure taken at each sub-step midpoint).
         c: mode coefficients (2M+1, nmax); L: length [m]; tol: Chebyshev cut |J_n| <= tol; z0: start z [m]."""
-        if self.rb is None and self.figure is None and self.path is None:
+        if self.rb is None and self.figure is None and self.path is None and self.wall_loss is None:
             return c * np.exp(-1j * self.h0 * L), 0
         steps = max(1, int(math.ceil(float(np.max(-self.h0.imag)) * L / CHEB_DAMP)))
         if (self.figure is not None and self.figure.z_dependent) or self.path is not None:
@@ -557,8 +562,12 @@ class FBChannel:
         try:
             for s in range(steps):
                 zm = z0 + (s + 0.5) * dl
-                if self.figure is not None:
-                    self._dr = self.figure.coeffs(zm)
+                if self.figure is not None or self.wall_loss is not None:
+                    dr = self.figure.coeffs(zm) if self.figure is not None else np.zeros(1, complex)
+                    if self.wall_loss is not None:
+                        dr = dr.astype(complex)
+                        dr[(dr.size - 1) // 2] += self.wall_loss
+                    self._dr = dr
                 if self.path is not None:
                     self._cpp = self.path.derivs(zm)[2]
                 c, deg = self.propagate_chebyshev(c, dl, tol)
