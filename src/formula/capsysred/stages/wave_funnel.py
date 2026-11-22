@@ -1,16 +1,16 @@
 """Stage 16 provider fb for conformal funnel bores (kind funnel, f = g): every bore of the scene scales about the device
-axis with G(z) = 1 + g0 z + g1 z^2 (z from the entrance). In xi = r / G(z) the bores are fixed discs and
-  E(r, z) = G^-1 exp(i k G' |r|^2 / 2G) u(xi, z),   i du/dz = -Lap_xi u / (2 k G^2) + [V(G xi) + (k/2) G G'' |xi|^2] u.
-In a bore of centre c0 (q = xi - c0) the kinetic part with the wall has the eigenvalues of the physical bore of radius
-a G(z) (exact roots of the scalar characteristic equation). Its effective Dirichlet radius a G + Re ell is, in xi,
-A(z) = a + Re ell / G, so the Fourier-Bessel basis of the disc A0 = a + Re ell lives in rho = q / s(z), s = A / A0:
-  u(q) = s^-1 exp(i M s' |q|^2 / 2s) w(q / s),  M = k G^2,
-  i dw/dz = -Lap_rho w / (2 M s^2) + [V + (k/2) G G'' (s^2 |rho|^2 + 2 s c0.rho + |c0|^2) + (M' s' + M s'') s |rho|^2 / 2] w.
-The lens and the axis term enter as Galerkin blocks (r^2 within m, r e^{+-i phi} between m and m +- 1). A step is the
-commutator-free exponential integrator of order 4 (two exponentials of combinations of H at the Gauss points), each
-exponential a Chebyshev series. The basis keeps every zero j_mn < jmax; its outer fraction `layer` absorbs (amplitude
-rate gamma_max ((j - j_s) / (jmax - j_s))^2). The Kirchhoff edge tail of the entrance is fixed in j (the conformal map
-keeps j while the physical angle falls as 1 / G), so jmax has to cover the guided modes of the entrance, k theta_c a.
+axis with G(z) = 1 + g0 z + g1 z^2 (z from the entrance): the axis of a bore is G(z) c0, its radius a G(z). The field
+of a bore lives in the frame of the bore, rho = (r - G c0) / S(z), scaled with its effective Dirichlet radius,
+S = (a G + Re ell) / A0, so the wall is the fixed disc A0 = a + Re ell of the Fourier-Bessel basis:
+  E(r, z) = S^-1 exp(i k [S' |x|^2 / 2S + G' c0.x + G G' |c0|^2 / 2]) w(rho, z),   x = r - G c0,
+  i dw/dz = -Lap_rho w / (2 k S^2) + [V + (k/2) S S'' |rho|^2 + k S G'' c0.rho + (k/2) G G'' |c0|^2] w.
+The kinetic part with the wall has the eigenvalues of the physical bore of radius a G(z) (exact roots of the scalar
+characteristic equation). The lens and the axis term enter as Galerkin blocks (r^2 within m, r e^{+-i phi} between m
+and m +- 1). A step is the commutator-free exponential integrator of order 4 (two exponentials of combinations of H at
+the Gauss points), each exponential a Chebyshev series. The basis keeps every zero j_mn < jmax; its outer fraction
+`layer` absorbs (amplitude rate gamma_max ((j - j_s) / (jmax - j_s))^2). The Kirchhoff edge tail of the entrance is
+fixed in j (the frame keeps j while the physical angle falls as 1 / G), so jmax has to cover the guided modes of the
+entrance, k theta_c a.
 Kirchhoff entrance: the paraxial point source inside the geometric aperture a. Exit plane: the field inside the
 geometric exit core a G(L) at the screen pixels (observable point).
 The bores are propagated one after another with all source nodes as one block; W and I accumulate bore by bore (the exit
@@ -82,11 +82,9 @@ class FunnelBasis:
     def dG(self, z):
         return self.g[0] + 2.0 * self.g[1] * z
 
-    def s(self, z):
-        """Dilation s = A / A0 of the basis about the bore centre and its first two derivatives."""
-        G, dG, d2G, lr = self.G(z), self.dG(z), 2.0 * self.g[1], self.ell.real
-        return ((self.a + lr / G) / self.A0, -lr * dG / G ** 2 / self.A0,
-                -lr * (d2G / G ** 2 - 2.0 * dG ** 2 / G ** 3) / self.A0)
+    def scale(self, z):
+        """Scale S = (a G + Re ell) / A0 of the bore frame and its z-derivative."""
+        return (self.a * self.G(z) + self.ell.real) / self.A0, self.a * self.dG(z) / self.A0
 
     def h(self, z):
         """kappa^2 / 2k of the bore of radius a G(z) per row: exact roots (damped Newton, warm-started from the roots of
@@ -164,12 +162,11 @@ class FunnelChannel:
         self.alpha = float(np.arctan2(self.c0[1], self.c0[0]))
 
     def coeffs(self, z):
+        """Factors of |rho|^2, of 2 c0.rho / rho0 and the constant: (k/2) S S'', (k/2) S G'', (k/2) G G'' rho0^2."""
         b = self.b
-        G, dG = b.G(z), b.dG(z)
-        s, ds, d2s = b.s(z)
-        lam = 0.5 * b.k * G * 2.0 * b.g[1]
-        M, dM = b.k * G * G, 2.0 * b.k * G * dG
-        return lam * s * s + 0.5 * (dM * ds + M * d2s) * s, lam * s, lam * self.rho0 ** 2
+        kg = b.k * b.g[1]                                      # k G'' / 2
+        S = b.scale(z)[0]
+        return kg * b.a / b.A0 * S, kg * S, kg * b.G(z) * self.rho0 ** 2
 
     def operator(self, za, zb, wa, wb, scale=1.0):
         """A = scale (wa H(za) + wb H(zb)) on the paired layout: (apply(z, alpha, shift) = alpha (A - shift) z, spectral
@@ -266,12 +263,11 @@ class FunnelChannel:
         wr = 0.5 * b.a * wq
         nphi = d.nphi
         phi = 2.0 * math.pi * np.arange(nphi) / nphi
-        X = self.c0[0] + r[:, None] * np.cos(phi)[None, :]
-        Y = self.c0[1] + r[:, None] * np.sin(phi)[None, :]
-        G0, dG0 = b.G(0.0), b.dG(0.0)
-        s, ds, _ = b.s(0.0)
+        dx, dy = r[:, None] * np.cos(phi)[None, :], r[:, None] * np.sin(phi)[None, :]
+        X, Y = self.c0[0] + dx, self.c0[1] + dy
+        S, ph = self._frame(0.0, dx, dy)
         lam = 2.0 * math.pi / b.k
-        gauge = np.exp(-1j * b.k * dG0 * (X * X + Y * Y) / (2.0 * G0) - 1j * b.k * G0 * G0 * ds * r[:, None] ** 2 / (2.0 * s))
+        gauge = S * np.exp(-1j * ph)
         F = np.empty((len(nodes), n_r, nphi), complex)
         for i, (sx, sy) in enumerate(nodes):
             E = np.exp(1j * b.k * ((X - sx) ** 2 + (Y - sy) ** 2) / (2.0 * D)) / (1j * lam * D)
@@ -283,29 +279,30 @@ class FunnelChannel:
                 out[m + d.M, :zz.size] = (F[:, :, m % nphi] @ P).T
         return out
 
-    def _frame(self, z):
+    def _frame(self, z, dx, dy):
+        """Scale S of the bore frame at z and the phase of E / w at the lab offsets (dx, dy) from the bore axis."""
         b = self.b
+        S, dS = b.scale(z)
         G, dG = b.G(z), b.dG(z)
-        s, ds, _ = b.s(z)
-        return G, dG, s, ds, b.k * G * G
+        return S, b.k * (dS * (dx * dx + dy * dy) / (2.0 * S) + dG * (self.c0[0] * dx + self.c0[1] * dy)
+                         + 0.5 * G * dG * self.rho0 ** 2)
 
     def centre_values(self, c, z):
         """E at the bore centre G(z) c0 for every node: only m = 0 is non-zero at rho = 0. (B,)"""
-        G, dG, s, ds, M = self._frame(z)
+        S, ph = self._frame(z, 0.0, 0.0)
         w0 = c[self.b.disc.M].sum(axis=0)                       # J_0(0) = 1
-        r2 = float((G * self.c0) @ (G * self.c0))
-        return w0 / s * np.exp(1j * self.b.k * dG * r2 / (2.0 * G)) / G
+        return w0 / S * np.exp(1j * ph)
 
     def points(self, c, z, X, Y, dr):
         """E at lab points (X, Y) inside the geometric core a G(z) for every node: (n_points, B) and the inside mask.
         Radial functions by cubic Hermite interpolation on r = 0, dr, ... (relative error ~ (2 pi dr jmax / A0)^4 / 384)."""
         b, d = self.b, self.b.disc
-        G, dG, s, ds, M = self._frame(z)
-        qx, qy = X / G - self.c0[0], Y / G - self.c0[1]
-        q = np.hypot(qx, qy)
-        inside = q * G < b.a * G
-        q, phi = q[inside], np.arctan2(qy[inside], qx[inside])
-        rho = q / s
+        G = b.G(z)
+        dx, dy = X - G * self.c0[0], Y - G * self.c0[1]
+        inside = np.hypot(dx, dy) < b.a * G
+        dx, dy = dx[inside], dy[inside]
+        S, ph = self._frame(z, dx, dy)
+        rho, phi = np.hypot(dx, dy) / S, np.arctan2(dy, dx)
         b.prefetch(dr)
         i = np.minimum((rho / dr).astype(int), int(d.aw / dr))
         t = rho / dr - i
@@ -319,9 +316,7 @@ class FunnelChannel:
                 R, dR = J @ cm, dJ @ cm
                 val = (h00[:, None] * R[i] + h10[:, None] * dr * dR[i] + h01[:, None] * R[i + 1] + h11[:, None] * dr * dR[i + 1])
                 E += val * np.exp(1j * m * phi)[:, None]
-        u = E * (np.exp(1j * M * ds * q ** 2 / (2.0 * s)) / s)[:, None]
-        r2 = X[inside] ** 2 + Y[inside] ** 2
-        return u * (np.exp(1j * b.k * dG * r2 / (2.0 * G)) / G)[:, None], inside
+        return E * (np.exp(1j * ph) / S)[:, None], inside
 
 
 # ----------------------------------------------------------------- scene driver

@@ -1,5 +1,5 @@
 """Stage 16 provider fb on conformal funnel bores (wave_funnel): the straight limit is the fb bore with exact roots,
-the basis dilation follows the effective radius, power is kept without absorption, the result agrees with the march
+the scale of the bore frame follows the effective radius, power is kept without absorption, the result agrees with the march
 funnel, and a run writes the screen and the matrix of mu between the bore centres."""
 
 import json
@@ -20,7 +20,7 @@ Z26_G = (1.0 / 0.03, -1.0 / (0.03 * 0.46))
 
 
 def test_straight_limit_is_the_fb_bore():
-    """g = 0: G = s = 1 and no lens, so the propagator is the diagonal exp(-i h L) of the exact roots."""
+    """g = 0: G = S = 1 and no lens, so the propagator is the diagonal exp(-i h L) of the exact roots."""
     basis = WF.FunnelBasis(0.5e-6, (0.0, 0.0), K, DELTA, BETA, 40)
     ch = WF.FunnelChannel(basis, (0.3e-6, 0.0))
     c0 = ch.entrance_modes([(0.0, 0.0), (-0.1e-6, 0.2e-6)], 1.5e-3)
@@ -31,15 +31,33 @@ def test_straight_limit_is_the_fb_bore():
     assert np.max(np.abs(cL - ref)) < 1e-9 * np.max(np.abs(c0))
 
 
-def test_dilation_tracks_the_effective_radius():
-    """s A0 = a + Re ell / G, s(0) = 1; the derivatives against finite differences."""
-    basis = WF.FunnelBasis(6.0e-6, Z26_G, K, DELTA, BETA, 20)
+def test_scale_tracks_the_effective_radius():
+    """S A0 = a G + Re ell, S(0) = 1; the derivative against finite differences; the lens and axis factors."""
+    basis = WF.FunnelBasis(6.0e-6, Z26_G, K, DELTA, BETA, 20, blocks=False)
     for z in (0.0, 0.1, 0.23):
-        assert basis.s(z)[0] * basis.A0 == pytest.approx(basis.a + basis.ell.real / basis.G(z), rel=1e-14)
-    assert basis.s(0.0)[0] == 1.0
+        assert basis.scale(z)[0] * basis.A0 == pytest.approx(basis.a * basis.G(z) + basis.ell.real, rel=1e-14)
+    assert basis.scale(0.0)[0] == 1.0
     z, h = 0.1, 1.0e-5
-    assert basis.s(z)[1] == pytest.approx((basis.s(z + h)[0] - basis.s(z - h)[0]) / (2 * h), rel=1e-6)
-    assert basis.s(z)[2] == pytest.approx((basis.s(z + h)[1] - basis.s(z - h)[1]) / (2 * h), rel=1e-5)
+    S, dS = basis.scale(z)
+    assert dS == pytest.approx((basis.scale(z + h)[0] - basis.scale(z - h)[0]) / (2 * h), rel=1e-6)
+    d2S = (basis.scale(z + h)[1] - basis.scale(z - h)[1]) / (2 * h)
+    ch = WF.FunnelChannel(basis, (2.0e-5, 1.0e-5))
+    d2G = 2.0 * Z26_G[1]
+    assert ch.coeffs(z) == pytest.approx((0.5 * K * S * d2S, 0.5 * K * S * d2G, 0.5 * K * basis.G(z) * d2G * ch.rho0 ** 2), rel=1e-6)
+
+
+def test_frame_phase_is_the_scaling_about_the_device_axis_then_about_the_bore():
+    """The phase of E / w equals k G' |r|^2 / 2G + k G^2 s' |q|^2 / 2s with q = r / G - c0, s = S / G."""
+    basis = WF.FunnelBasis(6.0e-6, Z26_G, K, DELTA, BETA, 20, blocks=False)
+    ch = WF.FunnelChannel(basis, (2.0e-5, 1.0e-5))
+    z = 0.17
+    G, dG = basis.G(z), basis.dG(z)
+    S, dS = basis.scale(z)
+    s, ds = S / G, (dS - S * dG / G) / G
+    dx, dy = np.array([3.0e-6, -11.0e-6]), np.array([-7.0e-6, 4.0e-6])
+    X, Y = G * ch.c0[0] + dx, G * ch.c0[1] + dy
+    two = K * dG * (X * X + Y * Y) / (2.0 * G) + K * ds * (dx * dx + dy * dy) / (2.0 * s)
+    assert ch._frame(z, dx, dy)[1] == pytest.approx(two, rel=1e-12)
 
 
 def test_power_is_kept_without_absorption():
