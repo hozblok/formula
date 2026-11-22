@@ -162,7 +162,7 @@ class FunnelChannel:
         self.alpha = float(np.arctan2(self.c0[1], self.c0[0]))
 
     def coeffs(self, z):
-        """Factors of |rho|^2, of 2 c0.rho / rho0 and the constant: (k/2) S S'', (k/2) S G'', (k/2) G G'' rho0^2."""
+        """Factors of |rho|^2 and of 2 c0.rho, and the constant: (k/2) S S'', (k/2) S G'', (k/2) G G'' rho0^2."""
         b = self.b
         kg = b.k * b.g[1]                                      # k G'' / 2
         S = b.scale(z)[0]
