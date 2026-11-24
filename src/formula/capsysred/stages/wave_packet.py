@@ -53,6 +53,8 @@ def preflight_packet_inputs(sim, wave, packet):
                          f"got kind {cap.bores[0].get('kind')!r}")
     if wave["provider"] not in ("auto", "fb"):
         raise ValueError(f"wave_packet: stage 20 runs on provider fb, wave_estimator.provider is {wave['provider']!r}")
+    if wave["fb_wall"] == "effective-radius":
+        raise ValueError("wave_packet: fb_wall effective-radius is for funnel bores only")
     if wave["entrance_spot"] is None:
         raise ValueError("wave_packet: stage 20 needs wave_estimator.entrance_spot (a coherent spot on the entrance face)")
     if packet["far_field_at"] and wave["far_field"] is None:

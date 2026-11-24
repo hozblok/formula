@@ -115,7 +115,8 @@ WAVE_DEFAULTS = {
     "fb_theta_cut": 3.6e-4,         # modal angular cut [rad] behind the jmax rule
     "fb_chebyshev_tol": 1.0e-12,    # Bessel-coefficient cutoff of the Chebyshev series of exp(-iHL)
     "fb_dr": 2.0e-8,                # fine radial table step [m] for the exit-field synthesis
-    "fb_wall": "dir-ell",           # dir-ell (complex offset: phase + absorption) | dir-ell-real (no absorption) | exact-roots (J/K roots per mode)
+    "fb_wall": "dir-ell",           # dir-ell (complex offset: phase + absorption) | dir-ell-real (no absorption) | exact-roots (J/K roots per mode) | effective-radius (funnels: zero field at a G + ell, ell the complex penetration depth)
+    "fb_integrator": "split-step",  # funnels: split-step (order 2: mode phases, the lens on the (r, phi) grid) | cf4 (order 4, Chebyshev exponentials of Galerkin blocks)
     "fb_wall_cut": True,            # keep only guided modes: j_mn^2 - m^2 < (k a_w theta_c)^2
     "fb_figure": None,              # fb: [{q, amp, angle, rate, period, phase}] wall dr = amp mod(z) cos(q (phi - angle - rate z)); q = 1 moves the axis
     "fb_figure_noise": None,        # fb: {sigma, lc, q: [...], seed} random figure, gaussian z-correlation lc, equal power per q
@@ -681,7 +682,8 @@ class Config:
         for key, choices in (("provider", ("auto", "uisk", "images", "march", "fb", "free")),
                              ("observable", ("coherent_cell", "point")),
                              ("source_mode", ("quadrature", "recorded_origins")),
-                             ("fb_wall", ("dir-ell", "dir-ell-real", "exact-roots")),
+                             ("fb_wall", ("dir-ell", "dir-ell-real", "exact-roots", "effective-radius")),
+                             ("fb_integrator", ("cf4", "split-step")),
                              ("fb_grid_dtype", ("complex64", "complex128"))):
             if w[key] not in choices:
                 raise ValueError(

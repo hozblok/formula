@@ -4,10 +4,17 @@ of a bore lives in the frame of the bore, rho = (r - G c0) / S(z), scaled with i
 S = (a G + Re ell) / A0, so the wall is the fixed disc A0 = a + Re ell of the Fourier-Bessel basis:
   E(r, z) = S^-1 exp(i k [S' |x|^2 / 2S + G' c0.x + G G' |c0|^2 / 2]) w(rho, z),   x = r - G c0,
   i dw/dz = -Lap_rho w / (2 k S^2) + [V + (k/2) S S'' |rho|^2 + k S G'' c0.rho + (k/2) G G'' |c0|^2] w.
-The kinetic part with the wall has the eigenvalues of the physical bore of radius a G(z) (exact roots of the scalar
-characteristic equation). The lens and the axis term enter as Galerkin blocks (r^2 within m, r e^{+-i phi} between m
-and m +- 1). A step is the commutator-free exponential integrator of order 4 (two exponentials of combinations of H at
-the Gauss points), each exponential a Chebyshev series. The basis keeps every zero j_mn < jmax; its outer fraction
+The kinetic part with the wall has the eigenvalues of the physical bore of radius a G(z): fb_wall exact-roots takes the
+roots of the scalar characteristic equation, effective-radius the zero field at the radius a G + ell, ell the complex
+penetration depth, kappa = j / (a G + ell).
+fb_integrator cf4: the lens and the axis term enter as Galerkin blocks (r^2 within m, r e^{+-i phi} between m and
+m +- 1); a step is the commutator-free exponential integrator of order 4 (two exponentials of combinations of H at
+the Gauss points), each exponential a Chebyshev series.
+fb_integrator split-step: a step is exp(-i dz/2 D) exp(-i dz nu K) exp(-i dz/2 D), order 2: D the diagonal of the modes,
+nu K = k g1 S [(a / A0) |rho|^2 + 2 c0.rho] the lens and the axis term as one multiplication on the (r, phi) grid; no
+Galerkin block and no matrix exponential. The projection back on the modes drops what the product puts above jmax; that
+power (projection_loss, summed over the steps) falls as 1 / steps only, so the order is 2 while it stays below the
+wanted error: the top of the basis has to be empty. The basis keeps every zero j_mn < jmax; its outer fraction
 `layer` absorbs (amplitude rate gamma_max ((j - j_s) / (jmax - j_s))^2). The Kirchhoff edge tail of the entrance is
 fixed in j (the frame keeps j while the physical angle falls as 1 / G), so jmax has to cover the guided modes of the
 entrance, k theta_c a.
@@ -26,6 +33,7 @@ from types import SimpleNamespace
 
 import numpy as np
 from numpy.polynomial.legendre import leggauss
+from scipy import fft as sfft
 from scipy.linalg.blas import dgemm as _gemm, zaxpy as _axpy
 from scipy.special import jv, jvp
 
@@ -55,8 +63,8 @@ class FunnelBasis:
     the Galerkin blocks, the profile G, the absorbing top layer and the mode eigenvalues h(G) (cached by G).
     Propagation works on the paired layout (N, 2, B): rows (|m|, n) over |m| = 0..M, slots +|m| and -|m|."""
 
-    def __init__(self, a, g, k, delta, beta, jmax, nr=None, layer=0.0, gamma_max=5.0e2, blocks=True):
-        self.a, self.g = float(a), (float(g[0]), float(g[1]))
+    def __init__(self, a, g, k, delta, beta, jmax, nr=None, layer=0.0, gamma_max=5.0e2, blocks=True, wall="exact-roots"):
+        self.a, self.g, self.wall = float(a), (float(g[0]), float(g[1])), wall
         self.layer, self.gamma_max = float(layer), float(gamma_max)
         self.k, self.delta, self.beta = float(k), float(delta), float(beta)
         self.ell = wall_offset(k, delta, beta)
@@ -75,6 +83,7 @@ class FunnelBasis:
         self.zc = zc
         self._h, self.fallback, self._tab = {}, {}, {}
         self._warm = None                                      # (G, kappa per row) of the last roots
+        self._grid = None
 
     def G(self, z):
         return 1.0 + self.g[0] * z + self.g[1] * z * z
@@ -87,9 +96,12 @@ class FunnelBasis:
         return (self.a * self.G(z) + self.ell.real) / self.A0, self.a * self.dG(z) / self.A0
 
     def h(self, z):
-        """kappa^2 / 2k of the bore of radius a G(z) per row: exact roots (damped Newton, warm-started from the roots of
-        the previous G scaled by (a G' + ell) / (a G + ell)), DIR-ell where Newton fails."""
+        """kappa^2 / 2k of the bore of radius a G(z) per row. effective-radius: kappa = j / (a G + ell). exact-roots:
+        damped Newton, warm-started from the roots of the previous G scaled by (a G' + ell) / (a G + ell), with the
+        effective radius where Newton fails."""
         G = self.G(z)
+        if self.wall == "effective-radius":
+            return (self.zc / (self.a * G + self.ell)) ** 2 / (2.0 * self.k)
         key = round(G, 12)
         if key not in self._h:
             ag = self.a * G
@@ -127,6 +139,22 @@ class FunnelBasis:
         c[d.M + self.mr, self.nr_] = z[:, 0]
         return c
 
+    def grid(self, T):
+        """(r, phi) grid of the split step for a lens phase of gradient up to T radians per disc radius: Gauss-Legendre
+        radii with the weights w r, J_|m|(j r / A0) per |m| on them, the cosine of the azimuthal nodes, the mode norms.
+        Shared by the bores; rebuilt for a larger T only."""
+        if self._grid is None or self._grid.T < T:
+            d = self.disc
+            t, w = leggauss(radial_nodes(d.jmax + T))
+            r = 0.5 * d.aw * (t + 1.0)
+            nphi = sfft.next_fast_len(2 * d.M + int(T + 10.0 * T ** (1.0 / 3.0)) + 11)
+            with ThreadPoolExecutor(os.cpu_count() or 1) as ex:  # the Bessel ufuncs release the GIL
+                B = list(ex.map(lambda mm: jv(mm, np.outer(r, d.zeros[mm] / d.aw)), range(d.M + 1)))
+            self._grid = SimpleNamespace(T=T, r=r, wr=0.5 * d.aw * w * r, nphi=nphi, B=B,
+                                         cos=np.cos(2.0 * math.pi * np.arange(nphi) / nphi),
+                                         norm=[0.5 * d.aw ** 2 * jv(mm + 1, z) ** 2 for mm, z in enumerate(d.zeros)])
+        return self._grid
+
     def radial_tables(self, m, dr, cache_bytes=3.0 * 2 ** 30):
         """J_|m|(j r / A0) and its r-derivative on r = 0, dr, ..., A0 (+dr): (nf, n_m) each (float32, cached while the
         tables of all |m| fit in cache_bytes)."""
@@ -156,10 +184,12 @@ class FunnelChannel:
     """One funnel bore of entrance centre c0 on a shared FunnelBasis. The propagation frame is turned by the polar angle
     of c0, so the axis term is real: c_m -> c_m exp(i m alpha) on entry and back on exit."""
 
-    def __init__(self, basis, c0):
-        self.b, self.c0 = basis, np.asarray(c0, float)
+    def __init__(self, basis, c0, integrator="cf4"):
+        self.b, self.c0, self.integrator = basis, np.asarray(c0, float), integrator
         self.rho0 = float(np.hypot(*self.c0))
         self.alpha = float(np.arctan2(self.c0[1], self.c0[0]))
+        # split-step: the lens phase gradient of a step [rad per disc radius], the power dropped by the projection per node
+        self.lens_rad = self.projection_loss = None
 
     def coeffs(self, z):
         """Factors of |rho|^2 and of 2 c0.rho, and the constant: (k/2) S S'', (k/2) S G'', (k/2) G G'' rho0^2."""
@@ -234,15 +264,68 @@ class FunnelChannel:
                 deg += n
         return z, deg
 
+    def lens_phase(self, L, n):
+        """Largest radial gradient of the lens phase of one of n steps over L, times the disc radius [rad]."""
+        b, dz = self.b, L / n
+        S = max(b.scale(i * dz)[0] for i in range(n + 1))
+        return dz * 2.0 * b.A0 * abs(b.k * b.g[1]) * S * (self.rho0 + b.a)
+
+    def lens(self, z, q, chunk=8):
+        """Paired coefficients of exp(-i q K) w, K = (a / A0) r^2 + 2 rho0 r cos(phi): synthesis on the (r, phi) grid,
+        the product, projection; chunk nodes at a time."""
+        b, g, nt = self.b, self.grid, os.cpu_count() or 1
+        e = (g.nphi * np.exp(-1j * q * self.K))[:, :, None]
+        out = np.empty_like(z)
+        for j in range(0, z.shape[2], chunk):
+            x = np.ascontiguousarray(z[:, :, j:j + chunk]).view(np.float64)    # real and imaginary parts as columns
+            F = np.zeros((g.nphi, g.r.size, x.shape[2] // 2), complex)
+            for m in range(b.disc.M + 1):
+                o, n = b.off[m], b.cnt[m]
+                F[m] = (g.B[m] @ x[o:o + n, 0]).view(complex)
+                if m:
+                    F[-m] = (g.B[m] @ x[o:o + n, 1]).view(complex)
+            F = sfft.ifft(F, axis=0, overwrite_x=True, workers=nt)
+            F *= e
+            F = sfft.fft(F, axis=0, overwrite_x=True, workers=nt)
+            F *= g.wr[None, :, None] / g.nphi
+            y = np.empty((z.shape[0], 2, F.shape[2]), complex)
+            yr = y.view(np.float64)
+            for m in range(b.disc.M + 1):
+                o, n = b.off[m], b.cnt[m]
+                yr[o:o + n, 0] = (g.B[m].T @ F[m].view(np.float64)) / g.norm[m][:, None]
+                yr[o:o + n, 1] = (g.B[m].T @ F[-m].view(np.float64)) / g.norm[m][:, None] if m else yr[o:o + n, 0]
+            out[:, :, j:j + chunk] = y
+        return out
+
+    def split_step(self, z, z0, dz, tol=None):
+        """One split step exp(-i dz/2 D) exp(-i dz nu K) exp(-i dz/2 D): D the eigenvalues, the damping and the constant,
+        nu = k g1 S the factor of the lens; both the means over the Gauss points of the step. The power that the product
+        puts above jmax is dropped by the projection; its fraction is summed in projection_loss."""
+        b = self.b
+        z1, z2 = z0 + _C1 * dz, z0 + _C2 * dz
+        (_, n1, c1), (_, n2, c2) = self.coeffs(z1), self.coeffs(z2)
+        e = np.exp(-0.5j * dz * (0.5 * (b.h(z1) + b.h(z2) + c1 + c2) - 1j * b.damp))[:, None, None]
+        z = e * z
+        y = self.lens(z, 0.5 * dz * (n1 + n2))
+        self.projection_loss += 1.0 - (self.pw * np.abs(y) ** 2).sum((0, 1)) / (self.pw * np.abs(z) ** 2).sum((0, 1))
+        return e * y, 0
+
     def propagate(self, c, L, dz_max, tol=CHEB_TOL):
         """Exit coefficients (signed layout) of the entrance coefficients c, steps of at most dz_max; with the power
         fraction left in the absorbing layer at the exit, per node."""
         n_steps = max(1, int(math.ceil(L / dz_max - 1e-9)))
-        dz, deg = L / n_steps, 0
+        dz, deg, step = L / n_steps, 0, self.step
+        if self.integrator == "split-step":
+            self.lens_rad, step = self.lens_phase(L, n_steps), self.split_step
+            self.grid = g = self.b.grid(self.lens_rad)
+            self.K = self.b.a / self.b.A0 * g.r ** 2 + 2.0 * self.rho0 * np.outer(g.cos, g.r)
+            # power weights of the paired layout: m = 0 sits in both slots, counted once
+            self.pw = (np.concatenate(g.norm)[:, None] * np.stack([np.ones(self.b.mr.size), self.b.mr > 0], axis=1))[:, :, None]
+            self.projection_loss = 0.0
         rot = np.exp(1j * np.array(self.b.disc.ms) * self.alpha)[:, None, None]
         z = self.b.pair(c * rot)
         for i in range(n_steps):
-            z, n = self.step(z, i * dz, dz, tol)
+            z, n = step(z, i * dz, dz, tol)
             deg += n
         cL = self.b.unpair(z) / rot
         d = self.b.disc
@@ -255,7 +338,6 @@ class FunnelChannel:
         """w(rho, 0) of paraxial point sources at (node, -D) through the geometric aperture a: (2M+1, nmax, B).
         c_mn = int_0^a int u J_|m|(j r / A0) e^{-i m phi} r dr dphi / (pi A0^2 J_{|m|+1}(j)^2), Gauss-Legendre on [0, a]
         (the aperture edge is the end of the interval), FFT over phi."""
-        from scipy import fft as sfft
         b, d = self.b, self.b.disc
         n_r = nr or radial_nodes(d.jmax)
         tq, wq = leggauss(n_r)
@@ -352,6 +434,8 @@ def funnel_scene(sim, wave, lines, log, out_dir=None):
     jmax, layer = int(wave["fb_jmax"]), 0.1
     dz = float(wave["fb_dz"])
     tol = float(wave["fb_chebyshev_tol"])
+    wall, integrator = wave["fb_wall"], wave["fb_integrator"]
+    split = integrator == "split-step"
     t0 = time.time()
     samplers = [ScreenSampler(ScreenGrid(s), s.reference or (ScreenGrid(s).cxf, ScreenGrid(s).cyf), "point", 1) for s in screens]
     I = [np.zeros((sm.nx, sm.ny)) for sm in samplers]
@@ -366,9 +450,9 @@ def funnel_scene(sim, wave, lines, log, out_dir=None):
         os.makedirs(dump_dir, exist_ok=True)
     basis = dr = None
     for li, (k, wl, delta, beta) in enumerate(lines):
-        basis = FunnelBasis(a, g, k, delta, beta, jmax, layer=layer)
+        basis = FunnelBasis(a, g, k, delta, beta, jmax, layer=layer, blocks=not split, wall=wall)
         dr = min(float(wave["fb_dr"]), basis.disc.aw / 1500.0)
-        chans = [FunnelChannel(basis, c) for c in centres]
+        chans = [FunnelChannel(basis, c, integrator) for c in centres]
         exits = {}
 
         def exit_coeffs(bi):
@@ -382,8 +466,12 @@ def funnel_scene(sim, wave, lines, log, out_dir=None):
                 if dump_dir is not None:
                     np.save(os.path.join(dump_dir, f"line{li}-bore{bi}.npy"), cL)
                 info.append({"line": li, "bore": bi, "steps": n_steps, "chebyshev_degree": deg, "seconds": time.time() - t1,
+                             "lens_phase_rad": chans[bi].lens_rad,
+                             "projection_loss": chans[bi].projection_loss.tolist() if split else None,
                              "transmission": (p_out / p_in).tolist(), "layer_power": chans[bi].layer_power.tolist()})
-                log(f"  16 [funnel]: line {li} bore {bi}: {n_steps} steps, Chebyshev degree {deg}, {time.time() - t1:.0f} s")
+                how = (f"lens phase {chans[bi].lens_rad:.2f} rad per step, projection loss {chans[bi].projection_loss.max():.1e}"
+                       if split else f"Chebyshev degree {deg}")
+                log(f"  16 [funnel]: line {li} bore {bi}: {n_steps} steps, {how}, {time.time() - t1:.0f} s")
             return exits[bi]
 
         # reference fields of every node at every screen reference
@@ -430,9 +518,10 @@ def funnel_scene(sim, wave, lines, log, out_dir=None):
     Ic = np.real(np.diag(Wc))
     mu_c = Wc / np.sqrt(np.outer(Ic, Ic))
     files, out = [], []
-    meta_base = {"provider": "fb", "model_class": "exact-jk,funnel-xi", "source_rule": rule, "n_nodes": int(nn),
+    meta_base = {"provider": "fb", "source_rule": rule, "n_nodes": int(nn),
+                 "model_class": {"exact-roots": "exact-jk", "effective-radius": "effective-radius"}[wall] + ",funnel-xi",
                  "funnel": {"g": list(g), "G_exit": G_L, "radius_m": a, "jmax": jmax, "layer": layer,
-                            "n_modes": int(basis.disc.nmodes),
+                            "wall": wall, "integrator": integrator, "n_modes": int(basis.disc.nmodes),
                             "A0_m": basis.A0, "dz_m": dz, "chebyshev_tol": tol, "dr_m": dr,
                             "exact_fallback_modes": sum(basis.fallback.values())},
                  "propagation": info, "distance_m": 0.0}
@@ -454,6 +543,7 @@ def funnel_scene(sim, wave, lines, log, out_dir=None):
         meta = dict(meta_base, scene=label)
         res = _finish(acc, sm, meta, wave, seconds)
         res["report"] = _report_lines(label, res, wave, [f"- funnel: G(L) = {G_L:.6f}, jmax {jmax}, {basis.disc.nmodes} modes, "
+                                                          f"wall {wall}, integrator {integrator}, "
                                                           f"sub-step {dz * 1e3:g} mm, centres matrix in funnel-centres.json"])
         res["fb_files"] = files
         out.append((label, res))
