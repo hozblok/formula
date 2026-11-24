@@ -80,7 +80,7 @@ def _scene(nx=45, ref=(0.0, 0.0)):
                                      "position": [0.0, 0.0, -L / 3.0], "n_modes": 5, "n_rays": 1},
                           "screen": {"z": L, "center": [0.0, 0.0], "edge_x": 10.8e-6, "edge_y": 3.6e-6, "nx": nx, "ny": 15,
                                      "reference": list(ref)}},
-            "wave_estimator": {"provider": "fb", "observable": "point", "fb_wall": "exact", "fb_jmax": 30, "fb_dz": 2.0e-5}}
+            "wave_estimator": {"provider": "fb", "observable": "point", "fb_wall": "exact-roots", "fb_jmax": 30, "fb_dz": 2.0e-5}}
 
 
 def test_run_two_bores(tmp_path):
@@ -97,7 +97,7 @@ def test_run_two_bores(tmp_path):
     assert lit and all(r["mu_abs"] <= 1.0 + 1e-9 for r in lit)
     ref = [r for r in lit if abs(r["x_um"]) < 1e-9 and abs(r["y_um"]) < 1e-9]
     assert ref and ref[0]["mu_abs"] == pytest.approx(1.0, abs=1e-6)
-    with pytest.raises(ValueError, match="fb_wall: exact"):
+    with pytest.raises(ValueError, match="fb_wall: exact-roots"):
         raw = _scene()
         raw["wave_estimator"]["fb_wall"] = "dir-ell"
         Simulation.from_dict(raw).run(str(tmp_path / "x"), stages=[16])

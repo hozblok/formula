@@ -156,7 +156,7 @@ def _scene(extra, length=0.005, a=0.5e-6):
 
 def test_stage_far_field_dump_exact_and_mirror_symmetry(tmp_path):
     plane = {"center": [0.0, 0.0], "fwhm": 30e-6, "tilt": [1.2e-3, 0.0]}
-    raw = _scene({"entrance_spot": plane, "fb_wall": "exact", "dump_field": True,
+    raw = _scene({"entrance_spot": plane, "fb_wall": "exact-roots", "dump_field": True,
                   "far_field": {"theta_max": 2.5e-3, "ring": [0.9e-3, 1.5e-3], "n_theta": 101}})
     sim = Simulation.from_dict(raw)
     res = W.run_wave_stage(sim, str(tmp_path), sim.cfg.validate_wave_estimator(), log=lambda *a: None)

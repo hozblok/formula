@@ -694,8 +694,8 @@ def capillary_provider(cap, wave):
     if prov == "fb" and not circular:
         raise ValueError("wave_estimator: provider fb supports circular bores (radius, optional "
                          f"bend) or conformal funnels only; got kinds {sorted(kinds)}")
-    if prov == "fb" and kinds == {"funnel"} and wave.get("fb_wall") != "exact":
-        raise ValueError("wave_estimator: provider fb on funnel bores needs fb_wall: exact")
+    if prov == "fb" and kinds == {"funnel"} and wave.get("fb_wall") != "exact-roots":
+        raise ValueError("wave_estimator: provider fb on funnel bores needs fb_wall: exact-roots")
     if prov is None:
         raise ValueError(f"wave_estimator: no provider for bore kinds {sorted(kinds)} "
                          "(uisk: polygons; fb: circular / torus)")

@@ -9,7 +9,7 @@ exp(i k c'(L).x' + i g), g = k L^3 / (6 R^2); screens by angular-spectrum drift 
 lattice and exact cell integrals of the band-limited field (Fourier box), reference cell as
 Stage 14.  Conventions as the uisk provider: W = <E(P) E*(P_ref)>, e^{-i omega t}, carrier
 e^{+ikz} dropped; entrance field exp(ik|x - s|^2 / 2 z_in) / (i lambda z_in).
-Options: wall `exact` (per-mode roots of the J_m / K_m characteristic equation of the hollow
+Options: wall `exact-roots` (per-mode roots of the J_m / K_m characteristic equation of the hollow
 cylinder instead of DIR-ell), a wall figure dr(phi, z) to first order (Hadamard) with the q = 1
 part as an exact co-moving axis path, the far field from the exit modes (Lommel integrals) and
 a dump of the entrance / exit mode coefficients.
@@ -849,7 +849,7 @@ def _init_worker(spec):
     figure = WallFigure(spec["figure"]["terms"], spec["figure"]["noise"], spec["length"])
     chans, fallback = {}, {}
     for k, wl, delta, beta in spec["lines"]:
-        if spec["wall"] == "exact":
+        if spec["wall"] == "exact-roots":
             row = []
             for b in spec["bores"]:
                 kap, ok = exact_kappa(disc, a=b["radius"], k=k, delta=delta, beta=beta)
@@ -1009,14 +1009,14 @@ def fb_capillary_scene(sim, wave, lines, rays_paths, log, out_dir=None):
                 extra[key] = extra[key] + v
     fig = WallFigure(spec["figure"]["terms"], spec["figure"]["noise"], spec["length"])
     fallback = ({f"{float(HC_KEV_ANGSTROM) * k / (2.0e10 * math.pi):.6f}": n for k, n in sorted(extra["fallback"].items())}
-                if spec["wall"] == "exact" else None)
+                if spec["wall"] == "exact-roots" else None)
     files = []
     if out_dir is not None and spec["far"] is not None:
         files += _emit_far_field(out_dir, spec, lines, extra, wave)
     if out_dir is not None and spec["dump"]:
         files += _emit_dump(out_dir, spec, lines, extra, nodes, weights)
     transmission = [float(po / pi) if pi > 0.0 else None for pi, po in zip(extra["p_in"], extra["p_out"])]
-    wall_label = {"dir-ell": "dir-ell", "dir-ell-real": "dir-ell,no-absorption", "exact": "exact-jk"}[spec["wall"]]
+    wall_label = {"dir-ell": "dir-ell", "dir-ell-real": "dir-ell,no-absorption", "exact-roots": "exact-jk"}[spec["wall"]]
     out = []
     a = spec["bores"][0]["radius"]
     for label, s, smp, acc in zip(labels, spec["screens"], samplers, accs):
@@ -1043,7 +1043,7 @@ def fb_capillary_scene(sim, wave, lines, rays_paths, log, out_dir=None):
         res = _finish(acc, smp, meta, wave, time.time() - t0)
         wall_text = {"dir-ell": f"wall DIR-ℓ, ℓ = {spec['ells'][0][0]*1e9:.3f} + {spec['ells'][0][1]*1e9:.3f}i nm, damping × Fresnel loss at θ_w",
                      "dir-ell-real": f"wall DIR-ℓ, ℓ = {spec['ells'][0][0]*1e9:.3f} nm (absorption off)",
-                     "exact": "wall exact: J_m / K_m characteristic equation per mode and line"
+                     "exact-roots": "wall exact roots: J_m / K_m characteristic equation per mode and line"
                               + (f" (DIR-ℓ fallback for {sum(fallback.values())} mode(s))" if fallback and sum(fallback.values()) else "")}
         lines_r = [
             f"- provider fb: j_max = {spec['jmax']} (θ_modal = {spec['theta_modal']*1e3:.3f} mrad, tilt {spec['tilt']*1e3:.3f} mrad), "

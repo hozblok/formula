@@ -180,7 +180,7 @@ def _channel(spec, disc, figure, k, delta, beta, fallback):
         ell = wall_offset(k, delta, beta)
         return FBChannel(c0=b["center"], t=b["toward"], rbend=b["rbend"], disc=disc, k=k, figure=figure, dz=spec["dz"],
                          wall_loss=1j * ell.imag)
-    if spec["wall"] == "exact":
+    if spec["wall"] == "exact-roots":
         kap, ok = exact_kappa(disc, a=b["radius"], k=k, delta=delta, beta=beta)
         dirl = disc.kap2 / (2.0 * k) - 1j * mode_damping(disc, k, delta, beta)
         h0 = np.where(disc.valid, np.where(ok[disc.am], (kap * kap)[disc.am] / (2.0 * k), dirl), 0.0)
@@ -307,7 +307,7 @@ def _run(sim, partial, wave, packet, log):
     np.savez(os.path.join(partial, NPZ), **arrays)
     files = [NPZ]
     wall_label = {"dir-ell": "dir-ell," + ("boundary-loss" if spec["loss"] == "boundary" else "diagonal-loss"),
-                  "dir-ell-real": "dir-ell,no-absorption", "exact": "exact-jk"}[spec["wall"]]
+                  "dir-ell-real": "dir-ell,no-absorption", "exact-roots": "exact-jk"}[spec["wall"]]
     seconds = time.time() - t0
     meta = {"scene": "capillary", "stage": 20, "provider": "fb",
             "model_class": wall_label + (",parabolic-axis" if bent else "") + (",hadamard-figure" if figure.has_wall else "")
@@ -318,7 +318,7 @@ def _run(sim, partial, wave, packet, log):
             "wall": spec["wall"], "loss": spec["loss"] if spec["wall"] == "dir-ell" else ("none" if spec["wall"] == "dir-ell-real" else "diagonal"),
             "wall_offset_nm": [[e[0] * 1e9, e[1] * 1e9] for e in spec["ells"]],
             "exact_fallback_modes": ({f"{float(HC_KEV_ANGSTROM) * k / (2.0e10 * math.pi):.6f}": n for k, n in sorted(fallback.items())}
-                                     if spec["wall"] == "exact" else None),
+                                     if spec["wall"] == "exact-roots" else None),
             "propagator": "chebyshev" if degrees else "diagonal",
             "chebyshev_degree_median": int(np.median(degrees)) if degrees else None,
             "chebyshev_tol": spec["cheb_tol"], "figure": spec["figure"],
