@@ -28,6 +28,7 @@ import json
 import math
 import os
 import time
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
@@ -63,14 +64,19 @@ class FunnelBasis:
     the Galerkin blocks, the profile G, the absorbing top layer and the mode eigenvalues h(G) (cached by G).
     Propagation works on the paired layout (N, 2, B): rows (|m|, n) over |m| = 0..M, slots +|m| and -|m|."""
 
-    def __init__(self, a, g, k, delta, beta, jmax, nr=None, layer=0.0, gamma_max=5.0e2, blocks=True, wall="exact-roots"):
+    def __init__(self, *, a: float, g: Sequence[float], k: float, delta: float, beta: float, jmax: float,
+                 nr: int | None = None, layer: float = 0.0, gamma_max: float = 5.0e2, blocks: bool = True,
+                 wall: str = "exact-roots") -> None:
+        """a: bore radius at the entrance [m]; g: (g0 [1/m], g1 [1/m^2]) of G; k: wavenumber [1/m]; delta, beta: wall
+        index n = 1 - delta + i beta; jmax: cut of the zeros, j_mn < jmax; nr: radial nodes of the Galerkin blocks
+        (None: radial_nodes(jmax)); layer: absorbing fraction of jmax at its top (0: none); gamma_max: amplitude damping
+        rate at jmax [1/m]; blocks: build the Galerkin blocks of cf4; wall: exact-roots or effective-radius."""
         self.a, self.g, self.wall = float(a), (float(g[0]), float(g[1])), wall
         self.layer, self.gamma_max = float(layer), float(gamma_max)
         self.k, self.delta, self.beta = float(k), float(delta), float(beta)
         self.ell = wall_offset(k, delta, beta)
         self.A0 = self.a + self.ell.real
         self.disc = d = Disc(aw=self.A0, jmax=jmax, nr=8)                # zeros, norms and index maps; blocks on their own quadrature
-        # blocks=False: only the evaluation of stored coefficients (points, centre values)
         self.R, self.S, self.T = _galerkin(d, nr or radial_nodes(jmax)) if blocks else (None, None, None)
         self.cnt = np.array([z.size for z in d.zeros])
         self.off = np.concatenate([[0], np.cumsum(self.cnt)])
@@ -85,20 +91,22 @@ class FunnelBasis:
         self._warm = None                                      # (G, kappa per row) of the last roots
         self._grid = None
 
-    def G(self, z):
+    def G(self, z: float) -> float:
+        """Profile G = 1 + g0 z + g1 z^2. z: distance from the entrance [m]."""
         return 1.0 + self.g[0] * z + self.g[1] * z * z
 
-    def dG(self, z):
+    def dG(self, z: float) -> float:
+        """dG/dz [1/m]. z: distance from the entrance [m]."""
         return self.g[0] + 2.0 * self.g[1] * z
 
-    def scale(self, z):
-        """Scale S = (a G + Re ell) / A0 of the bore frame and its z-derivative."""
+    def scale(self, z: float) -> tuple[float, float]:
+        """Scale S = (a G + Re ell) / A0 of the bore frame and its z-derivative. z: distance from the entrance [m]."""
         return (self.a * self.G(z) + self.ell.real) / self.A0, self.a * self.dG(z) / self.A0
 
-    def h(self, z):
+    def h(self, z: float) -> np.ndarray:
         """kappa^2 / 2k of the bore of radius a G(z) per row. effective-radius: kappa = j / (a G + ell). exact-roots:
         damped Newton, warm-started from the roots of the previous G scaled by (a G' + ell) / (a G + ell), with the
-        effective radius where Newton fails."""
+        effective radius where Newton fails. z: distance from the entrance [m]."""
         G = self.G(z)
         if self.wall == "effective-radius":
             return (self.zc / (self.a * G + self.ell)) ** 2 / (2.0 * self.k)
@@ -127,22 +135,23 @@ class FunnelBasis:
             self.fallback[key] = int(np.sum(~ok))
         return self._h[key]
 
-    def pair(self, c):
-        """Signed (2M+1, nmax, B) -> paired (N, 2, B)."""
+    def pair(self, c: np.ndarray) -> np.ndarray:
+        """Signed (2M+1, nmax, B) -> paired (N, 2, B). c: coefficients, rows m = -M..M, columns n, B source nodes."""
         M = self.disc.M
         return np.ascontiguousarray(np.stack([c[M + self.mr, self.nr_], c[M - self.mr, self.nr_]], axis=1))
 
-    def unpair(self, z):
+    def unpair(self, z: np.ndarray) -> np.ndarray:
+        """Paired (N, 2, B) -> signed (2M+1, nmax, B). z: coefficients, rows (|m|, n), slots +|m| and -|m|."""
         d = self.disc
         c = np.zeros((2 * d.M + 1, d.nmax, z.shape[2]), complex)
         c[d.M - self.mr, self.nr_] = z[:, 1]
         c[d.M + self.mr, self.nr_] = z[:, 0]
         return c
 
-    def grid(self, T):
-        """(r, phi) grid of the split step for a lens phase of gradient up to T radians per disc radius: Gauss-Legendre
-        radii with the weights w r, J_|m|(j r / A0) per |m| on them, the cosine of the azimuthal nodes, the mode norms.
-        Shared by the bores; rebuilt for a larger T only."""
+    def grid(self, T: float) -> SimpleNamespace:
+        """(r, phi) grid of the split step: Gauss-Legendre radii with the weights w r, J_|m|(j r / A0) per |m| on them,
+        the cosine of the azimuthal nodes, the mode norms. Shared by the bores; rebuilt for a larger T only.
+        T: largest gradient of the lens phase of a step [rad per disc radius]."""
         if self._grid is None or self._grid.T < T:
             d = self.disc
             t, w = leggauss(radial_nodes(d.jmax + T))
@@ -155,9 +164,10 @@ class FunnelBasis:
                                          norm=[0.5 * d.aw ** 2 * jv(mm + 1, z) ** 2 for mm, z in enumerate(d.zeros)])
         return self._grid
 
-    def radial_tables(self, m, dr, cache_bytes=3.0 * 2 ** 30):
+    def radial_tables(self, m: int, dr: float, cache_bytes: float = 3.0 * 2 ** 30) -> tuple[np.ndarray, np.ndarray]:
         """J_|m|(j r / A0) and its r-derivative on r = 0, dr, ..., A0 (+dr): (nf, n_m) each (float32, cached while the
-        tables of all |m| fit in cache_bytes)."""
+        tables of all |m| fit in cache_bytes). m: azimuthal order, taken as |m|; dr: radial step [m]; cache_bytes:
+        cap on the tables of all |m| [bytes]."""
         d = self.disc
         key = (abs(m), dr)
         if key in self._tab:
@@ -170,8 +180,9 @@ class FunnelBasis:
             self._tab[key] = tab
         return tab
 
-    def prefetch(self, dr, cache_bytes=3.0 * 2 ** 30):
-        """All radial tables of step dr in threads (the Bessel ufuncs release the GIL), when they fit the cache."""
+    def prefetch(self, dr: float, cache_bytes: float = 3.0 * 2 ** 30) -> None:
+        """All radial tables of step dr in threads (the Bessel ufuncs release the GIL), when they fit the cache.
+        dr: radial step [m]; cache_bytes: cap on the tables of all |m| [bytes]."""
         d = self.disc
         if 8 * (int((d.aw + 2.0 * dr) / dr) + 2) * d.nmodes > cache_bytes:
             return
@@ -450,7 +461,7 @@ def funnel_scene(sim, wave, lines, log, out_dir=None):
         os.makedirs(dump_dir, exist_ok=True)
     basis = dr = None
     for li, (k, wl, delta, beta) in enumerate(lines):
-        basis = FunnelBasis(a, g, k, delta, beta, jmax, layer=layer, blocks=not split, wall=wall)
+        basis = FunnelBasis(a=a, g=g, k=k, delta=delta, beta=beta, jmax=jmax, layer=layer, blocks=not split, wall=wall)
         dr = min(float(wave["fb_dr"]), basis.disc.aw / 1500.0)
         chans = [FunnelChannel(basis, c, integrator) for c in centres]
         exits = {}
