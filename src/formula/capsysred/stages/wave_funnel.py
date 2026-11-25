@@ -28,9 +28,10 @@ import json
 import math
 import os
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
+from typing import Literal
 
 import numpy as np
 from numpy.polynomial.legendre import leggauss
@@ -195,23 +196,28 @@ class FunnelChannel:
     """One funnel bore of entrance centre c0 on a shared FunnelBasis. The propagation frame is turned by the polar angle
     of c0, so the axis term is real: c_m -> c_m exp(i m alpha) on entry and back on exit."""
 
-    def __init__(self, basis, c0, integrator="cf4"):
+    def __init__(self, *, basis: FunnelBasis, c0: Sequence[float] | np.ndarray,
+                 integrator: Literal["cf4", "split-step"]) -> None:
+        """basis: shared FunnelBasis; c0: bore centre at the entrance (x, y) [m]; integrator: cf4 or split-step."""
         self.b, self.c0, self.integrator = basis, np.asarray(c0, float), integrator
         self.rho0 = float(np.hypot(*self.c0))
         self.alpha = float(np.arctan2(self.c0[1], self.c0[0]))
         # split-step: the lens phase gradient of a step [rad per disc radius], the power dropped by the projection per node
         self.lens_rad = self.projection_loss = None
 
-    def coeffs(self, z):
-        """Factors of |rho|^2 and of 2 c0.rho, and the constant: (k/2) S S'', (k/2) S G'', (k/2) G G'' rho0^2."""
+    def coeffs(self, z: float) -> tuple[float, float, float]:
+        """Factors of |rho|^2 and of 2 c0.rho, and the constant: (k/2) S S'', (k/2) S G'', (k/2) G G'' rho0^2.
+        z: distance from the entrance [m]."""
         b = self.b
         kg = b.k * b.g[1]                                      # k G'' / 2
         S = b.scale(z)[0]
         return kg * b.a / b.A0 * S, kg * S, kg * b.G(z) * self.rho0 ** 2
 
-    def operator(self, za, zb, wa, wb, scale=1.0):
+    def operator(self, za: float, zb: float, wa: float, wb: float,
+                 scale: float = 1.0) -> tuple[Callable[..., np.ndarray], tuple[float, float], float]:
         """A = scale (wa H(za) + wb H(zb)) on the paired layout: (apply(z, alpha, shift) = alpha (A - shift) z, spectral
-        bounds of the Hermitian part of A, max damping)."""
+        bounds of the Hermitian part of A, max damping). za, zb: distances from the entrance [m]; wa, wb: weights of H
+        at them; scale: common factor of A."""
         b, d = self.b, self.b.disc
         qa, qb = self.coeffs(za), self.coeffs(zb)
         q2, q1, q0 = (scale * (wa * x + wb * y) for x, y in zip(qa, qb))
@@ -219,7 +225,7 @@ class FunnelChannel:
         hd = scale * (wa * b.h(za) + wb * b.h(zb) - 1j * (wa + wb) * b.damp) + q0
         R, S, T, off, cnt, M = b.R, b.S, b.T, b.off, b.cnt, d.M
 
-        def apply(z, alpha=1.0, shift=0.0):
+        def apply(z: np.ndarray, alpha: float = 1.0, shift: float = 0.0) -> np.ndarray:
             y = (alpha * (hd - shift))[:, None, None] * z
             x = z.view(np.float64).reshape(z.shape[0], -1)
             yr = y.view(np.float64).reshape(z.shape[0], -1)
@@ -241,9 +247,11 @@ class FunnelChannel:
         return apply, (min(0.0, float(hd.real.min())) - v, float(hd.real.max()) + v), float(np.max(-hd.imag))
 
     @staticmethod
-    def _chebyshev(apply, bounds, c, L, tol):
+    def _chebyshev(apply: Callable[..., np.ndarray], bounds: tuple[float, float], c: np.ndarray, L: float,
+                   tol: float) -> tuple[np.ndarray, int]:
         """exp(-i A L) c for apply(z, alpha, shift) = alpha (A - shift) z with the spectrum of A inside bounds
-        (Tal-Ezer & Kosloff): T_{i+1} = 2 X T_i - T_{i-1}, X = (A - ec) / dE."""
+        (Tal-Ezer & Kosloff): T_{i+1} = 2 X T_i - T_{i-1}, X = (A - ec) / dE. c: paired coefficients; L: length of
+        the exponent [m]; tol: the degree n grows until |J_n(dE L)| <= tol."""
         emin, emax = bounds
         dE, ec = 0.5 * (emax - emin) * CHEB_MARGIN, 0.5 * (emax + emin)
         t = dE * L
@@ -261,10 +269,11 @@ class FunnelChannel:
         res *= np.exp(-1j * ec * L)
         return res, n
 
-    def step(self, z, z0, dz, tol):
+    def cf4_step(self, z: np.ndarray, z0: float, dz: float, tol: float) -> tuple[np.ndarray, int]:
         """One CF4 step: exp(-i dz (w+ H1 + w- H2)) then exp(-i dz (w- H1 + w+ H2)), H1, H2 at the Gauss points,
         w+- = 1/4 +- sqrt(3)/6; each as exp(-i (dz/2) (2 A)) in sub-steps that keep the damping small on the scaled
-        spectrum (2 g_max (dz/2) / n_sub <= CHEB_DAMP)."""
+        spectrum (2 g_max (dz/2) / n_sub <= CHEB_DAMP). z: paired coefficients at z0; z0: start of the step, from the
+        entrance [m]; dz: step [m]; tol: Chebyshev tolerance."""
         z1, z2 = z0 + _C1 * dz, z0 + _C2 * dz
         deg = 0
         for wa, wb in ((_WP, _WM), (_WM, _WP)):
@@ -275,15 +284,16 @@ class FunnelChannel:
                 deg += n
         return z, deg
 
-    def lens_phase(self, L, n):
-        """Largest radial gradient of the lens phase of one of n steps over L, times the disc radius [rad]."""
+    def lens_phase(self, L: float, n: int) -> float:
+        """Largest radial gradient of the lens phase of one of n steps over L, times the disc radius [rad].
+        L: bore length [m]; n: number of steps."""
         b, dz = self.b, L / n
         S = max(b.scale(i * dz)[0] for i in range(n + 1))
         return dz * 2.0 * b.A0 * abs(b.k * b.g[1]) * S * (self.rho0 + b.a)
 
-    def lens(self, z, q, chunk=8):
+    def lens(self, z: np.ndarray, q: float, chunk: int = 8) -> np.ndarray:
         """Paired coefficients of exp(-i q K) w, K = (a / A0) r^2 + 2 rho0 r cos(phi): synthesis on the (r, phi) grid,
-        the product, projection; chunk nodes at a time."""
+        the product, projection. z: paired coefficients of w; q: factor of K [1/m^2]; chunk: source nodes per pass."""
         b, g, nt = self.b, self.grid, os.cpu_count() or 1
         e = (g.nphi * np.exp(-1j * q * self.K))[:, :, None]
         out = np.empty_like(z)
@@ -308,10 +318,11 @@ class FunnelChannel:
             out[:, :, j:j + chunk] = y
         return out
 
-    def split_step(self, z, z0, dz, tol=None):
+    def split_step(self, z: np.ndarray, z0: float, dz: float) -> np.ndarray:
         """One split step exp(-i dz/2 D) exp(-i dz nu K) exp(-i dz/2 D): D the eigenvalues, the damping and the constant,
         nu = k g1 S the factor of the lens; both the means over the Gauss points of the step. The power that the product
-        puts above jmax is dropped by the projection; its fraction is summed in projection_loss."""
+        puts above jmax is dropped by the projection; its fraction is summed in projection_loss.
+        z, z0, dz: as in cf4_step."""
         b = self.b
         z1, z2 = z0 + _C1 * dz, z0 + _C2 * dz
         (_, n1, c1), (_, n2, c2) = self.coeffs(z1), self.coeffs(z2)
@@ -319,15 +330,16 @@ class FunnelChannel:
         z = e * z
         y = self.lens(z, 0.5 * dz * (n1 + n2))
         self.projection_loss += 1.0 - (self.pw * np.abs(y) ** 2).sum((0, 1)) / (self.pw * np.abs(z) ** 2).sum((0, 1))
-        return e * y, 0
+        return e * y
 
-    def propagate(self, c, L, dz_max, tol=CHEB_TOL):
+    def propagate(self, c: np.ndarray, L: float, dz_max: float, tol: float = CHEB_TOL) -> tuple[np.ndarray, int, int]:
         """Exit coefficients (signed layout) of the entrance coefficients c, steps of at most dz_max; with the power
-        fraction left in the absorbing layer at the exit, per node."""
+        fraction left in the absorbing layer at the exit, per node. c: (2M+1, nmax, B); L: bore length [m];
+        dz_max: largest step [m]; tol: Chebyshev tolerance of cf4."""
         n_steps = max(1, int(math.ceil(L / dz_max - 1e-9)))
-        dz, deg, step = L / n_steps, 0, self.step
-        if self.integrator == "split-step":
-            self.lens_rad, step = self.lens_phase(L, n_steps), self.split_step
+        dz, deg, split = L / n_steps, 0, self.integrator == "split-step"
+        if split:
+            self.lens_rad = self.lens_phase(L, n_steps)
             self.grid = g = self.b.grid(self.lens_rad)
             self.K = self.b.a / self.b.A0 * g.r ** 2 + 2.0 * self.rho0 * np.outer(g.cos, g.r)
             # power weights of the paired layout: m = 0 sits in both slots, counted once
@@ -336,8 +348,11 @@ class FunnelChannel:
         rot = np.exp(1j * np.array(self.b.disc.ms) * self.alpha)[:, None, None]
         z = self.b.pair(c * rot)
         for i in range(n_steps):
-            z, n = step(z, i * dz, dz, tol)
-            deg += n
+            if split:
+                z = self.split_step(z, i * dz, dz)
+            else:
+                z, n = self.cf4_step(z, i * dz, dz, tol)
+                deg += n
         cL = self.b.unpair(z) / rot
         d = self.b.disc
         p = np.abs(cL) ** 2 * d.mnorm[:, :, None]
@@ -345,10 +360,12 @@ class FunnelChannel:
         self.layer_power = np.where(top, p, 0.0).sum((0, 1)) / p.sum((0, 1))
         return cL, n_steps, deg
 
-    def entrance_modes(self, nodes, D, nr=None):
+    def entrance_modes(self, nodes: Sequence[Sequence[float]] | np.ndarray, D: float,
+                       nr: int | None = None) -> np.ndarray:
         """w(rho, 0) of paraxial point sources at (node, -D) through the geometric aperture a: (2M+1, nmax, B).
         c_mn = int_0^a int u J_|m|(j r / A0) e^{-i m phi} r dr dphi / (pi A0^2 J_{|m|+1}(j)^2), Gauss-Legendre on [0, a]
-        (the aperture edge is the end of the interval), FFT over phi."""
+        (the aperture edge is the end of the interval), FFT over phi. nodes: source points (x, y) [m]; D: distance from
+        the source plane to the entrance [m]; nr: radial nodes on [0, a] (None: radial_nodes(jmax))."""
         b, d = self.b, self.b.disc
         n_r = nr or radial_nodes(d.jmax)
         tq, wq = leggauss(n_r)
@@ -372,23 +389,26 @@ class FunnelChannel:
                 out[m + d.M, :zz.size] = (F[:, :, m % nphi] @ P).T
         return out
 
-    def _frame(self, z, dx, dy):
-        """Scale S of the bore frame at z and the phase of E / w at the lab offsets (dx, dy) from the bore axis."""
+    def _frame(self, z: float, dx: float | np.ndarray, dy: float | np.ndarray) -> tuple[float, float | np.ndarray]:
+        """Scale S of the bore frame at z and the phase of E / w at the lab offsets (dx, dy) from the bore axis.
+        z: distance from the entrance [m]; dx, dy: [m]."""
         b = self.b
         S, dS = b.scale(z)
         G, dG = b.G(z), b.dG(z)
         return S, b.k * (dS * (dx * dx + dy * dy) / (2.0 * S) + dG * (self.c0[0] * dx + self.c0[1] * dy)
                          + 0.5 * G * dG * self.rho0 ** 2)
 
-    def centre_values(self, c, z):
-        """E at the bore centre G(z) c0 for every node: only m = 0 is non-zero at rho = 0. (B,)"""
+    def centre_values(self, c: np.ndarray, z: float) -> np.ndarray:
+        """E at the bore centre G(z) c0 for every node: only m = 0 is non-zero at rho = 0. (B,)
+        c: coefficients at z, (2M+1, nmax, B); z: distance from the entrance [m]."""
         S, ph = self._frame(z, 0.0, 0.0)
         w0 = c[self.b.disc.M].sum(axis=0)                       # J_0(0) = 1
         return w0 / S * np.exp(1j * ph)
 
-    def points(self, c, z, X, Y, dr):
+    def points(self, c: np.ndarray, z: float, X: np.ndarray, Y: np.ndarray, dr: float) -> tuple[np.ndarray, np.ndarray]:
         """E at lab points (X, Y) inside the geometric core a G(z) for every node: (n_points, B) and the inside mask.
-        Radial functions by cubic Hermite interpolation on r = 0, dr, ... (relative error ~ (2 pi dr jmax / A0)^4 / 384)."""
+        Radial functions by cubic Hermite interpolation on r = 0, dr, ... (relative error ~ (2 pi dr jmax / A0)^4 / 384).
+        c: coefficients at z, (2M+1, nmax, B); z: distance from the entrance [m]; X, Y: [m]; dr: radial step [m]."""
         b, d = self.b, self.b.disc
         G = b.G(z)
         dx, dy = X - G * self.c0[0], Y - G * self.c0[1]
@@ -463,7 +483,7 @@ def funnel_scene(sim, wave, lines, log, out_dir=None):
     for li, (k, wl, delta, beta) in enumerate(lines):
         basis = FunnelBasis(a=a, g=g, k=k, delta=delta, beta=beta, jmax=jmax, layer=layer, blocks=not split, wall=wall)
         dr = min(float(wave["fb_dr"]), basis.disc.aw / 1500.0)
-        chans = [FunnelChannel(basis, c, integrator) for c in centres]
+        chans = [FunnelChannel(basis=basis, c0=c, integrator=integrator) for c in centres]
         exits = {}
 
         def exit_coeffs(bi):
