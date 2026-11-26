@@ -1,4 +1,4 @@
-"""Scene of the Stage 16 provider fb for conformal funnel bores (the basis and the channel are in funnel.py).
+"""Scene of the Stage 16 provider fb for conformal funnel bores (basis.py, channel.py).
 The bores are propagated one after another with all source nodes as one block; W and I accumulate bore by bore (the exit
 cores do not overlap), and the fields at the bore centres give the matrix of mu between the centres. With dump_field
 the exit coefficients of every bore (all nodes) are written to funnel-exit/ for post-processing without propagation."""
@@ -11,11 +11,12 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from ...screen import ScreenGrid
-from .funnel import FunnelBasis, FunnelChannel
-from .output import _report_lines
-from .screen_sampler import ScreenSampler, _finish
-from .source import _rule
+from .....screen import ScreenGrid
+from ...output import _report_lines
+from ...screen_sampler import ScreenSampler, _finish
+from ...source import _rule
+from .basis import FunnelBasis
+from .channel import FunnelChannel
 
 
 def funnel_scene(sim, wave, lines, log, out_dir=None):

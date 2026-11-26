@@ -11,7 +11,8 @@ import numpy as np
 import pytest
 
 from formula.capsysred import Simulation
-from formula.capsysred.stages.wave import funnel as WF
+from formula.capsysred.stages.wave.providers.funnel import basis as WFB
+from formula.capsysred.stages.wave.providers.funnel import channel as WFC
 from formula.xray import OE2012_GLASS
 
 E_KEV = 8.0
@@ -23,8 +24,8 @@ Z26_G = (1.0 / 0.03, -1.0 / (0.03 * 0.46))
 
 def test_straight_limit_is_the_fb_bore():
     """g = 0: G = S = 1 and no lens, so the propagator is the diagonal exp(-i h L) of the exact roots."""
-    basis = WF.FunnelBasis(a=0.5e-6, g=(0.0, 0.0), k=K, delta=DELTA, beta=BETA, jmax=40)
-    ch = WF.FunnelChannel(basis=basis, c0=(0.3e-6, 0.0), integrator="cf4")
+    basis = WFB.FunnelBasis(a=0.5e-6, g=(0.0, 0.0), k=K, delta=DELTA, beta=BETA, jmax=40)
+    ch = WFC.FunnelChannel(basis=basis, c0=(0.3e-6, 0.0), integrator="cf4")
     c0 = ch.entrance_modes([(0.0, 0.0), (-0.1e-6, 0.2e-6)], 1.5e-3)
     cL, _, _ = ch.propagate(c0, 2.0e-3, 1.0e-3)
     hp = np.zeros(basis.disc.zp.shape, complex)
@@ -38,8 +39,8 @@ def test_effective_radius_is_the_grazing_limit_of_the_exact_roots():
     roots, t = theta / theta_c, ell0 = 1 / (k theta_c) (the phase of the Fresnel reflection)."""
     a = 0.5e-6
     kc = K * math.sqrt(2.0 * DELTA)
-    exact = WF.FunnelBasis(a=a, g=(0.0, 0.0), k=K, delta=DELTA, beta=BETA, jmax=60, blocks=False)
-    eff = WF.FunnelBasis(a=a, g=(0.0, 0.0), k=K, delta=DELTA, beta=BETA, jmax=60, blocks=False, wall="effective-radius")
+    exact = WFB.FunnelBasis(a=a, g=(0.0, 0.0), k=K, delta=DELTA, beta=BETA, jmax=60, blocks=False)
+    eff = WFB.FunnelBasis(a=a, g=(0.0, 0.0), k=K, delta=DELTA, beta=BETA, jmax=60, blocks=False, wall="effective-radius")
     m0 = exact.mr == 0
     kap = np.sqrt(2.0 * K * exact.h(0.0))[m0].real
     t = kap / kc
@@ -52,7 +53,7 @@ def test_effective_radius_is_the_grazing_limit_of_the_exact_roots():
 
 def test_scale_tracks_the_effective_radius():
     """S A0 = a G + Re ell, S(0) = 1; the derivative against finite differences; the lens and axis factors."""
-    basis = WF.FunnelBasis(a=6.0e-6, g=Z26_G, k=K, delta=DELTA, beta=BETA, jmax=20, blocks=False)
+    basis = WFB.FunnelBasis(a=6.0e-6, g=Z26_G, k=K, delta=DELTA, beta=BETA, jmax=20, blocks=False)
     for z in (0.0, 0.1, 0.23):
         assert basis.scale(z)[0] * basis.A0 == pytest.approx(basis.a * basis.G(z) + basis.ell.real, rel=1e-14)
     assert basis.scale(0.0)[0] == 1.0
@@ -60,15 +61,15 @@ def test_scale_tracks_the_effective_radius():
     S, dS = basis.scale(z)
     assert dS == pytest.approx((basis.scale(z + h)[0] - basis.scale(z - h)[0]) / (2 * h), rel=1e-6)
     d2S = (basis.scale(z + h)[1] - basis.scale(z - h)[1]) / (2 * h)
-    ch = WF.FunnelChannel(basis=basis, c0=(2.0e-5, 1.0e-5), integrator="cf4")
+    ch = WFC.FunnelChannel(basis=basis, c0=(2.0e-5, 1.0e-5), integrator="cf4")
     d2G = 2.0 * Z26_G[1]
     assert ch.coeffs(z) == pytest.approx((0.5 * K * S * d2S, 0.5 * K * S * d2G, 0.5 * K * basis.G(z) * d2G * ch.rho0 ** 2), rel=1e-6)
 
 
 def test_frame_phase_is_the_scaling_about_the_device_axis_then_about_the_bore():
     """The phase of E / w equals k G' |r|^2 / 2G + k G^2 s' |q|^2 / 2s with q = r / G - c0, s = S / G."""
-    basis = WF.FunnelBasis(a=6.0e-6, g=Z26_G, k=K, delta=DELTA, beta=BETA, jmax=20, blocks=False)
-    ch = WF.FunnelChannel(basis=basis, c0=(2.0e-5, 1.0e-5), integrator="cf4")
+    basis = WFB.FunnelBasis(a=6.0e-6, g=Z26_G, k=K, delta=DELTA, beta=BETA, jmax=20, blocks=False)
+    ch = WFC.FunnelChannel(basis=basis, c0=(2.0e-5, 1.0e-5), integrator="cf4")
     z = 0.17
     G, dG = basis.G(z), basis.dG(z)
     S, dS = basis.scale(z)
@@ -81,8 +82,8 @@ def test_frame_phase_is_the_scaling_about_the_device_axis_then_about_the_bore():
 
 def test_power_is_kept_without_absorption():
     """beta = 0: real exact roots, real lens / axis / dilation terms, so the norm of w (= of E) is kept."""
-    basis = WF.FunnelBasis(a=0.5e-6, g=(3.0e3, -1.0e6), k=K, delta=DELTA, beta=0.0, jmax=40)
-    ch = WF.FunnelChannel(basis=basis, c0=(0.3e-6, 0.1e-6), integrator="cf4")
+    basis = WFB.FunnelBasis(a=0.5e-6, g=(3.0e3, -1.0e6), k=K, delta=DELTA, beta=0.0, jmax=40)
+    ch = WFC.FunnelChannel(basis=basis, c0=(0.3e-6, 0.1e-6), integrator="cf4")
     c0 = ch.entrance_modes([(0.0, 0.0), (-0.2e-6, 0.15e-6)], 1.0e-3 / 3.0)
     cL, _, _ = ch.propagate(c0, 1.0e-3, 2.0e-5)
     for i in range(2):
@@ -91,9 +92,9 @@ def test_power_is_kept_without_absorption():
 
 
 def _split(g, c0, n, jmax, layer, integrator, wall="effective-radius"):
-    basis = WF.FunnelBasis(a=0.5e-6, g=g, k=K, delta=DELTA, beta=BETA, jmax=jmax, layer=layer,
+    basis = WFB.FunnelBasis(a=0.5e-6, g=g, k=K, delta=DELTA, beta=BETA, jmax=jmax, layer=layer,
                            blocks=integrator == "cf4", wall=wall)
-    ch = WF.FunnelChannel(basis=basis, c0=c0, integrator=integrator)
+    ch = WFC.FunnelChannel(basis=basis, c0=c0, integrator=integrator)
     cL, _, _ = ch.propagate(ch.entrance_modes([(0.0, 0.0), (-0.2e-6, 0.15e-6)], 1.0e-3 / 3.0), 1.0e-3, 1.0e-3 / n)
     return basis, ch, cL
 
@@ -177,7 +178,7 @@ def test_run_effective_radius_split_step(tmp_path):
 def test_agrees_with_the_march_funnel():
     """A conformal funnel at grazing angles below 0.2 theta_c (a = 0.5 um, L = 3 mm, D = 1.5 mm, G(L) = 2.5, centre
     0.6 um): the exit fields of the modes and of the split step (dx 5 nm) overlap to better than 0.999."""
-    from formula.capsysred.stages.wave import march as WM
+    from formula.capsysred.stages.wave.providers import march as WM
     L, D, a, c0, g = 3.0e-3, 1.5e-3, 0.5e-6, (0.6e-6, 0.0), (1.0 / 1.5e-3, -0.5 / 9.0e-6)
     raw = {"precision": 32, "energy_kev": E_KEV, "material": "glass_oe2012",
            "capillary": {"bores": [{"center": list(c0), "radius": a, "funnel": {"g": list(g)}}], "z0": 0.0, "z1": L,
@@ -190,8 +191,8 @@ def test_agrees_with_the_march_funnel():
     s = WM.MarchSolver(sim.cfg.capillary.bores[0], D, L, 5e-3, LAM, sim.cfg.validate_wave_estimator())
     src = (-0.2e-6, 0.15e-6)
     um = s.exit_field(np.array(src), K, DELTA, BETA, 4)
-    basis = WF.FunnelBasis(a=a, g=g, k=K, delta=DELTA, beta=BETA, jmax=60)
-    ch = WF.FunnelChannel(basis=basis, c0=c0, integrator="cf4")
+    basis = WFB.FunnelBasis(a=a, g=g, k=K, delta=DELTA, beta=BETA, jmax=60)
+    ch = WFC.FunnelChannel(basis=basis, c0=c0, integrator="cf4")
     cL, _, _ = ch.propagate(ch.entrance_modes([src], D), L, 5e-5)
     X, Y = np.meshgrid(s.xs, s.ys, indexing="ij")
     inside = s.exit_mask > 0.999

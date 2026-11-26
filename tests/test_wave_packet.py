@@ -10,7 +10,8 @@ import numpy as np
 import pytest
 
 from formula.capsysred import Simulation
-from formula.capsysred.stages.wave import fb as FB
+from formula.capsysred.stages.wave.providers.fb import basis as FBB
+from formula.capsysred.stages.wave.providers.fb import channel as FBC
 from formula.capsysred.stages import wave_packet as WP
 
 E_KEV = 8.0
@@ -85,7 +86,7 @@ def test_straight_lossless_bore_is_unitary_and_returns_at_zero(tmp_path):
     assert np.max(np.abs(T - 1.0)) < 1e-10                       # no absorption, no leak: the power is conserved
     assert F[-1] < 0.9                                            # the packet spreads and the overlap falls
     # the slice coefficients equal the diagonal propagation of the entrance coefficients
-    disc = FB.Disc(aw=float(d["aw"]), jmax=60, wall_cut=None)
+    disc = FBB.Disc(aw=float(d["aw"]), jmax=60, wall_cut=None)
     c0, c = d["c_in"][0], d["coef"][0, 0]
     h0 = disc.kap2 / (2.0 * K)
     assert np.max(np.abs(c - c0 * np.exp(-1j * h0 * 2.0e-3))) < 1e-9 * np.max(np.abs(c0))
@@ -158,9 +159,9 @@ def test_boundary_loss_operator_matches_the_diagonal_damping_and_the_bouncer_law
     """Straight bore, one disc mode: the boundary form of i Im ell damps it as mode_damping without its Fresnel factor.
     Bent bore, a packet at the outer wall: every Airy mode loses 2 k Im ell / R per unit length, so T(z) = exp(-2 k Im ell z / R)."""
     a, delta, beta = 2.0e-6, 4.5575e-6, 5.725e-8
-    ell = FB.wall_offset(K, delta, beta)
-    d = FB.Disc(aw=a + ell.real, jmax=60)
-    ch = FB.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K, wall_loss=1j * ell.imag)
+    ell = FBB.wall_offset(K, delta, beta)
+    d = FBB.Disc(aw=a + ell.real, jmax=60)
+    ch = FBC.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K, wall_loss=1j * ell.imag)
     c = d.empty()
     c[d.M + 7, 2] = 1.0                                           # m = 7, n = 3
     out, _ = ch.propagate(c, 2.0e-3)

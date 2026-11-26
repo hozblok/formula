@@ -13,8 +13,9 @@ from scipy.linalg import expm
 from formula.capsysred import Simulation
 from formula.formula import NumberContext
 from formula.capsysred.stages.wave import estimator as W
-from formula.capsysred.stages.wave import fb as FB
-from formula.capsysred.stages.wave import fb_scene as FBS
+from formula.capsysred.stages.wave.providers.fb import basis as FBB
+from formula.capsysred.stages.wave.providers.fb import channel as FBC
+from formula.capsysred.stages.wave.providers.fb import scene as FBS
 from formula.capsysred.walls.wall_torus import TorusWall
 
 LAM = 12.398419843320026e-10 / 8.048
@@ -64,7 +65,7 @@ def test_fb_config_and_provider_resolution():
 
 
 def test_wall_offset_dir_ell():
-    ell = FB.wall_offset(K, DELTA, BETA)
+    ell = FBB.wall_offset(K, DELTA, BETA)
     assert ell.real == pytest.approx(1.0 / (K * math.sqrt(2 * DELTA)), rel=2e-4)   # 6.5 nm
     assert 0.0 < ell.imag < 0.02 * ell.real                                       # absorption: small positive
 
@@ -72,7 +73,7 @@ def test_wall_offset_dir_ell():
 # ---------------------------------------------------------------- basis and oracles
 
 def test_disc_transform_pair():
-    d = FB.Disc(aw=3e-6, jmax=40)
+    d = FBB.Disc(aw=3e-6, jmax=40)
     rng = np.random.default_rng(0)
     c = (rng.standard_normal(d.kap2.shape) + 1j * rng.standard_normal(d.kap2.shape)) * d.valid
     back = d.to_modes(d.to_grid(c))
@@ -83,9 +84,9 @@ def test_free_space_point_source_sphere():
     """Wide disc, point source on the axis: the exit field equals the paraxial spherical
     wave at z_in + L up to the rim diffraction (knife-edge ripples of a few % at v ~ 10)."""
     aw, z_in, L = 20e-6, 0.5, 0.02
-    d = FB.Disc(aw=aw, jmax=120)
+    d = FBB.Disc(aw=aw, jmax=120)
     d.fine_table(20e-9)
-    ch = FB.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K)
+    ch = FBC.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K)
     c0 = ch.entrance_modes((0.0, 0.0), z_in)
     cL, _ = ch.propagate_chebyshev(c0, L)
     x = np.arange(-8e-6, 8e-6, 0.2e-6)
@@ -103,9 +104,9 @@ def test_gaussian_beam_q_law():
     """Straight wide bore: a Gaussian beam follows q -> q + L with amplitude q0/q (complex,
     no fitted constant)."""
     aw, L, w0 = 15e-6, 0.02, 2.5e-6
-    d = FB.Disc(aw=aw, jmax=100)
+    d = FBB.Disc(aw=aw, jmax=100)
     d.fine_table(20e-9)
-    ch = FB.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K)
+    ch = FBC.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K)
     xi = d.r[:, None] * np.cos(d.phi)[None, :]
     eta = d.r[:, None] * np.sin(d.phi)[None, :]
     q0 = -1j * math.pi * w0 ** 2 / LAM
@@ -121,14 +122,14 @@ def test_gaussian_beam_q_law():
 
 def test_unitarity_and_wall_damping():
     aw = 3e-6
-    d = FB.Disc(aw=aw, jmax=30)
-    ell = FB.wall_offset(K, DELTA, BETA)
+    d = FBB.Disc(aw=aw, jmax=30)
+    ell = FBB.wall_offset(K, DELTA, BETA)
     gamma = d.kap2 * ell.imag / (aw * K)
-    c0 = FB.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=500.0, disc=d, k=K).entrance_modes((0.2e-6, 0.0), 0.05)
-    lossless = FB.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=500.0, disc=d, k=K)
+    c0 = FBC.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=500.0, disc=d, k=K).entrance_modes((0.2e-6, 0.0), 0.05)
+    lossless = FBC.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=500.0, disc=d, k=K)
     assert d.norm(lossless.propagate_chebyshev(c0, 0.02)[0]) / d.norm(c0) == pytest.approx(1.0, abs=1e-12)
     # straight bore: every mode decays as exp(-2 gamma L) in norm
-    lossy = FB.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K, gamma=gamma)
+    lossy = FBC.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K, gamma=gamma)
     e = np.zeros(d.kap2.shape, complex)
     e[d.M + 2, 1] = 1.0                       # one valid mode (m = 2, n = 2)
     expected = math.exp(-2.0 * gamma[d.M + 2, 1] * 0.02)
@@ -138,10 +139,10 @@ def test_unitarity_and_wall_damping():
 
 def test_chebyshev_matches_dense_exponential():
     aw = 3e-6
-    d = FB.Disc(aw=aw, jmax=20)
-    ell = FB.wall_offset(K, DELTA, BETA)
+    d = FBB.Disc(aw=aw, jmax=20)
+    ell = FBB.wall_offset(K, DELTA, BETA)
     gamma = d.kap2 * ell.imag / (aw * K)
-    ch = FB.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=2000.0, disc=d, k=K, gamma=gamma)
+    ch = FBC.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=2000.0, disc=d, k=K, gamma=gamma)
     c0 = ch.entrance_modes((0.3e-6, 0.1e-6), 0.05)
     assert np.linalg.norm(ch.apply_h(c0) - ch.apply_h_grid(c0)) < 1e-13 * np.linalg.norm(ch.apply_h_grid(c0))
     n = c0.size
@@ -166,17 +167,17 @@ def _lab_exit(ch, cL, L, x):
 
 def test_bend_limit_and_mirror_symmetry():
     aw, L = 3e-6, 0.03
-    d = FB.Disc(aw=aw, jmax=40)
+    d = FBB.Disc(aw=aw, jmax=40)
     d.fine_table(20e-9)
     x = np.arange(-2.8e-6, 2.81e-6, 0.1e-6)
-    straight = FB.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K)
-    far = FB.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=1e12, disc=d, k=K)
+    straight = FBC.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K)
+    far = FBC.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=1e12, disc=d, k=K)
     c0 = straight.entrance_modes((0.0, 0.0), 0.05)
     Es = _lab_exit(straight, straight.propagate_chebyshev(c0, L)[0], L, x)
     Ef = _lab_exit(far, far.propagate_chebyshev(c0, L)[0], L, x)
     assert np.max(np.abs(Ef - Es)) < 1e-8 * np.max(np.abs(Es))          # (a) R -> infinity
-    plus = FB.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=50.0, disc=d, k=K)
-    minus = FB.FBChannel(c0=(0.0, 0.0), t=(-1.0, 0.0), rbend=50.0, disc=d, k=K)
+    plus = FBC.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=50.0, disc=d, k=K)
+    minus = FBC.FBChannel(c0=(0.0, 0.0), t=(-1.0, 0.0), rbend=50.0, disc=d, k=K)
     Ep = _lab_exit(plus, plus.propagate_chebyshev(c0, L)[0], L, x)
     Em = _lab_exit(minus, minus.propagate_chebyshev(c0, L)[0], L, x)
     assert np.max(np.abs(Ep - Em[:, ::-1])) < 1e-9 * np.max(np.abs(Ep))  # (b) mirror x -> -x
@@ -187,9 +188,9 @@ def test_bend_frame_against_free_gaussian_beam():
     """Accelerated frame: a Gaussian beam far from the walls propagates straight in the lab;
     the frame solution transformed back (sag, tilt, carrier g) must equal it, phase included."""
     aw, L, R, w0 = 10e-6, 0.01, 50.0, 3e-6
-    d = FB.Disc(aw=aw, jmax=110)
+    d = FBB.Disc(aw=aw, jmax=110)
     d.fine_table(20e-9)
-    ch = FB.FBChannel(c0=(20e-6, 0.0), t=(-1.0, 0.0), rbend=R, disc=d, k=K)
+    ch = FBC.FBChannel(c0=(20e-6, 0.0), t=(-1.0, 0.0), rbend=R, disc=d, k=K)
     xi = d.r[:, None] * np.cos(d.phi)[None, :]
     eta = d.r[:, None] * np.sin(d.phi)[None, :]
     q0 = -1j * math.pi * w0 ** 2 / LAM
@@ -300,7 +301,7 @@ def test_fb_stage_two_bores(tmp_path):
 
 def test_disc_wall_cut_keeps_guided_modes_only():
     aw, J = 1e-6, 155.0
-    cut, full = FB.Disc(aw=aw, jmax=300, wall_cut=J), FB.Disc(aw=aw, jmax=300)
+    cut, full = FBB.Disc(aw=aw, jmax=300, wall_cut=J), FBB.Disc(aw=aw, jmax=300)
     assert cut.M == full.M and cut.nmodes < full.nmodes
     for m, z in enumerate(cut.zeros):
         assert np.all(z * z - m * m < J * J) and np.all(z < 300)
@@ -308,15 +309,15 @@ def test_disc_wall_cut_keeps_guided_modes_only():
         assert np.all(dropped * dropped - m * m >= J * J)
     assert cut.zeros[0].max() < J < full.zeros[0].max()
     # nothing to cut below the kappa cap: the basis is unchanged
-    a, b = FB.Disc(aw=aw, jmax=120, wall_cut=J), FB.Disc(aw=aw, jmax=120)
+    a, b = FBB.Disc(aw=aw, jmax=120, wall_cut=J), FBB.Disc(aw=aw, jmax=120)
     assert a.M == b.M and all(np.array_equal(x, y) for x, y in zip(a.zeros, b.zeros))
 
 
 def test_mode_damping_fresnel_factor():
     aw, thc = 1e-6, math.sqrt(2 * DELTA)
-    d = FB.Disc(aw=aw, jmax=int(K * aw * 0.9 * thc), wall_cut=K * aw * thc)
-    g = FB.mode_damping(d, K, DELTA, BETA)
-    base = d.kap2 * FB.wall_offset(K, DELTA, BETA).imag / (aw * K)
+    d = FBB.Disc(aw=aw, jmax=int(K * aw * 0.9 * thc), wall_cut=K * aw * thc)
+    g = FBB.mode_damping(d, K, DELTA, BETA)
+    base = d.kap2 * FBB.wall_offset(K, DELTA, BETA).imag / (aw * K)
     x = np.maximum(d.kap2 - (d.am[:, None] / aw) ** 2, 0.0) / (K * thc) ** 2
     v = d.valid
     assert np.isfinite(g).all() and np.all(g[v] > 0.0) and np.all(x[v] < 0.81)
@@ -325,7 +326,7 @@ def test_mode_damping_fresnel_factor():
     assert np.all(np.abs(g[v] / base[v] * np.sqrt(1.0 - x[v]) - 1.0) < tol)
     assert abs(g[d.M, 0] / base[d.M, 0] - 1.0) < 1e-3                       # m = 0, n = 1: grazing limit
     one = SimpleNamespace(kap2=np.array([[(K * thc) ** 2]]), am=np.array([0]), aw=aw)
-    assert np.isfinite(FB.mode_damping(one, K, DELTA, BETA)).all()          # critical angle: finite
+    assert np.isfinite(FBB.mode_damping(one, K, DELTA, BETA)).all()          # critical angle: finite
 
 
 def test_fb_wall_cut_config():
@@ -344,10 +345,10 @@ def test_fb_wall_cut_config():
 # ---------------------------------------------------------------- entrance spot (whispering-gallery launch)
 
 def test_entrance_spot_modes_and_stage(tmp_path):
-    aw = 1e-6 + FB.wall_offset(K, DELTA, BETA).real
+    aw = 1e-6 + FBB.wall_offset(K, DELTA, BETA).real
     thc = math.sqrt(2 * DELTA)
-    d = FB.Disc(aw=aw, jmax=int(K * aw * 1.15 * thc), wall_cut=K * aw * thc)
-    ch = FB.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K)
+    d = FBB.Disc(aw=aw, jmax=int(K * aw * 1.15 * thc), wall_cut=K * aw * thc)
+    ch = FBC.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K)
     r0, tilt = aw - 51e-9, 2.31e-3
     spot = {"center": [r0, 0.0], "fwhm": 100e-9, "tilt": [0.0, tilt]}
     c = ch.spot_modes(spot)
@@ -377,18 +378,18 @@ def test_entrance_spot_modes_and_stage(tmp_path):
 
 
 def test_propagate_is_exact_for_straight_bores_and_substeps_strong_damping():
-    aw, thc = 1e-6 + FB.wall_offset(K, DELTA, BETA).real, math.sqrt(2 * DELTA)
-    d = FB.Disc(aw=aw, jmax=int(K * aw * 0.8 * thc), wall_cut=K * aw * thc)        # kappa cap below theta_c: a small basis
-    g = FB.mode_damping(d, K, DELTA, BETA)
+    aw, thc = 1e-6 + FBB.wall_offset(K, DELTA, BETA).real, math.sqrt(2 * DELTA)
+    d = FBB.Disc(aw=aw, jmax=int(K * aw * 0.8 * thc), wall_cut=K * aw * thc)        # kappa cap below theta_c: a small basis
+    g = FBB.mode_damping(d, K, DELTA, BETA)
     spot = {"center": [aw - 51e-9, 0.0], "fwhm": 100e-9, "tilt": [0.0, 2.31e-3]}
     L = 0.03
-    straight = FB.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K, gamma=g)
+    straight = FBC.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K, gamma=g)
     c0 = straight.spot_modes(spot)
     out, deg = straight.propagate(c0, L)
     assert deg == 0 and np.allclose(out, c0 * np.exp(-1j * straight.h0 * L), rtol=0, atol=0)
     T = d.norm(out) / d.norm(c0)
     assert 0.4 < T < 0.75                                                 # whispering-gallery launch, 30 mm
-    bent = FB.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=100.0, disc=d, k=K, gamma=g)
+    bent = FBC.FBChannel(c0=(0.0, 0.0), t=(1.0, 0.0), rbend=100.0, disc=d, k=K, gamma=g)
     one, deg1 = bent.propagate(c0, L)
     two_a, _ = bent.propagate(c0, L / 2)
     two, deg2 = bent.propagate(two_a, L / 2)

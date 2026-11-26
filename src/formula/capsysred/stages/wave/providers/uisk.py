@@ -5,8 +5,8 @@ import math
 import numpy as np
 from scipy import fft as sfft
 
-from .physics import fresnel_r
-from .polygon import Polygon, _fast_len, coverage, sub_lattice_mask, sub_offsets
+from ..physics import fresnel_r
+from ..polygon import Polygon, _fast_len, coverage, sub_lattice_mask, sub_offsets
 
 
 class Family:

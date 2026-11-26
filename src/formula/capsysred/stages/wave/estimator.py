@@ -2,12 +2,12 @@
 
 Baseline estimator: one positive source quadrature; complex W(P, P_ref) and
 I(P) accumulate from the same fields (PSD by construction). Providers:
-`free` (source -> screen Fresnel), `uisk` (uisk.py: unfolded-image spectral
+`free` (source -> screen Fresnel), `uisk` (providers/uisk.py: unfolded-image spectral
 Kirchhoff: straight regular-polygon bores, plane-wave r(kappa) per bounce,
-Kirchhoff entrance/exit masks), `images` (images.py: the same physics for
+Kirchhoff entrance/exit masks), `images` (providers/images.py: the same physics for
 axis-aligned rectangles as a product of two line sums over every image up to
-the guided horizon), `march` (march.py: split-step through the wall as a
-medium, cross section free to change along z) and `fb` (fb.py: Fourier-Bessel
+the guided horizon), `march` (providers/march.py: split-step through the wall as a
+medium, cross section free to change along z) and `fb` (providers/fb: Fourier-Bessel
 modes of circular / torus bores, DIR-ell wall). Paraxial scalar optics, carrier e^{+ikz}
 dropped, phasor e^{-i omega t}. Rows: stage16/[screen-N/|free/]mu-wave.jsonl.
 """
@@ -21,15 +21,15 @@ import numpy as np
 
 from ...screen import ScreenGrid
 from ...shared.units import m_to_um
-from .fb_scene import fb_capillary_scene
-from .funnel_scene import funnel_scene
-from .images import ImageSolver, axis_rectangle, far_field
-from .march import MarchSolver
 from .output import RESULT_DIR, _emit, _emit_far_field, _report_lines
 from .polygon import Polygon
+from .providers.fb.scene import fb_capillary_scene
+from .providers.funnel.scene import funnel_scene
+from .providers.images import ImageSolver, axis_rectangle, far_field
+from .providers.march import MarchSolver
+from .providers.uisk import BoreSolver
 from .screen_sampler import Accumulator, ScreenSampler, _finish
 from .source import _rule
-from .uisk import BoreSolver
 
 FIELD_DUMP = "field-capillary.npz"
 MODEL_CLASS = {"free": "free-space", "uisk": "kirchhoff-rims", "images": "kirchhoff-rims",

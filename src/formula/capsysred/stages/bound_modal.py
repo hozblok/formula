@@ -24,7 +24,8 @@ import numpy as np
 from numpy.polynomial.legendre import leggauss
 from scipy.special import jv
 
-from .wave.fb import CHEB_MARGIN, Disc, FBChannel, wall_offset
+from .wave.providers.fb.basis import Disc, wall_offset
+from .wave.providers.fb.channel import CHEB_MARGIN, FBChannel
 
 
 def _interp_error(zs, s_at, norm):

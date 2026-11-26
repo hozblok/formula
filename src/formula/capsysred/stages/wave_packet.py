@@ -24,8 +24,9 @@ from ...physical_constants import HC_KEV_ANGSTROM
 from .. import render
 from ..shared.units import m_to_um
 from .wave.output import _json_default
-from .wave.fb import (Disc, FBChannel, WallFigure, exact_kappa, far_field_amplitude, far_field_profiles,
-                      fb_jmax_rule, mode_damping, ring_summary, wall_offset)
+from .wave.providers.fb.basis import Disc, exact_kappa, fb_jmax_rule, mode_damping, wall_offset
+from .wave.providers.fb.channel import FBChannel, WallFigure
+from .wave.providers.fb.far_field import far_field_amplitude, far_field_profiles, ring_summary
 
 RESULT_DIR = "stage20"
 NPZ = "packet.npz"

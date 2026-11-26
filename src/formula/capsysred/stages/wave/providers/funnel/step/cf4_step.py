@@ -10,11 +10,11 @@ import numpy as np
 from scipy.linalg.blas import dgemm as _gemm, zaxpy as _axpy
 from scipy.special import jv
 
-from ..fb import CHEB_DAMP, CHEB_MARGIN
+from ...fb.channel import CHEB_DAMP, CHEB_MARGIN
 from .constants import _C1, _C2
 
 if TYPE_CHECKING:
-    from ..funnel import FunnelChannel
+    from ..channel import FunnelChannel
 
 
 # CF4 weights

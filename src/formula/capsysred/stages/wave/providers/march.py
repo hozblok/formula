@@ -10,8 +10,8 @@ import math
 import numpy as np
 from scipy import fft as sfft
 
-from .physics import spot_profile
-from .polygon import Polygon, _fast_len, sub_offsets
+from ..physics import spot_profile
+from ..polygon import Polygon, _fast_len, sub_offsets
 
 DEFECT_KEYS = {
     "roughness": {"sigma", "lc", "seed", "walls"},

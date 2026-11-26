@@ -10,8 +10,8 @@ import math
 import numpy as np
 from scipy import fft as sfft
 
-from .physics import fresnel_r, spot_axis
-from .polygon import Polygon, _fast_len, coverage, sub_offsets
+from ..physics import fresnel_r, spot_axis
+from ..polygon import Polygon, _fast_len, coverage, sub_offsets
 
 
 def axis_rectangle(bore):

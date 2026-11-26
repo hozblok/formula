@@ -4,7 +4,8 @@ import math
 
 import numpy as np
 
-from .wave.fb import Disc, FBChannel, mode_damping
+from .wave.providers.fb.basis import Disc, mode_damping
+from .wave.providers.fb.channel import FBChannel
 
 
 _DISCS = {}

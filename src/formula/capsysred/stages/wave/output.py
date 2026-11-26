@@ -10,7 +10,7 @@ from .... import __version__
 from ....physical_constants import HC_KEV_ANGSTROM
 from ... import render
 from ...shared.units import m_to_um
-from .images import far_field_summary
+from .providers.images import far_field_summary
 from .screen_sampler import FAR_TAIL_RATIO
 
 RESULT_DIR = "stage16"

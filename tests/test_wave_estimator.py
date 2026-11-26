@@ -19,7 +19,7 @@ from formula.capsysred.stages.wave import physics as WP
 from formula.capsysred.stages.wave import polygon as WPOLY
 from formula.capsysred.stages.wave import screen_sampler as WS
 from formula.capsysred.stages.wave import source as WSRC
-from formula.capsysred.stages.wave import uisk as WU
+from formula.capsysred.stages.wave.providers import uisk as WU
 
 LAM = 12.398419843320026e-10 / 8.048
 K = 2.0 * math.pi / LAM
