@@ -38,9 +38,9 @@ from numpy.polynomial.legendre import leggauss
 from scipy import fft as sfft
 from scipy.special import jv, jvp
 
-from .wave_fb import CHEB_TOL, Disc, newton_kappa, radial_nodes, wall_offset
-from .wave_step.cf4_step import CF4Step
-from .wave_step.split_step import SplitStep
+from .fb import CHEB_TOL, Disc, newton_kappa, radial_nodes, wall_offset
+from .step.cf4_step import CF4Step
+from .step.split_step import SplitStep
 
 
 def _galerkin(d, nr):
@@ -303,8 +303,8 @@ class FunnelChannel:
 def funnel_scene(sim, wave, lines, log, out_dir=None):
     """Stage 16 on a scene of conformal funnel bores: exit-plane screens (point observable), the matrix of mu between
     the bore centres. Returns [(label, res), ...] like fb_capillary_scene."""
-    from .wave import ScreenSampler, _finish, _report_lines, _rule
-    from ..screen import ScreenGrid
+    from .estimator import ScreenSampler, _finish, _report_lines, _rule
+    from ...screen import ScreenGrid
     cfg = sim.cfg
     cap = cfg.capillary
     if wave["observable"] != "point":

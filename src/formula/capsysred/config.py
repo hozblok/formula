@@ -741,7 +741,7 @@ class Config:
         if w["provider"] == "march" and mc is None:
             raise ValueError("wave_estimator.march: provider march needs the march section {dz, box, ...}")
         if mc is not None:
-            from .stages.wave_march import DEFECT_KEYS, WALLS
+            from .stages.wave.march import DEFECT_KEYS, WALLS
             if not isinstance(mc, dict) or set(mc) - {"dx", "dz", "box", "sponge", "defects"} or "dz" not in mc:
                 raise ValueError("wave_estimator.march: expected {dx, dz, box, sponge, defects}")
             out = {"dx": mc.get("dx"), "dz": mc["dz"], "box": mc.get("box", 2.0e-7),

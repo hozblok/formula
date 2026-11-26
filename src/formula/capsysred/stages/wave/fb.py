@@ -24,9 +24,9 @@ from numpy.polynomial.legendre import leggauss
 from scipy import fft as sfft
 from scipy.special import jn_zeros, jv, kve
 
-from ...physical_constants import HC_KEV_ANGSTROM
-from ..screen import ScreenGrid
-from ..shared.units import m_to_um
+from ....physical_constants import HC_KEV_ANGSTROM
+from ...screen import ScreenGrid
+from ...shared.units import m_to_um
 
 MODEL_CLASS_FB = "dir-ell"
 CHEB_TOL = 1e-12        # default cut |J_n(t)| <= CHEB_TOL of the Chebyshev series of exp(-iHL)
@@ -488,7 +488,7 @@ class FBChannel:
         """Coherent gaussian on the entrance disc: FWHM in intensity at the waist, unit power, plane-wave tilt
         (tx, ty); waist at z = focus (0: on the entrance, < 0: before it), q = -focus + i z_R per axis.
         spot: the wave spot config (fwhm, center, tilt, focus)."""
-        from .wave import spot_profile
+        from .estimator import spot_profile
         X, Y, gauge = self._entrance_grid()
         return gauge * spot_profile(spot, self.k, X, Y)
 
@@ -841,7 +841,7 @@ _W = {}
 
 def _init_worker(spec):
     """Per-process state: basis, channels per line, lattice, samplers and accumulators."""
-    from .wave import ScreenSampler, Accumulator
+    from .estimator import ScreenSampler, Accumulator
     t0 = time.time()
     dtype = np.complex64 if spec["dtype"] == "complex64" else np.complex128
     disc = Disc(aw=spec["aw"], jmax=spec["jmax"], wall_cut=spec["wall_cut"])
@@ -903,7 +903,7 @@ def _node_fields(spec, k, chans, lat, xi, per_bore=True):
 
 def _run_nodes(args):
     """Accumulate W/I over a chunk of (node, weight) pairs; returns the partial sums."""
-    from .wave import Accumulator
+    from .estimator import Accumulator
     nodes, weights, idx = args
     spec, lat, per_bore = _W["spec"], _W["lat"], _W["per_bore"]
     # fresh sums per task: a pool worker may serve several chunks
@@ -948,7 +948,7 @@ def _run_nodes(args):
 # ----------------------------------------------------------------- scene driver
 
 def fb_capillary_scene(sim, wave, lines, rays_paths, log, out_dir=None):
-    from .wave import _rule, ScreenSampler, Accumulator, _finish, _report_lines
+    from .estimator import _rule, ScreenSampler, Accumulator, _finish, _report_lines
     cfg = sim.cfg
     cap = cfg.capillary
     if wave["entrance_spot"]:
@@ -1071,7 +1071,7 @@ def _emit_far_field(out_dir, spec, lines, extra, wave):
     """far-field.json (per line and weighted ring statistics, modal transmission), far-field-fb.npz (ring and
     radial profiles per line, weighted map) and the weighted ring profile as SVG."""
     import json
-    from .. import render
+    from ... import render
     far = extra["far_meta"]
     th, nphi = far["thetas"], far["n_phi"]
     phi = 2.0 * math.pi * np.arange(nphi) / nphi

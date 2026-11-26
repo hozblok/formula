@@ -12,9 +12,9 @@ from scipy.integrate import quad
 from scipy.special import jn_zeros, jv, jvp, kv, kvp
 
 from formula.capsysred import Simulation
-from formula.capsysred.stages import wave as W
-from formula.capsysred.stages import wave_fb as FB
-from formula.capsysred.stages import wave_images as WI
+from formula.capsysred.stages.wave import estimator as W
+from formula.capsysred.stages.wave import fb as FB
+from formula.capsysred.stages.wave import images as WI
 from formula.xray import FUSED_SILICA
 
 E_KEV = 8.048

@@ -10,8 +10,8 @@ import pytest
 
 from formula.capsysred import Simulation
 from formula.capsysred.screen import ScreenGrid
-from formula.capsysred.stages import wave as W
-from formula.capsysred.stages import wave_images as WI
+from formula.capsysred.stages.wave import estimator as W
+from formula.capsysred.stages.wave import images as WI
 
 LAM = 12.398419843320026e-10 / 8.048
 K = 2.0 * math.pi / LAM

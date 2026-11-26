@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from formula.capsysred import Simulation
-from formula.capsysred.stages import wave_fb as FB
+from formula.capsysred.stages.wave import fb as FB
 from formula.capsysred.stages import wave_packet as WP
 
 E_KEV = 8.0

@@ -7,7 +7,7 @@ import pytest
 
 from formula.capsysred.stages.beamlets import defect as D
 from formula.capsysred.stages import bound_modal as B
-from formula.capsysred.stages.wave_fb import Disc, FBChannel
+from formula.capsysred.stages.wave.fb import Disc, FBChannel
 
 LAM = 12.398419843320026e-10 / 8.048
 K = 2.0 * math.pi / LAM

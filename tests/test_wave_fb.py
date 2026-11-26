@@ -12,8 +12,8 @@ from scipy.linalg import expm
 
 from formula.capsysred import Simulation
 from formula.formula import NumberContext
-from formula.capsysred.stages import wave as W
-from formula.capsysred.stages import wave_fb as FB
+from formula.capsysred.stages.wave import estimator as W
+from formula.capsysred.stages.wave import fb as FB
 from formula.capsysred.walls.wall_torus import TorusWall
 
 LAM = 12.398419843320026e-10 / 8.048

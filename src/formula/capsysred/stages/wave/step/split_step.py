@@ -11,7 +11,7 @@ from scipy import fft as sfft
 from .constants import _C1, _C2
 
 if TYPE_CHECKING:
-    from ..wave_funnel import FunnelChannel
+    from ..funnel import FunnelChannel
 
 
 class SplitStep:

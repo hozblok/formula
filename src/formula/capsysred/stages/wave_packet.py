@@ -1,7 +1,7 @@
 """Stage 20: one coherent wave packet along one circular bore, straight or bent (`wave_packet`).
 
 The entrance spot of `wave_estimator.entrance_spot` is projected on the Fourier-Bessel basis of provider fb
-(wave_fb: Dirichlet disc a + Re ell, DIR-ell or exact roots, a bend as the potential k xi / R in the frame
+(wave.fb: Dirichlet disc a + Re ell, DIR-ell or exact roots, a bend as the potential k xi / R in the frame
 co-moving with the axis, Chebyshev propagator) and carried to a ladder of z inside the bore. At every z: the
 power P(z) in the basis, the transmission T = P(z) / P(0), the return fidelity F(z) = |<E(0), E(z)>|^2 /
 (P(0) P(z)) against the entrance field, the centroid and the rms width of the intensity along xi (toward the
@@ -23,8 +23,8 @@ from ... import __version__
 from ...physical_constants import HC_KEV_ANGSTROM
 from .. import render
 from ..shared.units import m_to_um
-from .wave import _json_default
-from .wave_fb import (Disc, FBChannel, WallFigure, exact_kappa, far_field_amplitude, far_field_profiles,
+from .wave.estimator import _json_default
+from .wave.fb import (Disc, FBChannel, WallFigure, exact_kappa, far_field_amplitude, far_field_profiles,
                       fb_jmax_rule, mode_damping, ring_summary, wall_offset)
 
 RESULT_DIR = "stage20"

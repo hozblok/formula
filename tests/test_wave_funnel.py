@@ -1,4 +1,4 @@
-"""Stage 16 provider fb on conformal funnel bores (wave_funnel): the straight limit is the fb bore with exact roots,
+"""Stage 16 provider fb on conformal funnel bores (wave.funnel): the straight limit is the fb bore with exact roots,
 the scale of the bore frame follows the effective radius, power is kept without absorption, the result agrees with the march
 funnel, and a run writes the screen and the matrix of mu between the bore centres. The wall effective-radius is the
 grazing limit of the exact roots; the split step is the diagonal on a cone, converges to cf4 at order 2 while the top of
@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from formula.capsysred import Simulation
-from formula.capsysred.stages import wave_funnel as WF
+from formula.capsysred.stages.wave import funnel as WF
 from formula.xray import OE2012_GLASS
 
 E_KEV = 8.0
@@ -177,7 +177,7 @@ def test_run_effective_radius_split_step(tmp_path):
 def test_agrees_with_the_march_funnel():
     """A conformal funnel at grazing angles below 0.2 theta_c (a = 0.5 um, L = 3 mm, D = 1.5 mm, G(L) = 2.5, centre
     0.6 um): the exit fields of the modes and of the split step (dx 5 nm) overlap to better than 0.999."""
-    from formula.capsysred.stages import wave_march as WM
+    from formula.capsysred.stages.wave import march as WM
     L, D, a, c0, g = 3.0e-3, 1.5e-3, 0.5e-6, (0.6e-6, 0.0), (1.0 / 1.5e-3, -0.5 / 9.0e-6)
     raw = {"precision": 32, "energy_kev": E_KEV, "material": "glass_oe2012",
            "capillary": {"bores": [{"center": list(c0), "radius": a, "funnel": {"g": list(g)}}], "z0": 0.0, "z1": L,

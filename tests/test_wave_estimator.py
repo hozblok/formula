@@ -13,7 +13,7 @@ from formula.capsysred import Simulation, render
 from formula.capsysred.config import WAVE_DEFAULTS
 from formula.capsysred.screen import ScreenGrid
 from formula.capsysred.simulation import KNOWN_STAGES
-from formula.capsysred.stages import wave as W
+from formula.capsysred.stages.wave import estimator as W
 
 LAM = 12.398419843320026e-10 / 8.048
 K = 2.0 * math.pi / LAM

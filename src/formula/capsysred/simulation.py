@@ -53,7 +53,7 @@ KNOWN_STAGES = (1, 2, 3, 7, 8, 9, 11, 14, 16, 17, 18, 20)
 def _wave_backend():
     """Load optional dependencies only for an explicitly selected Stage 16."""
     try:
-        from .stages import wave
+        from .stages.wave import estimator as wave
     except ModuleNotFoundError as exc:
         if exc.name not in {"numpy", "scipy"}:
             raise

@@ -4,10 +4,10 @@ Baseline estimator: one positive source quadrature; complex W(P, P_ref) and
 I(P) accumulate from the same fields (PSD by construction). Providers:
 `free` (source -> screen Fresnel), `uisk` (unfolded-image spectral
 Kirchhoff: straight regular-polygon bores, plane-wave r(kappa) per bounce,
-Kirchhoff entrance/exit masks), `images` (wave_images: the same physics for
+Kirchhoff entrance/exit masks), `images` (images.py: the same physics for
 axis-aligned rectangles as a product of two line sums over every image up to
-the guided horizon), `march` (wave_march: split-step through the wall as a
-medium, cross section free to change along z) and `fb` (wave_fb: Fourier-Bessel
+the guided horizon), `march` (march.py: split-step through the wall as a
+medium, cross section free to change along z) and `fb` (fb.py: Fourier-Bessel
 modes of circular / torus bores, DIR-ell wall). Paraxial scalar optics, carrier e^{+ikz}
 dropped, phasor e^{-i omega t}. Rows: stage16/[screen-N/|free/]mu-wave.jsonl.
 """
@@ -22,11 +22,11 @@ import numpy as np
 from scipy import fft as sfft
 from scipy.special import fresnel
 
-from ... import __version__
-from ...physical_constants import HC_KEV_ANGSTROM
-from .. import render, rays_v3
-from ..screen import ScreenGrid
-from ..shared.units import m_to_um
+from .... import __version__
+from ....physical_constants import HC_KEV_ANGSTROM
+from ... import render, rays_v3
+from ...screen import ScreenGrid
+from ...shared.units import m_to_um
 
 RESULT_DIR = "stage16"
 FIELD_DUMP = "field-capillary.npz"
@@ -604,13 +604,13 @@ def _raw_spectral_weights(cfg):
     if mode == "lines":
         return [float(l.get("weight", 1.0)) for l in spec["lines"]]
     if mode == "table":
-        from ..spectrum import _table_pairs
+        from ...spectrum import _table_pairs
         return [w for _, w in _table_pairs(spec["file"], cfg.precision)]
     return [float(ln.weight) for ln in spectral_lines_of(cfg)]
 
 
 def spectral_lines_of(cfg):
-    from ..spectrum import spectral_lines
+    from ...spectrum import spectral_lines
     return spectral_lines(cfg.spectrum, cfg.energy_kev)
 
 
@@ -673,7 +673,7 @@ def capillary_provider(cap, wave):
     prov = wave["provider"]
     if prov == "auto":
         if polygonal:
-            from .wave_images import axis_rectangle
+            from .images import axis_rectangle
             prov = "images" if all(axis_rectangle(b) is not None for b in cap.bores) else "march"
         else:
             prov = "fb" if circular else None
@@ -684,7 +684,7 @@ def capillary_provider(cap, wave):
         raise ValueError("wave_estimator: provider uisk supports polygon bores "
                          f"only (sides: n, optional apothems); got kinds {sorted(kinds)}")
     if prov == "images":
-        from .wave_images import axis_rectangle
+        from .images import axis_rectangle
         if not polygonal or any(axis_rectangle(b) is None for b in cap.bores):
             raise ValueError("wave_estimator: provider images supports rectangles with faces along "
                              f"the lattice axes only (sides: 4, rotation 0 or 90 degrees); got kinds {sorted(kinds)}")
@@ -773,12 +773,12 @@ def _run(sim, out_dir, partial, wave, rays_paths, log):
             if wave["far_field"] is not None:
                 files += scenes[0][1]["far_field_files"]
         elif all(b.get("kind") == "funnel" for b in cap.bores):
-            from . import wave_funnel
-            scenes = wave_funnel.funnel_scene(sim, wave, lines, log, out_dir=partial)
+            from . import funnel
+            scenes = funnel.funnel_scene(sim, wave, lines, log, out_dir=partial)
             files += scenes[0][1].get("fb_files", [])
         else:
-            from . import wave_fb
-            scenes = wave_fb.fb_capillary_scene(sim, wave, lines, rays_paths, log, out_dir=partial)
+            from . import fb
+            scenes = fb.fb_capillary_scene(sim, wave, lines, rays_paths, log, out_dir=partial)
             files += scenes[0][1].get("fb_files", [])
         for label, res in scenes:
             results[label] = res
@@ -851,11 +851,11 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log, dump_dir=None, 
     if spot:
         theta_max = max(theta_max, math.hypot(*spot["tilt"]) + lam_h / spot["fwhm"])
     if provider == "images":
-        from .wave_images import ImageSolver
+        from .images import ImageSolver
         theta_c = max(math.sqrt(2.0 * delta) for _, _, delta, _ in lines)
         solvers = [ImageSolver(b, z_in, length, theta_max, lam_h, wave, lam_reach, theta_c, spot) for b in cap.bores]
     elif provider == "march":
-        from .wave_march import MarchSolver
+        from .march import MarchSolver
         solvers = [MarchSolver(b, z_in, length, theta_max, lam_h, wave, lam_reach, spot) for b in cap.bores]
     else:
         solvers = [BoreSolver(b, z_in, length, theta_max, lam_h, wave, lam_reach,
@@ -908,7 +908,7 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log, dump_dir=None, 
                 for bi, u in enumerate(exits):
                     dump[f"field_line{li}_node{j}_bore{bi}"] = np.asarray(u, dtype=np.complex128)
             if ff is not None:
-                from .wave_images import far_field
+                from .images import far_field
                 t, px, py, total, inside = far_field(exits[0], solvers[0].h, k, ff["theta_max"], ff["pad"])
                 acc_f = far[li] or [t, 0.0, 0.0, 0.0, 0.0]
                 far[li] = [t, acc_f[1] + w * px, acc_f[2] + w * py, acc_f[3] + w * total, acc_f[4] + w * inside]
@@ -992,7 +992,7 @@ def _capillary_scene(sim, wave, lines, rays_paths, workers, log, dump_dir=None, 
 
 def _emit_far_field(out_dir, far, lines, ff, wave):
     """far-field.json (per line and weighted) and the marginal profiles of the weighted sum."""
-    from .wave_images import far_field_summary
+    from .images import far_field_summary
     rows, wx, wy, wt, wi = [], None, None, 0.0, 0.0
     for (k, wl, *_), f in zip(lines, far):
         t, px, py, total, inside = f
