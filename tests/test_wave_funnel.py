@@ -103,7 +103,7 @@ def test_split_step_is_the_diagonal_on_a_cone():
     for wall in ("exact-roots", "effective-radius"):
         _, _, ref = _split((3.0e3, 0.0), (0.3e-6, 0.1e-6), 8, 40, 0.0, "cf4", wall)
         _, ch, cL = _split((3.0e3, 0.0), (0.3e-6, 0.1e-6), 8, 40, 0.0, "split-step", wall)
-        assert np.max(np.abs(cL - ref)) < 1e-9 * np.max(np.abs(ref)) and np.all(np.abs(ch.projection_loss) < 1e-9)
+        assert np.max(np.abs(cL - ref)) < 1e-9 * np.max(np.abs(ref)) and np.all(np.abs(ch.stepper.projection_loss) < 1e-9)
 
 
 def test_split_step_converges_to_cf4_at_order_two():
@@ -117,9 +117,9 @@ def test_split_step_converges_to_cf4_at_order_two():
         _, ch, cL = _split(g, c0, n, 120, 0.1, "split-step")
         err.append(math.sqrt((np.abs(cL - ref) ** 2 * w).sum() / (np.abs(ref) ** 2 * w).sum()))
     assert err[0] > 3.5 * err[1] > 3.5 ** 2 * err[2] and err[2] < 1e-2
-    assert ch.projection_loss.max() < 1e-3
+    assert ch.stepper.projection_loss.max() < 1e-3
     _, ch, _ = _split(g, c0, 16, 40, 0.0, "split-step")
-    assert ch.projection_loss.max() > 0.1
+    assert ch.stepper.projection_loss.max() > 0.1
 
 
 def _scene(nx=45, ref=(0.0, 0.0)):
