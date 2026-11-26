@@ -15,6 +15,7 @@ from formula.capsysred import Simulation
 from formula.capsysred.stages.wave import estimator as W
 from formula.capsysred.stages.wave import fb as FB
 from formula.capsysred.stages.wave import images as WI
+from formula.capsysred.stages.wave import physics as WP
 from formula.xray import FUSED_SILICA
 
 E_KEV = 8.048
@@ -212,12 +213,12 @@ def test_spot_focus_is_the_free_propagation_of_the_waist():
     spot = {"center": [0.2e-6, 0.0], "fwhm": 100e-9, "tilt": [0.5e-3, 0.0]}
     h, n = 2e-9, 1 << 13
     x = (np.arange(n) - n // 2) * h
-    waist = W.spot_axis(spot, K, x, 0)
+    waist = WP.spot_axis(spot, K, x, 0)
     f = -150e-6                                                      # waist 150 um before the entrance
     kx = 2 * np.pi * sfft.fftfreq(n, h)
     prop = sfft.ifft(sfft.fft(waist) * np.exp(-1j * kx ** 2 * (-f) / (2 * K)))
     # the propagated beam is centred at c + t |f|; the spot is defined by its centre on the entrance plane
-    moved = W.spot_axis(dict(spot, focus=f, center=[spot["center"][0] + spot["tilt"][0] * (-f), 0.0]), K, x, 0)
+    moved = WP.spot_axis(dict(spot, focus=f, center=[spot["center"][0] + spot["tilt"][0] * (-f), 0.0]), K, x, 0)
     moved = moved * np.exp(-1j * K * spot["tilt"][0] ** 2 * (-f) / 2)    # plane-wave phase of the tilt over |f|
     m = np.abs(x - 0.275e-6) < 0.6e-6
     assert np.max(np.abs(prop[m] - moved[m])) < 1e-9 * np.max(np.abs(moved))

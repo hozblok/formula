@@ -23,7 +23,7 @@ from ... import __version__
 from ...physical_constants import HC_KEV_ANGSTROM
 from .. import render
 from ..shared.units import m_to_um
-from .wave.estimator import _json_default
+from .wave.output import _json_default
 from .wave.fb import (Disc, FBChannel, WallFigure, exact_kappa, far_field_amplitude, far_field_profiles,
                       fb_jmax_rule, mode_damping, ring_summary, wall_offset)
 

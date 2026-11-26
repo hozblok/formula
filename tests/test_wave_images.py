@@ -12,6 +12,8 @@ from formula.capsysred import Simulation
 from formula.capsysred.screen import ScreenGrid
 from formula.capsysred.stages.wave import estimator as W
 from formula.capsysred.stages.wave import images as WI
+from formula.capsysred.stages.wave import screen_sampler as WS
+from formula.capsysred.stages.wave import uisk as WU
 
 LAM = 12.398419843320026e-10 / 8.048
 K = 2.0 * math.pi / LAM
@@ -77,7 +79,7 @@ def test_config_and_provider_contract():
 def test_images_match_uisk_on_the_same_tiles():
     """uisk at max_bounces 2 keeps the 3 x 3 box of tiles; `images: 1` is the same sum without the band window."""
     sim, wave, cap, theta, z_in, length = _solvers(_square())
-    uisk = W.BoreSolver(cap.bores[0], z_in, length, theta, LAM, wave)
+    uisk = WU.BoreSolver(cap.bores[0], z_in, length, theta, LAM, wave)
     assert len(uisk.families) == 9
     img = WI.ImageSolver(cap.bores[0], z_in, length, theta, LAM, dict(wave, images=1, grid_dx=uisk.h), theta_c_max=None)
     assert img.n_images == [1, 1] and img.win == uisk.win and np.allclose(img.xs, uisk.xs) and np.allclose(img.ys, uisk.ys)
@@ -91,7 +93,7 @@ def test_images_match_uisk_on_the_same_tiles():
     sv = np.linalg.svd(u_i, compute_uv=False)
     assert sv[1] / sv[0] < 1e-9                                            # X(x) Y(y)
     grid = ScreenGrid(cap.screen)
-    samp = W.ScreenSampler(grid, (0.0, 0.0), "point", 1)
+    samp = WS.ScreenSampler(grid, (0.0, 0.0), "point", 1)
     d = 0.183 - 0.0525
     e_i, _, _ = samp.fields(u_i, samp.kernels(img.xs, img.ys, K, d, img.h), K, d, img.h)
     e_u, _, _ = samp.fields(u_u, samp.kernels(uisk.xs, uisk.ys, K, d, uisk.h), K, d, uisk.h)
@@ -122,7 +124,7 @@ def test_entrance_spot_is_a_unit_power_tilted_gaussian():
     x = np.linspace(-24e-6, 24e-6, 20001)
     assert float(np.trapezoid(np.abs(fx(x)) ** 2, x) * np.trapezoid(np.abs(fy(x)) ** 2, x)) == pytest.approx(1.0, rel=1e-6)
     u0 = sol.exit_field((0.0, 0.0), K, sim.delta_f, sim.beta_f, -1)
-    samp = W.ScreenSampler(ScreenGrid(cap.screen), (0.0, 0.0), "point", 1)
+    samp = WS.ScreenSampler(ScreenGrid(cap.screen), (0.0, 0.0), "point", 1)
     d = 0.183 - 0.0525
     e0, _, _ = samp.fields(u0, samp.kernels(sol.xs, sol.ys, K, d, sol.h), K, d, sol.h)
     assert np.abs(e0 - e0[::-1, :]).max() < 1e-10 * np.abs(e0).max()
