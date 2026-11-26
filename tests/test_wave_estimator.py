@@ -13,7 +13,13 @@ from formula.capsysred import Simulation, render
 from formula.capsysred.config import WAVE_DEFAULTS
 from formula.capsysred.screen import ScreenGrid
 from formula.capsysred.simulation import KNOWN_STAGES
-from formula.capsysred.stages import wave as W
+from formula.capsysred.stages.wave import estimator as W
+from formula.capsysred.stages.wave import output as WO
+from formula.capsysred.stages.wave import physics as WP
+from formula.capsysred.stages.wave import polygon as WPOLY
+from formula.capsysred.stages.wave import screen_sampler as WS
+from formula.capsysred.stages.wave import source as WSRC
+from formula.capsysred.stages.wave.providers import uisk as WU
 
 LAM = 12.398419843320026e-10 / 8.048
 K = 2.0 * math.pi / LAM
@@ -137,21 +143,21 @@ def test_source_rules_grid_and_weights():
         shape, size, position = "grid", 0.0, (1e-6, -2e-6, -0.1)
         grid_n, grid_step, grid_rot_deg, grid_r_max = 3, 1e-6, 0.0, None
 
-    nodes, w, label = W.source_rule(Src(), {"source_nodes": 9})
+    nodes, w, label = WSRC.source_rule(Src(), {"source_nodes": 9})
     assert len(nodes) == 9 and np.allclose(w, 1.0 / 9)          # size 0: equal weights, all nodes
     assert np.allclose(nodes.mean(0), [1e-6, -2e-6])
     Src.size = 0.5e-6
-    nodes, w, _ = W.source_rule(Src(), {"source_nodes": 9})
+    nodes, w, _ = WSRC.source_rule(Src(), {"source_nodes": 9})
     r2 = ((nodes - np.array([1e-6, -2e-6])) ** 2).sum(1)
     assert np.allclose(w, np.exp(-r2 / (2 * 0.25e-12)) / np.exp(-r2 / (2 * 0.25e-12)).sum())
     Src.grid_r_max = 1.1e-6
-    nodes, w, _ = W.source_rule(Src(), {"source_nodes": 9})
+    nodes, w, _ = WSRC.source_rule(Src(), {"source_nodes": 9})
     assert len(nodes) == 5 and abs(w.sum() - 1.0) < 1e-15
 
     class Disk:
         shape, size, position = "disk", 2e-6, (0.0, 0.0, -0.3)
 
-    nodes, w, _ = W.source_rule(Disk(), {"source_nodes": 768})
+    nodes, w, _ = WSRC.source_rule(Disk(), {"source_nodes": 768})
     assert len(nodes) == 4 * 14 * 14 and np.all(w > 0) and abs(w.sum() - 1.0) < 1e-14
     assert abs((nodes ** 2).sum(1) @ w - (2e-6) ** 2 / 2) < 1e-24   # <r^2> of a uniform disk = a^2/2
 
@@ -176,7 +182,7 @@ def test_recorded_origins_merge_every_archive(tmp_path):
         _trace_archive(cfg, archive)
         archives.append(str(archive))
     src = Simulation.from_dict(raw).cfg.capillary.source
-    nodes, w, label = W.recorded_rule(archives, "capillary", src)
+    nodes, w, label = WSRC.recorded_rule(archives, "capillary", src)
     expected = []
     for a in archives:
         expected += [o[:2] for o in rays_v3.origins(a, rays_v3.load_index(a), "capillary")]
@@ -250,15 +256,15 @@ def test_broadband_lines_sum_in_w_and_i():
 
 def test_families_dedup_is_scale_and_rotation_robust():
     for a, rot in ((24e-6, 0.0), (24e-6, math.pi / 4), (3e-6, 0.137), (1e-6, 0.0), (7e-6, 1.1)):
-        poly = W.Polygon({"center": [0.0, 0.0], "radius": a, "sides": 4, "rotation": rot})
-        assert [len(W.enumerate_families(poly, m)) for m in (2, 3, 4)] == [13, 25, 41], (a, rot)
-    square = W.Polygon({"center": [0.0, 0.0], "radius": 24e-6, "sides": 4, "rotation": 0.0})
-    fams = W.enumerate_families(square, 2)
+        poly = WPOLY.Polygon({"center": [0.0, 0.0], "radius": a, "sides": 4, "rotation": rot})
+        assert [len(WU.enumerate_families(poly, m)) for m in (2, 3, 4)] == [13, 25, 41], (a, rot)
+    square = WPOLY.Polygon({"center": [0.0, 0.0], "radius": 24e-6, "sides": 4, "rotation": 0.0})
+    fams = WU.enumerate_families(square, 2)
     corner = [f for f in fams if len(f.seq) == 2 and abs(f.center[0]) > 1e-9 and abs(f.center[1]) > 1e-9]
     assert len(corner) == 4 and np.allclose(np.abs(corner[0].center), [48e-6, 48e-6])
     assert np.allclose([abs(n @ m) for n, m in zip(corner[0].unfolded, corner[0].unfolded[::-1])], 0.0)
-    hexa = W.Polygon({"center": [0.0, 0.0], "radius": 24e-6, "sides": 6, "rotation": 0.3})
-    assert len(W.enumerate_families(hexa, 2)) == 1 + 6 + 30      # no commuting pairs at 120 degrees
+    hexa = WPOLY.Polygon({"center": [0.0, 0.0], "radius": 24e-6, "sides": 6, "rotation": 0.3})
+    assert len(WU.enumerate_families(hexa, 2)) == 1 + 6 + 30      # no commuting pairs at 120 degrees
     one = [f for f in fams if f.seq == (0,)][0]
     assert np.allclose(one.center, [48e-6, 0.0]) and np.allclose(one.unfolded[0], [1.0, 0.0])
     assert np.allclose(one.map_point(np.array([1e-6, 2e-6])), [47e-6, 2e-6])
@@ -272,7 +278,7 @@ def square_point_solver():
     cap = sim.cfg.capillary
     grid = ScreenGrid(cap.screen)
     theta = W._theta_max(cap, np.array([[0.0, 0.0]]), [grid])
-    solver = W.BoreSolver(cap.bores[0], 0.117, 0.0525, theta, LAM, wave)
+    solver = WU.BoreSolver(cap.bores[0], 0.117, 0.0525, theta, LAM, wave)
     return sim, wave, solver, grid, theta
 
 
@@ -282,7 +288,7 @@ def test_square_point_source_is_separable_and_symmetric(square_point_solver):
     u = solver.exit_field((0.0, 0.0), K, sim.delta_f, sim.beta_f, -1)
     sv = np.linalg.svd(u, compute_uv=False)
     assert sv[1] / sv[0] < 1e-9                        # X(x) Y(y): rank one
-    samp = W.ScreenSampler(grid, (0.0, 0.0), "point", 1)
+    samp = WS.ScreenSampler(grid, (0.0, 0.0), "point", 1)
     d = 0.183 - 0.0525
     e, ref, _ = samp.fields(u, samp.kernels(solver.xs, solver.ys, K, d, solver.h), K, d, solver.h)
     assert np.abs(e - e[::-1, :]).max() / np.abs(e).max() < 1e-10
@@ -295,13 +301,13 @@ def test_rotated_square_keeps_symmetries_and_power(square_point_solver):
     raw = _square(rotation_deg=45)
     sim_r = Simulation.from_dict(raw)
     cap = sim_r.cfg.capillary
-    rot = W.BoreSolver(cap.bores[0], 0.117, 0.0525, theta, LAM, dict(wave, grid_dx=solver.h))
+    rot = WU.BoreSolver(cap.bores[0], 0.117, 0.0525, theta, LAM, dict(wave, grid_dx=solver.h))
     assert len(rot.families) + rot.pruned == 13         # 13 unique tiles, none duplicated
     u0 = solver.exit_field((0.0, 0.0), K, sim.delta_f, sim.beta_f, -1)
     ur = rot.exit_field((0.0, 0.0), K, sim.delta_f, sim.beta_f, -1)
     power = lambda u, h: float(np.sum(np.abs(u) ** 2) * h * h)
     assert abs(power(ur, rot.h) / power(u0, solver.h) - 1.0) < 2e-2
-    samp = W.ScreenSampler(grid, (0.0, 0.0), "point", 1)
+    samp = WS.ScreenSampler(grid, (0.0, 0.0), "point", 1)
     d = 0.183 - 0.0525
     e, _, _ = samp.fields(ur, samp.kernels(rot.xs, rot.ys, K, d, rot.h), K, d, rot.h)
     assert np.abs(e - e[::-1, :]).max() / np.abs(e).max() < 1e-9
@@ -316,7 +322,7 @@ def test_direct_family_matches_closed_form_fresnel():
     wave.update(max_bounces=0, grid_dx=0.0664e-6, pad=2.25)
     cap = sim.cfg.capillary
     theta = W._theta_max(cap, np.array([[0.0, 0.0]]), [ScreenGrid(cap.screen)])
-    solver = W.BoreSolver(cap.bores[0], 0.117, 0.0525, theta, LAM, wave)
+    solver = WU.BoreSolver(cap.bores[0], 0.117, 0.0525, theta, LAM, wave)
     u = solver.exit_field((0.0, 0.0), K, sim.delta_f, sim.beta_f, -1)
     z_in, L, R = 0.117, 0.0525, 24e-6
 
@@ -345,14 +351,14 @@ def test_reciprocity_source_and_detector_swap(square_point_solver):
     uf = solver.exit_field(xi, K, sim.delta_f, sim.beta_f, -1)
     XS, YS = np.meshgrid(solver.xs, solver.ys, indexing="ij")
     e_fwd = np.sum(uf * np.exp(1j * K * ((P[0] - XS) ** 2 + (P[1] - YS) ** 2) / (2 * d))) * solver.h ** 2 / (1j * LAM * d)
-    rev = W.BoreSolver(sim.cfg.capillary.bores[0], d, 0.0525, theta, LAM, dict(wave, grid_dx=solver.h))
+    rev = WU.BoreSolver(sim.cfg.capillary.bores[0], d, 0.0525, theta, LAM, dict(wave, grid_dx=solver.h))
     ur = rev.exit_field(P, K, sim.delta_f, sim.beta_f, -1)
     e_rev = np.sum(ur * np.exp(1j * K * ((xi[0] - XS) ** 2 + (xi[1] - YS) ** 2) / (2 * z_in))) * solver.h ** 2 / (1j * LAM * z_in)
     assert abs(e_fwd - e_rev) / abs(e_fwd) < 1e-2
 
 
 def test_fresnel_r_limits():
-    r = W.fresnel_r(np.array([0.0, 1e-3, 3.775e-3, 1e-2]), 7.1258e-6, 9.208e-8)
+    r = WP.fresnel_r(np.array([0.0, 1e-3, 3.775e-3, 1e-2]), 7.1258e-6, 9.208e-8)
     assert abs(r[0] + 1.0) < 1e-12
     assert np.all(np.abs(r[:3]) > 0.85) and abs(r[3]) < 0.1
 
@@ -385,15 +391,15 @@ def test_pixel_intensity_keeps_cross_bore_interference():
     raw = _two_bores()
     sim = Simulation.from_dict(raw)
     grid = ScreenGrid(sim.cfg.capillary.screen)
-    samp = W.ScreenSampler(grid, (5e-6, 0.0), "coherent_cell", 2)
+    samp = WS.ScreenSampler(grid, (5e-6, 0.0), "coherent_cell", 2)
     xs = np.arange(-6e-6, 6e-6, 0.25e-6)
     u = np.exp(1j * K * (xs[:, None] ** 2 + xs[None, :] ** 2) / (2 * 0.08)) * 1e6
     kern = samp.kernels(xs, xs, K, 0.1, 0.25e-6)
     e, _, es = samp.fields(u, kern, K, 0.1, 0.25e-6)
     for sign, factor in ((-1.0, 0.0), (1.0, 4.0)):
-        acc = W.Accumulator(samp, 2)
+        acc = WS.Accumulator(samp, 2)
         acc.add(1.0, [e, sign * e], [None, None], [es, sign * es])
-        single = W.Accumulator(samp, 1)
+        single = WS.Accumulator(samp, 1)
         single.add(1.0, [e], [None], [es])
         assert np.allclose(acc.I_pixel, factor * single.I_pixel, rtol=1e-12, atol=1e-30 * single.I_pixel.max())
         assert np.allclose(acc.I_bore[0], single.I) and np.allclose(acc.I_bore[1], single.I)
@@ -490,9 +496,9 @@ def test_phase_mask_and_log_rows():
     """W = 0 has no phase; exact zeros leave gaps in the log plot."""
     mu = np.array([[1.0, 1.0], [0.0, 0.0]], dtype=complex)
     trusted = np.ones((2, 2), dtype=bool)
-    assert W._phase_mask(mu, trusted).tolist() == [[True, True], [False, False]]
-    assert W._phase_mask(np.array([[5e-4 + 0j]]), np.ones((1, 1), bool)).tolist() == [[False]]
-    assert W._log_rows([1.0, 0.0, 1e-8], 1.0) == [0.0, None, -8.0]
+    assert WO._phase_mask(mu, trusted).tolist() == [[True, True], [False, False]]
+    assert WO._phase_mask(np.array([[5e-4 + 0j]]), np.ones((1, 1), bool)).tolist() == [[False]]
+    assert WO._log_rows([1.0, 0.0, 1e-8], 1.0) == [0.0, None, -8.0]
 
 
 def test_one_dimensional_gamma12_plots_distinguish_phase(tmp_path):
@@ -504,13 +510,13 @@ def test_one_dimensional_gamma12_plots_distinguish_phase(tmp_path):
         sim = Simulation.from_dict(raw)
         wave = sim.cfg.validate_wave_estimator()
         grid = ScreenGrid(sim.cfg.capillary.screen)
-        samp = W.ScreenSampler(grid, (5e-6, 0.0), "coherent_cell", 2)
-        acc = W.Accumulator(samp, 2)
+        samp = WS.ScreenSampler(grid, (5e-6, 0.0), "coherent_cell", 2)
+        acc = WS.Accumulator(samp, 2)
         e = np.exp(1j * np.linspace(0, 3, 21))[:, None] + 0j
         acc.add(1.0, [e, sign * e], [None, None], [np.ones((42, 2), complex), sign * np.ones((42, 2), complex)])
-        res = W._finish(acc, samp, {"scene": "capillary", "provider": "uisk", "n_nodes": 1}, wave, 0.0)
+        res = WS._finish(acc, samp, {"scene": "capillary", "provider": "uisk", "n_nodes": 1}, wave, 0.0)
         os.makedirs(out)
-        names = W._maps(str(out), res, wave)
+        names = WO._maps(str(out), res, wave)
         return names, (out / "16-wave-gamma12.svg").read_text(encoding="utf-8")
 
     names_a, svg_a = run(1j, tmp_path / "a")
@@ -552,16 +558,16 @@ def test_companion_plots_survive_total_cancellation(tmp_path):
     sim = Simulation.from_dict(raw)
     wave = sim.cfg.validate_wave_estimator()
     grid = ScreenGrid(sim.cfg.capillary.screen)
-    samp = W.ScreenSampler(grid, (5e-6, 0.0), "coherent_cell", 2)
-    acc = W.Accumulator(samp, 2)
+    samp = WS.ScreenSampler(grid, (5e-6, 0.0), "coherent_cell", 2)
+    acc = WS.Accumulator(samp, 2)
     e = np.ones((21, 1), complex)
     es = np.ones((42, 2), complex)
     acc.add(1.0, [e, -e], [None, None], [es, -es])
-    res = W._finish(acc, samp, {"scene": "capillary", "provider": "uisk", "n_nodes": 1}, wave, 0.0)
+    res = WS._finish(acc, samp, {"scene": "capillary", "provider": "uisk", "n_nodes": 1}, wave, 0.0)
     assert float(res["I"].max()) == 0.0 and res["I_bore"].max() == 1.0
     out = tmp_path / "zero"
     out.mkdir()
-    names = W._maps(str(out), res, wave)
+    names = WO._maps(str(out), res, wave)
     assert {"16-wave-intensity.svg", "16-wave-interference.svg", "16-wave-gamma12.svg"} <= set(names)
     assert "16-wave-intensity-log.svg" not in names and "16-wave-mu.svg" not in names
     assert "I_1 / S_coh" in (out / "16-wave-intensity.svg").read_text(encoding="utf-8")
@@ -624,12 +630,12 @@ def test_intensity_profiles_use_separate_scales(tmp_path, monkeypatch):
     sim = Simulation.from_dict(raw)
     wave = sim.cfg.validate_wave_estimator()
     grid = ScreenGrid(sim.cfg.free_screen)
-    samp = W.ScreenSampler(grid, (0.0, 0.0), "coherent_cell", 2)
+    samp = WS.ScreenSampler(grid, (0.0, 0.0), "coherent_cell", 2)
     area = samp.hx * samp.hy
     prof = np.array([1.0, 2.0, 1.0])
     e = (area * prof)[:, None] + 0j
     es = np.repeat(np.repeat(prof[:, None], 2, 0), 2, 1) + 0j          # constant inside each cell
-    acc = W.Accumulator(samp, 1)
+    acc = WS.Accumulator(samp, 1)
     acc.add(1.0, [e], [None], [es])
     assert np.allclose(acc.I[:, 0], area ** 2 * prof ** 2) and np.allclose(acc.I_pixel[:, 0], area * prof ** 2)
     captured = {}
@@ -641,8 +647,8 @@ def test_intensity_profiles_use_separate_scales(tmp_path, monkeypatch):
         return real(series, title, *a, **k)
 
     monkeypatch.setattr(render, "line_chart", spy)
-    res = W._finish(acc, samp, {"scene": "free", "provider": "free", "n_nodes": 1}, wave, 0.0)
-    W._maps(str(tmp_path), res, wave)
+    res = WS._finish(acc, samp, {"scene": "free", "provider": "free", "n_nodes": 1}, wave, 0.0)
+    WO._maps(str(tmp_path), res, wave)
     coh = [k for k in captured if k.startswith("I / S_coh")][0]
     pix = [k for k in captured if k.startswith("I_pixel")][0]
     assert np.allclose(captured[coh], [0.25, 1.0, 0.25]) and np.allclose(captured[pix], [0.25, 1.0, 0.25])
@@ -654,9 +660,9 @@ def test_zero_coherent_intensity_caption(tmp_path, monkeypatch):
     raw["free"]["screen"].update(edge_x=2e-6, edge_y=2e-6, nx=3, ny=1, reference=[0.0, 0.0])
     sim = Simulation.from_dict(raw)
     wave = sim.cfg.validate_wave_estimator()
-    samp = W.ScreenSampler(ScreenGrid(sim.cfg.free_screen), (0.0, 0.0), "coherent_cell", 2)
+    samp = WS.ScreenSampler(ScreenGrid(sim.cfg.free_screen), (0.0, 0.0), "coherent_cell", 2)
     es = np.array([[1.0, -1.0], [1.0, -1.0]] * 3, dtype=complex)        # +1/-1 halves in each cell
-    acc = W.Accumulator(samp, 1)
+    acc = WS.Accumulator(samp, 1)
     acc.add(1.0, [np.zeros((3, 1), complex)], [None], [es])
     assert acc.I.max() == 0.0 and acc.I_pixel.min() > 0.0
     captured = {}
@@ -669,8 +675,8 @@ def test_zero_coherent_intensity_caption(tmp_path, monkeypatch):
         return real(series, title, xlabel, ylabel, subtitle, *a, **k)
 
     monkeypatch.setattr(render, "line_chart", spy)
-    res = W._finish(acc, samp, {"scene": "free", "provider": "free", "n_nodes": 1}, wave, 0.0)
-    W._maps(str(tmp_path), res, wave)
+    res = WS._finish(acc, samp, {"scene": "free", "provider": "free", "n_nodes": 1}, wave, 0.0)
+    WO._maps(str(tmp_path), res, wave)
     assert "all intensities" not in captured["sub"] and "coherent intensities are zero" in captured["sub"]
     assert "S_coh = max(I, I_b) = 0.000e+00" in captured["sub"]
     assert np.allclose(captured["I / S_coh"], 0.0)
@@ -688,7 +694,7 @@ def test_far_tail_reference_is_flagged(tmp_path):
     res = W._free_scene(sim, wave, _lines(sim), None)
     assert res["meta"]["I_ref_over_max_I"] is not None and not res["meta"]["reference_in_far_tail"]
     fake = dict(res["meta"], I_ref_over_max_I=4.6e-5, reference_in_far_tail=True)
-    lines = W._report_lines("free", dict(res, meta=fake), wave, [])
+    lines = WO._report_lines("free", dict(res, meta=fake), wave, [])
     assert any("far diffraction tail" in l for l in lines)
 
 
@@ -705,7 +711,7 @@ def test_exit_plane_kernels_pick_and_average_the_lattice():
     rng = np.random.default_rng(3)
     u = rng.normal(size=(xs.size, ys.size)) + 1j * rng.normal(size=(xs.size, ys.size))
     cell_of = lambda p, zs: int(np.flatnonzero((p >= zs - h / 2) & (p < zs + h / 2))[0])
-    samp = W.ScreenSampler(grid, (0.2e-6, 0.1e-6), "point", 1)
+    samp = WS.ScreenSampler(grid, (0.2e-6, 0.1e-6), "point", 1)
     e, ref, _ = samp.fields(u, samp.kernels(xs, ys, K, 0.0, h), K, 0.0, h)
     for ix, px in enumerate(samp.px):
         for iy, py in enumerate(samp.py):
@@ -713,7 +719,7 @@ def test_exit_plane_kernels_pick_and_average_the_lattice():
             assert abs(e[ix, iy] - want) < 1e-12 * abs(want)
     want = u[cell_of(0.2e-6, xs), cell_of(0.1e-6, ys)]
     assert abs(ref - want) < 1e-12 * abs(want)
-    samp = W.ScreenSampler(grid, (0.2e-6, 0.1e-6), "coherent_cell", 2)
+    samp = WS.ScreenSampler(grid, (0.2e-6, 0.1e-6), "coherent_cell", 2)
     e, _, es = samp.fields(u, samp.kernels(xs, ys, K, 0.0, h), K, 0.0, h)
     for ix, px in enumerate(samp.px):
         for iy, py in enumerate(samp.py):
@@ -737,7 +743,7 @@ def test_exit_plane_screen_is_the_exit_field(tmp_path):
     theta = W._theta_max(cap, np.array([[0.0, 0.0]]), [ScreenGrid(cap.screen)], [(0.0, 0.0)])
     assert abs(theta - 24e-6 / math.cos(math.pi / 4) / 0.117) < 1e-15 * theta
     (label, res), = W._capillary_scene(sim, wave, _lines(sim), None, -1, lambda _: None)
-    solver = W.BoreSolver(cap.bores[0], 0.117, 0.0525, theta, LAM, wave)
+    solver = WU.BoreSolver(cap.bores[0], 0.117, 0.0525, theta, LAM, wave)
     u = solver.exit_field((0.0, 0.0), K, sim.delta_f, sim.beta_f, -1)
     samp = res["sampler"]
     picked = np.array([[u[int(np.argmin(np.abs(solver.xs - px))), int(np.argmin(np.abs(solver.ys - py)))]
@@ -754,11 +760,11 @@ def test_rectangle_apothems_is_separable_into_two_squares(square_point_solver):
     raw = _square()
     raw["capillary"]["bores"][0]["apothems"] = [ax, ay, ax, ay]
     w = dict(wave, grid_dx=solver.h)
-    rect = W.BoreSolver(Simulation.from_dict(raw).cfg.capillary.bores[0], 0.117, 0.0525, theta, LAM, w)
+    rect = WU.BoreSolver(Simulation.from_dict(raw).cfg.capillary.bores[0], 0.117, 0.0525, theta, LAM, w)
     assert np.allclose(rect.poly.a, [ax, ay, ax, ay]) and rect.poly.verts.max(0)[1] == pytest.approx(ay)
     raw_y = _square()
     raw_y["capillary"]["bores"][0]["radius"] = ay
-    sq_y = W.BoreSolver(Simulation.from_dict(raw_y).cfg.capillary.bores[0], 0.117, 0.0525, theta, LAM, w)
+    sq_y = WU.BoreSolver(Simulation.from_dict(raw_y).cfg.capillary.bores[0], 0.117, 0.0525, theta, LAM, w)
     u_r = rect.exit_field((0.0, 0.0), K, sim.delta_f, sim.beta_f, -1)
     u_x = solver.exit_field((0.0, 0.0), K, sim.delta_f, sim.beta_f, -1)
     u_y = sq_y.exit_field((0.0, 0.0), K, sim.delta_f, sim.beta_f, -1)
@@ -802,19 +808,19 @@ def test_dump_field_writes_exit_fields_for_uisk_only(tmp_path):
 def test_transfer_separable_path_matches_the_general_product(square_point_solver):
     sim, wave, solver, grid, theta = square_point_solver
     fams = {f.seq: f for f in solver.families}
-    assert W.BoreSolver._axis_counts(fams[()]) == (0, 0) and W.BoreSolver._axis_counts(fams[(0,)]) == (1, 0)
-    assert W.BoreSolver._axis_counts(fams[(0, 1)]) == (1, 1)              # two-step tiles are pruned by the reach
+    assert WU.BoreSolver._axis_counts(fams[()]) == (0, 0) and WU.BoreSolver._axis_counts(fams[(0,)]) == (1, 0)
+    assert WU.BoreSolver._axis_counts(fams[(0, 1)]) == (1, 1)              # two-step tiles are pruned by the reach
     for f in solver.families:
         fast = solver.transfer(f, K, sim.delta_f, sim.beta_f)
         slow = solver.transfer(f, K, sim.delta_f, sim.beta_f, general=True)
         assert fast.shape == slow.shape and np.abs(fast - slow).max() < 1e-12 * np.abs(slow).max()
-    rot = W.Polygon({"center": [0.0, 0.0], "radius": 24e-6, "sides": 4, "rotation": math.pi / 4})
-    assert W.BoreSolver._axis_counts(W.enumerate_families(rot, 1)[1]) is None     # rotated faces: general path
+    rot = WPOLY.Polygon({"center": [0.0, 0.0], "radius": 24e-6, "sides": 4, "rotation": math.pi / 4})
+    assert WU.BoreSolver._axis_counts(WU.enumerate_families(rot, 1)[1]) is None     # rotated faces: general path
 
 
 def test_uncached_masks_give_the_same_exit_field(square_point_solver):
     sim, wave, solver, grid, theta = square_point_solver
-    lazy = W.BoreSolver(sim.cfg.capillary.bores[0], 0.117, 0.0525, theta, LAM, dict(wave, grid_dx=solver.h), cache_masks=False)
+    lazy = WU.BoreSolver(sim.cfg.capillary.bores[0], 0.117, 0.0525, theta, LAM, dict(wave, grid_dx=solver.h), cache_masks=False)
     assert all(f.mask is None for f in lazy.families) and len(lazy.families) == len(solver.families)
     u_c = solver.exit_field((0.0, 0.0), K, sim.delta_f, sim.beta_f, -1)
     u_l = lazy.exit_field((0.0, 0.0), K, sim.delta_f, sim.beta_f, -1)

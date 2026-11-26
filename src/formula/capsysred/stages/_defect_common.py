@@ -4,7 +4,8 @@ import math
 
 import numpy as np
 
-from .wave_fb import Disc, FBChannel, mode_damping
+from .wave.providers.fb.basis import Disc, mode_damping
+from .wave.providers.fb.channel import FBChannel
 
 
 _DISCS = {}
@@ -47,7 +48,7 @@ def _disc(a_w, jmax):
 
 def _channel(bore, a_w, disc, k, fresnel=None):
     """FBChannel of a bore; `fresnel` = (2 delta, 2 beta) adds the DIR-ell per-mode damping of
-    the fb wave (wave_fb.mode_damping), none = lossless Dirichlet."""
+    the fb wave (wave.fb.mode_damping), none = lossless Dirichlet."""
     c0 = np.array([float(bore["center"][0]), float(bore["center"][1])])
     gamma = None if fresnel is None else mode_damping(disc, k, 0.5 * fresnel[0], 0.5 * fresnel[1])
     bend = bore.get("bend")

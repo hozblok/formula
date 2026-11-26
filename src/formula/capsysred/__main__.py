@@ -22,7 +22,8 @@ def main(argv=None) -> int:
                              "2+3 for a free scene, 14 for a capillary scene; "
                              "3 requires 2, which is added automatically); "
                              "17: experimental archive phase checks or canonical coherence map; "
-                             "18: experimental archive contour coherence map")
+                             "18: experimental archive contour coherence map; "
+                             "20: wave packet along one circular bore (return fidelity, carpets, far field)")
     parser.add_argument("--replay", metavar="ARCHIVE", default=None,
                         nargs="+",
                         help="rays recording(s) to re-evaluate with the spectrum and "

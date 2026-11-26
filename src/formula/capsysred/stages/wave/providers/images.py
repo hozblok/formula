@@ -10,10 +10,12 @@ import math
 import numpy as np
 from scipy import fft as sfft
 
+from ..physics import fresnel_r, spot_axis
+from ..polygon import Polygon, _fast_len, coverage, sub_offsets
+
 
 def axis_rectangle(bore):
     """(cx, ax, cy, ay) of a polygon bore whose four faces lie along the lattice axes, else None."""
-    from .wave import Polygon
     poly = Polygon(bore)
     if poly.n != 4:
         return None
@@ -35,7 +37,6 @@ class AxisSolver:
     line lattice x = i h, each tile's field FFT-propagated with exp(-i kappa^2 L / 2k) r^|n|."""
 
     def __init__(self, c, a, z_in, length, h, supersample, n_images, spread):
-        from .wave import _fast_len, sub_offsets
         self.c, self.a, self.z_in, self.L, self.h = float(c), float(a), float(z_in), float(length), float(h)
         self.n_img = int(n_images)
         half = (self.n_img + 0.5) * 2.0 * self.a + spread
@@ -58,7 +59,6 @@ class AxisSolver:
     def exit_line(self, entrance, k, delta, beta, hard=False):
         """Exit samples on the window for a 1D entrance factor `entrance(x)` given in the aperture frame;
         hard: a perfect Dirichlet wall at the geometric face (r = -1, no penetration)."""
-        from .wave import fresnel_r
         r = -np.ones(self.kap.size) if hard else fresnel_r(np.abs(self.kap) / k, delta, beta)
         prop = np.exp(-1j * self.kap ** 2 * self.L / (2.0 * k))
         S = np.zeros(self.xs.size, dtype=complex)
@@ -73,7 +73,6 @@ class ImageSolver:
     """Separable image sum for one axis-aligned rectangular bore; the interface of BoreSolver."""
 
     def __init__(self, bore, z_in, length, theta_max, lam_h, wave, lam_reach=None, theta_c_max=None, spot=None):
-        from .wave import Polygon, coverage
         lam_reach = lam_h if lam_reach is None else lam_reach
         self.poly = Polygon(bore)
         rect = axis_rectangle(bore)
@@ -110,7 +109,6 @@ class ImageSolver:
             return ([lambda x, s=float(xi[0]): np.exp(1j * k * (x - s) ** 2 / (2.0 * z)),
                      lambda y, s=float(xi[1]): np.exp(1j * k * (y - s) ** 2 / (2.0 * z))],
                     1.0 / (1j * (2.0 * np.pi / k) * z))
-        from .wave import spot_axis
         return ([lambda x: spot_axis(self.spot, k, x, 0), lambda y: spot_axis(self.spot, k, y, 1)], 1.0)
 
     def exit_field(self, xi, k, delta, beta, workers):

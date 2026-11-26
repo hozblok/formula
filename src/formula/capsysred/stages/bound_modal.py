@@ -3,13 +3,13 @@
 The error e = E - E_m of a method field E_m (E the exact paraxial Dirichlet field on the
 bore r < a_w) solves, in the bore frame, i e_z = -Lap e / 2k + U e with e|_wall = -g
 (g the method field's wall trace) and e(0) = E_in - E_m(0).  In the Dirichlet basis
-b_mn = J_|m|(kappa_mn r) e^{i m phi} (wave_fb.Disc), Green's identity turns the trace into
+b_mn = J_|m|(kappa_mn r) e^{i m phi} (wave.fb.Disc), Green's identity turns the trace into
 a forcing of the Galerkin coefficients c_mn (field = sum c_mn b_mn):
 
     c' = -i H c + s(z),   s_mn(z) = -i kappa_mn ghat_m(z) / (k a_w J_|m|+1(j_mn)),
 
 ghat_m the Fourier coefficients of g over phi, H = diag(kappa^2 / 2k) + U the operator of
-wave_fb.FBChannel.  Hence, with the exact free-paraxial-equation residual R of E_m,
+wave.fb.FBChannel.  Hence, with the exact free-paraxial-equation residual R of E_m,
 
     ||e(L)|| <= ||e(0)|| + ||int_0^L e^{-iH(L-z)} s(z) dz|| + tail(N) + int ||R|| dz,
 
@@ -24,7 +24,8 @@ import numpy as np
 from numpy.polynomial.legendre import leggauss
 from scipy.special import jv
 
-from .wave_fb import CHEB_MARGIN, Disc, FBChannel, wall_offset
+from .wave.providers.fb.basis import Disc, wall_offset
+from .wave.providers.fb.channel import CHEB_MARGIN, FBChannel
 
 
 def _interp_error(zs, s_at, norm):
@@ -516,7 +517,7 @@ class Square:
 
 
 def slab_damping(kappa, k, delta, beta, aw):
-    """DIR-ell amplitude damping of a slab mode of wall wavenumber kappa (wave_fb.mode_damping
+    """DIR-ell amplitude damping of a slab mode of wall wavenumber kappa (wave.fb.mode_damping
     per wall pair): kappa^2 Im ell / (k a_w) times the exact Fresnel loss at the grazing angle
     kappa / k relative to its theta -> 0 form.  A diagnostic of the model gap, not part of B."""
     ell = wall_offset(k, delta, beta)

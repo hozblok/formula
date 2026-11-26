@@ -12,9 +12,12 @@ from scipy.integrate import quad
 from scipy.special import jn_zeros, jv, jvp, kv, kvp
 
 from formula.capsysred import Simulation
-from formula.capsysred.stages import wave as W
-from formula.capsysred.stages import wave_fb as FB
-from formula.capsysred.stages import wave_images as WI
+from formula.capsysred.stages.wave import estimator as W
+from formula.capsysred.stages.wave import physics as WP
+from formula.capsysred.stages.wave.providers import images as WI
+from formula.capsysred.stages.wave.providers.fb import basis as FBB
+from formula.capsysred.stages.wave.providers.fb import channel as FBC
+from formula.capsysred.stages.wave.providers.fb import far_field as FBF
 from formula.xray import FUSED_SILICA
 
 E_KEV = 8.048
@@ -24,9 +27,9 @@ DELTA, BETA = FUSED_SILICA.optical(E_KEV)
 
 
 def _disc(a, theta_cut=4.5e-3, cut=True):
-    aw = a + FB.wall_offset(K, DELTA, BETA).real
+    aw = a + FBB.wall_offset(K, DELTA, BETA).real
     J = K * aw * math.sqrt(2.0 * DELTA)
-    return FB.Disc(aw=aw, jmax=int(math.ceil(K * aw * theta_cut)), wall_cut=J if cut else None)
+    return FBB.Disc(aw=aw, jmax=int(math.ceil(K * aw * theta_cut)), wall_cut=J if cut else None)
 
 
 # ---------------------------------------------------------------- exact dispersion
@@ -34,7 +37,7 @@ def _disc(a, theta_cut=4.5e-3, cut=True):
 def test_exact_kappa_roots_and_the_angular_talbot_length():
     a = 1.0e-6
     d = _disc(a)
-    kap, ok = FB.exact_kappa(d, a=a, k=K, delta=DELTA, beta=BETA)
+    kap, ok = FBB.exact_kappa(d, a=a, k=K, delta=DELTA, beta=BETA)
     assert ok[d.validp].all()
     # independent script values (J_m / K_m continuity, numeric Newton), kappa * a
     for (m, n), (re, im) in {(0, 1): (2.3893, -9.962e-05), (90, 1): (97.9037, -4.225e-03),
@@ -59,10 +62,10 @@ def test_exact_kappa_roots_and_the_angular_talbot_length():
 
 def test_hadamard_term_is_the_translation_generator():
     """A rigid shift dr = d cos phi: V_ij = -d (h_j - h_i) <psi_i | d_x psi_j> / <psi_i|psi_i> for the code's V."""
-    d = FB.Disc(aw=1.0e-6, jmax=60)
-    ch = FB.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K)
+    d = FBB.Disc(aw=1.0e-6, jmax=60)
+    ch = FBC.FBChannel(c0=(0.0, 0.0), t=None, rbend=None, disc=d, k=K)
     shift = 1e-10
-    ch._dr = FB.WallFigure([{"q": 1, "amp": shift}], None, 1.0, axis=False).coeffs(0.0)
+    ch._dr = FBC.WallFigure([{"q": 1, "amp": shift}], None, 1.0, axis=False).coeffs(0.0)
     mj, nj, M = 20, 1, d.M
     e = d.empty()
     e[mj + M, nj - 1] = 1.0
@@ -86,13 +89,13 @@ def test_axis_path_against_hadamard_first_order():
     res = {}
     for cut in (True, False):
         d = _disc(a, theta_cut=4.5e-3 if cut else 1.5 * math.sqrt(2 * DELTA), cut=cut)
-        g = FB.mode_damping(d, K, DELTA, BETA)
-        ch0 = FB.FBChannel(c0=(0, 0), t=None, rbend=None, disc=d, k=K, gamma=g)
+        g = FBB.mode_damping(d, K, DELTA, BETA)
+        ch0 = FBC.FBChannel(c0=(0, 0), t=None, rbend=None, disc=d, k=K, gamma=g)
         c0 = ch0.spot_modes(spot)
         cu = ch0.propagate(c0, L)[0]
         for A in (0.1e-9, 0.03e-9):
             terms = [{"q": 1, "amp": A, "angle": 0.3}, {"q": 1, "amp": -A, "angle": 0.3, "period": P}]
-            c = {ax: FB.FBChannel(c0=(0, 0), t=None, rbend=None, disc=d, k=K, gamma=g, figure=FB.WallFigure(terms, None, L, axis=ax),
+            c = {ax: FBC.FBChannel(c0=(0, 0), t=None, rbend=None, disc=d, k=K, gamma=g, figure=FBC.WallFigure(terms, None, L, axis=ax),
                                   dz=P / 64).propagate(c0, L)[0] for ax in (True, False)}
             eff = math.sqrt(d.norm(c[True] - cu) / d.norm(cu))
             res[cut, A] = (eff, math.sqrt(d.norm(c[False] - c[True]) / d.norm(c[True] - cu)))
@@ -108,9 +111,9 @@ def test_axis_path_lab_frame_and_static_shift():
     d.fine_table(2e-9)
     spot = {"center": [0.1e-6, 0.05e-6], "fwhm": 150e-9, "tilt": [0.8e-3, 0.4e-3]}
     s = 3e-9
-    fig = FB.WallFigure([{"q": 1, "amp": s, "angle": 0.0}], None, 2e-3)
-    ch = FB.FBChannel(c0=(0, 0), t=None, rbend=None, disc=d, k=K, figure=fig, dz=1e-4)
-    ch0 = FB.FBChannel(c0=(0, 0), t=None, rbend=None, disc=d, k=K)
+    fig = FBC.WallFigure([{"q": 1, "amp": s, "angle": 0.0}], None, 2e-3)
+    ch = FBC.FBChannel(c0=(0, 0), t=None, rbend=None, disc=d, k=K, figure=fig, dz=1e-4)
+    ch0 = FBC.FBChannel(c0=(0, 0), t=None, rbend=None, disc=d, k=K)
     assert np.allclose(ch.axis(1e-3), [s, 0.0]) and np.allclose(ch.slope(1e-3), 0.0) and ch.lab_phase_g(1e-3) == 0.0
     sp = dict(spot, center=[spot["center"][0] - s, spot["center"][1]])
     c1 = ch.propagate(ch.spot_modes(spot), 2e-3)[0]
@@ -129,17 +132,17 @@ def test_far_field_from_modes_parseval_and_fft():
     c *= np.exp(-d.kap2 / (2 * (K * 1.5e-3) ** 2))
     th = np.linspace(0, 8e-3, 1601)
     nphi = 1 << int(math.ceil(math.log2(2 * d.M + 1)))
-    A = FB.far_field_amplitude(d, c, K, th, nphi)
-    ring, _ = FB.far_field_profiles(np.abs(A) ** 2, th, K, (0.0, 1.0))
+    A = FBF.far_field_amplitude(d, c, K, th, nphi)
+    ring, _ = FBF.far_field_profiles(np.abs(A) ** 2, th, K, (0.0, 1.0))
     assert ring.sum() * 2 * math.pi / nphi == pytest.approx(d.norm(c), rel=1e-4)
     d.fine_table(2e-9)
-    ch = FB.FBChannel(c0=(0, 0), t=None, rbend=None, disc=d, k=K)
+    ch = FBC.FBChannel(c0=(0, 0), t=None, rbend=None, disc=d, k=K)
     h = 4e-9
     xs = (np.arange(-300, 300) + 0.5) * h
     F = sfft.fft2(ch.lab_field(c=c, z=0.0, xg=xs, yg=xs, dr=2e-9), s=(8192, 8192)) * h * h
     fq = sfft.fftfreq(8192, h) * 2 * math.pi
     for i in (186, 280):                                             # ky = 0, kx = q: phi = 0
-        a_mod = FB.far_field_amplitude(d, c, K, [fq[i] / K], nphi)[0, 0]
+        a_mod = FBF.far_field_amplitude(d, c, K, [fq[i] / K], nphi)[0, 0]
         assert abs(a_mod) == pytest.approx(abs(F[0, i]), rel=2e-3)
 
 
@@ -156,7 +159,7 @@ def _scene(extra, length=0.005, a=0.5e-6):
 
 def test_stage_far_field_dump_exact_and_mirror_symmetry(tmp_path):
     plane = {"center": [0.0, 0.0], "fwhm": 30e-6, "tilt": [1.2e-3, 0.0]}
-    raw = _scene({"entrance_spot": plane, "fb_wall": "exact", "dump_field": True,
+    raw = _scene({"entrance_spot": plane, "fb_wall": "exact-roots", "dump_field": True,
                   "far_field": {"theta_max": 2.5e-3, "ring": [0.9e-3, 1.5e-3], "n_theta": 101}})
     sim = Simulation.from_dict(raw)
     res = W.run_wave_stage(sim, str(tmp_path), sim.cfg.validate_wave_estimator(), log=lambda *a: None)
@@ -212,12 +215,12 @@ def test_spot_focus_is_the_free_propagation_of_the_waist():
     spot = {"center": [0.2e-6, 0.0], "fwhm": 100e-9, "tilt": [0.5e-3, 0.0]}
     h, n = 2e-9, 1 << 13
     x = (np.arange(n) - n // 2) * h
-    waist = W.spot_axis(spot, K, x, 0)
+    waist = WP.spot_axis(spot, K, x, 0)
     f = -150e-6                                                      # waist 150 um before the entrance
     kx = 2 * np.pi * sfft.fftfreq(n, h)
     prop = sfft.ifft(sfft.fft(waist) * np.exp(-1j * kx ** 2 * (-f) / (2 * K)))
     # the propagated beam is centred at c + t |f|; the spot is defined by its centre on the entrance plane
-    moved = W.spot_axis(dict(spot, focus=f, center=[spot["center"][0] + spot["tilt"][0] * (-f), 0.0]), K, x, 0)
+    moved = WP.spot_axis(dict(spot, focus=f, center=[spot["center"][0] + spot["tilt"][0] * (-f), 0.0]), K, x, 0)
     moved = moved * np.exp(-1j * K * spot["tilt"][0] ** 2 * (-f) / 2)    # plane-wave phase of the tilt over |f|
     m = np.abs(x - 0.275e-6) < 0.6e-6
     assert np.max(np.abs(prop[m] - moved[m])) < 1e-9 * np.max(np.abs(moved))

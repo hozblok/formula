@@ -115,7 +115,8 @@ WAVE_DEFAULTS = {
     "fb_theta_cut": 3.6e-4,         # modal angular cut [rad] behind the jmax rule
     "fb_chebyshev_tol": 1.0e-12,    # Bessel-coefficient cutoff of the Chebyshev series of exp(-iHL)
     "fb_dr": 2.0e-8,                # fine radial table step [m] for the exit-field synthesis
-    "fb_wall": "dir-ell",           # dir-ell (complex offset: phase + absorption) | dir-ell-real (no absorption) | exact (J/K roots per mode)
+    "fb_wall": "dir-ell",           # dir-ell (complex offset: phase + absorption) | dir-ell-real (no absorption) | exact-roots (J/K roots per mode) | effective-radius (funnels: zero field at a G + ell, ell the complex penetration depth)
+    "fb_integrator": "split-step",  # funnels: split-step (order 2: mode phases, the lens on the (r, phi) grid) | cf4 (order 4, Chebyshev exponentials of Galerkin blocks)
     "fb_wall_cut": True,            # keep only guided modes: j_mn^2 - m^2 < (k a_w theta_c)^2
     "fb_figure": None,              # fb: [{q, amp, angle, rate, period, phase}] wall dr = amp mod(z) cos(q (phi - angle - rate z)); q = 1 moves the axis
     "fb_figure_noise": None,        # fb: {sigma, lc, q: [...], seed} random figure, gaussian z-correlation lc, equal power per q
@@ -130,6 +131,19 @@ WAVE_DEFAULTS = {
     "hard_wall": False,             # images: perfect Dirichlet faces at the geometric width (r = -1)
     "far_field": None,              # one bore: {theta_max, pad} (uisk / images / march, FFT) | {theta_max, n_theta, n_phi, ring} (fb, from the modes)
     "march": None,                  # march: {dx, dz, box, sponge, defects: [{type, ...}]} split-step lattice and defects
+}
+
+# stage 20 (`wave_packet`): merged lazily by Config.validate_wave_packet(); the basis, the wall model, the bore figure and
+# the entrance spot come from `wave_estimator` (provider fb).
+PACKET_DEFAULTS = {
+    "z_step": None,                 # ladder step along the bore [m]; null -> z_max / 200
+    "z_max": None,                  # last ladder point [m]; null -> the bore length
+    "slices": [],                   # z [m] of the cross-section fields and mode coefficients kept in packet.npz
+    "slice_pixel": 1.0e-8,          # pixel of the cross-section fields [m], bore frame
+    "carpet_pixel": 5.0e-9,         # radial step of the diameter carpet [m]
+    "far_field_at": [],             # z [m] of far fields from the modes (needs wave_estimator.far_field)
+    "dephasing_from": 0.5,          # F(z) is averaged from this fraction of z_max to z_max: the dephased level
+    "loss": "boundary",             # dir-ell wall: boundary (first-order boundary operator of i Im ell, non-diagonal) | diagonal (per mode, as stage 16)
 }
 
 B5_DEFAULTS = {
@@ -668,7 +682,8 @@ class Config:
         for key, choices in (("provider", ("auto", "uisk", "images", "march", "fb", "free")),
                              ("observable", ("coherent_cell", "point")),
                              ("source_mode", ("quadrature", "recorded_origins")),
-                             ("fb_wall", ("dir-ell", "dir-ell-real", "exact")),
+                             ("fb_wall", ("dir-ell", "dir-ell-real", "exact-roots", "effective-radius")),
+                             ("fb_integrator", ("cf4", "split-step")),
                              ("fb_grid_dtype", ("complex64", "complex128"))):
             if w[key] not in choices:
                 raise ValueError(
@@ -726,7 +741,7 @@ class Config:
         if w["provider"] == "march" and mc is None:
             raise ValueError("wave_estimator.march: provider march needs the march section {dz, box, ...}")
         if mc is not None:
-            from .stages.wave_march import DEFECT_KEYS, WALLS
+            from .stages.wave.providers.march import DEFECT_KEYS, WALLS
             if not isinstance(mc, dict) or set(mc) - {"dx", "dz", "box", "sponge", "defects"} or "dz" not in mc:
                 raise ValueError("wave_estimator.march: expected {dx, dz, box, sponge, defects}")
             out = {"dx": mc.get("dx"), "dz": mc["dz"], "box": mc.get("box", 2.0e-7),
@@ -770,6 +785,35 @@ class Config:
             if focus:
                 w["entrance_spot"]["focus"] = float(focus)
         self.wave = w
+        return w
+
+    def validate_wave_packet(self) -> dict:
+        """Stage-20-only checks; returns the `wave_packet` section merged with PACKET_DEFAULTS."""
+        raw = self.raw.get("wave_packet")
+        if raw is None:
+            raw = {}
+        if not isinstance(raw, dict):
+            raise ValueError("wave_packet must be a mapping")
+        unknown = raw.keys() - PACKET_DEFAULTS.keys()
+        if unknown:
+            raise ValueError(f"wave_packet has unknown keys {sorted(unknown)}")
+        w = _merge(PACKET_DEFAULTS, raw)
+        if w["loss"] not in ("boundary", "diagonal"):
+            raise ValueError(f"wave_packet.loss: expected boundary or diagonal, got {w['loss']!r}")
+        for key, lo, strict, optional in (("z_step", 0.0, True, True), ("z_max", 0.0, True, True), ("slice_pixel", 0.0, True, False),
+                                          ("carpet_pixel", 0.0, True, False), ("dephasing_from", 0.0, False, False)):
+            v = w[key]
+            if v is None and optional:
+                continue
+            if not _finite(v) or (v <= lo if strict else v < lo) or (key == "dephasing_from" and v >= 1.0):
+                raise ValueError(f"wave_packet.{key}: invalid value {v!r}")
+            w[key] = float(v)
+        for key in ("slices", "far_field_at"):
+            v = w[key]
+            if not isinstance(v, (list, tuple)) or not all(_finite(z) and z >= 0.0 for z in v):
+                raise ValueError(f"wave_packet.{key}: expected a list of finite z >= 0 [m], got {v!r}")
+            w[key] = sorted(float(z) for z in v)
+        self.packet = w
         return w
 
     def validate_b5_estimator(self) -> dict:

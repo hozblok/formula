@@ -1,6 +1,8 @@
-"""Stage 16 provider fb on conformal funnel bores (wave_funnel): the straight limit is the fb bore with exact roots,
-the basis dilation follows the effective radius, power is kept without absorption, the result agrees with the march
-funnel, and a run writes the screen and the matrix of mu between the bore centres."""
+"""Stage 16 provider fb on conformal funnel bores (wave.funnel): the straight limit is the fb bore with exact roots,
+the scale of the bore frame follows the effective radius, power is kept without absorption, the result agrees with the march
+funnel, and a run writes the screen and the matrix of mu between the bore centres. The wall effective-radius is the
+grazing limit of the exact roots; the split step is the diagonal on a cone, converges to cf4 at order 2 while the top of
+the basis is empty and reports the power it drops there."""
 
 import json
 import math
@@ -9,7 +11,8 @@ import numpy as np
 import pytest
 
 from formula.capsysred import Simulation
-from formula.capsysred.stages import wave_funnel as WF
+from formula.capsysred.stages.wave.providers.funnel import basis as WFB
+from formula.capsysred.stages.wave.providers.funnel import channel as WFC
 from formula.xray import OE2012_GLASS
 
 E_KEV = 8.0
@@ -20,9 +23,9 @@ Z26_G = (1.0 / 0.03, -1.0 / (0.03 * 0.46))
 
 
 def test_straight_limit_is_the_fb_bore():
-    """g = 0: G = s = 1 and no lens, so the propagator is the diagonal exp(-i h L) of the exact roots."""
-    basis = WF.FunnelBasis(0.5e-6, (0.0, 0.0), K, DELTA, BETA, 40)
-    ch = WF.FunnelChannel(basis, (0.3e-6, 0.0))
+    """g = 0: G = S = 1 and no lens, so the propagator is the diagonal exp(-i h L) of the exact roots."""
+    basis = WFB.FunnelBasis(a=0.5e-6, g=(0.0, 0.0), k=K, delta=DELTA, beta=BETA, jmax=40)
+    ch = WFC.FunnelChannel(basis=basis, c0=(0.3e-6, 0.0), integrator="cf4")
     c0 = ch.entrance_modes([(0.0, 0.0), (-0.1e-6, 0.2e-6)], 1.5e-3)
     cL, _, _ = ch.propagate(c0, 2.0e-3, 1.0e-3)
     hp = np.zeros(basis.disc.zp.shape, complex)
@@ -31,26 +34,93 @@ def test_straight_limit_is_the_fb_bore():
     assert np.max(np.abs(cL - ref)) < 1e-9 * np.max(np.abs(c0))
 
 
-def test_dilation_tracks_the_effective_radius():
-    """s A0 = a + Re ell / G, s(0) = 1; the derivatives against finite differences."""
-    basis = WF.FunnelBasis(6.0e-6, Z26_G, K, DELTA, BETA, 20)
+def test_effective_radius_is_the_grazing_limit_of_the_exact_roots():
+    """The wall shift j / Re kappa - a of the modes m = 0: ell for the effective radius, ell0 arcsin(t) / t for the exact
+    roots, t = theta / theta_c, ell0 = 1 / (k theta_c) (the phase of the Fresnel reflection)."""
+    a = 0.5e-6
+    kc = K * math.sqrt(2.0 * DELTA)
+    exact = WFB.FunnelBasis(a=a, g=(0.0, 0.0), k=K, delta=DELTA, beta=BETA, jmax=60, blocks=False)
+    eff = WFB.FunnelBasis(a=a, g=(0.0, 0.0), k=K, delta=DELTA, beta=BETA, jmax=60, blocks=False, wall="effective-radius")
+    m0 = exact.mr == 0
+    kap = np.sqrt(2.0 * K * exact.h(0.0))[m0].real
+    t = kap / kc
+    shift = exact.zc[m0] / kap - a
+    assert sum(exact.fallback.values()) == 0 and t.min() < 0.05 and t.max() > 0.9
+    assert shift == pytest.approx(np.arcsin(t) / (t * kc), rel=2e-3)
+    assert shift[0] == pytest.approx(eff.ell.real, rel=1e-3) and shift[-1] > 1.25 * eff.ell.real
+    assert eff.zc[m0] / np.sqrt(2.0 * K * eff.h(0.0))[m0].real - a == pytest.approx(eff.ell.real, rel=1e-6)
+
+
+def test_scale_tracks_the_effective_radius():
+    """S A0 = a G + Re ell, S(0) = 1; the derivative against finite differences; the lens and axis factors."""
+    basis = WFB.FunnelBasis(a=6.0e-6, g=Z26_G, k=K, delta=DELTA, beta=BETA, jmax=20, blocks=False)
     for z in (0.0, 0.1, 0.23):
-        assert basis.s(z)[0] * basis.A0 == pytest.approx(basis.a + basis.ell.real / basis.G(z), rel=1e-14)
-    assert basis.s(0.0)[0] == 1.0
+        assert basis.scale(z)[0] * basis.A0 == pytest.approx(basis.a * basis.G(z) + basis.ell.real, rel=1e-14)
+    assert basis.scale(0.0)[0] == 1.0
     z, h = 0.1, 1.0e-5
-    assert basis.s(z)[1] == pytest.approx((basis.s(z + h)[0] - basis.s(z - h)[0]) / (2 * h), rel=1e-6)
-    assert basis.s(z)[2] == pytest.approx((basis.s(z + h)[1] - basis.s(z - h)[1]) / (2 * h), rel=1e-5)
+    S, dS = basis.scale(z)
+    assert dS == pytest.approx((basis.scale(z + h)[0] - basis.scale(z - h)[0]) / (2 * h), rel=1e-6)
+    d2S = (basis.scale(z + h)[1] - basis.scale(z - h)[1]) / (2 * h)
+    ch = WFC.FunnelChannel(basis=basis, c0=(2.0e-5, 1.0e-5), integrator="cf4")
+    d2G = 2.0 * Z26_G[1]
+    assert ch.coeffs(z) == pytest.approx((0.5 * K * S * d2S, 0.5 * K * S * d2G, 0.5 * K * basis.G(z) * d2G * ch.rho0 ** 2), rel=1e-6)
+
+
+def test_frame_phase_is_the_scaling_about_the_device_axis_then_about_the_bore():
+    """The phase of E / w equals k G' |r|^2 / 2G + k G^2 s' |q|^2 / 2s with q = r / G - c0, s = S / G."""
+    basis = WFB.FunnelBasis(a=6.0e-6, g=Z26_G, k=K, delta=DELTA, beta=BETA, jmax=20, blocks=False)
+    ch = WFC.FunnelChannel(basis=basis, c0=(2.0e-5, 1.0e-5), integrator="cf4")
+    z = 0.17
+    G, dG = basis.G(z), basis.dG(z)
+    S, dS = basis.scale(z)
+    s, ds = S / G, (dS - S * dG / G) / G
+    dx, dy = np.array([3.0e-6, -11.0e-6]), np.array([-7.0e-6, 4.0e-6])
+    X, Y = G * ch.c0[0] + dx, G * ch.c0[1] + dy
+    two = K * dG * (X * X + Y * Y) / (2.0 * G) + K * ds * (dx * dx + dy * dy) / (2.0 * s)
+    assert ch._frame(z, dx, dy)[1] == pytest.approx(two, rel=1e-12)
 
 
 def test_power_is_kept_without_absorption():
     """beta = 0: real exact roots, real lens / axis / dilation terms, so the norm of w (= of E) is kept."""
-    basis = WF.FunnelBasis(0.5e-6, (3.0e3, -1.0e6), K, DELTA, 0.0, 40)
-    ch = WF.FunnelChannel(basis, (0.3e-6, 0.1e-6))
+    basis = WFB.FunnelBasis(a=0.5e-6, g=(3.0e3, -1.0e6), k=K, delta=DELTA, beta=0.0, jmax=40)
+    ch = WFC.FunnelChannel(basis=basis, c0=(0.3e-6, 0.1e-6), integrator="cf4")
     c0 = ch.entrance_modes([(0.0, 0.0), (-0.2e-6, 0.15e-6)], 1.0e-3 / 3.0)
     cL, _, _ = ch.propagate(c0, 1.0e-3, 2.0e-5)
     for i in range(2):
         p0, p1 = basis.disc.norm(c0[:, :, i]), basis.disc.norm(cL[:, :, i])
         assert p1 == pytest.approx(p0, rel=1e-6)
+
+
+def _split(g, c0, n, jmax, layer, integrator, wall="effective-radius"):
+    basis = WFB.FunnelBasis(a=0.5e-6, g=g, k=K, delta=DELTA, beta=BETA, jmax=jmax, layer=layer,
+                           blocks=integrator == "cf4", wall=wall)
+    ch = WFC.FunnelChannel(basis=basis, c0=c0, integrator=integrator)
+    cL, _, _ = ch.propagate(ch.entrance_modes([(0.0, 0.0), (-0.2e-6, 0.15e-6)], 1.0e-3 / 3.0), 1.0e-3, 1.0e-3 / n)
+    return basis, ch, cL
+
+
+def test_split_step_is_the_diagonal_on_a_cone():
+    """g1 = 0: no lens and no axis term, so the split step and cf4 are the same diagonal."""
+    for wall in ("exact-roots", "effective-radius"):
+        _, _, ref = _split((3.0e3, 0.0), (0.3e-6, 0.1e-6), 8, 40, 0.0, "cf4", wall)
+        _, ch, cL = _split((3.0e3, 0.0), (0.3e-6, 0.1e-6), 8, 40, 0.0, "split-step", wall)
+        assert np.max(np.abs(cL - ref)) < 1e-9 * np.max(np.abs(ref)) and np.all(np.abs(ch.stepper.projection_loss) < 1e-9)
+
+
+def test_split_step_converges_to_cf4_at_order_two():
+    """jmax 120 for k theta_c a = 61 with the absorbing layer: the top of the basis is empty, the error against cf4 falls
+    4 times per doubling of the steps. jmax 40 without the layer: the lens overfills the basis and projection_loss shows it."""
+    g, c0 = (3.0e3, -1.0e6), (0.3e-6, 0.1e-6)
+    basis, _, ref = _split(g, c0, 32, 120, 0.1, "cf4")
+    w = basis.disc.mnorm[:, :, None]
+    err = []
+    for n in (8, 16, 32):
+        _, ch, cL = _split(g, c0, n, 120, 0.1, "split-step")
+        err.append(math.sqrt((np.abs(cL - ref) ** 2 * w).sum() / (np.abs(ref) ** 2 * w).sum()))
+    assert err[0] > 3.5 * err[1] > 3.5 ** 2 * err[2] and err[2] < 1e-2
+    assert ch.stepper.projection_loss.max() < 1e-3
+    _, ch, _ = _split(g, c0, 16, 40, 0.0, "split-step")
+    assert ch.stepper.projection_loss.max() > 0.1
 
 
 def _scene(nx=45, ref=(0.0, 0.0)):
@@ -62,12 +132,13 @@ def _scene(nx=45, ref=(0.0, 0.0)):
                                      "position": [0.0, 0.0, -L / 3.0], "n_modes": 5, "n_rays": 1},
                           "screen": {"z": L, "center": [0.0, 0.0], "edge_x": 10.8e-6, "edge_y": 3.6e-6, "nx": nx, "ny": 15,
                                      "reference": list(ref)}},
-            "wave_estimator": {"provider": "fb", "observable": "point", "fb_wall": "exact", "fb_jmax": 30, "fb_dz": 2.0e-5}}
+            "wave_estimator": {"provider": "fb", "observable": "point", "fb_wall": "exact-roots", "fb_jmax": 30, "fb_dz": 2.0e-5}}
 
 
 def test_run_two_bores(tmp_path):
-    sim = Simulation.from_dict(_scene())
-    sim.run(str(tmp_path), stages=[16])
+    raw = _scene()
+    raw["wave_estimator"]["fb_integrator"] = "cf4"
+    Simulation.from_dict(raw).run(str(tmp_path), stages=[16])
     out = tmp_path / "stage16"
     meta = json.load(open(out / "meta.json", encoding="utf-8"))
     assert meta["provider"] == "fb" and meta["model_class"] == "exact-jk,funnel-xi" and meta["funnel"]["G_exit"] == pytest.approx(3.0)
@@ -79,16 +150,35 @@ def test_run_two_bores(tmp_path):
     assert lit and all(r["mu_abs"] <= 1.0 + 1e-9 for r in lit)
     ref = [r for r in lit if abs(r["x_um"]) < 1e-9 and abs(r["y_um"]) < 1e-9]
     assert ref and ref[0]["mu_abs"] == pytest.approx(1.0, abs=1e-6)
-    with pytest.raises(ValueError, match="fb_wall: exact"):
+    with pytest.raises(ValueError, match="fb_wall: exact-roots or effective-radius"):
         raw = _scene()
         raw["wave_estimator"]["fb_wall"] = "dir-ell"
+        Simulation.from_dict(raw).run(str(tmp_path / "x"), stages=[16])
+
+
+def test_run_effective_radius_split_step(tmp_path):
+    """The split step is the default integrator of funnel bores."""
+    raw = _scene()
+    raw["wave_estimator"]["fb_wall"] = "effective-radius"
+    Simulation.from_dict(raw).run(str(tmp_path), stages=[16])
+    out = tmp_path / "stage16"
+    meta = json.load(open(out / "meta.json", encoding="utf-8"))
+    assert meta["model_class"] == "effective-radius,funnel-xi" and meta["funnel"]["integrator"] == "split-step"
+    assert all(p["chebyshev_degree"] == 0 and p["phase_gradient_rad"] > 0.0 and len(p["projection_loss"]) == meta["n_nodes"]
+               for p in meta["propagation"])
+    cen = json.load(open(out / "funnel-centres.json", encoding="utf-8"))
+    mu = np.array(cen["mu_re"]) + 1j * np.array(cen["mu_im"])
+    assert np.allclose(np.diag(mu), 1.0) and np.allclose(mu, mu.conj().T) and np.all(np.abs(mu) <= 1.0 + 1e-12)
+    for b in raw["capillary"]["bores"]:
+        del b["funnel"]
+    with pytest.raises(ValueError, match="funnel bores only"):
         Simulation.from_dict(raw).run(str(tmp_path / "x"), stages=[16])
 
 
 def test_agrees_with_the_march_funnel():
     """A conformal funnel at grazing angles below 0.2 theta_c (a = 0.5 um, L = 3 mm, D = 1.5 mm, G(L) = 2.5, centre
     0.6 um): the exit fields of the modes and of the split step (dx 5 nm) overlap to better than 0.999."""
-    from formula.capsysred.stages import wave_march as WM
+    from formula.capsysred.stages.wave.providers import march as WM
     L, D, a, c0, g = 3.0e-3, 1.5e-3, 0.5e-6, (0.6e-6, 0.0), (1.0 / 1.5e-3, -0.5 / 9.0e-6)
     raw = {"precision": 32, "energy_kev": E_KEV, "material": "glass_oe2012",
            "capillary": {"bores": [{"center": list(c0), "radius": a, "funnel": {"g": list(g)}}], "z0": 0.0, "z1": L,
@@ -101,8 +191,8 @@ def test_agrees_with_the_march_funnel():
     s = WM.MarchSolver(sim.cfg.capillary.bores[0], D, L, 5e-3, LAM, sim.cfg.validate_wave_estimator())
     src = (-0.2e-6, 0.15e-6)
     um = s.exit_field(np.array(src), K, DELTA, BETA, 4)
-    basis = WF.FunnelBasis(a, g, K, DELTA, BETA, 60)
-    ch = WF.FunnelChannel(basis, c0)
+    basis = WFB.FunnelBasis(a=a, g=g, k=K, delta=DELTA, beta=BETA, jmax=60)
+    ch = WFC.FunnelChannel(basis=basis, c0=c0, integrator="cf4")
     cL, _, _ = ch.propagate(ch.entrance_modes([src], D), L, 5e-5)
     X, Y = np.meshgrid(s.xs, s.ys, indexing="ij")
     inside = s.exit_mask > 0.999

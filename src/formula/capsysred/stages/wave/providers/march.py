@@ -10,6 +10,9 @@ import math
 import numpy as np
 from scipy import fft as sfft
 
+from ..physics import spot_profile
+from ..polygon import Polygon, _fast_len, sub_offsets
+
 DEFECT_KEYS = {
     "roughness": {"sigma", "lc", "seed", "walls"},
     "step": {"z", "dw"},
@@ -40,7 +43,6 @@ class MarchSolver:
     """Split-step march for one bore; the interface of BoreSolver / ImageSolver."""
 
     def __init__(self, bore, z_in, length, theta_max, lam_h, wave, lam_reach=None, spot=None):
-        from .wave import Polygon, _fast_len, sub_offsets
         m = wave["march"]
         self.z_in, self.length, self.spot = float(z_in), float(length), spot
         self.theta_max = theta_max
@@ -105,7 +107,6 @@ class MarchSolver:
 
     def _cover_exit(self):
         """Grow the exit window to every core cell of the exit section (slope, wall offsets) with 2 cells of margin."""
-        from .wave import _fast_len
         win = list(self.win)
         for ax in range(2):
             cells = np.nonzero(self.exit_mask_full.sum(axis=1 - ax) > 0.0)[0]
@@ -256,7 +257,6 @@ class MarchSolver:
         if self.spot is None:
             lam = 2.0 * np.pi / k
             return np.exp(1j * k * ((X - xi[0]) ** 2 + (Y - xi[1]) ** 2) / (2.0 * self.z_in)) / (1j * lam * self.z_in)
-        from .wave import spot_profile
         return spot_profile(self.spot, k, X, Y)
 
     def exit_field(self, xi, k, delta, beta, workers):
