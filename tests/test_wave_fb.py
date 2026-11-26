@@ -14,6 +14,7 @@ from formula.capsysred import Simulation
 from formula.formula import NumberContext
 from formula.capsysred.stages.wave import estimator as W
 from formula.capsysred.stages.wave import fb as FB
+from formula.capsysred.stages.wave import fb_scene as FBS
 from formula.capsysred.walls.wall_torus import TorusWall
 
 LAM = 12.398419843320026e-10 / 8.048
@@ -334,10 +335,10 @@ def test_fb_wall_cut_config():
     with pytest.raises(ValueError, match="fb_wall_cut"):
         Simulation.from_dict(bad).cfg.validate_wave_estimator()
     sim = Simulation.from_dict(raw)
-    spec = FB.build_spec(sim, sim.cfg.validate_wave_estimator(), [(K, 1.0, DELTA, BETA)])
+    spec = FBS.build_spec(sim, sim.cfg.validate_wave_estimator(), [(K, 1.0, DELTA, BETA)])
     assert spec["wall_cut"] == pytest.approx(K * spec["aw"] * math.sqrt(2 * DELTA))
     off = Simulation.from_dict(_scene([{"center": [0.0, 0.0], "radius": 3e-6}], extra={"fb_wall_cut": False}))
-    assert FB.build_spec(off, off.cfg.validate_wave_estimator(), [(K, 1.0, DELTA, BETA)])["wall_cut"] is None
+    assert FBS.build_spec(off, off.cfg.validate_wave_estimator(), [(K, 1.0, DELTA, BETA)])["wall_cut"] is None
 
 
 # ---------------------------------------------------------------- entrance spot (whispering-gallery launch)

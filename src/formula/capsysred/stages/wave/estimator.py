@@ -21,7 +21,8 @@ import numpy as np
 
 from ...screen import ScreenGrid
 from ...shared.units import m_to_um
-from . import fb, funnel
+from .fb_scene import fb_capillary_scene
+from .funnel_scene import funnel_scene
 from .images import ImageSolver, axis_rectangle, far_field
 from .march import MarchSolver
 from .output import RESULT_DIR, _emit, _emit_far_field, _report_lines
@@ -216,10 +217,10 @@ def _run(sim, out_dir, partial, wave, rays_paths, log):
             if wave["far_field"] is not None:
                 files += scenes[0][1]["far_field_files"]
         elif all(b.get("kind") == "funnel" for b in cap.bores):
-            scenes = funnel.funnel_scene(sim, wave, lines, log, out_dir=partial)
+            scenes = funnel_scene(sim, wave, lines, log, out_dir=partial)
             files += scenes[0][1].get("fb_files", [])
         else:
-            scenes = fb.fb_capillary_scene(sim, wave, lines, rays_paths, log, out_dir=partial)
+            scenes = fb_capillary_scene(sim, wave, lines, rays_paths, log, out_dir=partial)
             files += scenes[0][1].get("fb_files", [])
         for label, res in scenes:
             results[label] = res
