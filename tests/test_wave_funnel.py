@@ -163,7 +163,7 @@ def test_run_effective_radius_split_step(tmp_path):
     out = tmp_path / "stage16"
     meta = json.load(open(out / "meta.json", encoding="utf-8"))
     assert meta["model_class"] == "effective-radius,funnel-xi" and meta["funnel"]["integrator"] == "split-step"
-    assert all(p["chebyshev_degree"] == 0 and p["lens_phase_rad"] > 0.0 and len(p["projection_loss"]) == meta["n_nodes"]
+    assert all(p["chebyshev_degree"] == 0 and p["phase_gradient_rad"] > 0.0 and len(p["projection_loss"]) == meta["n_nodes"]
                for p in meta["propagation"])
     cen = json.load(open(out / "funnel-centres.json", encoding="utf-8"))
     mu = np.array(cen["mu_re"]) + 1j * np.array(cen["mu_im"])

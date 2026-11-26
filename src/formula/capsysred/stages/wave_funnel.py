@@ -364,10 +364,10 @@ def funnel_scene(sim, wave, lines, log, out_dir=None):
                 if dump_dir is not None:
                     np.save(os.path.join(dump_dir, f"line{li}-bore{bi}.npy"), cL)
                 info.append({"line": li, "bore": bi, "steps": n_steps, "chebyshev_degree": deg, "seconds": time.time() - t1,
-                             "lens_phase_rad": st.lens_rad if split else None,
+                             "phase_gradient_rad": st.phase_gradient_rad if split else None,
                              "projection_loss": st.projection_loss.tolist() if split else None,
                              "transmission": (p_out / p_in).tolist(), "layer_power": chans[bi].layer_power.tolist()})
-                how = (f"lens phase {st.lens_rad:.2f} rad per step, projection loss {st.projection_loss.max():.1e}"
+                how = (f"phase gradient {st.phase_gradient_rad:.2f} rad per step, projection loss {st.projection_loss.max():.1e}"
                        if split else f"Chebyshev degree {deg}")
                 log(f"  16 [funnel]: line {li} bore {bi}: {n_steps} steps, {how}, {time.time() - t1:.0f} s")
             return exits[bi]
